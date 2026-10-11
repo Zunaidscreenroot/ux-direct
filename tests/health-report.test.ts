@@ -77,7 +77,9 @@ test("health audit catches a summary count mismatch", () => {
 });
 
 test("health audit catches a short inventory and missing required action checks", () => {
-  const report = makeReport().checks.slice(0, 20);
+  const report = makeReport().checks
+    .filter((item) => !REQUIRED_FIGMA_ACTION_CHECKS.includes(item.name as typeof REQUIRED_FIGMA_ACTION_CHECKS[number]))
+    .slice(0, 20);
   const summary = {
     passed: report.filter((item) => item.status === "success" && item.level !== "availability").length,
     available: report.filter((item) => item.status === "success" && item.level === "availability").length,
