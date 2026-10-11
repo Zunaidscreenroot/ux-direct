@@ -11,7 +11,7 @@ type Health = {
 type EventItem = {
   id: string; at: string; source: string; event: string;
   status: "success" | "warning" | "error" | "info";
-  summary: string; requestId?: string; project?: string; durationMs?: number; mode?: string;
+  summary: string; requestId?: string; project?: string; durationMs?: number; mode?: string; category?: string; action?: string; testType?: "availability" | "functional" | "not-tested";
 };
 type PlanResult = {
   task: { id: string; status: string; steps: Array<{ id: string; label: string; status: string }> };
@@ -185,7 +185,7 @@ export default function Home() {
                   <article className="event-row" key={item.id}>
                     <span className={"event-indicator event-" + item.status} />
                     <div className="event-main"><div className="event-title-line"><strong>{item.event}</strong><span className={"status-chip status-" + (item.status === "success" ? "success" : item.status === "error" ? "error" : item.status === "warning" ? "warning" : "neutral")}>{item.status}</span></div>
-                      <p>{item.summary}</p><div className="event-meta"><span>{item.source}</span>{item.project && <span>{item.project}</span>}{item.mode && <span>{item.mode} mode</span>}{typeof item.durationMs === "number" && <span>{item.durationMs} ms</span>}{item.requestId && <span>Request {item.requestId.slice(0, 8)}</span>}</div>
+                      <p>{item.summary}</p><div className="event-meta"><span>{item.source}</span>{item.project && <span>{item.project}</span>}{item.mode && <span>{item.mode} mode</span>}{item.category && <span>{item.category}</span>}{item.testType && <span>{item.testType}</span>}{typeof item.durationMs === "number" && <span>{item.durationMs} ms</span>}{item.requestId && <span>Request {item.requestId.slice(0, 8)}</span>}</div>
                     </div><time>{new Date(item.at).toLocaleTimeString()}</time>
                   </article>
                 ))}</div>

@@ -25,7 +25,7 @@ export function recordOperationalEvent(event: Omit<OperationalEvent, "id" | "at"
     requestId: event.requestId?.slice(0, 80),
     project: event.project?.slice(0, 80),
     durationMs: typeof event.durationMs === "number" ? Math.max(0, Math.round(event.durationMs)) : undefined,
-    mode: event.mode?.slice(0, 40),
+    mode: event.mode?.slice(0, 40),\n    category: event.category?.slice(0, 80),\n    action: event.action?.slice(0, 120),\n    testType: event.testType,
   };
   runtimeEvents.unshift(normalized);
   if (runtimeEvents.length > MAX_EVENTS) runtimeEvents.length = MAX_EVENTS;

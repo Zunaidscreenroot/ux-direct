@@ -1,66 +1,89 @@
-figma.showUI(__html__, { width: 380, height: 640, themeColors: true });
-
+figma.showUI(__html__, { width: 380, height: 720, themeColors: true });
 function getSelectionSummary() {
   return figma.currentPage.selection.map(function (node) {
-    return {
-      id: node.id,
-      name: node.name,
-      type: node.type,
-      visible: node.visible,
-      childCount: "children" in node ? node.children.length : undefined
-    };
+    return { id: node.id, name: node.name, type: node.type, visible: node.visible,
+      childCount: "children" in node ? node.children.length : undefined };
   });
 }
-
 function sendSelection() {
-  figma.ui.postMessage({
-    type: "selection",
-    fileKey: figma.fileKey || null,
-    pageName: figma.currentPage.name,
-    selection: getSelectionSummary()
-  });
+  figma.ui.postMessage({ type: "selection", fileKey: figma.fileKey || null,
+    pageName: figma.currentPage.name, selection: getSelectionSummary() });
 }
-
 figma.on("selectionchange", sendSelection);
 function runNativeApiHealthCheck() {
   var checks = [];
-  function check(name, ok, reason) { checks.push({ name: name, status: ok ? "success" : "error", reason: ok ? "Available" : reason }); }
-  function has(path, value) { check(path, value !== undefined && value !== null, "API/property unavailable in this plugin runtime"); }
-  has("figma.currentPage", figma.currentPage);
-  has("figma.currentPage.selection", figma.currentPage && figma.currentPage.selection);
-  has("figma.root", figma.root);
-  has("figma.viewport", figma.viewport);
-  has("figma.ui", figma.ui);
-  has("figma.on", figma.on);
-  has("figma.off", figma.off);
-  has("figma.getNodeByIdAsync", figma.getNodeByIdAsync);
-  has("figma.getNodeById", figma.getNodeById);
-  has("figma.createFrame", figma.createFrame);
-  has("figma.createComponent", figma.createComponent);
-  has("figma.createText", figma.createText);
-  has("figma.createRectangle", figma.createRectangle);
-  has("figma.createEllipse", figma.createEllipse);
-  has("figma.createPage", figma.createPage);
-  has("figma.loadFontAsync", figma.loadFontAsync);
-  has("figma.notify", figma.notify);
-  has("figma.clientStorage", figma.clientStorage);
-  has("figma.variables", figma.variables);
-  has("figma.teamLibrary", figma.teamLibrary);
-  has("figma.currentPage.findAll", figma.currentPage && figma.currentPage.findAll);
-  has("figma.currentPage.appendChild", figma.currentPage && figma.currentPage.appendChild);
-  var selection = figma.currentPage && figma.currentPage.selection;
-  check("Selection readable", Array.isArray(selection), "Current selection could not be read");
-  check("Page name readable", Boolean(figma.currentPage && typeof figma.currentPage.name === "string"), "Current page name unavailable");
-  check("Plugin UI message bridge", Boolean(figma.ui && typeof figma.ui.postMessage === "function"), "Plugin UI message bridge unavailable");
-  check("Selection metadata extraction", Array.isArray(getSelectionSummary()), "Selection metadata extraction failed");
-  check("Plugin file context readable", typeof figma.fileKey === "string" || figma.fileKey === null, "File context could not be read");
-  check("Viewport bounds readable", Boolean(figma.viewport && figma.viewport.bounds), "Viewport bounds unavailable");
-  check("Viewport zoom readable", Boolean(figma.viewport && typeof figma.viewport.zoom === "number"), "Viewport zoom unavailable");
-  check("Current page id readable", Boolean(figma.currentPage && figma.currentPage.id), "Current page id unavailable");
-  check("Current page children readable", Boolean(figma.currentPage && Array.isArray(figma.currentPage.children)), "Page children unavailable");
-  figma.ui.postMessage({ type: "native-health-result", checks: checks, passed: checks.filter(function (item) { return item.status === "success"; }).length, failed: checks.filter(function (item) { return item.status === "error"; }).length, checkedAt: new Date().toISOString() });
+  function add(category, name, level, ok, reason) {
+    checks.push({ category: category, name: name, level: level, status: ok ? "success" : "error",
+      reason: reason || (ok ? "Verified" : "Check failed") });
+  }
+  function api(category, name, value) {
+    add(category, name, "availability", value !== undefined && value !== null, value == null ?
+      "API/property unavailable in this plugin runtime" : "API exists; operation not executed");
+  }
+  function safeRead(category, name, fn) {
+    try { fn(); add(category, name, "functional", true, "Read-only operation succeeded"); }
+    catch (e) { add(category, name, "functional", false, e && e.message ? e.message : String(e)); }
+  }
+  safeRead("Selection", "Read current selection", function () {
+    if (!Array.isArray(figma.currentPage.selection)) throw new Error("Selection is not an array");
+  });
+  safeRead("Selection", "Read selection metadata", function () {
+    if (!Array.isArray(getSelectionSummary())) throw new Error("Metadata extraction did not return an array");
+  });
+  safeRead("Node inspection", "Read current page name and ID", function () {
+    if (!figma.currentPage.name || !figma.currentPage.id) throw new Error("Page name or ID missing");
+  });
+  safeRead("Node inspection", "Read current page children", function () {
+    if (!Array.isArray(figma.currentPage.children)) throw new Error("Page children unavailable");
+  });
+  safeRead("Node inspection", "Read selected node parent/visibility", function () {
+    figma.currentPage.selection.forEach(function (n) { void n.parent; void n.visible; void n.type; void n.name; });
+  });
+  safeRead("Viewport", "Read viewport bounds and zoom", function () {
+    if (!figma.viewport.bounds || typeof figma.viewport.zoom !== "number") throw new Error("Viewport data unavailable");
+  });
+  safeRead("Plugin bridge", "Read UI bridge and postMessage", function () {
+    if (!figma.ui || typeof figma.ui.postMessage !== "function") throw new Error("UI message bridge unavailable");
+  });
+  [
+    ["Selection","figma.on / selectionchange",figma.on],["Selection","figma.off",figma.off],
+    ["Node inspection","figma.getNodeByIdAsync",figma.getNodeByIdAsync],["Node inspection","figma.getNodeById (legacy)",figma.getNodeById],
+    ["Page navigation","figma.createPage",figma.createPage],["Page navigation","figma.setCurrentPageAsync",figma.setCurrentPageAsync],
+    ["Shapes","figma.createFrame",figma.createFrame],["Shapes","figma.createRectangle",figma.createRectangle],
+    ["Shapes","figma.createEllipse",figma.createEllipse],["Shapes","figma.createLine",figma.createLine],
+    ["Shapes","figma.createPolygon",figma.createPolygon],["Shapes","figma.createStar",figma.createStar],["Shapes","figma.createVector",figma.createVector],
+    ["Text","figma.createText",figma.createText],["Text","figma.loadFontAsync",figma.loadFontAsync],
+    ["Components","figma.createComponent",figma.createComponent],["Components","figma.createComponentFromNode",figma.createComponentFromNode],
+    ["Components","figma.combineAsVariants",figma.combineAsVariants],["Components","figma.createInstance",figma.createInstance],
+    ["Layout and styling","figma.group",figma.group],["Layout and styling","figma.flatten",figma.flatten],
+    ["Layout and styling","figma.union",figma.union],["Layout and styling","figma.intersect",figma.intersect],
+    ["Layout and styling","figma.subtract",figma.subtract],["Layout and styling","figma.exclude",figma.exclude],
+    ["Variables","figma.variables",figma.variables],["Library","figma.teamLibrary",figma.teamLibrary],
+    ["Storage","figma.clientStorage",figma.clientStorage],["Viewport","figma.viewport",figma.viewport],
+    ["Export","Node exportAsync",figma.currentPage && figma.currentPage.exportAsync],
+    ["Events","figma.on",figma.on],["Events","figma.once",figma.once],
+    ["Plugin bridge","figma.ui.onmessage",figma.ui && figma.ui.onmessage],
+    ["Plugin lifecycle","figma.closePlugin",figma.closePlugin],["Plugin utilities","figma.notify",figma.notify],
+    ["Plugin utilities","figma.openExternal",figma.openExternal]
+  ].forEach(function (item) { api(item[0], item[1], item[2]); });
+  [
+    ["Selection","Selection change event delivery","Requires a user to change selection after this test starts"],
+    ["Page navigation","Switch page operation","Not executed to avoid changing the user's active page"],
+    ["Shapes","Create/delete shape operation","Not executed to avoid modifying the design document"],
+    ["Text","Write text / change font operation","Not executed to avoid modifying the design document"],
+    ["Layout and styling","Modify layout or visual styles","Not executed to avoid modifying the design document"],
+    ["Components","Create component/variant operation","Not executed to avoid modifying the design document"],
+    ["Variables","Read/write variable values","Variable operations not executed in this non-destructive check"],
+    ["Export","Export selected node","Export not executed; only API availability was checked"]
+  ].forEach(function (item) { add(item[0], item[1], "not-tested", false, item[2]); });
+  var passed = checks.filter(function (x) { return x.status === "success"; }).length;
+  var failed = checks.filter(function (x) { return x.status === "error"; }).length;
+  var notTested = checks.filter(function (x) { return x.level === "not-tested"; }).length;
+  figma.ui.postMessage({ type: "native-health-result", checks: checks, passed: passed, failed: failed,
+    notTested: notTested, checkedAt: new Date().toISOString() });
 }
 figma.ui.onmessage = function (message) {
+  if (!message) return;
   if (message.type === "get-selection") sendSelection();
   if (message.type === "run-native-health-check") runNativeApiHealthCheck();
   if (message.type === "close") figma.closePlugin();

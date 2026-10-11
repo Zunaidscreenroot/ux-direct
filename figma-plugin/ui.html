@@ -79,7 +79,7 @@
     if (heartbeatTimer) window.clearInterval(heartbeatTimer);
     const body = JSON.stringify({ source: "figma-plugin", event: "Plugin close attempted", status: "info", summary: "Plugin UI is unloading; close event delivery is best-effort." });
     try {
-      if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/telemetry", new Blob([body], { type: "text/plain;charset=UTF-8" }));
+      if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/telemetry", new Blob([body], { type: "application/json" }));
       else fetch(API + "/api/telemetry", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
     } catch (_) {}
   });
@@ -116,22 +116,22 @@
     const message = event.data && event.data.pluginMessage;
     if (!message) return;
     if (message.type === "native-health-result") {
-      const passed = message.passed || 0, failed = message.failed || 0;
-      $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + new Date(message.checkedAt).toLocaleTimeString();
+      const passed = message.passed || 0, failed = message.failed || 0, notTested = message.notTested || 0;
+      $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + notTested + " not tested · " + new Date(message.checkedAt).toLocaleTimeString();
       const list = document.createElement("div");
       message.checks.forEach((item) => {
         const row = document.createElement("div");
         row.style.cssText = "display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-top:1px solid var(--figma-color-border)";
         const badge = document.createElement("strong"); badge.textContent = item.status === "success" ? "PASS" : "FAIL";
         badge.style.color = item.status === "success" ? "#26966b" : "#d14343";
-        const label = document.createElement("span"); label.textContent = item.name + " — " + item.reason;
+        const label = document.createElement("span"); label.textContent = "[" + item.category + " · " + item.level + "] " + item.name + " — " + item.reason;
         row.append(badge, label); list.appendChild(row);
       });
       $("healthResults").replaceChildren(list);
       $("runHealth").disabled = false;
-      void sendTelemetry("Plugin API health check completed", failed ? "warning" : "success", "Native Plugin API self-test: " + passed + " passed, " + failed + " failed.");
+      void sendTelemetry("Plugin API health check completed", failed ? "warning" : "success", "Native Plugin API self-test: " + passed + " passed, " + failed + " failed, " + notTested + " not tested.");
       message.checks.forEach((item) => {
-        void sendTelemetry("Plugin API check: " + item.name, item.status, item.name + ": " + item.reason);
+        void sendTelemetry("Plugin API check: " + item.name, item.level === "not-tested" ? "warning" : item.status, item.name + ": " + item.reason, { category: item.category, action: item.name, testType: item.level });
       });
       return;
     }
