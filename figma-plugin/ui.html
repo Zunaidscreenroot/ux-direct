@@ -415,7 +415,7 @@
       } catch (error) {
         bridgeReady = false;
         console.warn("[UX Direct plugin bridge]", error);
-        if (!backendHealthy) setConnection("bad", "Offline");
+        if (!backendHealthy) setConnection("bad", "Netlify Preview offline");
         return { ok: false, error: error && error.message ? error.message : "Unknown bridge error" };
       }
     }
@@ -441,8 +441,12 @@
         if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
         if (!backendHealthy) {
           const health = await checkConnection();
-          if (health) await syncPluginBridge();
+          if (health) {
+            if (!modelOptions.length) void loadModelOptions();
+            await syncPluginBridge();
+          }
         } else {
+          if (!modelOptions.length) void loadModelOptions();
           await syncPluginBridge();
         }
       }, 90000);
@@ -544,6 +548,7 @@
       appendMessage("user", prompt);
       $("prompt").value = "";
       $("send").disabled = true;
+      $("modelSelect").disabled = true;
       $("prompt").disabled = true;
       isSending = true;
       showTyping();
@@ -596,6 +601,7 @@
         hideTyping();
         isSending = false;
         $("prompt").disabled = false;
+        $("modelSelect").disabled = !backendHealthy || modelOptions.length === 0;
         updateSendAvailability();
         $("prompt").focus();
       }
