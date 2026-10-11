@@ -12,7 +12,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
-// Keep provider/model probes explicit so checking one model never fans out API calls to every provider.\nconst modelKey = (provider: string, model: string) => provider + "::" + model;
+// Keep provider/model probes explicit so checking one model never fans out API calls to every provider.
+const modelKey = (provider: string, model: string) => provider + "::" + model;
 
 function corsHeaders() {
   return {
