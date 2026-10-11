@@ -225,7 +225,7 @@ export async function getOpenRouterUsageSnapshot(): Promise<OpenRouterUsageSnaps
         if (activityResponse.ok) {
           const activityPayload = await activityResponse.json() as { data?: RawActivityItem[] };
           const rows = Array.isArray(activityPayload.data) ? activityPayload.data : [];
-          activity30Days = rows.reduce((sum, row) => ({
+          activity30Days = rows.reduce<{ requests: number; promptTokens: number; completionTokens: number; usageUsd: number }>((sum, row) => ({
             requests: sum.requests + Math.max(0, Number(row.requests) || 0),
             promptTokens: sum.promptTokens + Math.max(0, Number(row.prompt_tokens) || 0),
             completionTokens: sum.completionTokens + Math.max(0, Number(row.completion_tokens) || 0),
