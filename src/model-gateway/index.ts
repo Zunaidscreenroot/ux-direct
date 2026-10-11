@@ -338,13 +338,18 @@ export async function chatCompletionWithFallback(
     const moduleId = request.moduleId ?? TASK_MODULES[request.model] ?? "general";
     const settings = await getGatewaySettings();
     const policy = settings.modules[moduleId];
-    if (!policy?.allowFallback || policy.mode !== "free") throw primaryError;
+    if (!policy?.enabled || !policy.allowFallback || policy.mode !== "free" || !policy.selectedModelKey.startsWith("gemini::")) throw primaryError;
+    const generalPolicy = settings.modules.general;
+    if (!generalPolicy?.enabled || generalPolicy.mode !== "free" || generalPolicy.selectedModelKey !== "auto") throw primaryError;
+    const primaryModel = policy.selectedModelKey.slice("gemini::".length);
+    const status = primaryError instanceof GatewayError ? primaryError.status : (typeof primaryError === "object" && primaryError !== null && "status" in primaryError && typeof primaryError.status === "number" ? primaryError.status : 502);
+    if (![408, 429, 500, 502, 503, 504].includes(status)) throw primaryError;
     const providers = options.providers ?? providersFromEnv();
     const gemini = providers.find(provider => provider.name === "gemini" && provider.kind === "free-tier");
     if (!gemini || gemini.models.length < 2) throw primaryError;
     let lastError: unknown = primaryError;
     for (const model of gemini.models) {
-      if (model === request.model) continue;
+      if (model === primaryModel || model === request.model) continue;
       try { return await chatCompletion({ ...request, model, providerId: "gemini", moduleId: undefined }, options); }
       catch (error) { lastError = error; }
     }
