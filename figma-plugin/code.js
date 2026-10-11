@@ -133,40 +133,51 @@ async function runNativeApiHealthCheck(commandId) {
   try {
     sampleSceneNode = figma.currentPage.selection[0] || figma.currentPage.children[0] || null;
   } catch (_) {}
-  function availability(category, name, ok, reason) {
-    add(category, name, "availability", !!ok, reason || (ok ? "API/property availability verified; operation not executed" : "Required API/property is unavailable"));
+  function availability(category, name, ok, successReason, failureReason) {
+    add(category, name, "availability", !!ok,
+      ok ? (successReason || "API/property availability verified; operation not executed") :
+        (failureReason || "Required API/property is unavailable"));
   }
   availability("Selection", "Selection change listener registration", selectionChangeListenerRegistered,
-    "The figma.on('selectionchange') listener was registered at startup; event delivery requires a user selection change and is not forced by this test.");
+    "The figma.on('selectionchange') listener was registered at startup; event delivery requires a user selection change and is not forced by this test.",
+    "Could not register the selection-change listener.");
   availability("Page navigation", "Page create/switch APIs",
     typeof figma.createPage === "function" && typeof figma.setCurrentPageAsync === "function",
-    "Page APIs are checked by reference only; no page was created and the active page was not switched.");
+    "Page APIs are exposed by this runtime; no page was created and the active page was not switched.",
+    "One or more page create/switch APIs are unavailable in this runtime.");
   availability("Shapes", "Shape creation APIs",
     [figma.createFrame, figma.createRectangle, figma.createEllipse, figma.createLine,
       figma.createPolygon, figma.createStar, figma.createVector].every(function (value) { return typeof value === "function"; }),
-    "Shape-creation APIs are available; no shape was created. Node.remove is inspected on a current-page node when one is present.");
+    "Shape-creation APIs are exposed by this runtime; no shape was created. Node.remove is inspected on a current-page node when one is present.",
+    "One or more shape-creation APIs are unavailable in this runtime.");
   if (sampleSceneNode) {
     availability("Shapes", "SceneNode.remove API", typeof sampleSceneNode.remove === "function",
-      "The remove method was checked on an existing current-page node; no node was removed.");
+      "The existing current-page node's remove method was inspected; no node was removed.",
+      "The existing current-page node does not expose a remove method.");
   }
   availability("Text", "Text creation and font-loading APIs",
     typeof figma.createText === "function" && typeof figma.loadFontAsync === "function",
-    "Text creation and font-loading APIs are available; no text, font, or text property was changed.");
+    "Text creation and font-loading APIs are exposed by this runtime; no text, font, or text property was changed.",
+    "Text creation or font-loading API is unavailable in this runtime.");
   availability("Layout and styling", "Node manipulation APIs",
     [figma.group, figma.flatten, figma.union, figma.intersect, figma.subtract, figma.exclude]
       .every(function (value) { return typeof value === "function"; }),
-    "Grouping, flattening, and boolean-operation APIs are available; no geometry, layout, fill, or stroke was changed.");
+    "Node grouping, flattening, and boolean-operation APIs are exposed by this runtime; no geometry, layout, fill, or stroke was changed.",
+    "One or more node manipulation APIs are unavailable in this runtime.");
   availability("Components", "Component and variant creation APIs",
     typeof figma.createComponent === "function" && typeof figma.createComponentFromNode === "function" &&
       typeof figma.combineAsVariants === "function",
-    "Component and variant APIs are available; no component or variant was created. ComponentNode.createInstance is separately checked when a component exists on this page.");
+    "Component and variant APIs are exposed by this runtime; no component or variant was created. ComponentNode.createInstance is separately checked when a component exists on this page.",
+    "One or more component/variant creation APIs are unavailable in this runtime.");
   availability("Variables", "Variable creation APIs",
     !!figma.variables && typeof figma.variables.createVariable === "function" &&
       typeof figma.variables.createVariableCollection === "function",
-    "Variable write APIs are available; read-only variable queries are tested above. No variable or collection was created or changed.");
+    "Variable write APIs are exposed by this runtime; read-only variable queries are tested above. No variable or collection was created or changed.",
+    "One or more variable creation APIs are unavailable in this runtime.");
   availability("Export", "Node export API",
     typeof figma.currentPage.exportAsync === "function" && (!sampleSceneNode || typeof sampleSceneNode.exportAsync === "function"),
-    "exportAsync is available on the active page/sample node; an export was not generated to avoid unnecessary large output.");
+    "exportAsync is exposed on the active page/sample node; an export was not generated to avoid unnecessary large output.",
+    "The active page or sample node does not expose exportAsync.");
   add("Mutation safety", "Document-changing and live-interaction workflows", "not-tested", false,
     "Actual page switching, create/delete, text/style/component/variable writes, selection-change delivery, and content export are not executed by this non-destructive self-test. Their API availability is shown above where inspectable.");
   var passed = checks.filter(function (x) { return x.status === "success" && x.level !== "availability"; }).length;
