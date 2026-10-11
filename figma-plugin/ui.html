@@ -54,14 +54,13 @@
   <button id="submit" class="primary">Plan with UX Direct ↗</button>
   <div id="status" class="status" role="status">Ready. No Figma changes will be made.</div>
   <div id="result" class="result" hidden></div>
-  <footer>Planning sends prompt text and selected-node metadata only. The API self-test creates a persistent fixture set and temporary test artifacts only on the dedicated UXD API Test Lab page; temporary artifacts are cleaned up after each run. No Figma REST API or OAuth access is used.</footer>
+  <footer>Planning sends prompt text and selected-node metadata only. UXD API Test Lab and its test fixtures are created once and reused. Test nodes, components, variables, and the storage probe are intentionally preserved between runs; no per-run cleanup is performed. No Figma REST API or OAuth access is used.</footer>
 <script>
   const API = "https://ux-direct.vercel.app";
   const $ = (id) => document.getElementById(id);
   const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
   let verifiedFileKey = null;
   let pluginSessionStarted = false;
-  let autoHealthCheckStarted = false;
   let currentSelection = { fileKey: null, pageName: "", selection: [] };
   const status = (message) => { $("status").textContent = message; };
   $("runHealth").disabled = true;
@@ -106,7 +105,6 @@
         if (data.command.action === "native-api-health-check") {
           status("Running a native Figma API health check requested from Vercel…");
           void sendTelemetry("Vercel requested native API health check", "info", "Executing dashboard-issued plugin health check.", { requestId: data.command.commandId });
-          autoHealthCheckStarted = true;
           parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: data.command.commandId } }, "*");
         }
       }
@@ -117,7 +115,11 @@
   let heartbeatTimer = null;
   async function startPluginSession() {
     await sendTelemetry("Plugin opened", "success", "UX Direct plugin UI initialized in Figma.");
-    await checkConnection();
+    const connection = await checkConnection();
+    $("runHealth").disabled = false;
+    $("healthSummary").textContent = connection
+      ? "Backend connected. Run the native API self-test when ready."
+      : "Connection check attempted. Native API tests can still be run below.";
     await syncPluginBridge();
     heartbeatTimer = window.setInterval(() => {
       void sendTelemetry("Plugin heartbeat", "success", "Plugin UI is active and recently reached its event loop.");
@@ -193,19 +195,10 @@
       }
       verifiedFileKey = message.fileKey;
       currentSelection.fileKey = message.fileKey;
-      $("runHealth").disabled = false;
       $("submit").disabled = false;
       if (!pluginSessionStarted) {
         pluginSessionStarted = true;
-        void (async () => {
-          await startPluginSession();
-          if (!autoHealthCheckStarted) {
-            autoHealthCheckStarted = true;
-            $("runHealth").disabled = true;
-            $("healthSummary").textContent = "Running scoped API execution tests in UXD API Test Lab…";
-            parent.postMessage({ pluginMessage: { type: "run-native-health-check" } }, "*");
-          }
-        })();
+        void startPluginSession();
       }
       return;
     }
