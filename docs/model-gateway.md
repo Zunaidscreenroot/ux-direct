@@ -10,6 +10,12 @@ UX Direct includes a small, self-hosted-in-application gateway inspired by LiteL
 - Request timeout, cancellation, input validation, and normalized errors.
 - No database, external gateway account, telemetry service, or additional runtime dependency.
 
+## Dashboard and usage accounting
+
+The main dashboard includes a Model Gateway tab, provider readiness and non-editable API-key placeholders for the final setup step. It shows per-request prompt/completion/total tokens, model, provider, latency, estimated cost, month-to-date spend and the ₹3,000 default budget. `GET /api/model-gateway/dashboard` returns only sanitized readiness and ledger data.
+
+The initial usage ledger is in-memory best-effort telemetry and may reset on serverless restarts. Treat it as operational visibility rather than a durable billing source until persistent storage and concurrency-safe budget reservation are implemented.
+
 ## Configure providers
 
 Set secrets only in the server environment; never expose them through `NEXT_PUBLIC_*` variables or commit them.
