@@ -75,4 +75,4 @@ The `routeTask()` helper prefers local/free models for classification, extractio
 - [ ] Verify the gateway access key is configured on the server.
 - [ ] Run the mock suite and at least one local/free-tier smoke test.
 - [ ] Confirm free-tier data-use terms are acceptable for the prompts you send.
-- [ ] Only then add paid-provider credentials and explicitly enable paid model IDs.
+- [ ] Only then add paid-provider credentials and set `ALLOW_PAID_MODELS=true` alongside an explicit paid-model allowlist. A paid key alone does not enable paid routing.
