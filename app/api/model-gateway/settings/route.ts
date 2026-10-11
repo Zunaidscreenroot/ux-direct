@@ -72,7 +72,9 @@ export async function PUT(request: Request) {
   }
   if (Object.keys(rawModels).length > catalog.length + 10) return jsonError("Too many model budget entries.", 413);
   for (const [key, rawModel] of Object.entries(rawModels)) {
-    if (!allowed.has(key) || !rawModel || typeof rawModel !== "object" || Array.isArray(rawModel)) return jsonError("Unknown model budget entry: " + key, 400);
+    if (!rawModel || typeof rawModel !== "object" || Array.isArray(rawModel)) return jsonError("Invalid model budget entry: " + key, 400);
+    // Ignore legacy model-budget rows from previously connected providers; only live OpenRouter IDs are retained below.
+    if (!allowed.has(key)) continue;
     const model = rawModel as Record<string, unknown>;
     for (const field of ["monthlyBudgetInr", "maxRequestCostInr", "inputPriceInrPerMillion", "outputPriceInrPerMillion"]) {
       const n = Number(model[field]);
