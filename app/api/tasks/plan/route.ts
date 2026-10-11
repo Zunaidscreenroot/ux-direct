@@ -90,6 +90,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not create task plan";
     recordOperationalEvent({ source: "backend", event: "Task planning failed", status: "error", summary: message.slice(0, 220), requestId, project: parsed.data.project, durationMs: Date.now() - startedAt, mode: executionMode });
-    return NextResponse.json({ error: message, requestId }, { status: 500, headers });
+    const errorStatus = typeof error === "object" && error !== null && "status" in error && typeof error.status === "number" && error.status >= 400 && error.status <= 599 ? error.status : 500;
+    return NextResponse.json({ error: message, requestId }, { status: errorStatus, headers });
   }
 }
