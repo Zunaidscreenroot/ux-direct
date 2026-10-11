@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
+import { getOpenRouterPaidChatModel, OPENROUTER_PAID_CHAT_MODELS } from "@/src/model-gateway/openrouter-paid";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,7 +64,26 @@ async function discoverModels(provider: ProviderId) {
     .filter(item => typeof item.id === "string" && item.id.endsWith(":free"))
     .map(item => item.id)
     .filter((id): id is string => Boolean(id));
-  return { provider, configured: true, models, checkedAt: new Date().toISOString() };
+  const paidModels = OPENROUTER_PAID_CHAT_MODELS.flatMap(model => {
+    const live = (payload.data ?? []).find(item => item.id === model.id);
+    const liveInputPrice = Number(live?.pricing?.prompt);
+    const liveOutputPrice = Number(live?.pricing?.completion);
+    // Never list the paid model unless OpenRouter's live catalog confirms both prices.
+    if (!live || !(liveInputPrice > 0) || !(liveOutputPrice > 0)) return [];
+    return [{
+      provider: "openrouter",
+      id: model.id,
+      label: model.label + " · $" + model.listedInputUsdPerMillion.toFixed(2) + " in / $" + model.listedOutputUsdPerMillion.toFixed(2) + " out per 1M",
+      configured: true,
+      tier: "paid",
+      listedInputUsdPerMillion: model.listedInputUsdPerMillion,
+      listedOutputUsdPerMillion: model.listedOutputUsdPerMillion,
+      budgetInputUsdPerMillion: model.budgetInputUsdPerMillion,
+      budgetOutputUsdPerMillion: model.budgetOutputUsdPerMillion,
+      pricingSource: model.pricingSource
+    }];
+  });
+  return { provider, configured: true, models, paidModels, checkedAt: new Date().toISOString() };
 }
 function sanitizeProviderMessage(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -79,9 +99,11 @@ function sanitizeProviderMessage(value: unknown): string | undefined {
 async function probeModel(provider: ProviderId, model: string) {
   const config = providerConfig(provider);
   if (!config) return { available: false, provider, model, reason: `${provider} API key is missing in this deployment context.` };
-  if (!model.endsWith(":free")) {
-    return { available: false, provider, model, status: 400, reason: "Only model IDs ending in :free can be probed by this endpoint." };
+  const paidModel = getOpenRouterPaidChatModel(model);
+  if (!model.endsWith(":free") && !paidModel) {
+    return { available: false, provider, model, status: 400, reason: "Only free IDs or explicitly allowlisted low-cost paid OpenRouter models can be probed." };
   }
+  const isPaidModel = Boolean(paidModel);
   const startedAt = Date.now();
   const response = await timedFetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
@@ -96,7 +118,7 @@ async function probeModel(provider: ProviderId, model: string) {
       // OpenRouter supports configurable reasoning effort for compatible models.
       // Keep probe reasoning minimal and leave enough room for a final text token sequence.
       reasoning: { effort: "minimal" },
-      max_tokens: 256
+      max_tokens: isPaidModel ? 128 : 256
     })
   }, 18000);
   if (!response.ok) {
@@ -114,7 +136,7 @@ async function probeModel(provider: ProviderId, model: string) {
     } catch {
       // Keep the HTTP status even when the upstream response is not JSON.
     }
-    const quotaExhausted = response.status === 429 &&
+    const quotaExhausted = model.endsWith(":free") && response.status === 429 &&
       /free-models-per-day|free model requests per day|add\s*10\s*credits/i.test(providerMessage ?? "");
     return {
       available: false, provider, model, status: response.status,
@@ -289,12 +311,13 @@ export async function GET(request: Request) {
       if (provider !== "openrouter") {
         return NextResponse.json({ available: false, error: "Unsupported provider.", diagnosticId: id }, { status: 400, headers });
       }
-      if (!model.endsWith(":free")) {
+      if (!model.endsWith(":free") && !getOpenRouterPaidChatModel(model)) {
         return NextResponse.json({
-          available: false, error: "Only model IDs ending in :free can be probed by this endpoint.", diagnosticId: id
+          available: false, error: "Only free IDs or explicitly allowlisted low-cost paid OpenRouter models can be probed.", diagnosticId: id
         }, { status: 400, headers });
       }
-      // Probe exactly one requested free model; no paid IDs, fallback, or provider fan-out.
+      // Probe only the explicitly selected model. Paid probes are restricted to the
+      // server-side allowlist and use a 128-token response cap.
       const result = await probeModel(provider, model);
       return NextResponse.json({ ...result, diagnosticId: id }, { headers });
     }
@@ -321,11 +344,14 @@ export async function GET(request: Request) {
       const rankDifference = rank(a) - rank(b);
       return rankDifference !== 0 ? rankDifference : a.localeCompare(b);
     }).slice(0, 80);
-    const models = liveModelIds.map(modelId => ({
+    const freeModels = liveModelIds.map(modelId => ({
       provider: "openrouter", id: modelId, label: modelId + " · Free",
       configured: result.configured, tier: "free-tier"
     }));
-    const selectedModel = models.find(model => model.id === preferredOrder[0])?.id ?? models[0]?.id ?? null;
+    const paidModels = "paidModels" in result && Array.isArray(result.paidModels) ? result.paidModels : [];
+    // Prefer the explicitly allowlisted paid model while the user is in paid-model testing mode.
+    const models = [...paidModels, ...freeModels];
+    const selectedModel = paidModels[0]?.id ?? freeModels.find(model => model.id === preferredOrder[0])?.id ?? freeModels[0]?.id ?? null;
     return NextResponse.json({
       models,
       selectedModel,
@@ -334,7 +360,7 @@ export async function GET(request: Request) {
       ...(!models.length ? { reason: ("reason" in result ? result.reason : undefined) ?? "No free OpenRouter models were returned by the live catalog." } : {}),
       checkedAt: result.checkedAt ?? new Date().toISOString(),
       diagnosticId: id,
-      note: "Model options are fetched live from OpenRouter. The plugin verifies only the selected model before enabling chat."
+      note: "Free model IDs and the allowlisted paid model are verified against OpenRouter live catalog pricing. The plugin probes only the selected model before enabling chat."
     }, { headers });
   } catch (error) {
     console.error("[model-status] request failed", JSON.stringify({ diagnosticId: id, message: safeError(error) }));
@@ -356,8 +382,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ available: false, error: "Request body must be valid JSON.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
   }
   const parsed = body as { provider?: unknown; model?: unknown; fileKey?: unknown };
-  if (parsed.provider !== "openrouter" || typeof parsed.model !== "string" || typeof parsed.fileKey !== "string" || !parsed.model.endsWith(":free")) {
-    return NextResponse.json({ available: false, error: "A valid OpenRouter :free model ID and fileKey are required.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
+  if (parsed.provider !== "openrouter" || typeof parsed.model !== "string" || typeof parsed.fileKey !== "string" ||
+      (!parsed.model.endsWith(":free") && !getOpenRouterPaidChatModel(parsed.model))) {
+    return NextResponse.json({ available: false, error: "A free OpenRouter model or allowlisted paid model ID and fileKey are required.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
   }
   if (!originAllowed(request) || !approvedFileKey(request, parsed.fileKey) || !isAllowedFigmaFileKey(parsed.fileKey)) {
     return NextResponse.json({ available: false, error: "Origin or Figma file key not allowed.", diagnosticId: diagnosticId() }, { status: 403, headers: corsHeaders() });
