@@ -85,7 +85,7 @@ function ModelGatewayPanel() {
   const maxTokens = Math.max(1, ...records.map(record => record.totalTokens));
   const models = (data?.models ?? []).filter(model => showAllModels || model.configured || model.tier === "mock");
   const budget = data?.budget;
-  const keyReady = (data?.providers ?? []).filter(provider => provider.configured && provider.secretRequired).length;
+  const keyReady = (data?.providers ?? []).filter(provider => provider.keyDetected).length;
   return (
     <div className="content gateway-content">
       <div className="eyebrow"><span className="pulse" /> MODEL OPERATIONS</div>
@@ -128,11 +128,11 @@ function ModelGatewayPanel() {
       <div className="gateway-provider-grid">
         {(data?.providers ?? []).map(provider => (
           <article className="gateway-provider-card" key={provider.id}>
-            <div className="gateway-provider-top"><span className="gateway-provider-mark">{provider.label.split(" ").map(word => word[0]).join("").slice(0, 2)}</span><span className={"status-chip " + (provider.configured ? "status-success" : "status-neutral")}>{provider.configured ? "Ready" : provider.keyDetected ? "Key detected · setup incomplete" : provider.tier === "local" ? "Not connected" : "Key not added"}</span></div>
+            <div className="gateway-provider-top"><span className="gateway-provider-mark">{provider.label.split(" ").map(word => word[0]).join("").slice(0, 2)}</span><span className={"status-chip " + (provider.configured ? "status-success" : "status-neutral")}>{provider.configured ? "Configured · unverified" : provider.keyDetected ? "Key detected · setup incomplete" : provider.tier === "local" ? "Endpoint not configured" : "Key not added"}</span></div>
             <h3>{provider.label}</h3><p>{provider.tier === "paid" ? "Paid provider · stays disabled until explicitly activated." : provider.tier === "local" ? "Local inference · no model API key or per-token provider charge." : "Free-tier candidate · account quotas and availability apply."}</p>
             <label className="gateway-key-label" htmlFor={"key-slot-" + provider.id}>{provider.envName}</label>
             <div className="gateway-key-placeholder"><input id={"key-slot-" + provider.id} type="password" placeholder={provider.secretRequired ? "API key placeholder · add in final step" : "Local endpoint placeholder"} disabled readOnly aria-label={provider.envName + " placeholder; edit disabled"} /><span>{provider.keyDetected ? "KEY DETECTED" : provider.configured ? "CONNECTED" : "PLACEHOLDER"}</span></div>
-            <small className="gateway-provider-note">{provider.secretRequired ? "No key is requested or stored in this dashboard. Add it later as a server-side environment variable." : "Configure the endpoint in server environment settings when local inference is ready."}</small>
+            <small className="gateway-provider-note">{provider.secretRequired ? "No key is requested or stored in this dashboard. Add it later as a server-side environment variable; live provider health is not verified here." : "Configure the endpoint in server environment settings when local inference is ready. Reachability is not verified by this status check."}</small>
           </article>
         ))}
       </div>
