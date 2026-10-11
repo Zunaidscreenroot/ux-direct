@@ -7,6 +7,7 @@ export type ChatRole = "system" | "user" | "assistant";
 export type ChatMessage = { role: ChatRole; content: string };
 export type GatewayRequest = {
   model: string;
+  requestId?: string;
   messages: ChatMessage[];
   temperature?: number;
   max_tokens?: number;
@@ -46,11 +47,11 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   // Task routing prefers configured real providers and uses mock only as the last resort.
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
   const openRouterModels = csv(env.OPENROUTER_MODELS).filter(model =>
-    env.ALLOW_PAID_MODELS === "true" || model.endsWith(":free")
+    model.endsWith(":free") || (env.ALLOW_PAID_MODELS === "true" && paidPricingReady)
   );
   if (env.OPENROUTER_API_KEY && openRouterModels.length) providers.push({
     name: "openrouter", baseUrl: trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"),
-    apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: env.ALLOW_PAID_MODELS === "true" ? "paid" : "free-tier"
+    apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: openRouterModels.some(model => !model.endsWith(":free")) ? "paid" : "free-tier"
   });
   if (env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) providers.push({
     name: "gemini", baseUrl: trimSlash(env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai"),
@@ -65,13 +66,16 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
     name: "cerebras", baseUrl: trimSlash(env.CEREBRAS_BASE_URL || "https://api.cerebras.ai/v1"),
     apiKey: env.CEREBRAS_API_KEY, models: csv(env.CEREBRAS_MODELS, "gpt-oss-120b"), kind: "free-tier"
   });
-  // Paid inference requires a separate explicit opt-in, even if a key is present.
-  if (env.OPENAI_API_KEY && env.ALLOW_PAID_MODELS === "true") providers.push({
+  // Paid inference requires a key, explicit opt-in, and configured token prices.
+  const paidPricingReady = Number(env.MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M) > 0 &&
+    Number(env.MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M) > 0 &&
+    Number(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "3000") > 0;
+  if (env.OPENAI_API_KEY && env.ALLOW_PAID_MODELS === "true" && paidPricingReady) providers.push({
     name: "openai", baseUrl: trimSlash(env.OPENAI_BASE_URL || "https://api.openai.com/v1"),
     apiKey: env.OPENAI_API_KEY, models: csv(env.OPENAI_MODELS, "gpt-4o-mini"), kind: "paid"
   });
   const customKind = env.CUSTOM_OPENAI_COMPATIBLE_KIND === "local" ? "local" : "paid";
-  if (env.CUSTOM_OPENAI_COMPATIBLE_BASE_URL && (customKind === "local" || env.ALLOW_PAID_MODELS === "true")) providers.push({
+  if (env.CUSTOM_OPENAI_COMPATIBLE_BASE_URL && (customKind === "local" || (env.ALLOW_PAID_MODELS === "true" && paidPricingReady))) providers.push({
     name: "custom", baseUrl: trimSlash(env.CUSTOM_OPENAI_COMPATIBLE_BASE_URL),
     apiKey: env.CUSTOM_OPENAI_COMPATIBLE_API_KEY, models: csv(env.CUSTOM_OPENAI_COMPATIBLE_MODELS, "default"),
     kind: customKind
@@ -156,9 +160,16 @@ export async function chatCompletion(
   const resolvedModel = aliases[request.model] ? routeTask(aliases[request.model], providers).id : request.model;
   const provider = resolveProvider(resolvedModel, providers);
   const started = Date.now();
+  const requestId = request.requestId ?? crypto.randomUUID();
+  const usageStore = await import("./usage-store");
+  if (provider.kind === "paid") {
+    usageStore.assertBudgetAllows(request.messages.reduce((n, m) => n + m.content.length, 0), request.max_tokens ?? 1024);
+  }
   if (provider.kind === "mock" || provider.baseUrl.startsWith("mock://")) {
     const lastUser = [...request.messages].reverse().find(m => m.role === "user")?.content ?? "";
-    return { model: resolvedModel, content: `[UX Direct mock — no model API called] Received ${lastUser.length} characters. Configure a local or free-tier provider to enable real inference.`, provider: provider.name, latencyMs: Date.now() - started, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } };
+    const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    usageStore.recordModelUsage({ requestId, provider: provider.name, model: resolvedModel, tier: "mock", promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCostInr: 0, latencyMs: Date.now() - started, status: "success" });
+    return { id: requestId, model: resolvedModel, content: `[UX Direct mock — no model API called] Received ${lastUser.length} characters. Configure a local or free-tier provider to enable real inference.`, provider: provider.name, latencyMs: Date.now() - started, usage };
   }
   const fetchImpl = options.fetchImpl ?? fetch;
   const controller = new AbortController();
@@ -187,10 +198,17 @@ export async function chatCompletion(
     try { payload = await response.json(); } catch { throw new GatewayError("Provider returned invalid JSON.", 502, provider.name); }
     const content = payload?.choices?.[0]?.message?.content;
     if (typeof content !== "string") throw new GatewayError("Provider response did not contain choices[0].message.content.", 502, provider.name);
+    const latencyMs = Date.now() - started;
+    const tokenUsage = usageStore.tokenUsageValues(payload.usage);
+    const estimatedCostInr = usageStore.estimateCostInr(tokenUsage.promptTokens, tokenUsage.completionTokens, provider);
+    usageStore.recordModelUsage({
+      requestId, provider: provider.name, model: typeof payload.model === "string" ? payload.model : resolvedModel,
+      tier: provider.kind ?? "paid", ...tokenUsage, estimatedCostInr, latencyMs, status: "success"
+    });
     return {
       id: typeof payload.id === "string" ? payload.id : undefined,
       model: typeof payload.model === "string" ? payload.model : resolvedModel,
-      content, usage: payload.usage, provider: provider.name, latencyMs: Date.now() - started
+      content, usage: payload.usage, provider: provider.name, latencyMs
     };
   } catch (error) {
     if (error instanceof GatewayError) throw error;
