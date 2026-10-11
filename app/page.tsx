@@ -149,10 +149,10 @@ export default function Home() {
                 <dl><div><dt>Health endpoint</dt><dd>{backendHealthy ? "Responding" : "Not verified"}</dd></div><div><dt>Task planning</dt><dd>{health?.capabilities.taskPlanning ? "Available" : "Unknown"}</dd></div><div><dt>Last checked</dt><dd>{lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : "—"}</dd></div></dl>
               </article>
               <article className="connection-card">
-                <div className="connection-card-top"><span className="service-icon">FG</span><span className={"status-chip " + (health?.figma.oauthConfigured ? "status-warning" : "status-neutral")}>{health?.figma.oauthConfigured ? "Needs authorization test" : "Not configured"}</span></div>
-                <h2>Figma account</h2><p>OAuth / sign-in connection</p>
-                <dl><div><dt>OAuth credentials</dt><dd>{health ? (health.figma.oauthConfigured ? "Present" : "Missing") : "Unknown"}</dd></div><div><dt>Account authorization</dt><dd>{health?.figma.status === "configured_not_verified" ? "Not verified" : "Not connected"}</dd></div><div><dt>File access</dt><dd>Allowlist required</dd></div></dl>
-                <p className="connection-note">{health?.figma.note ?? "Figma OAuth status could not be checked."}</p>
+                <div className="connection-card-top"><span className="service-icon">FG</span><span className="status-chip status-success">OAuth not required</span></div>
+                <h2>Figma plugin bridge</h2><p>Uses the Figma session already open in the plugin</p>
+                <dl><div><dt>Separate Figma login</dt><dd>No</dd></div><div><dt>Plugin → backend</dt><dd>{backendHealthy ? "Reachable" : "Not verified"}</dd></div><div><dt>Selected-layer access</dt><dd>Plugin permissions</dd></div></dl>
+                <p className="connection-note">UX Direct will not ask for your Figma password, OAuth credentials, or a separate account login. Direct REST API file access is a separate optional capability and remains disabled until explicitly needed.</p>
               </article>
               <article className="connection-card">
                 <div className="connection-card-top"><span className="service-icon">AI</span><span className={"status-chip " + (health?.modelProviderConfigured ? "status-warning" : "status-neutral")}>{health?.modelProviderConfigured ? "Key detected" : "Mock mode"}</span></div>
