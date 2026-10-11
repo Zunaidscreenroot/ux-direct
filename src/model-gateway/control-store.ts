@@ -45,8 +45,8 @@ export function defaultGatewaySettings(): GatewaySettings {
   for (const m of GATEWAY_MODULES) modules[m.id] = { enabled: true, mode: "free", selectedModelKey: "auto", monthlyBudgetInr: m.suggestedBudgetShare, maxRequestCostInr: 10, allowFallback: false };
   const models: Record<string, ModelPolicy> = {
     [modelKey("gemini", "gemini-3.8-flash")]: pricePolicy(.75, 3.75),
-    [modelKey("gemini", "gemini-3.7-flash")]: pricePolicy(.75, 3.75),
-    [modelKey("gemini", "gemini-3.6-flash")]: pricePolicy(.75, 3.75),
+    [modelKey("gemini", "gemini-3.5-flash")]: pricePolicy(1.5, 9),
+    [modelKey("gemini", "gemini-3-flash-preview")]: pricePolicy(.5, 3),
     [modelKey("gemini", "gemini-3.1-flash-lite")]: pricePolicy(.25, 1.5),
     [modelKey("gemini", "gemini-2.5-flash")]: pricePolicy(.3, 2.5),
     [modelKey("gemini", "gemini-2.5-flash-lite")]: pricePolicy(.1, .4),
@@ -56,7 +56,7 @@ export function defaultGatewaySettings(): GatewaySettings {
     [modelKey("ollama", "qwen2.5:7b")]: pricePolicy(),
     [modelKey("ollama", "gemma4:31b")]: pricePolicy(),
     [modelKey("cerebras", "gpt-oss-120b")]: pricePolicy(),
-    [modelKey("openai", "gpt-4o-mini")]: pricePolicy()
+    [modelKey("openai", "gpt-4o-mini")]: pricePolicy(.15, .6)
   };
   return { version: 1, globalMonthlyBudgetInr: 3000, usdToInrRate: 97, paidRoutingEnabled: false, modules, models };
 }
