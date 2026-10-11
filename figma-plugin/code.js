@@ -57,12 +57,9 @@ async function executeNativeApiHealthCheck() {
   var checks = [];
   var testPage = null;
   var harness = null;
-  var originalPage = null;
-  var savedTestSelection = null;
   var storageKey = null;
   var selectionHandlerPaused = false;
   var cleanupErrors = [];
-  var healthTestTimedOut = false;
 
   function add(category, name, level, status, reason) {
     checks.push({ category: category, name: name, level: level, status: status,
@@ -133,7 +130,6 @@ async function executeNativeApiHealthCheck() {
     } catch (error) {
       add(category, name, "functional", "error", error && error.message ? error.message : String(error));
       if (error && error.code === "UXD_HEALTH_TEST_TIMEOUT") {
-        healthTestTimedOut = true;
         figma.ui.postMessage({ type: "native-health-progress", category: category, name: name,
           text: "Stopped: " + name + " exceeded the safe test timeout.", failedAt: new Date().toISOString() });
         throw error;
@@ -202,7 +198,6 @@ async function executeNativeApiHealthCheck() {
 
   try {
     assertUxDirectFileScope("starting native API health check");
-    originalPage = figma.currentPage;
   } catch (error) {
     add("Security", "Revalidate exact Figma file key", "functional", "error", error && error.message ? error.message : String(error));
     await postResult();
