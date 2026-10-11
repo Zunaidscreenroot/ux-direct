@@ -176,6 +176,14 @@
     if (message.type === "native-health-progress") {
       if (message.text) $("healthSummary").textContent = message.text;
       if (message.text) status(message.text);
+      if (message.text) {
+        const progressStatus = message.text.startsWith("Passed:") ? "success" :
+          /^(Failed:|Stopped:|Timed out|Cleanup timed out)/.test(message.text) ? "error" : "info";
+        void sendTelemetry("Native API health progress", progressStatus, message.text, {
+          category: message.category,
+          action: message.name
+        });
+      }
       return;
     }
     if (message.type === "scope-approved") {
