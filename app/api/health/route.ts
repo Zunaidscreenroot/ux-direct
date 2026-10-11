@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 
 const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 function isAllowedOrigin(origin: string | null, request: Request): boolean {
@@ -19,6 +20,10 @@ export async function OPTIONS(request: Request) {
 export async function GET(request: Request) {
   const origin = request.headers.get("origin");
   if (!isAllowedOrigin(origin, request)) return NextResponse.json({ status: "blocked", error: "Origin not allowed" }, { status: 403, headers: corsHeaders(origin) });
+  if (origin && ["null", "https://www.figma.com", "https://figma.com"].includes(origin)) {
+    const fileKey = new URL(request.url).searchParams.get("fileKey");
+    if (!isAllowedFigmaFileKey(fileKey)) return NextResponse.json({ status: "blocked", error: "Approved Figma file key required." }, { status: 403, headers: corsHeaders(origin) });
+  }
   const figmaOAuthConfigured = Boolean(process.env.FIGMA_CLIENT_ID && process.env.FIGMA_CLIENT_SECRET && process.env.FIGMA_REDIRECT_URI);
   return NextResponse.json({
     service: "ux-direct-backend", status: "ok", checkedAt: new Date().toISOString(),
