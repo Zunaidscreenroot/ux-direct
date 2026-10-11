@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { GATEWAY_MODULES, getDefaultModelPolicy, getGatewaySettings, modelKey } from "@/src/model-gateway/control-store";
 import { findOpenRouterModel, isFreeOpenRouterModel } from "@/src/model-gateway/openrouter-catalog";
-import { assertBudgetAllows, recordModelUsage, tokenUsageValues } from "@/src/model-gateway/usage-store";
+import { assertBudgetAllows, recordModelUsage } from "@/src/model-gateway/usage-store";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 
 export const runtime = "nodejs";
