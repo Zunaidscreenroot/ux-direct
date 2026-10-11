@@ -686,20 +686,57 @@ async function executeNativeApiHealthCheck() {
       pngExportBytes = bytes;
     });
 
-    add("Events", "Receive selection-change event from inactive page", "not-tested", "not-tested",
-      "Skipped to preserve the user's active page; selectionchange events are tied to the current page.");
+    await runTest("Events", "Receive selection-change event on Test Lab page", async function () {
+      var baseline = rect("__UXD SELECTIONCHANGE BASELINE");
+      var target = rect("__UXD SELECTIONCHANGE TARGET");
+      await withActiveTestLabPage("selection-change event probe", async function () {
+        // Allow the page-switch event to settle, then establish a distinct
+        // baseline selection before registering the event listener.
+        await new Promise(function (resolve) { setTimeout(resolve, 160); });
+        mutateLab("set selection-change baseline", function () { testPage.selection = [baseline]; });
+        await new Promise(function (resolve) { setTimeout(resolve, 160); });
+        var firedForTarget = false;
+        var listener = function () {
+          var selected = Array.from(figma.currentPage.selection);
+          if (figma.currentPage.id === testPage.id &&
+              selected.length === 1 && selected[0].id === target.id) {
+            firedForTarget = true;
+          }
+        };
+        figma.on("selectionchange", listener);
+        try {
+          mutateLab("trigger active-page selection change", function () { testPage.selection = [target]; });
+          await new Promise(function (resolve) { setTimeout(resolve, 180); });
+          if (!firedForTarget) {
+            throw new Error("selectionchange did not fire for a real selection change on the current Test Lab page.");
+          }
+        } finally {
+          figma.off("selectionchange", listener);
+        }
+      });
+    });
 
     await runTest("Events", "Register/remove listener with figma.off", async function () {
-      var node = rect("UXD off API probe");
-      var fired = false;
-      var previousSelection = Array.from(testPage.selection);
-      var listener = function () { fired = true; };
-      mutateLab("register test selection listener", function () { figma.on("selectionchange", listener); });
-      mutateLab("remove test selection listener", function () { figma.off("selectionchange", listener); });
-      mutateLab("trigger selection after removal", function () { testPage.selection = [node]; });
-      await new Promise(function (resolve) { setTimeout(resolve, 120); });
-      mutateLab("restore selection after listener removal test", function () { testPage.selection = previousSelection; });
-      if (fired) throw new Error("Removed listener still fired.");
+      var baseline = rect("__UXD OFF API BASELINE");
+      var target = rect("__UXD OFF API TARGET");
+      await withActiveTestLabPage("listener removal probe", async function () {
+        await new Promise(function (resolve) { setTimeout(resolve, 160); });
+        mutateLab("set listener-removal baseline", function () { testPage.selection = [baseline]; });
+        await new Promise(function (resolve) { setTimeout(resolve, 160); });
+        var firedAfterRemoval = false;
+        var listener = function () {
+          var selected = Array.from(figma.currentPage.selection);
+          if (figma.currentPage.id === testPage.id &&
+              selected.length === 1 && selected[0].id === target.id) {
+            firedAfterRemoval = true;
+          }
+        };
+        figma.on("selectionchange", listener);
+        figma.off("selectionchange", listener);
+        mutateLab("trigger selection after listener removal", function () { testPage.selection = [target]; });
+        await new Promise(function (resolve) { setTimeout(resolve, 180); });
+        if (firedAfterRemoval) throw new Error("Removed selectionchange listener still fired.");
+      });
     });
 
     await runTest("Plugin bridge", "Round-trip a probe through UI messaging", async function () {
