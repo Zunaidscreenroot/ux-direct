@@ -114,3 +114,40 @@ test("UX task aliases resolve to configured providers and safely fall back to mo
   assert.equal(result.model, "mock/ux-direct");
   assert.equal(result.provider, "mock");
 });
+
+
+test("OpenRouter only exposes explicitly free models until paid mode is enabled", async () => {
+  const { providersFromEnv } = await import("../src/model-gateway");
+  const locked = providersFromEnv({
+    NODE_ENV: "production",
+    OPENROUTER_API_KEY: "test-only",
+    OPENROUTER_MODELS: "vendor/free-model:free,vendor/paid-model"
+  });
+  const router = locked.find(p => p.name === "openrouter");
+  assert.deepEqual(router?.models, ["vendor/free-model:free"]);
+  assert.equal(router?.kind, "free-tier");
+  const paid = providersFromEnv({
+    NODE_ENV: "production",
+    OPENROUTER_API_KEY: "test-only",
+    OPENROUTER_MODELS: "vendor/paid-model",
+    ALLOW_PAID_MODELS: "true"
+  });
+  assert.equal(paid.find(p => p.name === "openrouter")?.kind, "paid");
+});
+
+test("custom endpoints are disabled unless local or paid mode is explicitly enabled", async () => {
+  const { providersFromEnv } = await import("../src/model-gateway");
+  const disabled = providersFromEnv({
+    NODE_ENV: "production",
+    CUSTOM_OPENAI_COMPATIBLE_BASE_URL: "https://provider.example/v1",
+    CUSTOM_OPENAI_COMPATIBLE_API_KEY: "test-only",
+    CUSTOM_OPENAI_COMPATIBLE_KIND: "paid"
+  });
+  assert.equal(disabled.some(p => p.name === "custom"), false);
+  const local = providersFromEnv({
+    NODE_ENV: "production",
+    CUSTOM_OPENAI_COMPATIBLE_BASE_URL: "http://127.0.0.1:11434/v1",
+    CUSTOM_OPENAI_COMPATIBLE_KIND: "local"
+  });
+  assert.equal(local.some(p => p.name === "custom" && p.kind === "local"), true);
+});
