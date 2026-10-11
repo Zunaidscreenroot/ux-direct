@@ -1,4 +1,4 @@
-import type { TaskProject } from "./types";
+import type { TaskProject } from "../core/types";
 
 export type ProjectMemoryEntry = {
   id: string;
