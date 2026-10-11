@@ -294,7 +294,7 @@
     async function loadModelOptions() {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
       $("modelSelect").disabled = true;
-      setModelStatus("warn", "Loading models…", "Fetching current models from Gemini and OpenRouter APIs.");
+      setModelStatus("warn", "Loading models…", "Fetching free models from OpenRouter API.");
       try {
         const response = await fetch(API + "/api/model-status?fileKey=" + encodeURIComponent(verifiedFileKey), { method: "GET", cache: "no-store" });
         const payload = await response.json().catch(() => ({}));
@@ -302,7 +302,7 @@
           throw new Error(payload.error || "Model list endpoint returned HTTP " + response.status + ".");
         }
         modelOptions = payload.models.filter(model =>
-          model && (model.provider === "gemini" || model.provider === "openrouter") &&
+          model && model.provider === "openrouter" &&
           typeof model.id === "string" && typeof model.label === "string"
         );
         const select = $("modelSelect");
@@ -365,7 +365,7 @@
         if (!response.ok) throw new Error(payload.error || "Model check returned HTTP " + response.status + ".");
         if (payload.available === true && payload.responseReceived === true) {
           modelAvailable = true;
-          const providerLabel = model.provider === "gemini" ? "Gemini connected" : "OpenRouter connected";
+          const providerLabel = "OpenRouter connected";
           setModelStatus("ok", providerLabel, model.label + " returned a response in " + Math.max(0, Number(payload.latencyMs || 0)) + " ms.");
           if (modelProbeRow) {
             modelProbeRow.remove();
@@ -616,7 +616,7 @@
             currentModel = actual;
             modelAvailable = true;
             $("modelSelect").value = modelSelectValue(actual);
-            setModelStatus("ok", actual.provider === "gemini" ? "Gemini connected" : "OpenRouter connected", actual.label + " returned the chat response.");
+            setModelStatus("ok", "OpenRouter connected", actual.label + " returned the chat response.");
           }
         }
         appendMessage("assistant", data.content);
