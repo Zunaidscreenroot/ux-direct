@@ -41,7 +41,7 @@ function providerConfig(_provider: ProviderId) {
     apiKey,
     baseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, ""),
     modelsUrl: "https://openrouter.ai/api/v1/models",
-    headers: { Authorization: \`Bearer \${apiKey}\` }
+    headers: { Authorization: "Bearer " + apiKey }
   } : null;
 }
 async function timedFetch(url: string, init: RequestInit = {}, timeoutMs = 12000) {
