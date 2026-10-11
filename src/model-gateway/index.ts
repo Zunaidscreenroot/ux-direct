@@ -1,4 +1,5 @@
 import { GATEWAY_MODULES, getGatewaySettings, getDefaultModelPolicy, modelKey } from "./control-store";
+import { getOpenRouterPaidChatModel, OPENROUTER_PAID_CHAT_MODELS } from "./openrouter-paid";
 /**
  * Zero-fee model gateway for UX Direct.
  * Requests go directly to provider APIs. No gateway SaaS, account, or usage fee.
@@ -15,6 +16,8 @@ export type GatewayRequest = {
   signal?: AbortSignal;
   moduleId?: string;
   providerId?: string;
+  /** Set only by the server-side allowlisted OpenRouter paid-model helper. */
+  openRouterPaidSelection?: boolean;
 };
 export type TokenUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 type ProviderChatPayload = { id?: unknown; model?: unknown; choices?: Array<{ message?: { content?: unknown } }>; usage?: TokenUsage };
@@ -61,6 +64,21 @@ export function getFreeChatModelOptions(providers = providersFromEnv(), discover
   return Array.from(new Set([...(provider.models ?? []), ...discoveredModelIds]))
     .filter(id => id.endsWith(":free"))
     .map(id => ({ provider: "openrouter", id, label: id, tier: "free-tier", configured: true }));
+}
+
+/** Restrict paid inference through OpenRouter to a tiny server-side allowlist. */
+export function providersForOpenRouterPaidChat(
+  providers = providersFromEnv(),
+  selectedModel: string
+): ProviderConfig[] {
+  if (!getOpenRouterPaidChatModel(selectedModel)) {
+    throw new GatewayError("This OpenRouter paid model is not on the approved low-cost allowlist.", 400, "openrouter");
+  }
+  return providers.map(provider => {
+    if (provider.name !== "openrouter" || !provider.apiKey) return provider;
+    // This request-scoped provider config admits only the selected paid ID.
+    return { ...provider, kind: "paid", models: [selectedModel] };
+  });
 }
 
 export function providersFromEnv(env: Record<string, string | undefined> = process.env): ProviderConfig[] {
@@ -129,6 +147,15 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
     { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", provider: "openrouter", label: "NVIDIA Nemotron Nano Omni · free", tier: "free-tier", tasks: ["vision","screen analysis","multimodal","summaries"], notes: "Free multimodal endpoint for text/image/video/audio understanding; verify endpoint modalities.", pricingSource: "https://openrouter.ai/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", pricingReviewedAt: "2026-10-11" },
     { id: "google/gemma-4-31b-it:free", provider: "openrouter", label: "Gemma 4 31B · OpenRouter free", tier: "free-tier", tasks: ["reasoning","critique","vision","document understanding"], notes: "Verify exact free endpoint availability before activation." },
     { id: "google/gemma-4-26b-a4b-it:free", provider: "openrouter", label: "Gemma 4 26B A4B · OpenRouter free", tier: "free-tier", tasks: ["classification","extraction","summaries","vision"], notes: "Verify exact free endpoint availability before activation." },
+    ...OPENROUTER_PAID_CHAT_MODELS.map(model => ({
+      id: model.id, provider: "openrouter", label: model.label, tier: "paid" as const,
+      tasks: ["chat", "UX drafting", "reasoning"],
+      notes: "Allowlisted OpenRouter paid test model. Listed base price $0.02 input / $0.10 output per 1M tokens; gateway budget reserves at 5x listed price.",
+      usdInputPerMillion: model.budgetInputUsdPerMillion,
+      usdOutputPerMillion: model.budgetOutputUsdPerMillion,
+      pricingSource: model.pricingSource,
+      pricingReviewedAt: "2026-10-12"
+    })),
     { id: "deepseek-flash", provider: "deepseek", label: "DeepSeek V4.1 Flash", tier: "paid", tasks: ["classification","extraction","reasoning","vision","summaries"], notes: "Peak-hour conservative rate reference: $0.30 input / $1.20 output per 1M tokens. Off-peak/cached input may be cheaper; API price varies by UTC time.", usdInputPerMillion: .30, usdOutputPerMillion: 1.20, pricingSource: "https://api-docs.deepseek.com/quick_start/pricing/", pricingReviewedAt: "2026-10-11" },
     { id: "deepseek-v4-pro", provider: "deepseek", label: "DeepSeek V4 Pro", tier: "paid", tasks: ["reasoning","critique","complex planning","summaries"], notes: "Peak-hour conservative rate reference: $1.32 input / $3.96 output per 1M tokens. Off-peak/cached input may be cheaper; API price varies by UTC time.", usdInputPerMillion: 1.32, usdOutputPerMillion: 3.96, pricingSource: "https://api-docs.deepseek.com/quick_start/pricing/", pricingReviewedAt: "2026-10-11" },
     { id: "gpt-4o-mini", provider: "openai", label: "OpenAI GPT-4o mini", tier: "paid", tasks: ["classification","extraction","reasoning","vision"], notes: "Published text-token price $0.15 input / $0.60 output per 1M tokens; tool-specific charges may apply.", usdInputPerMillion: .15, usdOutputPerMillion: .6, pricingSource: "https://developers.openai.com/api/docs/models/gpt-4o-mini", pricingReviewedAt: "2026-10-11" }
@@ -227,6 +254,14 @@ export async function chatCompletion(
   if(promptChars>200_000)throw new GatewayError("Request content exceeds the 200,000-character limit.",413);
 
   const providers=options.providers??providersFromEnv();
+  const explicitlySelectedOpenRouterPaid = request.openRouterPaidSelection === true &&
+    request.providerId === "openrouter" &&
+    Boolean(getOpenRouterPaidChatModel(request.model)) &&
+    !request.model.endsWith(":free") &&
+    request.moduleId === undefined;
+  if (request.openRouterPaidSelection && !explicitlySelectedOpenRouterPaid) {
+    throw new GatewayError("Paid OpenRouter selection must come from the server-side allowlisted helper.", 403);
+  }
   const settings=await getGatewaySettings();
   const moduleId=request.moduleId??TASK_MODULES[request.model]??"general";
   const policy=settings.modules[moduleId]??settings.modules.general;
@@ -250,13 +285,15 @@ export async function chatCompletion(
   if(!provider)throw new GatewayError("Selected model \""+model+"\" is not connected. Add its server-side key/model allowlist; no other model was attempted.",503,providerId);
   const effective=selected??catalog.find(m=>m.provider===provider!.name&&m.id===model)??{id:model,provider:provider.name,label:model,tier:(provider.kind??"paid") as ModelCatalogEntry["tier"],tasks:[],configured:true,notes:""};
   const mockFallback=Boolean(TASK_MODULES[request.model]&&policy.mode==="free"&&policy.selectedModelKey==="auto"&&provider.kind==="mock");
-  if(!modeAllows(policy.mode,effective,provider,mockFallback))throw new GatewayError("Model/provider is incompatible with "+policy.mode+" mode for module "+moduleId+". No fallback was attempted.",403,provider.name);
+  if(!modeAllows(policy.mode,effective,provider,mockFallback) && !explicitlySelectedOpenRouterPaid)throw new GatewayError("Model/provider is incompatible with "+policy.mode+" mode for module "+moduleId+". No fallback was attempted.",403,provider.name);
 
   const exactKey=modelKey(provider.name,model);
   const modelPolicy=settings.models[exactKey]??getDefaultModelPolicy(provider.name,model,effective.usdInputPerMillion??0,effective.usdOutputPerMillion??0,settings.usdToInrRate);
-  const billable=policy.mode==="paid";
+  const billable=policy.mode==="paid" || explicitlySelectedOpenRouterPaid;
   if(billable){
-    if(!settings.paidRoutingEnabled||process.env.ALLOW_PAID_MODELS!=="true")throw new GatewayError("Paid routing is locked. Enable the gateway switch and set ALLOW_PAID_MODELS=true in server environment.",403,provider.name);
+    // The explicit OpenRouter allowlist is a narrow user-requested exception to
+    // the broad paid-provider switch. It still goes through all cost/budget checks.
+    if((!settings.paidRoutingEnabled||process.env.ALLOW_PAID_MODELS!=="true") && !explicitlySelectedOpenRouterPaid)throw new GatewayError("Paid routing is locked. Enable the gateway switch and set ALLOW_PAID_MODELS=true in server environment.",403,provider.name);
     if(model.endsWith(":free")||modelPolicy.inputPriceInrPerMillion<=0||modelPolicy.outputPriceInrPerMillion<=0)throw new GatewayError("Exact model needs positive input and output prices before paid routing.",400,provider.name);
     if(policy.monthlyBudgetInr<=0||modelPolicy.monthlyBudgetInr<=0||policy.maxRequestCostInr<=0||modelPolicy.maxRequestCostInr<=0)throw new GatewayError("Module or model budget/per-request cap is zero; paid request blocked.",402,provider.name);
   }
@@ -350,4 +387,26 @@ export async function chatCompletionWithFreeFallback(
   const provider = providers.find(item => item.name === "openrouter" && Boolean(item.apiKey) && item.models.includes(request.model));
   if (!provider) throw new GatewayError("OpenRouter API key is not configured for this Preview deployment.", 503, "openrouter");
   return chatCompletion({ ...request, providerId: "openrouter", moduleId: undefined }, { ...options, providers });
+}
+
+/**
+ * Direct paid OpenRouter chat for the single allowlisted low-cost test model.
+ * The common gateway still enforces request, module, model and global budgets.
+ */
+export async function chatCompletionWithOpenRouterPaid(
+  request: GatewayRequest,
+  options: { providers?: ProviderConfig[]; fetchImpl?: typeof fetch; timeoutMs?: number } = {}
+): Promise<GatewayResponse> {
+  if (request.providerId !== "openrouter" || !getOpenRouterPaidChatModel(request.model) || request.model.endsWith(":free")) {
+    throw new GatewayError("Only an explicitly selected allowlisted paid OpenRouter model is allowed.", 400, "openrouter");
+  }
+  const providers = providersForOpenRouterPaidChat(options.providers ?? providersFromEnv(), request.model);
+  const provider = providers.find(item => item.name === "openrouter" && Boolean(item.apiKey) && item.models.includes(request.model));
+  if (!provider) throw new GatewayError("OpenRouter API key is not configured for this Preview deployment.", 503, "openrouter");
+  return chatCompletion({
+    ...request,
+    providerId: "openrouter",
+    moduleId: undefined,
+    openRouterPaidSelection: true
+  }, { ...options, providers });
 }
