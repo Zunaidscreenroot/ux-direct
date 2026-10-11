@@ -45,36 +45,21 @@ const trimSlash = (value: string) => value.replace(/\/+$/, "");
 const csv = (value?: string, fallback = "") =>
   (value || fallback).split(",").map(s => s.trim()).filter(Boolean);
 
-export type FreeChatModel = { provider: "gemini" | "openrouter"; id: string; label: string; tier: "free-tier" };
-export const FREE_CHAT_MODELS: FreeChatModel[] = [
-  { provider: "gemini", id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", tier: "free-tier" },
-  { provider: "gemini", id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", tier: "free-tier" },
-  { provider: "openrouter", id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra · OpenRouter free", tier: "free-tier" },
-  { provider: "openrouter", id: "nvidia/nemotron-3.5-lightning:free", label: "Nemotron 3.5 Lightning · OpenRouter free", tier: "free-tier" },
-  { provider: "openrouter", id: "google/gemma-4-31b-it:free", label: "Gemma 4 31B · OpenRouter free", tier: "free-tier" },
-];
+export type FreeChatModel = { provider: "openrouter"; id: string; label: string; tier: "free-tier"; configured: boolean };
 
-export function providersForFreeChat(providers = providersFromEnv()): ProviderConfig[] {
+export function providersForFreeChat(providers = providersFromEnv(), selectedModel?: string): ProviderConfig[] {
   return providers.map(provider => {
-    const candidates = FREE_CHAT_MODELS.filter(model => model.provider === provider.name).map(model => model.id);
-    const isUsableFreeProvider = provider.name === "gemini"
-      ? provider.kind === "free-tier" && Boolean(provider.apiKey)
-      : provider.name === "openrouter" && Boolean(provider.apiKey);
-    if (!isUsableFreeProvider || candidates.length === 0) return provider;
-    // The client can select only the curated free model IDs above; extend the in-memory allowlist,
-    // not environment variables or persisted configuration.
-    return { ...provider, models: Array.from(new Set([...provider.models, ...candidates])) };
+    if (provider.name !== "openrouter" || !provider.apiKey) return provider;
+    const selected = selectedModel && selectedModel.endsWith(":free") ? [selectedModel] : [];
+    return { ...provider, kind: "free-tier", models: Array.from(new Set([...provider.models.filter(model => model.endsWith(":free")), ...selected])) };
   });
 }
 
-export function getFreeChatModelOptions(providers = providersFromEnv()) {
-  return FREE_CHAT_MODELS.map(model => {
-    const configuredProvider = providers.find(provider => provider.name === model.provider);
-    const configured = model.provider === "gemini"
-      ? Boolean(configuredProvider?.kind === "free-tier" && configuredProvider.apiKey)
-      : Boolean(configuredProvider?.apiKey);
-    return { ...model, configured };
-  });
+export function getFreeChatModelOptions(providers = providersFromEnv()): FreeChatModel[] {
+  const provider = providers.find(item => item.name === "openrouter" && Boolean(item.apiKey));
+  return (provider?.models ?? []).filter(id => id.endsWith(":free")).map(id => ({
+    provider: "openrouter", id, label: id, tier: "free-tier", configured: true
+  }));
 }
 
 export function providersFromEnv(env: Record<string, string | undefined> = process.env): ProviderConfig[] {
