@@ -294,7 +294,7 @@
     async function loadModelOptions() {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
       $("modelSelect").disabled = true;
-      setModelStatus("warn", "Loading models…", "Loading the curated free-tier model list from the Preview backend.");
+      setModelStatus("warn", "Loading models…", "Fetching current models from Gemini and OpenRouter APIs.");
       try {
         const response = await fetch(API + "/api/model-status?fileKey=" + encodeURIComponent(verifiedFileKey), { method: "GET", cache: "no-store" });
         const payload = await response.json().catch(() => ({}));
@@ -311,7 +311,7 @@
           gemini: document.createElement("optgroup"),
           openrouter: document.createElement("optgroup")
         };
-        groups.gemini.label = "Gemini · Free tier";
+        groups.gemini.label = "Gemini · API models (check account tier)";
         groups.openrouter.label = "OpenRouter · Free models";
         modelOptions.forEach(model => {
           const option = document.createElement("option");
