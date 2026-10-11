@@ -392,7 +392,7 @@ export default function Home() {
   return (
     <main className="shell">
       <aside className="sidebar">
-        <a className="brand" href="/" aria-label="UX Direct home"><span className="brand-mark">ux</span><span>UX Direct</span></a>
+        <Link className="brand" href="/" aria-label="UX Direct home"><span className="brand-mark">ux</span><span>UX Direct</span></Link>
         <div className="sidebar-label">WORKSPACE</div>
         {navItems.map((item) => (
           <button key={item.id} className={"nav-item" + (activeTab === item.id ? " active" : "")} type="button" onClick={() => setActiveTab(item.id)}>

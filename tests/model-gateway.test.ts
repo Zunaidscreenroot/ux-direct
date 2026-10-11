@@ -233,3 +233,16 @@ test("usage ledger records token-level counts and computes monthly budget totals
   assert.ok(snapshot.records.some(record => record.requestId === "req-test" && record.totalTokens === 20));
   assert.equal(snapshot.currency, "INR");
 });
+
+
+test("direct provider billing tier is explicit and paid providers stay unavailable until paid routing is enabled", () => {
+  const base = { GEMINI_API_KEY: "test-key", GEMINI_MODELS: "gemini-3.1-flash-lite", MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000" };
+  const paidLocked = providersFromEnv({ ...base, GEMINI_BILLING_MODE: "paid", ALLOW_PAID_MODELS: "false" });
+  assert.equal(paidLocked.some(provider => provider.name === "gemini"), false);
+  const paidEnabled = providersFromEnv({ ...base, GEMINI_BILLING_MODE: "paid", ALLOW_PAID_MODELS: "true" });
+  const paidProvider = paidEnabled.find(provider => provider.name === "gemini");
+  assert.equal(paidProvider?.kind, "paid");
+  assert.equal(getModelCatalog(paidEnabled).find(model => model.provider === "gemini" && model.id === "gemini-3.1-flash-lite")?.tier, "paid");
+  const free = providersFromEnv({ ...base, GEMINI_BILLING_MODE: "free-tier", ALLOW_PAID_MODELS: "false" });
+  assert.equal(free.find(provider => provider.name === "gemini")?.kind, "free-tier");
+});

@@ -56,18 +56,21 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
     name: "openrouter", baseUrl: trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"),
     apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: openRouterModels.some(model => !model.endsWith(":free")) ? "paid" : "free-tier"
   });
-  if (env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) providers.push({
+  const geminiBillingKind = env.GEMINI_BILLING_MODE === "paid" ? "paid" : "free-tier";
+  if ((env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) && (geminiBillingKind !== "paid" || paidRoutingReady)) providers.push({
     name: "gemini", baseUrl: trimSlash(env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai"),
     apiKey: env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY, apiKeyHeader: "x-goog-api-key",
-    models: csv(env.GEMINI_MODELS || env.GOOGLE_GENERATIVE_AI_MODELS, "gemini-3.1-flash-lite"), kind: "free-tier"
+    models: csv(env.GEMINI_MODELS || env.GOOGLE_GENERATIVE_AI_MODELS, "gemini-3.1-flash-lite"), kind: geminiBillingKind
   });
-  if (env.GROQ_API_KEY) providers.push({
+  const groqBillingKind = env.GROQ_BILLING_MODE === "paid" ? "paid" : "free-tier";
+  if (env.GROQ_API_KEY && (groqBillingKind !== "paid" || paidRoutingReady)) providers.push({
     name: "groq", baseUrl: trimSlash(env.GROQ_BASE_URL || "https://api.groq.com/openai/v1"),
-    apiKey: env.GROQ_API_KEY, models: csv(env.GROQ_MODELS, "openai/gpt-oss-120b,openai/gpt-oss-20b"), kind: "free-tier"
+    apiKey: env.GROQ_API_KEY, models: csv(env.GROQ_MODELS, "openai/gpt-oss-120b,openai/gpt-oss-20b"), kind: groqBillingKind
   });
-  if (env.CEREBRAS_API_KEY) providers.push({
+  const cerebrasBillingKind = env.CEREBRAS_BILLING_MODE === "paid" ? "paid" : "free-tier";
+  if (env.CEREBRAS_API_KEY && (cerebrasBillingKind !== "paid" || paidRoutingReady)) providers.push({
     name: "cerebras", baseUrl: trimSlash(env.CEREBRAS_BASE_URL || "https://api.cerebras.ai/v1"),
-    apiKey: env.CEREBRAS_API_KEY, models: csv(env.CEREBRAS_MODELS, "gpt-oss-120b"), kind: "free-tier"
+    apiKey: env.CEREBRAS_API_KEY, models: csv(env.CEREBRAS_MODELS, "gpt-oss-120b"), kind: cerebrasBillingKind
   });
   if (env.OPENAI_API_KEY && paidRoutingReady) providers.push({
     name: "openai", baseUrl: trimSlash(env.OPENAI_BASE_URL || "https://api.openai.com/v1"),
@@ -123,7 +126,10 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
     { id: "deepseek-v4-pro", provider: "deepseek", label: "DeepSeek V4 Pro", tier: "paid", tasks: ["reasoning","critique","complex planning","summaries"], notes: "Peak-hour conservative rate reference: $1.32 input / $3.96 output per 1M tokens. Off-peak/cached input may be cheaper; API price varies by UTC time.", usdInputPerMillion: 1.32, usdOutputPerMillion: 3.96, pricingSource: "https://api-docs.deepseek.com/quick_start/pricing/", pricingReviewedAt: "2026-10-11" },
     { id: "gpt-4o-mini", provider: "openai", label: "OpenAI GPT-4o mini", tier: "paid", tasks: ["classification","extraction","reasoning","vision"], notes: "Published text-token price $0.15 input / $0.60 output per 1M tokens; tool-specific charges may apply.", usdInputPerMillion: .15, usdOutputPerMillion: .6, pricingSource: "https://developers.openai.com/api/docs/models/gpt-4o-mini", pricingReviewedAt: "2026-10-11" }
   ];
-  const known = base.map(m => ({ ...m, configured: providers.some(p => p.name === m.provider && (p.models.includes(m.id) || (p.models.includes("default") && ["ollama","custom"].includes(p.name)))) }));
+  const known = base.map(m => {
+    const configuredProvider = providers.find(p => p.name === m.provider && (p.models.includes(m.id) || (p.models.includes("default") && ["ollama","custom"].includes(p.name))));
+    return { ...m, ...(configuredProvider?.kind === "paid" && m.tier !== "mock" && m.tier !== "local" ? { tier: "paid" as const } : {}), configured: Boolean(configuredProvider) };
+  });
   const extras: ModelCatalogEntry[] = providers.flatMap(p => p.models.filter(id => id !== "default" && !known.some(m => m.provider === p.name && m.id === id)).map(id => ({
     id, provider: p.name, label: p.name + ": " + id,
     tier: (id.endsWith(":free") ? "free-tier" : p.kind ?? "paid"),
