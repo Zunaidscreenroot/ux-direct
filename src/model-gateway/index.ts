@@ -226,8 +226,10 @@ export async function chatCompletion(
       new GatewayError(error instanceof Error ? error.message : "Unknown provider error.", 502, provider.name);
     usageStore.recordModelUsage({
       requestId, provider: provider.name, model: resolvedModel, tier: provider.kind ?? "paid",
-      promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCostInr: 0,
-      latencyMs: Date.now() - started, status: "error", note: failure.message
+      promptTokens: 0, completionTokens: 0, totalTokens: 0,
+      estimatedCostInr: usageStore.estimateCostInr(Math.ceil(request.messages.reduce((n, m) => n + m.content.length, 0) / 4), request.max_tokens ?? 1024, provider, process.env, resolvedModel),
+      latencyMs: Date.now() - started, status: "error",
+      note: failure.message + " Provider usage was unavailable; cost is a conservative estimate for this request."
     });
     throw failure;
   } finally {
