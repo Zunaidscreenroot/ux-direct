@@ -1,4 +1,20 @@
-figma.showUI(__html__, { width: 380, height: 720, themeColors: true });
+// STRICT SCOPE: this plugin is disabled until the exact approved Figma file key is configured.
+var UXD_ALLOWED_FILE_NAME = "Zunaid_Workspace";
+var UXD_ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
+function getUxDirectScopeDecision() {
+  var fileName = "";
+  var fileKey = "";
+  try { fileName = figma.root && typeof figma.root.name === "string" ? figma.root.name.trim() : ""; } catch (_) {}
+  try { fileKey = typeof figma.fileKey === "string" ? figma.fileKey : ""; } catch (_) {}
+  if (!UXD_ALLOWED_FILE_KEY) {
+    return { allowed: false, reason: "The exact approved Figma file URL/key has not been configured yet." };
+  }
+  if (!fileKey) return { allowed: false, reason: "Figma did not expose the private file key; access is denied by default." };
+  if (fileKey !== UXD_ALLOWED_FILE_KEY) return { allowed: false, reason: "This is not the allowlisted Figma file." };
+  if (fileName.toLowerCase() !== UXD_ALLOWED_FILE_NAME.toLowerCase()) return { allowed: false, reason: "The file name does not match Zunaid_Workspace (case-insensitive check)." };
+  return { allowed: true, reason: "Approved file identity verified." };
+}
+function startScopedPlugin() {
 function getSelectionSummary() {
   return figma.currentPage.selection.map(function (node) {
     return { id: node.id, name: node.name, type: node.type, visible: node.visible,
@@ -59,7 +75,7 @@ function runNativeApiHealthCheck(commandId) {
     ["Layout and styling","figma.group",figma.group],["Layout and styling","figma.flatten",figma.flatten],
     ["Layout and styling","figma.union",figma.union],["Layout and styling","figma.intersect",figma.intersect],
     ["Layout and styling","figma.subtract",figma.subtract],["Layout and styling","figma.exclude",figma.exclude],
-    ["Variables","figma.variables",figma.variables],["Library","figma.teamLibrary",figma.teamLibrary],
+    ["Variables","figma.variables",figma.variables],
     ["Storage","figma.clientStorage",figma.clientStorage],["Viewport","figma.viewport",figma.viewport],
     ["Export","Node exportAsync",figma.currentPage && figma.currentPage.exportAsync],
     ["Events","figma.on",figma.on],["Events","figma.once",figma.once],
@@ -67,6 +83,7 @@ function runNativeApiHealthCheck(commandId) {
     ["Plugin lifecycle","figma.closePlugin",figma.closePlugin],["Plugin utilities","figma.notify",figma.notify],
     ["Plugin utilities","figma.openExternal",figma.openExternal]
   ].forEach(function (item) { api(item[0], item[1], item[2]); });
+  add("Library", "Team library access", "not-tested", false, "Skipped intentionally: the teamlibrary permission is not granted. UX Direct must not inspect or import organization library assets.");
   [
     ["Selection","Selection change event delivery","Requires a user to change selection after this test starts"],
     ["Page navigation","Switch page operation","Not executed to avoid changing the user's active page"],
@@ -90,3 +107,11 @@ figma.ui.onmessage = function (message) {
   if (message.type === "close") figma.closePlugin();
 };
 sendSelection();
+
+}
+var uxdScopeDecision = getUxDirectScopeDecision();
+if (uxdScopeDecision.allowed) {
+  startScopedPlugin();
+} else {
+  figma.closePlugin("UX Direct blocked: " + uxdScopeDecision.reason + " Only the approved Zunaid_Workspace file is allowed.");
+}
