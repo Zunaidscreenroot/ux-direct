@@ -42,7 +42,7 @@ function pricePolicy(inputUsd = 0, outputUsd = 0, fx = 97): ModelPolicy {
 }
 export function defaultGatewaySettings(): GatewaySettings {
   const modules: Record<string, ModulePolicy> = {};
-  for (const m of GATEWAY_MODULES) modules[m.id] = { enabled: true, mode: "free", selectedModelKey: m.id === "reasoning" ? modelKey("gemini", "gemini-3.5-flash-lite") : "auto", monthlyBudgetInr: m.suggestedBudgetShare, maxRequestCostInr: 10, allowFallback: m.id === "reasoning" };
+  for (const m of GATEWAY_MODULES) modules[m.id] = { enabled: true, mode: "free", selectedModelKey: m.id === "reasoning" && (process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY) ? modelKey("gemini", "gemini-3.5-flash-lite") : "auto", monthlyBudgetInr: m.suggestedBudgetShare, maxRequestCostInr: 10, allowFallback: m.id === "reasoning" };
   const models: Record<string, ModelPolicy> = {
     [modelKey("gemini", "gemini-3.8-flash")]: pricePolicy(.75, 3.75),
     [modelKey("gemini", "gemini-3.5-flash")]: pricePolicy(1.5, 9),
