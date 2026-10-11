@@ -48,11 +48,21 @@ export async function OPTIONS() {
 }
 
 export async function GET(request: Request) {
+  const url = new URL(request.url);
+  // Probe requests use GET so a Figma iframe does not need a JSON POST preflight.
+  // This route never accepts a user prompt; it sends only a fixed, tiny server-side test.
+  if (url.searchParams.has("provider") || url.searchParams.has("model")) {
+    return handleModelProbe(request, {
+      fileKey: url.searchParams.get("fileKey"),
+      provider: url.searchParams.get("provider"),
+      model: url.searchParams.get("model")
+    });
+  }
+
   const headers = corsHeaders();
   if (!originAllowed(request)) {
     return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
   }
-  const url = new URL(request.url);
   const fileKey = url.searchParams.get("fileKey");
   if (!approvedFileKey(request, fileKey)) {
     return NextResponse.json({ error: "Approved Figma file key required." }, { status: 403, headers });
@@ -72,15 +82,11 @@ const probeSchema = z.object({
   model: z.string().trim().min(1).max(180)
 });
 
-export async function POST(request: Request) {
+async function handleModelProbe(request: Request, raw: unknown) {
   const headers = corsHeaders();
   if (!originAllowed(request)) {
     return NextResponse.json({ available: false, error: "Origin not allowed." }, { status: 403, headers });
   }
-
-  let raw: unknown;
-  try { raw = await request.json(); }
-  catch { return NextResponse.json({ available: false, error: "Request body must be valid JSON." }, { status: 400, headers }); }
 
   const parsed = probeSchema.safeParse(raw);
   if (!parsed.success) {
@@ -136,4 +142,12 @@ export async function POST(request: Request) {
       checkedAt: new Date().toISOString(), latencyMs: Date.now() - startedAt
     }, { headers });
   }
+}
+
+ 
+export async function POST(request: Request) {
+  let raw: unknown;
+  try { raw = await request.json(); }
+  catch { return NextResponse.json({ available: false, error: "Request body must be valid JSON." }, { status: 400, headers: corsHeaders() }); }
+  return handleModelProbe(request, raw);
 }
