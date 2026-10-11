@@ -10,7 +10,7 @@ The gateway itself is application code and costs **$0 in gateway fees**. It call
 4. **Groq developer free tier** — requires a key; supported models and request/token quotas vary. Current gateway defaults include GPT OSS 120B and 20B, but verify exact model IDs and free-plan quotas in the provider console before enabling.
 5. **Cerebras free developer access** — requires a key; availability, exact model IDs and quotas are account-specific. Treat it as optional until its model ID is confirmed from your account.
 6. **OpenRouter free models** — requires a key. Use explicit model IDs ending in `:free` where offered; avoid `openrouter/auto` for cost-sensitive production because auto-routing can select a paid model depending on account/model behavior. Free model inventory and rate limits change often.
-7. **Paid providers (OpenAI/Anthropic)** — no key is required to build or test the gateway. Add keys only in the final activation step, after tests and local/free-tier checks pass.
+7. **Paid providers (OpenAI)** — no key is required to build or test the gateway. Add keys only in the final activation step, after tests and local/free-tier checks pass. Anthropic's native Messages API is not implemented in this gateway yet and is intentionally not advertised as supported.
 
 Free API access still needs a provider account/key in most cases. "Free tier" does not mean unlimited, guaranteed availability, private processing, or no data retention.
 
