@@ -1,0 +1,5 @@
+# These two environment variables contain public configuration, not credentials.
+# Exempt only their values from Netlify's secret-value scan; keep scanning enabled
+# for API keys, gateway access keys, and all other environment variables.
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "OPENROUTER_MODELS,MODEL_GATEWAY_MONTHLY_BUDGET_INR"
