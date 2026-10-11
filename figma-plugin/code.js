@@ -423,6 +423,82 @@ async function executeNativeApiHealthCheck() {
       if (node.characters !== "UX Direct API test") throw new Error("Text write did not persist.");
     });
 
+    await runTest("Node actions", "Clone node and verify properties", async function () {
+      var source = rect("UXD clone source");
+      if (source.width !== 84 || source.height !== 48) {
+        mutateLab("size clone source", function () { source.resize(84, 48); });
+      }
+      var cloneName = "__UXD CLONE RESULT";
+      var clone = findNodeByName(harness, cloneName, "RECTANGLE");
+      if (!clone) {
+        clone = mutateLab("clone test rectangle", function () { return source.clone(); });
+        if (clone.parent !== harness) mutateLab("attach cloned test rectangle", function () { harness.appendChild(clone); });
+        mutateLab("name cloned test rectangle", function () { clone.name = cloneName; });
+      }
+      if (clone.id === source.id || clone.type !== "RECTANGLE") throw new Error("clone() did not return a distinct rectangle.");
+      if (clone.width !== 84 || clone.height !== 48) mutateLab("resize cloned test rectangle", function () { clone.resize(84, 48); });
+      if (clone.width !== source.width || clone.height !== source.height) throw new Error("Clone dimensions did not match the source.");
+    });
+
+    await runTest("Layout and styling", "Apply frame auto layout", async function () {
+      var frame = createNode(function () { return figma.createFrame(); }, "__UXD AUTO LAYOUT FRAME", harness);
+      var first = rect("UXD auto-layout rectangle", frame);
+      var second = ellipse("UXD auto-layout ellipse", frame);
+      mutateLab("set frame horizontal auto layout", function () {
+        frame.layoutMode = "HORIZONTAL";
+        frame.itemSpacing = 12;
+      });
+      if (frame.layoutMode !== "HORIZONTAL") throw new Error("Frame layout mode did not persist.");
+      if (frame.itemSpacing !== 12) throw new Error("Frame item spacing did not persist.");
+      if (first.parent !== frame || second.parent !== frame) throw new Error("Auto-layout children were not attached to the frame.");
+    });
+
+    await runTest("Layout and styling", "Rotate node and set constraints", async function () {
+      var node = rect("UXD rotate and constraints probe");
+      mutateLab("set probe rotation", function () { node.rotation = 17; });
+      mutateLab("set probe constraints", function () { node.constraints = { horizontal: "MIN", vertical: "MIN" }; });
+      if (Math.abs(node.rotation - 17) > 0.001) throw new Error("Node rotation did not persist.");
+      if (node.constraints.horizontal !== "MIN" || node.constraints.vertical !== "MIN") {
+        throw new Error("Node constraints did not persist.");
+      }
+    });
+
+    await runTest("Text", "Set and verify text range font size", async function () {
+      var node = createNode(function () { return figma.createText(); }, "UXD text range font-size probe", harness);
+      var fontName = node.fontName;
+      if (!fontName || fontName === figma.mixed) throw new Error("Text node did not expose a single font.");
+      await mutateLabAsync("load font for range-size probe", function () { return figma.loadFontAsync(fontName); });
+      if (node.characters !== "UX Direct range text") {
+        mutateLab("write range-size probe text", function () { node.characters = "UX Direct range text"; });
+      }
+      mutateLab("set text range font size", function () { node.setRangeFontSize(0, node.characters.length, 18); });
+      var fontSize = node.getRangeFontSize(0, node.characters.length);
+      if (fontSize !== 18) throw new Error("Text range font size mismatch: expected 18, got " + fontSize + ".");
+    });
+
+    await runTest("Export", "Export shape to SVG", async function () {
+      var node = rect("UXD SVG export probe");
+      if (node.width !== 48 || node.height !== 36) mutateLab("size SVG export probe", function () { node.resize(48, 36); });
+      var bytes = await mutateLabAsync("export test shape to SVG", function () { return node.exportAsync({ format: "SVG" }); });
+      if (!bytes || !bytes.length) throw new Error("SVG export produced no bytes.");
+      var svg = new TextDecoder().decode(bytes);
+      if (svg.indexOf("<svg") === -1) throw new Error("SVG export did not contain an SVG root element.");
+    });
+
+    await runTest("Layout and styling", "Reorder nodes with insertChild", async function () {
+      var first = rect("__UXD ORDER FIRST");
+      var second = ellipse("__UXD ORDER SECOND");
+      var firstIndex = harness.children.indexOf(first);
+      var secondIndex = harness.children.indexOf(second);
+      if (firstIndex < 0 || secondIndex < 0) throw new Error("Persistent reorder fixtures were not found in the test container.");
+      mutateLab("reorder persistent test nodes", function () {
+        harness.insertChild(harness.children.indexOf(first), second);
+      });
+      if (harness.children.indexOf(second) >= harness.children.indexOf(first)) {
+        throw new Error("insertChild did not move the second node before the first.");
+      }
+    });
+
     await runTest("Layout and styling", "Group two persistent test nodes", async function () {
       var groupName = "__UXD GROUP RESULT";
       var existingGroup = findNodeByName(harness, groupName, "GROUP");

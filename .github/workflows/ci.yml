@@ -23,6 +23,8 @@ jobs:
         run: npm install
       - name: Typecheck
         run: npm run typecheck
+      - name: Native Figma plugin syntax
+        run: node --check figma-plugin/code.js
       - name: Unit tests
         run: npm test
       - name: Build

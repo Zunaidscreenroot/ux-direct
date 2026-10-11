@@ -180,7 +180,7 @@ footer span { margin: 0 6px; color: #9bb98b; }
 .plugin-help, .plugin-health-message { margin:10px 0 0 !important; font-size:11px !important; line-height:1.55 !important; }
 .plugin-health-message { padding:9px 10px; border-radius:8px; background:#f7f9f5; border:1px solid var(--line); color:var(--ink) !important; overflow-wrap:anywhere; }
 .plugin-health-report { margin-top:13px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
-.health-counts { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; padding:10px; background:#f7f9f5; }
+.health-counts { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:5px; padding:10px; background:#f7f9f5; }
 .health-counts span { font-size:9px; color:var(--muted); display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
 .health-counts strong { font-size:17px; color:var(--ink); }
 .plugin-health-report details > summary { cursor:pointer; padding:11px 10px; font-size:11px; font-weight:700; border-top:1px solid var(--line); }
@@ -196,3 +196,35 @@ footer span { margin: 0 6px; color: #9bb98b; }
 .plugin-check-row div strong { font-size:10px; overflow-wrap:anywhere; }
 .plugin-check-row div span { color:var(--muted); margin-top:3px; font-size:9px; }
 .plugin-check-row p { margin:5px 0 0; color:#68736f; font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
+
+
+/* Manual health smoke suite: one snapshot, no action-per-row network traffic. */
+.smoke-test-panel { margin:0 0 18px; padding:18px; border:1px solid var(--line); border-radius:14px; background:#fff; }
+.smoke-test-heading { display:flex; gap:18px; align-items:flex-start; justify-content:space-between; }
+.smoke-test-heading h2 { margin:5px 0 7px; font-size:17px; letter-spacing:-.4px; }
+.smoke-test-heading p { max-width:650px; margin:0; color:var(--muted); font-size:11px; line-height:1.6; }
+.smoke-test-heading .secondary-button { flex-shrink:0; }
+.smoke-test-results { margin-top:15px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+.smoke-test-summary { display:flex; flex-wrap:wrap; gap:13px; align-items:center; padding:10px 12px; background:#f7f9f5; border-bottom:1px solid var(--line); font-size:10px; color:var(--muted); }
+.smoke-test-summary strong { color:#216b4c; }
+.smoke-test-summary span:nth-child(2) { color:#a63737; }
+.smoke-test-summary span:nth-child(3) { color:#875b16; }
+.smoke-test-summary time { margin-left:auto; }
+.smoke-check-row { display:grid; grid-template-columns:64px minmax(0,1fr); gap:10px; align-items:start; padding:10px 12px; border-bottom:1px solid #edf0ec; }
+.smoke-check-row:last-child { border-bottom:0; }
+.smoke-check-badge { padding:4px 5px; border-radius:4px; text-align:center; font-size:8px; font-weight:800; }
+.smoke-pass { background:#e5f5eb; color:#216b4c; }
+.smoke-fail { background:#fdecec; color:#a63737; }
+.smoke-blocked { background:#fff3d9; color:#875b16; }
+.smoke-check-row strong { font-size:11px; }
+.smoke-check-row p { margin:4px 0 0; color:var(--muted); font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
+.health-count-legend { padding:9px 10px; margin:0; color:var(--muted); background:#fff; font-size:10px; line-height:1.5; border-bottom:1px solid var(--line); }
+.failed-checks > summary { color:#a63737; }
+.health-report-warnings { padding:10px; border-top:1px solid var(--line); background:#fff9ed; }
+.health-report-warnings strong { font-size:10px; color:#875b16; }
+.health-report-warnings p { margin:6px 0 0; font-size:10px; line-height:1.5; color:#775a2b; overflow-wrap:anywhere; }
+@media (max-width:560px) {
+  .smoke-test-heading { flex-direction:column; }
+  .smoke-test-heading .secondary-button { width:100%; }
+  .health-counts { grid-template-columns:repeat(3,minmax(0,1fr)); }
+}
