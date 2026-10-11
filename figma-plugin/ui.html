@@ -44,6 +44,12 @@
   <select id="project"><option value="general">General UX</option><option value="express-computers">Express Computers</option><option value="dmi-finance">DMI Finance</option></select>
   <label for="prompt">Your brief</label>
   <textarea id="prompt" maxlength="8000" placeholder="Example: Analyse the selected DMI screen and plan a VKYC entry point. Reuse approved patterns and cover consent, loading, error and retry states."></textarea>
+  <section class="selection" aria-live="polite" style="margin-top:10px">
+    <strong>Native Plugin API health</strong>
+    <p id="healthSummary" class="muted" style="margin:7px 0">Not tested yet. Run a check to verify available plugin APIs.</p>
+    <button id="runHealth" class="secondary" type="button">Run native API self-test</button>
+    <div id="healthResults" style="margin-top:8px"></div>
+  </section>
   <div class="selection" aria-live="polite"><strong>Selected Figma context</strong><div id="selection" class="muted" style="margin-top:6px">Reading current selection…</div><button id="refresh" class="secondary" style="margin-top:9px">Refresh selection</button></div>
   <button id="submit" class="primary">Plan with UX Direct ↗</button>
   <div id="status" class="status" role="status">Ready. No Figma changes will be made.</div>
@@ -55,30 +61,80 @@
   let currentSelection = { fileKey: null, pageName: "", selection: [] };
   const status = (message) => { $("status").textContent = message; };
   async function sendTelemetry(event, result, summary, details = {}) {
-    try { await fetch(API + "/api/telemetry", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "figma-plugin", event, status: result, summary, ...details }) }); } catch (_) {}
+    try {
+      const response = await fetch(API + "/api/telemetry", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "figma-plugin", event, status: result, summary, ...details }) });
+      if (!response.ok) throw new Error("Telemetry returned " + response.status);
+      return true;
+    } catch (error) { console.warn("[UX Direct telemetry]", event, error); return false; }
   }
+  let heartbeatTimer = null;
+  async function startPluginSession() {
+    await sendTelemetry("Plugin opened", "success", "UX Direct plugin UI initialized in Figma.");
+    await checkConnection();
+    heartbeatTimer = window.setInterval(() => {
+      void sendTelemetry("Plugin heartbeat", "success", "Plugin UI is active and recently reached its event loop.");
+    }, 20000);
+  }
+  window.addEventListener("pagehide", () => {
+    if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+    const body = JSON.stringify({ source: "figma-plugin", event: "Plugin close attempted", status: "info", summary: "Plugin UI is unloading; close event delivery is best-effort." });
+    try {
+      if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/telemetry", new Blob([body], { type: "text/plain;charset=UTF-8" }));
+      else fetch(API + "/api/telemetry", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+    } catch (_) {}
+  });
   async function checkConnection() {
+    await sendTelemetry("Backend connection check started", "info", "Plugin is checking whether the UX Direct backend is reachable.");
     try {
       const response = await fetch(API + "/api/health", { method: "GET" });
       if (!response.ok) throw new Error("Backend returned " + response.status);
       const data = await response.json();
       $("connectionDot").className = "dot ok";
       $("connectionText").textContent = "Connected to UX Direct · backend healthy";
-      await sendTelemetry("Plugin health check", "success", "Figma plugin reached UX Direct health endpoint.");
+      await sendTelemetry("Backend connection check completed", "success", "Plugin reached the UX Direct health endpoint.");
       return data;
     } catch (error) {
       $("connectionDot").className = "dot";
       $("connectionText").textContent = "Not connected · backend unreachable";
-      await sendTelemetry("Plugin health check", "error", "Figma plugin could not reach UX Direct health endpoint.");
+      await sendTelemetry("Backend connection check failed", "error", "Backend request failed: " + (error && error.message ? error.message : "Unknown connection error"));
       return null;
     }
   }
   parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
-  $("refresh").addEventListener("click", () => parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*"));
+  $("refresh").addEventListener("click", () => {
+    void sendTelemetry("Selection refresh clicked", "info", "User requested a fresh selected-layer snapshot.");
+    parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
+  });
+  $("runHealth").addEventListener("click", async () => {
+    $("runHealth").disabled = true;
+    $("healthSummary").textContent = "Running native Plugin API checks…";
+    $("healthResults").replaceChildren();
+    await sendTelemetry("Plugin API health check started", "info", "User started native Figma Plugin API self-test.");
+    parent.postMessage({ pluginMessage: { type: "run-native-health-check" } }, "*");
+  });
   window.onmessage = (event) => {
     const message = event.data && event.data.pluginMessage;
     if (!message || message.type !== "selection") return;
+    if (message.type === "native-health-result") {
+      const passed = message.passed || 0, failed = message.failed || 0;
+      $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + new Date(message.checkedAt).toLocaleTimeString();
+      const list = document.createElement("div");
+      message.checks.forEach((item) => {
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-top:1px solid var(--figma-color-border)";
+        const badge = document.createElement("strong"); badge.textContent = item.status === "success" ? "PASS" : "FAIL";
+        badge.style.color = item.status === "success" ? "#26966b" : "#d14343";
+        const label = document.createElement("span"); label.textContent = item.name + " — " + item.reason;
+        row.append(badge, label); list.appendChild(row);
+      });
+      $("healthResults").replaceChildren(list);
+      $("runHealth").disabled = false;
+      void sendTelemetry("Plugin API health check completed", failed ? "warning" : "success", "Native Plugin API self-test: " + passed + " passed, " + failed + " failed. " + message.checks.filter((item) => item.status === "error").map((item) => item.name).slice(0, 4).join(", "));
+      return;
+    }
+    if (message.type !== "selection") return;
     currentSelection = message;
+    void sendTelemetry("Selection changed", "info", "Figma selection changed; " + message.selection.length + " top-level node(s) selected.");
     const target = $("selection"); target.replaceChildren();
     if (!message.selection.length) {
       target.textContent = "No layers selected. Select one or more frames/layers in Figma."; target.className = "muted"; return;
@@ -96,6 +152,7 @@
     if (message.selection.length > 8) { const more = document.createElement("div"); more.className = "muted"; more.textContent = "+" + (message.selection.length - 8) + " more"; target.appendChild(more); }
   };
   $("submit").addEventListener("click", async () => {
+    void sendTelemetry("Plan CTA clicked", "info", "User clicked Plan with UX Direct.");
     const prompt = $("prompt").value.trim();
     if (prompt.length < 5) { status("Add a little more detail to your brief (at least 5 characters)."); return; }
     $("submit").disabled = true; $("result").hidden = true; status("Sending task to UX Direct backend…");
@@ -113,7 +170,7 @@
       const data = await response.json();
       const durationMs = Date.now() - startedAt;
       if (!response.ok) {
-        await sendTelemetry("Task request failed", "error", "Backend rejected the planning request.", { requestId: data.requestId, project: $("project").value, durationMs });
+        await sendTelemetry("Task request failed", "error", "Backend rejected request: " + (data.error || "HTTP " + response.status), { requestId: data.requestId, project: $("project").value, durationMs });
         throw new Error((data.error || "Backend returned " + response.status) + (data.requestId ? " · Request ID " + data.requestId : ""));
       }
       renderPlan(data);
@@ -122,7 +179,7 @@
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       status("Could not complete the request. " + message);
-      await sendTelemetry("Task request failed", "error", "Plugin request failed before a successful response was rendered.");
+      await sendTelemetry("Task request failed", "error", "Request failed: " + message);
     } finally { $("submit").disabled = false; }
   });
   function renderPlan(data) {
@@ -141,7 +198,7 @@
     (data.plan && data.plan.qualityChecks || []).forEach((check) => { const li = document.createElement("li"); li.textContent = check; checks.appendChild(li); });
     root.appendChild(checks);
   }
-  checkConnection();
+  void startPluginSession();
 </script>
 </body>
 </html>

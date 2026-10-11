@@ -108,6 +108,11 @@ export default function Home() {
   }
 
   const backendHealthy = health?.status === "ok" && !healthError;
+  const lastHeartbeat = events.find((item) => item.source === "figma-plugin" && item.event === "Plugin heartbeat");
+  const heartbeatAgeMs = lastHeartbeat ? Date.now() - Date.parse(lastHeartbeat.at) : null;
+  const pluginOnline = heartbeatAgeMs !== null && heartbeatAgeMs >= 0 && heartbeatAgeMs < 65000;
+  const pluginStatusLabel = pluginOnline ? "Online" : lastHeartbeat ? "No recent heartbeat" : "Unknown";
+  const latestPluginTest = events.find((item) => item.source === "figma-plugin" && item.event === "Plugin API health check completed");
   const breadcrumb = navItems.find((item) => item.id === activeTab)?.label ?? "Cockpit";
 
   return (
@@ -136,7 +141,7 @@ export default function Home() {
           <div className="content">
             <div className="eyebrow"><span className="pulse" /> SYSTEM STATUS</div>
             <h1>Connections &amp;<br /><em>health checks.</em></h1>
-            <p className="intro">See whether the plugin can reach UX Direct, whether Figma account authorization is configured, and whether backend requests return successfully.</p>
+            <p className="intro">Separate backend availability from the plugin’s recent heartbeat. Review plugin events, request failures, and the latest native API self-test.</p>
             <div className="connection-toolbar">
               <span className="last-checked">Last checked: {lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : "Not checked yet"}</span>
               <button className="submit-button" type="button" onClick={() => void refreshConnections()}>Run health check ↻</button>
@@ -150,9 +155,10 @@ export default function Home() {
               </article>
               <article className="connection-card">
                 <div className="connection-card-top"><span className="service-icon">FG</span><span className="status-chip status-success">OAuth not required</span></div>
-                <h2>Figma plugin bridge</h2><p>Uses the Figma session already open in the plugin</p>
-                <dl><div><dt>Separate Figma login</dt><dd>No</dd></div><div><dt>Plugin → backend</dt><dd>{backendHealthy ? "Reachable" : "Not verified"}</dd></div><div><dt>Selected-layer access</dt><dd>Plugin permissions</dd></div></dl>
-                <p className="connection-note">UX Direct will not ask for your Figma password, OAuth credentials, or a separate account login. Direct REST API file access is a separate optional capability and remains disabled until explicitly needed.</p>
+                <h2>Figma plugin bridge</h2><p>Native Plugin API + backend reachability</p>
+                <dl><div><dt>Plugin activity</dt><dd>{pluginStatusLabel}</dd></div><div><dt>Last heartbeat</dt><dd>{lastHeartbeat ? new Date(lastHeartbeat.at).toLocaleTimeString() : "Not received"}</dd></div><div><dt>Plugin → backend</dt><dd>{backendHealthy ? "Backend healthy" : "Not verified"}</dd></div><div><dt>Latest API self-test</dt><dd>{latestPluginTest ? latestPluginTest.summary.slice(0, 90) : "Not run yet"}</dd></div></dl>
+                <p className="connection-note">No Figma OAuth or REST API is used. Run the native API self-test inside the open plugin; its result will appear in activity when telemetry reaches this backend instance.</p>
+                <button className="secondary-button" type="button" onClick={() => void refreshConnections()}>Refresh plugin activity ↻</button>
               </article>
               <article className="connection-card">
                 <div className="connection-card-top"><span className="service-icon">AI</span><span className={"status-chip " + (health?.modelProviderConfigured ? "status-warning" : "status-neutral")}>{health?.modelProviderConfigured ? "Key detected" : "Mock mode"}</span></div>
