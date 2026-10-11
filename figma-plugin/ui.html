@@ -68,7 +68,7 @@
   <header>
     <div class="brand" aria-label="UX">UX</div>
     <div class="statusbar" aria-label="System status">
-      <div id="connectionStatus" class="status-tag warn" aria-live="polite"><span id="connectionDot" class="dot"></span><span id="connectionText" class="tagtext">Preview connecting</span></div>
+      <div id="connectionStatus" class="status-tag warn" aria-live="polite"><span id="connectionDot" class="dot"></span><span id="connectionText" class="tagtext">Netlify Preview connecting</span></div>
       <button id="healthStatus" class="status-tag warn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="healthPanel" title="Automatic native API checks; click for details"><span id="healthDot" class="dot"></span><span id="healthStatusText" class="tagtext">API checks pending</span></button>
     </div>
   </header>
@@ -203,12 +203,12 @@
           throw new Error("The endpoint did not verify itself as the configured Netlify Deploy Preview.");
         }
         backendHealthy = true;
-        setConnection("ok", "Preview connected");
+        setConnection("ok", "Netlify Preview connected");
         $("send").disabled = isSending;
         return data;
       } catch (error) {
         backendHealthy = false;
-        setConnection("bad", "Preview offline");
+        setConnection("bad", "Netlify Preview offline");
         $("send").disabled = true;
         setActivity("UX Direct backend is unavailable. The plugin will retry automatically.");
         console.warn("[UX Direct backend health]", error);
