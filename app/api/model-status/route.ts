@@ -39,7 +39,7 @@ function providerConfig(provider: ProviderId) {
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     return apiKey ? {
       apiKey,
-      baseUrl: (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\\/+$/, ""),
+      baseUrl: (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/+$/, ""),
       modelsUrl: "https://generativelanguage.googleapis.com/v1beta/models",
       headers: { "x-goog-api-key": apiKey }
     } : null;
@@ -47,7 +47,7 @@ function providerConfig(provider: ProviderId) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   return apiKey ? {
     apiKey,
-    baseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\\/+$/, ""),
+    baseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, ""),
     modelsUrl: "https://openrouter.ai/api/v1/models",
     headers: { Authorization: `Bearer ${apiKey}` }
   } : null;
@@ -73,7 +73,7 @@ async function discoverModels(provider: ProviderId) {
   } else {
     models = (payload.models ?? [])
       .filter(item => (item.supportedGenerationMethods ?? []).includes("generateContent"))
-      .map(item => item.name?.replace(/^models\\//, ""))
+      .map(item => item.name?.replace(/^models\//, ""))
       .filter((id): id is string => Boolean(id));
   }
   return { provider, configured: true, models, checkedAt: new Date().toISOString() };
