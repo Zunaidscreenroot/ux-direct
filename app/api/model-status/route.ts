@@ -65,9 +65,23 @@ async function discoverModels(provider: ProviderId) {
     .filter((id): id is string => Boolean(id));
   return { provider, configured: true, models, checkedAt: new Date().toISOString() };
 }
+function sanitizeProviderMessage(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const message = value
+    .replace(/Bearer\\s+[^\\s]+/gi, "Bearer [redacted]")
+    .replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]")
+    .replace(/[\\r\\n\\t]+/g, " ")
+    .trim()
+    .slice(0, 240);
+  return message || undefined;
+}
+
 async function probeModel(provider: ProviderId, model: string) {
   const config = providerConfig(provider);
   if (!config) return { available: false, provider, model, reason: `${provider} API key is missing in this deployment context.` };
+  if (!model.endsWith(":free")) {
+    return { available: false, provider, model, status: 400, reason: "Only model IDs ending in :free can be probed by this endpoint." };
+  }
   const startedAt = Date.now();
   const response = await timedFetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
@@ -80,17 +94,37 @@ async function probeModel(provider: ProviderId, model: string) {
     })
   }, 18000);
   if (!response.ok) {
-    const status = response.status;
-    // Do not forward provider response bodies; they can contain account details.
-    return { available: false, provider, model, reason: `Provider returned HTTP ${status}.`, latencyMs: Date.now() - startedAt };
+    let providerMessage: string | undefined;
+    let providerCode: string | number | undefined;
+    try {
+      const payload = await response.json() as {
+        error?: { message?: unknown; code?: unknown };
+        message?: unknown;
+      };
+      providerMessage = sanitizeProviderMessage(payload.error?.message ?? payload.message);
+      if (typeof payload.error?.code === "string" || typeof payload.error?.code === "number") {
+        providerCode = payload.error.code;
+      }
+    } catch {
+      // Keep the HTTP status even when the upstream response is not JSON.
+    }
+    return {
+      available: false, provider, model, status: response.status,
+      ...(providerCode === undefined ? {} : { providerCode }),
+      reason: providerMessage ? `OpenRouter HTTP ${response.status}: ${providerMessage}` : `OpenRouter returned HTTP ${response.status}.`,
+      latencyMs: Date.now() - startedAt
+    };
   }
   const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }>; model?: string };
   const content = payload.choices?.[0]?.message?.content;
+  const responseReceived = typeof content === "string" && content.trim().length > 0;
   return {
-    available: typeof content === "string" && content.trim().length > 0,
+    available: responseReceived,
     provider,
     model,
-    responseReceived: typeof content === "string" && content.trim().length > 0,
+    status: response.status,
+    responseReceived,
+    ...(responseReceived ? {} : { reason: "HTTP response succeeded but choices[0].message.content was empty or missing." }),
     latencyMs: Date.now() - startedAt,
     checkedAt: new Date().toISOString()
   };
@@ -98,11 +132,21 @@ async function probeModel(provider: ProviderId, model: string) {
 
 async function discoverWorkingFreeModel() {
   const catalog = await discoverModels("openrouter");
-  if (!catalog.configured || catalog.models.length === 0) return { ...catalog, models: [] as string[] };
+  if (!catalog.configured || catalog.models.length === 0) {
+    return { ...catalog, models: [] as string[], attempts: [] as Array<Record<string, unknown>> };
+  }
   const candidates = catalog.models.slice(0, 5);
+  const attempts: Array<{ model: string; available: boolean; status?: number; providerCode?: string | number; reason?: string; latencyMs?: number }> = [];
   for (const model of candidates) {
     try {
       const result = await probeModel("openrouter", model);
+      attempts.push({
+        model, available: result.available,
+        ...("status" in result && typeof result.status === "number" ? { status: result.status } : {}),
+        ...("providerCode" in result && (typeof result.providerCode === "string" || typeof result.providerCode === "number") ? { providerCode: result.providerCode } : {}),
+        ...("reason" in result && typeof result.reason === "string" ? { reason: result.reason } : {}),
+        ...("latencyMs" in result && typeof result.latencyMs === "number" ? { latencyMs: result.latencyMs } : {})
+      });
       if (result.available && result.responseReceived) {
         return {
           provider: "openrouter",
@@ -110,14 +154,24 @@ async function discoverWorkingFreeModel() {
           models: [model],
           selectedModel: model,
           checkedAt: new Date().toISOString(),
-          probe: { available: true, latencyMs: result.latencyMs }
+          probe: { available: true, latencyMs: result.latencyMs },
+          attempts
         };
       }
-    } catch {
-      // Try the next free model only when this one fails. Never try paid IDs.
+    } catch (error) {
+      attempts.push({
+        model, available: false,
+        reason: safeError(error),
+      });
     }
   }
-  return { provider: "openrouter", configured: true, models: [], reason: "The first five listed :free models did not return a usable response." };
+  return {
+    provider: "openrouter", configured: true, models: [],
+    candidateCount: catalog.models.length,
+    attemptedCount: attempts.length,
+    attempts,
+    reason: "No tested :free model returned a usable chat response. Inspect attempts for each upstream HTTP status or error."
+  };
 }
 
 export async function OPTIONS() {
@@ -142,7 +196,12 @@ export async function GET(request: Request) {
       if (provider !== "openrouter") {
         return NextResponse.json({ available: false, error: "Unsupported provider.", diagnosticId: id }, { status: 400, headers });
       }
-      // Probe exactly one requested model; no fallback and no fan-out to other providers.
+      if (!model.endsWith(":free")) {
+        return NextResponse.json({
+          available: false, error: "Only model IDs ending in :free can be probed by this endpoint.", diagnosticId: id
+        }, { status: 400, headers });
+      }
+      // Probe exactly one requested free model; no paid IDs, fallback, or provider fan-out.
       const result = await probeModel(provider, model);
       return NextResponse.json({ ...result, diagnosticId: id }, { headers });
     }
@@ -190,8 +249,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ available: false, error: "Request body must be valid JSON.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
   }
   const parsed = body as { provider?: unknown; model?: unknown; fileKey?: unknown };
-  if (parsed.provider !== "openrouter" || typeof parsed.model !== "string" || typeof parsed.fileKey !== "string") {
-    return NextResponse.json({ available: false, error: "Valid provider, model and fileKey are required.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
+  if (parsed.provider !== "openrouter" || typeof parsed.model !== "string" || typeof parsed.fileKey !== "string" || !parsed.model.endsWith(":free")) {
+    return NextResponse.json({ available: false, error: "A valid OpenRouter :free model ID and fileKey are required.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
   }
   if (!originAllowed(request) || !approvedFileKey(request, parsed.fileKey) || !isAllowedFigmaFileKey(parsed.fileKey)) {
     return NextResponse.json({ available: false, error: "Origin or Figma file key not allowed.", diagnosticId: diagnosticId() }, { status: 403, headers: corsHeaders() });
