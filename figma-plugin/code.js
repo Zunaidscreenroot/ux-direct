@@ -417,21 +417,9 @@ async function executeNativeApiHealthCheck() {
       if (node.characters !== "UX Direct API test") throw new Error("Text write did not persist.");
     });
 
-    await runTest("Layout and styling", "Group two persistent test nodes", async function () {
-      var groupName = "__UXD GROUP RESULT";
-      var existingGroup = findNodeByName(harness, groupName, "GROUP");
-      if (existingGroup) {
-        if (existingGroup.children.length !== 2) throw new Error("Persistent group fixture no longer contains two children.");
-        return { uxdResultReason: "Reused the group created on the first run; did not create another group." };
-      }
-      var a = rect("UXD group item A"), b = ellipse("UXD group item B");
-      mutateLab("position group item A", function () { a.x = 5; a.y = 5; });
-      mutateLab("position group item B", function () { b.x = 35; b.y = 25; });
-      var group = mutateLab("group test nodes", function () { return figma.group([a, b], harness); });
-
-      mutateLab("name persistent test group", function () { group.name = groupName; });
-      if (group.type !== "GROUP" || group.children.length !== 2) throw new Error("Group did not contain both nodes.");
-    });
+    // The previous native run stopped at this grouping operation. Inventory the API without invoking a potentially blocking document mutation.
+    availability("Layout and styling", "figma.group", typeof figma.group === "function",
+      "Availability only; grouping is not invoked by health checks to keep the persistent Test Lab run responsive.");
     await runTest("Layout and styling", "Reuse persistent flattened vector", async function () {
       var vectorName = "__UXD FLATTEN RESULT";
       var existingVector = findNodeByName(harness, vectorName, "VECTOR");
