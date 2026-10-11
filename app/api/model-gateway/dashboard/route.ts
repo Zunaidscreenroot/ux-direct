@@ -36,9 +36,13 @@ export async function GET() {
   }
   const validModelKeys = new Set(catalog.map(model => modelKey(model.provider, model.id)));
   const modules = Object.fromEntries(Object.entries(settings.modules).map(([id, policy]) => {
-    const stillListed = policy.selectedModelKey === "auto" || validModelKeys.has(policy.selectedModelKey);
     const mode = policy.mode === "local" || policy.mode === "mock" ? "free" : policy.mode;
-    return [id, { ...policy, mode, selectedModelKey: stillListed ? policy.selectedModelKey : "auto" }];
+    const selectedModel = catalog.find(model => modelKey(model.provider, model.id) === policy.selectedModelKey);
+    const compatible = policy.selectedModelKey === "auto" ||
+      Boolean(selectedModel && selectedModel.provider === "openrouter" &&
+      (mode === "free" ? selectedModel.tier === "free-tier" && selectedModel.id.endsWith(":free") :
+        selectedModel.tier === "paid" && (selectedModel.usdInputPerMillion ?? 0) > 0 && (selectedModel.usdOutputPerMillion ?? 0) > 0));
+    return [id, { ...policy, mode, selectedModelKey: compatible ? policy.selectedModelKey : "auto" }];
   })) as typeof settings.modules;
   const fullSettings = { ...settings, modules, models: modelSettings };
   const keySlots = [
