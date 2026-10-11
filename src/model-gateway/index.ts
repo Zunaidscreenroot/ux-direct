@@ -60,7 +60,7 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   if ((env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) && (geminiBillingKind !== "paid" || paidRoutingReady)) providers.push({
     name: "gemini", baseUrl: trimSlash(env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai"),
     apiKey: env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY, apiKeyHeader: "x-goog-api-key",
-    models: csv(env.GEMINI_MODELS || env.GOOGLE_GENERATIVE_AI_MODELS, "gemini-3.1-flash-lite"), kind: geminiBillingKind
+    models: csv(env.GEMINI_MODELS || env.GOOGLE_GENERATIVE_AI_MODELS, "gemini-3.5-flash-lite,gemini-2.5-flash-lite"), kind: geminiBillingKind
   });
   const groqBillingKind = env.GROQ_BILLING_MODE === "paid" ? "paid" : "free-tier";
   if (env.GROQ_API_KEY && (groqBillingKind !== "paid" || paidRoutingReady)) providers.push({
@@ -196,6 +196,11 @@ function chooseModuleModel(moduleId: string, policy: { mode: string; selectedMod
       const bc=bp ? bp.inputPriceInrPerMillion*0.1+bp.outputPriceInrPerMillion*0.02 : Infinity;
       if(ac!==bc) return ac-bc;
     }
+    const geminiOrder = csv(process.env.GEMINI_MODELS || process.env.GOOGLE_GENERATIVE_AI_MODELS, "gemini-3.5-flash-lite,gemini-2.5-flash-lite");
+    if (a.provider === "gemini" && b.provider === "gemini") {
+      const ai = geminiOrder.indexOf(a.id), bi = geminiOrder.indexOf(b.id);
+      if (ai !== -1 && bi !== -1 && ai !== bi) return ai - bi;
+    }
     return a.label.localeCompare(b.label);
   });
   if(eligible[0])return eligible[0];
@@ -319,8 +324,35 @@ export function routeTask(task: "classify" | "extract" | "summarize" | "ux-reaso
  * Paid providers are never used as implicit fallbacks. Direct model requests
  * remain single-provider; task aliases can use this policy.
  */
-/** Strict routing: never fail over to a different provider/model behind the user's back. */
+/**
+ * Controlled Gemini-only fallback for modules where allowFallback is enabled.
+ * Fallback models must be in the configured Gemini allowlist and free-tier provider;
+ * paid providers are never used as implicit fallbacks.
+ */
 export async function chatCompletionWithFallback(
   request: GatewayRequest,
   options: { providers?: ProviderConfig[]; fetchImpl?: typeof fetch; timeoutMs?: number } = {}
-): Promise<GatewayResponse> { return chatCompletion(request, options); }
+): Promise<GatewayResponse> {
+  try { return await chatCompletion(request, options); }
+  catch (primaryError) {
+    const moduleId = request.moduleId ?? TASK_MODULES[request.model] ?? "general";
+    const settings = await getGatewaySettings();
+    const policy = settings.modules[moduleId];
+    if (!policy?.enabled || !policy.allowFallback || policy.mode !== "free" || !policy.selectedModelKey.startsWith("gemini::")) throw primaryError;
+    const generalPolicy = settings.modules.general;
+    if (!generalPolicy?.enabled || generalPolicy.mode !== "free" || generalPolicy.selectedModelKey !== "auto") throw primaryError;
+    const primaryModel = policy.selectedModelKey.slice("gemini::".length);
+    const status = primaryError instanceof GatewayError ? primaryError.status : (typeof primaryError === "object" && primaryError !== null && "status" in primaryError && typeof primaryError.status === "number" ? primaryError.status : 502);
+    if (![408, 429, 500, 502, 503, 504].includes(status)) throw primaryError;
+    const providers = options.providers ?? providersFromEnv();
+    const gemini = providers.find(provider => provider.name === "gemini" && provider.kind === "free-tier");
+    if (!gemini || gemini.models.length < 2) throw primaryError;
+    let lastError: unknown = primaryError;
+    for (const model of gemini.models) {
+      if (model === primaryModel || model === request.model) continue;
+      try { return await chatCompletion({ ...request, model, providerId: "gemini", moduleId: undefined }, options); }
+      catch (error) { lastError = error; }
+    }
+    throw lastError instanceof Error ? lastError : primaryError;
+  }
+}
