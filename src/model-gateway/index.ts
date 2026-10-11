@@ -62,7 +62,8 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
     name: "cerebras", baseUrl: trimSlash(env.CEREBRAS_BASE_URL || "https://api.cerebras.ai/v1"),
     apiKey: env.CEREBRAS_API_KEY, models: csv(env.CEREBRAS_MODELS, "gpt-oss-120b"), kind: "free-tier"
   });
-  if (env.OPENAI_API_KEY) providers.push({
+  // Paid inference requires a separate explicit opt-in, even if a key is present.
+  if (env.OPENAI_API_KEY && env.ALLOW_PAID_MODELS === "true") providers.push({
     name: "openai", baseUrl: trimSlash(env.OPENAI_BASE_URL || "https://api.openai.com/v1"),
     apiKey: env.OPENAI_API_KEY, models: csv(env.OPENAI_MODELS, "gpt-4o-mini"), kind: "paid"
   });
