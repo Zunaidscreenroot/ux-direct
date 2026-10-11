@@ -45,13 +45,48 @@ const trimSlash = (value: string) => value.replace(/\/+$/, "");
 const csv = (value?: string, fallback = "") =>
   (value || fallback).split(",").map(s => s.trim()).filter(Boolean);
 
+export type FreeChatModel = { provider: "gemini" | "openrouter"; id: string; label: string; tier: "free-tier" };
+export const FREE_CHAT_MODELS: FreeChatModel[] = [
+  { provider: "gemini", id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", tier: "free-tier" },
+  { provider: "gemini", id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", tier: "free-tier" },
+  { provider: "openrouter", id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra · OpenRouter free", tier: "free-tier" },
+  { provider: "openrouter", id: "nvidia/nemotron-3.5-lightning:free", label: "Nemotron 3.5 Lightning · OpenRouter free", tier: "free-tier" },
+  { provider: "openrouter", id: "google/gemma-4-31b-it:free", label: "Gemma 4 31B · OpenRouter free", tier: "free-tier" },
+];
+
+export function providersForFreeChat(providers = providersFromEnv()): ProviderConfig[] {
+  return providers.map(provider => {
+    const candidates = FREE_CHAT_MODELS.filter(model => model.provider === provider.name).map(model => model.id);
+    const isUsableFreeProvider = provider.name === "gemini"
+      ? provider.kind === "free-tier" && Boolean(provider.apiKey)
+      : provider.name === "openrouter" && Boolean(provider.apiKey);
+    if (!isUsableFreeProvider || candidates.length === 0) return provider;
+    // The client can select only the curated free model IDs above; extend the in-memory allowlist,
+    // not environment variables or persisted configuration.
+    return { ...provider, models: Array.from(new Set([...provider.models, ...candidates])) };
+  });
+}
+
+export function getFreeChatModelOptions(providers = providersFromEnv()) {
+  return FREE_CHAT_MODELS.map(model => {
+    const configuredProvider = providers.find(provider => provider.name === model.provider);
+    const configured = model.provider === "gemini"
+      ? Boolean(configuredProvider?.kind === "free-tier" && configuredProvider.apiKey)
+      : Boolean(configuredProvider?.apiKey);
+    return { ...model, configured };
+  });
+}
+
 export function providersFromEnv(env: Record<string, string | undefined> = process.env): ProviderConfig[] {
   const providers: ProviderConfig[] = [];
   // Always register a deterministic mock so tests and empty-credential installs work.
   // Task routing prefers configured real providers and uses mock only as the last resort.
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
   const paidRoutingReady = env.ALLOW_PAID_MODELS === "true" && Number(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "3000") > 0;
-  const openRouterModels = csv(env.OPENROUTER_MODELS).filter(model => model.endsWith(":free") || paidRoutingReady);
+  const openRouterModels = csv(
+    env.OPENROUTER_MODELS,
+    "nvidia/nemotron-3-ultra-550b-a55b:free,nvidia/nemotron-3.5-lightning:free,google/gemma-4-31b-it:free"
+  ).filter(model => model.endsWith(":free") || paidRoutingReady);
   if (env.OPENROUTER_API_KEY && openRouterModels.length) providers.push({
     name: "openrouter", baseUrl: trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"),
     apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: openRouterModels.some(model => !model.endsWith(":free")) ? "paid" : "free-tier"
@@ -284,7 +319,7 @@ export async function chatCompletion(
   try{
     const headers:Record<string,string>={"Content-Type":"application/json",...(provider.apiKey?(provider.apiKeyHeader?{[provider.apiKeyHeader]:provider.apiKey}:{Authorization:`Bearer ${provider.apiKey}`}):{}),...provider.headers};
     const response=await fetchImpl(`${trimSlash(provider.baseUrl)}/chat/completions`,{method:"POST",headers,body:JSON.stringify({model,messages:request.messages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{})}),signal:controller.signal});
-    if(!response.ok)throw new GatewayError(`Provider returned HTTP ${response.status}.`,response.status===429?429:502,provider.name);
+    if(!response.ok)throw new GatewayError(`Provider returned HTTP ${response.status}.`,response.status===429?429:response.status>=500?502:response.status,provider.name);
     let payload:ProviderChatPayload;try{payload=await response.json() as ProviderChatPayload;}catch{throw new GatewayError("Provider returned invalid JSON.",502,provider.name);}
     const content=payload.choices?.[0]?.message?.content;
     if(typeof content!=="string")throw new GatewayError("Provider response did not contain choices[0].message.content.",502,provider.name);
@@ -353,6 +388,60 @@ export async function chatCompletionWithFallback(
       if (model === primaryModel || model === request.model) continue;
       try { return await chatCompletion({ ...request, model, providerId: "gemini", moduleId: undefined }, options); }
       catch (error) { lastError = error; }
+    }
+    throw lastError instanceof Error ? lastError : primaryError;
+  }
+}
+
+
+/**
+ * Send the explicitly selected free model first, then retry only the curated free-tier
+ * Gemini/OpenRouter options on retryable failures. No paid model IDs are eligible.
+ */
+export async function chatCompletionWithFreeFallback(
+  request: GatewayRequest,
+  options: { providers?: ProviderConfig[]; fetchImpl?: typeof fetch; timeoutMs?: number } = {}
+): Promise<GatewayResponse> {
+  const selected = FREE_CHAT_MODELS.find(model => model.provider === request.providerId && model.id === request.model);
+  if (!selected) throw new GatewayError("The selected model is not in the approved free-model list.", 400);
+
+  const providers = providersForFreeChat(options.providers ?? providersFromEnv());
+  const availableProvider = providers.find(provider => provider.name === selected.provider &&
+    provider.models.includes(selected.id) &&
+    (selected.provider === "gemini" ? provider.kind === "free-tier" && Boolean(provider.apiKey) : Boolean(provider.apiKey)));
+  if (!availableProvider) {
+    throw new GatewayError("This provider is not configured with a usable free-tier API key.", 503, selected.provider);
+  }
+
+  try {
+    return await chatCompletion({ ...request, model: selected.id, providerId: selected.provider, moduleId: undefined }, { ...options, providers });
+  } catch (primaryError) {
+    const statusOf = (error: unknown) => error instanceof GatewayError ? error.status :
+      typeof error === "object" && error !== null && "status" in error && typeof error.status === "number" ? error.status : 502;
+    const primaryStatus = statusOf(primaryError);
+    if (![401, 403, 404, 408, 429, 500, 502, 503, 504].includes(primaryStatus)) throw primaryError;
+
+    let lastError: unknown = primaryError;
+    const disabledProviders = new Set<string>();
+    if (primaryStatus === 401 || primaryStatus === 403) disabledProviders.add(selected.provider);
+
+    for (const candidate of FREE_CHAT_MODELS) {
+      if (candidate.provider === selected.provider && candidate.id === selected.id) continue;
+      if (disabledProviders.has(candidate.provider)) continue;
+      const provider = providers.find(item => item.name === candidate.provider &&
+        item.models.includes(candidate.id) &&
+        (candidate.provider === "gemini" ? item.kind === "free-tier" && Boolean(item.apiKey) : Boolean(item.apiKey)));
+      if (!provider) continue;
+      try {
+        return await chatCompletion({
+          ...request, model: candidate.id, providerId: candidate.provider, moduleId: undefined
+        }, { ...options, providers });
+      } catch (error) {
+        lastError = error;
+        const status = statusOf(error);
+        if (status === 401 || status === 403) disabledProviders.add(candidate.provider);
+        if (![401, 403, 404, 408, 429, 500, 502, 503, 504].includes(status)) break;
+      }
     }
     throw lastError instanceof Error ? lastError : primaryError;
   }
