@@ -42,7 +42,7 @@ function pricePolicy(inputUsd = 0, outputUsd = 0, fx = 97): ModelPolicy {
 }
 export function defaultGatewaySettings(): GatewaySettings {
   const modules: Record<string, ModulePolicy> = {};
-  for (const m of GATEWAY_MODULES) modules[m.id] = { enabled: true, mode: "free", selectedModelKey: "auto", monthlyBudgetInr: m.suggestedBudgetShare, maxRequestCostInr: 10, allowFallback: false };
+  for (const m of GATEWAY_MODULES) modules[m.id] = { enabled: true, mode: "free", selectedModelKey: "auto", monthlyBudgetInr: m.suggestedBudgetShare, maxRequestCostInr: 10, allowFallback: m.id === "reasoning" };
   const models: Record<string, ModelPolicy> = {
     [modelKey("gemini", "gemini-3.8-flash")]: pricePolicy(.75, 3.75),
     [modelKey("gemini", "gemini-3.5-flash")]: pricePolicy(1.5, 9),
@@ -78,7 +78,7 @@ function cleanSettings(input: unknown): GatewaySettings {
       selectedModelKey: typeof c.selectedModelKey === "string" && c.selectedModelKey.length <= 220 ? c.selectedModelKey : "auto",
       monthlyBudgetInr: amount(c.monthlyBudgetInr, base.monthlyBudgetInr),
       maxRequestCostInr: amount(c.maxRequestCostInr, base.maxRequestCostInr),
-      allowFallback: typeof c.allowFallback === "boolean" ? c.allowFallback : false
+      allowFallback: typeof c.allowFallback === "boolean" ? c.allowFallback : base.allowFallback
     };
   }
   const models: Record<string, ModelPolicy> = { ...defaults.models };
