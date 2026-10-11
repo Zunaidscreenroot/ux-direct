@@ -297,3 +297,6 @@ footer span { margin: 0 6px; color: #9bb98b; }
 .gateway-header-actions .secondary-button { margin-top:8px; }
 .gateway-smoke-message { margin:-8px 0 17px; padding:10px 12px; background:#eef7e8; border:1px solid #dcebd2; color:#315e37; border-radius:8px; font-size:11px; line-height:1.55; overflow-wrap:anywhere; }
 @media (max-width:700px) { .gateway-header-actions { justify-content:flex-start; } .gateway-header-actions .submit-button, .gateway-header-actions .secondary-button { margin-top:0; } }
+
+.mobile-nav-select { display:none; border:1px solid var(--line); background:#fff; color:var(--ink); border-radius:7px; padding:7px 8px; font-size:10px; max-width:135px; }
+@media (max-width:560px) { .mobile-nav-select { display:block; } .topbar-right { gap:8px; } }
