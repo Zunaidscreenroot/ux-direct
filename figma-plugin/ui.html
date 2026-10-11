@@ -10,10 +10,9 @@
     [hidden] { display: none !important; }
     body { height: 100vh; min-height: 0; margin: 0; padding: 10px 12px 0; display:flex; flex-direction:column; overflow:hidden; color:var(--figma-color-text,#202124); background:var(--figma-color-bg,#fff); }
     header { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:30px; margin-bottom:7px; }
-    .brand { display:flex; align-items:center; gap:7px; font-size:14px; font-weight:750; letter-spacing:-.25px; white-space:nowrap; }
-    .mark { display:grid; place-items:center; width:25px; height:25px; border-radius:7px; background:#252525; color:#fff; font-size:12px; font-weight:800; }
+    .brand { display:flex; align-items:center; font-size:16px; font-weight:800; letter-spacing:-.35px; white-space:nowrap; }
     .statusbar { display:flex; align-items:center; justify-content:flex-end; gap:4px; min-width:0; }
-    .status-tag { display:inline-flex; align-items:center; gap:5px; max-width:124px; min-width:0; border:1px solid var(--figma-color-border); border-radius:999px; padding:4px 6px; background:var(--figma-color-bg-secondary); color:var(--figma-color-text-secondary); font-family:inherit; font-size:9px; font-weight:600; line-height:1.15; cursor:default; white-space:nowrap; }
+    .status-tag { display:inline-flex; align-items:center; gap:5px; max-width:142px; min-width:0; border:1px solid var(--figma-color-border); border-radius:999px; padding:4px 6px; background:var(--figma-color-bg-secondary); color:var(--figma-color-text-secondary); font-family:inherit; font-size:9px; font-weight:600; line-height:1.15; cursor:default; white-space:nowrap; }
     button.status-tag { cursor:pointer; }
     .status-tag:focus-visible, button:focus-visible, textarea:focus-visible, select:focus-visible { outline:2px solid var(--figma-color-bg-brand,#2563eb); outline-offset:2px; }
     .status-tag .tagtext { overflow:hidden; text-overflow:ellipsis; }
@@ -68,45 +67,35 @@
     .health-reason { margin-top:3px; color:var(--figma-color-text-secondary); font-size:10px; overflow-wrap:anywhere; }
     @media (max-width:340px) {
       body { padding-left:8px; padding-right:8px; }
-      .brand { font-size:12px; }
-      .status-tag { padding:4px 5px; max-width:104px; font-size:8px; }
-      .mark { width:22px; height:22px; }
+      .brand { font-size:14px; }
+      .status-tag { padding:4px 5px; max-width:112px; font-size:8px; }
     }
   </style>
 </head>
 <body>
   <header>
-    <div class="brand"><span class="mark">ux</span><span>UX Direct</span></div>
+    <div class="brand" aria-label="UX">UX</div>
     <div class="statusbar" aria-label="System status">
-      <div id="connectionStatus" class="status-tag warn" aria-live="polite"><span id="connectionDot" class="dot"></span><span id="connectionText" class="tagtext">Connecting</span></div>
-      <button id="healthStatus" class="status-tag warn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="healthPanel" title="View Plugin API health-check details"><span id="healthDot" class="dot"></span><span id="healthStatusText" class="tagtext">Health pending</span></button>
+      <div id="connectionStatus" class="status-tag warn" aria-live="polite"><span id="connectionDot" class="dot"></span><span id="connectionText" class="tagtext">Preview connecting</span></div>
+      <button id="healthStatus" class="status-tag warn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="healthPanel" title="Automatic native API checks; click for details"><span id="healthDot" class="dot"></span><span id="healthStatusText" class="tagtext">API checks pending</span></button>
     </div>
   </header>
 
   <main class="chat">
     <div id="chatLog" class="chatlog" role="log" aria-live="polite" aria-relevant="additions text"></div>
     <div class="composer">
-      <div class="composer-context">
-        <span id="contextText">Reading Figma selection…</span>
-        <select id="project" class="project-select" aria-label="Current project">
-          <option value="general">General UX</option>
-          <option value="dmi-finance">DMI Finance</option>
-          <option value="express-computers">Express Computers</option>
-        </select>
-      </div>
       <form id="chatForm">
         <div class="input-shell">
-          <textarea id="prompt" maxlength="5000" rows="2" aria-label="Message UX Direct" placeholder="Ask UX Direct to plan, critique, design or refine…" required></textarea>
+          <textarea id="prompt" maxlength="5000" rows="2" aria-label="Message UX Direct" placeholder="Message UX…" required></textarea>
           <button id="send" class="send" type="submit" aria-label="Send message" title="Send message" disabled>↑</button>
         </div>
       </form>
-      <div id="activity" class="activity" role="status">Connecting to your UX Director…</div>
     </div>
   </main>
 
   <section id="healthPanel" class="health-panel" aria-label="Plugin API health-check details" hidden>
-    <div class="health-head"><strong>Plugin health checks</strong><button id="closeHealth" class="close-health" type="button" aria-label="Close health details">×</button></div>
-    <p id="healthSummary" class="health-summary">The health suite runs automatically after the backend connection is verified.</p>
+    <div class="health-head"><strong>Native API checks</strong><button id="closeHealth" class="close-health" type="button" aria-label="Close health details">×</button></div>
+    <p id="healthSummary" class="health-summary">Checks run automatically when the Preview connection is established.</p>
     <div id="healthResults" class="health-results"><div class="muted">Waiting for the first report…</div></div>
   </section>
 
@@ -134,12 +123,13 @@
     const pluginClientId = makeId();
     const pluginSessionToken = makeId() + makeId();
 
-    function setActivity(message) { $("activity").textContent = message || ""; }
+    // Keep all transient feedback inside chat bubbles or the two compact status chips.
+    function setActivity(_message) {}
     function setConnection(state, label) {
       $("connectionStatus").className = "status-tag " + state;
       $("connectionDot").className = "dot";
       $("connectionText").textContent = label;
-      $("connectionStatus").title = state === "ok" ? "UX Direct backend is reachable" : label;
+      $("connectionStatus").title = state === "ok" ? "Netlify Deploy Preview is reachable" : label;
     }
     function setHealth(state, label) {
       $("healthStatus").className = "status-tag " + state;
@@ -155,19 +145,11 @@
     function appendMessage(role, content, meta) {
       const row = document.createElement("article");
       row.className = "message " + role;
-      const label = document.createElement("div");
-      label.className = "message-label";
-      label.textContent = role === "user" ? "You" : "UX Direct";
+      row.setAttribute("aria-label", role === "user" ? "Your message" : "UX response");
       const bubble = document.createElement("div");
       bubble.className = "bubble";
       bubble.textContent = String(content || "");
-      row.append(label, bubble);
-      if (meta) {
-        const details = document.createElement("div");
-        details.className = "message-meta";
-        details.textContent = meta;
-        row.appendChild(details);
-      }
+      row.appendChild(bubble);
       $("chatLog").appendChild(row);
       $("chatLog").scrollTop = $("chatLog").scrollHeight;
       return row;
@@ -177,31 +159,12 @@
       row.id = "typing";
       row.className = "typing";
       row.setAttribute("aria-label", "UX Direct is thinking");
-      row.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span><span style="margin-left:3px">Thinking through this…</span>';
+      row.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
       $("chatLog").appendChild(row);
       $("chatLog").scrollTop = $("chatLog").scrollHeight;
     }
     function hideTyping() { const typing = $("typing"); if (typing) typing.remove(); }
-    function showSuggestions() {
-      const root = document.createElement("div");
-      root.className = "suggestions";
-      [
-        ["Plan DMI VKYC", "Help me plan the DMI Finance VKYC entry point and end-to-end journey, including consent, loading, errors and recovery."],
-        ["Review selection", "Review the selected Figma context. Tell me what metadata is available, what is still needed for a proper visual UX audit, and propose a review checklist."],
-        ["Express Batch 3", "Help me structure the Express Computers Batch 3 wireframe work into a review-ready UX plan."]
-      ].forEach((item) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "suggestion";
-        button.textContent = item[0];
-        button.addEventListener("click", () => sendChatMessage(item[1]));
-        root.appendChild(button);
-      });
-      $("chatLog").appendChild(root);
-    }
-    appendMessage("assistant", "Hi, I’m UX Direct — your conversational UX Director.\n\nTell me what you’re working on. We can reason through the problem, plan the journey, critique UX decisions, define edge states and prepare review-ready work. I’ll keep the conversation in context and be clear about what has—and hasn’t—actually been executed.");
-    showSuggestions();
-
+    appendMessage("assistant", "Hi! What are we working on?");
     async function sendTelemetry(eventName, result, summary, details) {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return false;
       try {
@@ -246,12 +209,12 @@
           throw new Error("The endpoint did not verify itself as the UX Direct backend.");
         }
         backendHealthy = true;
-        setConnection("ok", "Connected");
+        setConnection("ok", "Preview connected");
         $("send").disabled = isSending;
         return data;
       } catch (error) {
         backendHealthy = false;
-        setConnection("bad", "Offline");
+        setConnection("bad", "Preview offline");
         $("send").disabled = true;
         setActivity("UX Direct backend is unavailable. The plugin will retry automatically.");
         console.warn("[UX Direct backend health]", error);
@@ -377,7 +340,7 @@
       const checkedAt = message.checkedAt ? new Date(message.checkedAt).toLocaleTimeString() : "just now";
       const suiteInvalid = checks.length === 0;
       const healthFailed = failed > 0 || suiteInvalid;
-      const label = healthFailed ? "Health check failed" : "Health check passed";
+      const label = healthFailed ? ("API " + failed + " failed") : ("API " + passed + " passed");
       setHealth(healthFailed ? "bad" : "ok", label);
       $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + available + " available · " + notTested + " not tested · " + checkedAt + ". Team Library access remains intentionally not tested.";
       $("healthResults").replaceChildren();
@@ -450,7 +413,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             fileKey: verifiedFileKey,
-            project: $("project").value,
+            project: "general",
             messages: chatHistory.slice(-12),
             selection: {
               pageName: String(currentSelection.pageName || "").slice(0, 160),
@@ -463,7 +426,7 @@
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
         chatHistory.push({ role: "assistant", content: data.content });
-        appendMessage("assistant", data.content, (data.provider || "AI") + " · " + (data.model || "model") + " · " + Math.max(0, Math.round(Number(data.latencyMs || 0))) + " ms");
+        appendMessage("assistant", data.content);
         setActivity("Response received. Continue the conversation or give me the next task.");
       } catch (error) {
         const message = error && error.message ? error.message : "Unknown chat error";
