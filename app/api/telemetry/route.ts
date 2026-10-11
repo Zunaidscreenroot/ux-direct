@@ -9,7 +9,9 @@ function isAllowedOrigin(origin: string | null, request: Request): boolean {
 }
 function corsHeaders(origin: string | null): Record<string, string> {
   return {
-    "Access-Control-Allow-Origin": origin && ALLOWED_ORIGINS.has(origin) ? origin : "https://www.figma.com",
+    // Figma plugin iframes use an opaque "null" origin; use wildcard CORS.
+    // Route handlers still validate request origin and the approved Figma file key.
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Vary": "Origin",
