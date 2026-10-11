@@ -103,42 +103,6 @@ async function executeNativeApiHealthCheck() {
     assertUxDirectFileScope(name + " complete");
     return value;
   }
-  async function withActiveTestLabPage(label, callback) {
-    assertLab(label + " preflight");
-    var originalPage = figma.currentPage;
-    var originalPageId = originalPage.id;
-    var originalSelectionIds = Array.from(originalPage.selection).map(function (node) { return node.id; });
-    var testLabSelection = Array.from(testPage.selection);
-    try {
-      if (originalPageId !== testPage.id) {
-        await mutateFileAsync(label + " switch to Test Lab", function () {
-          return figma.setCurrentPageAsync(testPage);
-        });
-      }
-      await callback();
-    } finally {
-      // Restore the inactive lab page's own selection before leaving it.
-      // The user's original page and selection are never mutated by the probe.
-      if (figma.currentPage.id === testPage.id) {
-        mutateLab(label + " restore Test Lab selection", function () {
-          testPage.selection = testLabSelection;
-        });
-      }
-      if (figma.currentPage.id !== originalPageId) {
-        await mutateFileAsync(label + " restore original active page", function () {
-          return figma.setCurrentPageAsync(originalPage);
-        });
-      }
-      if (figma.currentPage.id !== originalPageId) {
-        throw new Error(label + ": failed to restore the original active page.");
-      }
-      var restoredSelectionIds = Array.from(originalPage.selection).map(function (node) { return node.id; });
-      if (restoredSelectionIds.length !== originalSelectionIds.length ||
-          restoredSelectionIds.some(function (id, index) { return id !== originalSelectionIds[index]; })) {
-        throw new Error(label + ": original page selection was not restored unchanged.");
-      }
-    }
-  }
   async function runTest(category, name, fn, needsLab) {
     var timeoutHandle = null;
     try {
@@ -241,6 +205,11 @@ async function executeNativeApiHealthCheck() {
     await postResult();
     return;
   }
+
+  add("Events", "Receive selection-change event from inactive page", "not-tested", "not-tested",
+    "Not tested intentionally: selectionchange is tied to the current page. Testing the UXD API Test Lab page in the background would require switching away from the user's active page.");
+  availability("Events", "Register/remove listener with figma.off", typeof figma.off === "function",
+    "Availability only; verifying removal requires triggering the event, which this check skips to preserve the user's active page.");
 
   var labReady = await runTest("Test isolation", "Find and reuse UXD API Test Lab page", async function () {
     var pages = mutateFile("locate test lab in current file", function () { return figma.root.children; });
@@ -684,59 +653,6 @@ async function executeNativeApiHealthCheck() {
       });
       if (!bytes || !bytes.length) throw new Error("PNG export produced no bytes.");
       pngExportBytes = bytes;
-    });
-
-    await runTest("Events", "Receive selection-change event on Test Lab page", async function () {
-      var baseline = rect("__UXD SELECTIONCHANGE BASELINE");
-      var target = rect("__UXD SELECTIONCHANGE TARGET");
-      await withActiveTestLabPage("selection-change event probe", async function () {
-        // Allow the page-switch event to settle, then establish a distinct
-        // baseline selection before registering the event listener.
-        await new Promise(function (resolve) { setTimeout(resolve, 160); });
-        mutateLab("set selection-change baseline", function () { testPage.selection = [baseline]; });
-        await new Promise(function (resolve) { setTimeout(resolve, 160); });
-        var firedForTarget = false;
-        var listener = function () {
-          var selected = Array.from(figma.currentPage.selection);
-          if (figma.currentPage.id === testPage.id &&
-              selected.length === 1 && selected[0].id === target.id) {
-            firedForTarget = true;
-          }
-        };
-        figma.on("selectionchange", listener);
-        try {
-          mutateLab("trigger active-page selection change", function () { testPage.selection = [target]; });
-          await new Promise(function (resolve) { setTimeout(resolve, 180); });
-          if (!firedForTarget) {
-            throw new Error("selectionchange did not fire for a real selection change on the current Test Lab page.");
-          }
-        } finally {
-          figma.off("selectionchange", listener);
-        }
-      });
-    });
-
-    await runTest("Events", "Register/remove listener with figma.off", async function () {
-      var baseline = rect("__UXD OFF API BASELINE");
-      var target = rect("__UXD OFF API TARGET");
-      await withActiveTestLabPage("listener removal probe", async function () {
-        await new Promise(function (resolve) { setTimeout(resolve, 160); });
-        mutateLab("set listener-removal baseline", function () { testPage.selection = [baseline]; });
-        await new Promise(function (resolve) { setTimeout(resolve, 160); });
-        var firedAfterRemoval = false;
-        var listener = function () {
-          var selected = Array.from(figma.currentPage.selection);
-          if (figma.currentPage.id === testPage.id &&
-              selected.length === 1 && selected[0].id === target.id) {
-            firedAfterRemoval = true;
-          }
-        };
-        figma.on("selectionchange", listener);
-        figma.off("selectionchange", listener);
-        mutateLab("trigger selection after listener removal", function () { testPage.selection = [target]; });
-        await new Promise(function (resolve) { setTimeout(resolve, 180); });
-        if (firedAfterRemoval) throw new Error("Removed selectionchange listener still fired.");
-      });
     });
 
     await runTest("Plugin bridge", "Round-trip a probe through UI messaging", async function () {
