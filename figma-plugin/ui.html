@@ -104,6 +104,7 @@
     let healthTimeout = null;
     let heartbeatTimer = null;
     let isSending = false;
+    let connectionDiagnosticRow = null;
     let currentSelection = { fileKey: null, pageName: "", selection: [] };
     const chatHistory = [];
     const handledBridgeCommands = new Set();
@@ -191,26 +192,50 @@
       return data;
     }
 
+    function connectionDiagnostic(error) {
+      const detail = error && error.message ? error.message : String(error || "Unknown network error");
+      if (/failed to fetch|networkerror|load failed|fetch failed/i.test(detail)) {
+        return "I can’t reach the Netlify Preview health endpoint. The request was blocked before a readable API response arrived, so Gemini has not been tested yet. Check that the Preview URL opens without a Netlify login/protection page, then reload this plugin from the latest manifest with the Preview domain allowed. If it still fails, the Figma plugin console will distinguish a CORS/CSP block from a server error.\n\nTechnical detail: " + detail;
+      }
+      return "The Netlify Preview health check failed before Gemini was called.\n\nTechnical detail: " + detail;
+    }
+
     async function checkConnection() {
       try {
         if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) throw new Error("Approved Figma file scope is not verified.");
         const response = await fetch(API + "/api/health?fileKey=" + encodeURIComponent(verifiedFileKey), { method: "GET", cache: "no-store" });
-        if (!response.ok) throw new Error("Backend returned HTTP " + response.status);
-        const data = await response.json();
+        const contentType = response.headers.get("content-type") || "unknown content type";
+        const isJson = contentType.includes("application/json") || contentType.includes("+json");
+        if (!response.ok) {
+          if (!isJson) throw new Error("Preview returned HTTP " + response.status + " with " + contentType + "; a Netlify login/access page may be intercepting the API request.");
+          throw new Error("Preview health endpoint returned HTTP " + response.status + " (" + contentType + ").");
+        }
+        if (!isJson) {
+          throw new Error("Preview returned " + contentType + " instead of JSON. A private-preview/login page may be intercepting the API request.");
+        }
+        let data;
+        try { data = await response.json(); }
+        catch { throw new Error("Preview health endpoint returned invalid JSON."); }
         const expectedPreviewHost = new URL(API).host;
         if (!data || data.status !== "ok" || !data.deployment ||
             data.deployment.platform !== "netlify" || data.deployment.host !== expectedPreviewHost) {
-          throw new Error("The endpoint did not verify itself as the configured Netlify Deploy Preview.");
+          const actualHost = data && data.deployment && data.deployment.host ? data.deployment.host : "missing";
+          const actualPlatform = data && data.deployment && data.deployment.platform ? data.deployment.platform : "missing";
+          throw new Error("Expected Netlify Preview host " + expectedPreviewHost + " but received platform=" + actualPlatform + ", host=" + actualHost + ", status=" + (data && data.status ? data.status : "missing") + ".");
         }
         backendHealthy = true;
         setConnection("ok", "Netlify Preview connected");
+        if (connectionDiagnosticRow) {
+          connectionDiagnosticRow.remove();
+          connectionDiagnosticRow = null;
+        }
         $("send").disabled = isSending;
         return data;
       } catch (error) {
         backendHealthy = false;
         setConnection("bad", "Netlify Preview offline");
         $("send").disabled = true;
-        setActivity("UX Direct backend is unavailable. The plugin will retry automatically.");
+        if (!connectionDiagnosticRow) connectionDiagnosticRow = appendMessage("assistant", connectionDiagnostic(error));
         console.warn("[UX Direct backend health]", error);
         return null;
       }
