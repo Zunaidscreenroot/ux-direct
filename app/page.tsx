@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 type Health = {
   service: string; status: string; checkedAt: string; mode: string;
+  deployment?: { platform: string; host: string };
   modelProviderConfigured: boolean;
   figma: { oauthConfigured: boolean; status: string; note: string };
   capabilities: { taskPlanning: boolean; figmaRead: boolean; figmaWrite: boolean; operationalLog: string };
@@ -108,7 +109,7 @@ export default function Home() {
     setPluginHealthMessage("Sending a native API test request to the active Figma plugin…");
     const clientId = activePluginSession.clientId;
     try {
-      await logDashboardEvent("Plugin health check requested", "info", "User requested the native Figma API self-test from the Vercel dashboard.");
+      await logDashboardEvent("Plugin health check requested", "info", "User requested the native Figma API self-test from the Netlify dashboard.");
       const response = await fetch("/api/plugin-bridge", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: "command", clientId, action: "native-api-health-check" })
@@ -225,7 +226,7 @@ export default function Home() {
             <div className="connection-grid">
               <article className="connection-card">
                 <div className="connection-card-top"><span className="service-icon">API</span><span className={"status-chip " + (backendHealthy ? "status-success" : "status-error")}>{backendHealthy ? "Healthy" : "Unreachable"}</span></div>
-                <h2>UX Direct backend</h2><p>Dashboard → Vercel API</p>
+                <h2>UX Direct backend</h2><p>Dashboard → Netlify production API</p>
                 <dl><div><dt>Health endpoint</dt><dd>{backendHealthy ? "Responding" : "Not verified"}</dd></div><div><dt>Task planning</dt><dd>{health?.capabilities.taskPlanning ? "Available" : "Unknown"}</dd></div><div><dt>Last checked</dt><dd>{lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : "—"}</dd></div></dl>
               </article>
               <article className="connection-card plugin-bridge-card">
@@ -281,7 +282,7 @@ export default function Home() {
                   </article>
                 ))}</div>
               )}
-              <p className="retention-note">Log retention: best-effort recent events. Vercel serverless memory may reset between requests; structured runtime events are also emitted to Vercel logs. Durable cross-session history needs persistent storage.</p>
+              <p className="retention-note">Log retention: best-effort recent events. Netlify serverless memory may reset between requests; structured runtime events are also emitted to Netlify runtime logs. Durable cross-session history needs persistent storage.</p>
             </div>
             <footer>UX DIRECT <span>·</span> CONNECTIONS &amp; OPERATIONS</footer>
           </div>
