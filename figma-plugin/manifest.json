@@ -1,0 +1,12 @@
+{
+  "name": "UX Direct",
+  "id": "ux-direct-local-dev",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": ["https://ux-direct.vercel.app"],
+    "reasoning": "UX Direct sends the user's prompt and selected node metadata to its backend to create a task plan. It does not upload file contents or modify the design in this MVP."
+  }
+}
