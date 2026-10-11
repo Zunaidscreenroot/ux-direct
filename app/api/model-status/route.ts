@@ -68,9 +68,9 @@ async function discoverModels(provider: ProviderId) {
 function sanitizeProviderMessage(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const message = value
-    .replace(/Bearer\\s+[^\\s]+/gi, "Bearer [redacted]")
+    .replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]")
     .replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]")
-    .replace(/[\\r\\n\\t]+/g, " ")
+    .replace(/[\r\n\t]+/g, " ")
     .trim()
     .slice(0, 240);
   return message || undefined;
@@ -90,7 +90,9 @@ async function probeModel(provider: ProviderId, model: string) {
       model,
       messages: [{ role: "user", content: "Reply with exactly: UXD_MODEL_CHECK_OK" }],
       temperature: 0,
-      max_tokens: 12
+      // Reasoning-oriented free models can spend more than 12 tokens thinking
+      // before producing the tiny confirmation text. Keep a modest hard cap.
+      max_tokens: 128
     })
   }, 18000);
   if (!response.ok) {
@@ -115,16 +117,68 @@ async function probeModel(provider: ProviderId, model: string) {
       latencyMs: Date.now() - startedAt
     };
   }
-  const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }>; model?: string };
-  const content = payload.choices?.[0]?.message?.content;
-  const responseReceived = typeof content === "string" && content.trim().length > 0;
+  const payload = await response.json() as {
+    choices?: Array<{
+      text?: unknown;
+      finish_reason?: unknown;
+      native_finish_reason?: unknown;
+      error?: { message?: unknown; code?: unknown };
+      message?: {
+        content?: unknown;
+        reasoning?: unknown;
+        refusal?: unknown;
+        tool_calls?: unknown;
+      };
+    }>;
+    error?: { message?: unknown; code?: unknown };
+    usage?: { completion_tokens?: unknown };
+    model?: string;
+  };
+  const choice = payload.choices?.[0];
+  const message = choice?.message;
+  const rawContent = message?.content ?? choice?.text;
+  const content = typeof rawContent === "string"
+    ? rawContent
+    : Array.isArray(rawContent)
+      ? rawContent.map(part => {
+          if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text;
+          return "";
+        }).join("")
+      : "";
+  const responseReceived = content.trim().length > 0;
+  const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined;
+  const nativeFinishReason = typeof choice?.native_finish_reason === "string" ? choice.native_finish_reason : undefined;
+  const choiceError = sanitizeProviderMessage(choice?.error?.message ?? payload.error?.message);
+  const choiceErrorCode = choice?.error?.code ?? payload.error?.code;
+  const messageFields = message ? Object.keys(message).filter(key => [
+    "role", "content", "reasoning", "refusal", "tool_calls"
+  ].includes(key)) : [];
+  let reason: string | undefined;
+  if (!responseReceived) {
+    if (choiceError) {
+      reason = \`OpenRouter returned an error in the HTTP 200 response: \${choiceError}\`;
+    } else if (finishReason === "length" || nativeFinishReason === "length") {
+      reason = "The model hit the 128-token probe limit before returning final text.";
+    } else if (finishReason === "error" || nativeFinishReason === "error") {
+      reason = "The provider reported a model-generation error despite HTTP 200.";
+    } else if (typeof message?.reasoning === "string" && message.reasoning.trim()) {
+      reason = "The model returned reasoning metadata but no final answer text.";
+    } else {
+      reason = "HTTP 200 had no usable text in message.content or choice.text.";
+    }
+  }
   return {
     available: responseReceived,
     provider,
     model,
     status: response.status,
     responseReceived,
-    ...(responseReceived ? {} : { reason: "HTTP response succeeded but choices[0].message.content was empty or missing." }),
+    ...(finishReason ? { finishReason } : {}),
+    ...(nativeFinishReason ? { nativeFinishReason } : {}),
+    ...(messageFields.length ? { messageFields } : {}),
+    ...(typeof choiceErrorCode === "string" || typeof choiceErrorCode === "number" ? { providerCode: choiceErrorCode } : {}),
+    ...(typeof payload.usage?.completion_tokens === "number" ? { completionTokens: payload.usage.completion_tokens } : {}),
+    ...(!responseReceived && reason ? { reason } : {}),
     latencyMs: Date.now() - startedAt,
     checkedAt: new Date().toISOString()
   };
