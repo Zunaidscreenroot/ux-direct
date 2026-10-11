@@ -84,7 +84,6 @@
   }
   const pluginClientId = makeId();
   const pluginSessionToken = makeId() + makeId();
-  let lastBridgeCommandId = "";
   async function bridgeRequest(payload) {
     const fileKey = verifiedFileKey || currentSelection.fileKey;
     if (!fileKey || fileKey !== ALLOWED_FILE_KEY) throw new Error("Plugin bridge blocked: approved file scope is not verified.");
@@ -98,16 +97,11 @@
     return data;
   }
   async function syncPluginBridge() {
+    // Maintain the online session only. Health checks are intentionally local/manual
+    // from the plugin CTA; opening the plugin or receiving a dashboard command will
+    // never launch the native API test suite automatically.
     try {
-      const data = await bridgeRequest({ mode: "heartbeat" });
-      if (data.command && data.command.commandId && data.command.commandId !== lastBridgeCommandId) {
-        lastBridgeCommandId = data.command.commandId;
-        if (data.command.action === "native-api-health-check") {
-          status("Running a native Figma API health check requested from Vercel…");
-          void sendTelemetry("Vercel requested native API health check", "info", "Executing dashboard-issued plugin health check.", { requestId: data.command.commandId });
-          parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: data.command.commandId } }, "*");
-        }
-      }
+      await bridgeRequest({ mode: "heartbeat" });
     } catch (error) {
       console.warn("[UX Direct bridge]", error);
     }
