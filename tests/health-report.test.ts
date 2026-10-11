@@ -25,7 +25,7 @@ function makeReport(extraChecks: PluginHealthCheck[] = []): PluginHealthReport {
       status: "not-tested",
       reason: "Not tested intentionally: shared-library lookup and import are out of scope.",
     },
-    ...Array.from({ length: 46 }, (_, index) => ({
+    ...Array.from({ length: 51 }, (_, index) => ({
       category: "Styles",
       name: "Availability probe " + (index + 1),
       level: "availability" as const,
@@ -46,7 +46,7 @@ function makeReport(extraChecks: PluginHealthCheck[] = []): PluginHealthReport {
 
 test("health audit accepts a complete report with reconciled totals and intentional library exclusion", () => {
   const audit = inspectHealthReport(makeReport());
-  assert.equal(audit.total, 53);
+  assert.equal(audit.total, 58);
   assert.equal(audit.countsMatch, true);
   assert.equal(audit.actionCoverageComplete, true);
   assert.equal(audit.teamLibraryScopeCorrect, true);
