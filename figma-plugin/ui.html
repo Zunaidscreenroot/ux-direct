@@ -647,7 +647,7 @@
           if (actual) {
             currentModel = actual;
             modelAvailable = true;
-            setModelStatus("ok", "OpenRouter connected", actual.label + " returned the chat response.");
+            setModelStatus("ok", actual.tier === "paid" ? "Paid model connected" : "OpenRouter connected", actual.label + " returned the chat response.");
           }
         }
         appendMessage("assistant", data.content);
