@@ -47,7 +47,7 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
   if (env.OPENROUTER_API_KEY) providers.push({
     name: "openrouter", baseUrl: trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"),
-    apiKey: env.OPENROUTER_API_KEY, models: csv(env.OPENROUTER_MODELS, "openrouter/auto"), kind: "free-tier"
+    apiKey: env.OPENROUTER_API_KEY, models: csv(env.OPENROUTER_MODELS), kind: "free-tier"
   });
   if (env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) providers.push({
     name: "gemini", baseUrl: trimSlash(env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai"),
@@ -103,9 +103,12 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
 export function resolveProvider(model: string, providers: ProviderConfig[]): ProviderConfig {
   const exact = providers.find(provider => provider.models.includes(model));
   if (exact) return exact;
+  // Local/custom endpoints may intentionally expose a default model allowlist.
+  const defaults = providers.filter(provider => provider.models.includes("default") && ["ollama", "custom"].includes(provider.name));
+  if (defaults.length === 1) return defaults[0];
   const prefix = model.includes("/") ? model.split("/", 1)[0].toLowerCase() : "";
   const byName = providers.find(provider => provider.name.toLowerCase() === prefix);
-  if (byName && (byName.models.includes("default") || byName.models.includes("openrouter/auto"))) return byName;
+  if (byName && byName.models.includes("openrouter/auto")) return byName;
   throw new GatewayError(`Model "${model}" is not configured in the gateway allowlist.`, 400);
 }
 
