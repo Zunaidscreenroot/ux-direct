@@ -255,10 +255,21 @@ async function runNativeApiHealthCheck(commandId) {
       var found = await mutateLabAsync("resolve test node using getNodeByIdAsync", function () { return figma.getNodeByIdAsync(harness.id); });
       if (!found || found.id !== harness.id) throw new Error("getNodeByIdAsync failed to resolve the test frame.");
     });
-    await runTest("Node inspection", "Resolve a node by legacy synchronous ID lookup", async function () {
-      if (typeof figma.getNodeById !== "function") throw new Error("Legacy getNodeById is unavailable.");
-      var found = mutateLab("resolve test node using getNodeById", function () { return figma.getNodeById(harness.id); });
-      if (!found || found.id !== harness.id) throw new Error("getNodeById failed to resolve the test frame.");
+    await runTest("Node inspection", "Verify legacy getNodeById restriction in dynamic-page mode", async function () {
+      if (typeof figma.getNodeById !== "function") {
+        // The deprecated sync method may be absent; the async ID lookup above is the supported path.
+        return;
+      }
+      var expectedBlock = false;
+      try {
+        assertLab("verify dynamic-page sync lookup restriction");
+        figma.getNodeById(harness.id);
+      } catch (error) {
+        var message = error && error.message ? error.message : String(error);
+        if (/dynamic-page|deprecated|async/i.test(message)) expectedBlock = true;
+        else throw error;
+      }
+      if (!expectedBlock) throw new Error("Legacy getNodeById was not blocked despite dynamic-page mode; review manifest/API compatibility.");
     });
     await runTest("Viewport", "Read viewport zoom and bounds", async function () {
       var bounds = mutateLab("read viewport bounds", function () { return figma.viewport.bounds; });
