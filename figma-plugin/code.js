@@ -479,9 +479,10 @@ async function executeNativeApiHealthCheck() {
     await runTest("Export", "Export shape to SVG", async function () {
       var node = rect("UXD SVG export probe");
       if (node.width !== 48 || node.height !== 36) mutateLab("size SVG export probe", function () { node.resize(48, 36); });
-      var bytes = await mutateLabAsync("export test shape to SVG", function () { return node.exportAsync({ format: "SVG" }); });
-      if (!bytes || !bytes.length) throw new Error("SVG export produced no bytes.");
-      var svg = new TextDecoder().decode(bytes);
+      var svg = await mutateLabAsync("export test shape to SVG string", function () {
+        return node.exportAsync({ format: "SVG_STRING" });
+      });
+      if (typeof svg !== "string" || !svg.length) throw new Error("SVG export produced no string.");
       if (svg.indexOf("<svg") === -1) throw new Error("SVG export did not contain an SVG root element.");
     });
 
@@ -689,10 +690,20 @@ async function executeNativeApiHealthCheck() {
       "Availability only; local effect styles are not fetched during this check.");
     availability("Styles", "figma.getLocalGridStylesAsync", typeof figma.getLocalGridStylesAsync === "function",
       "Availability only; local grid styles are not fetched during this check.");
-    availability("Components", "figma.getLocalComponentsAsync", typeof figma.getLocalComponentsAsync === "function",
-      "Availability only; the complete local component library is not enumerated.");
-    availability("Components", "figma.getLocalComponentSetsAsync", typeof figma.getLocalComponentSetsAsync === "function",
-      "Availability only; the complete local component-set library is not enumerated.");
+    await runTest("Components", "Find component nodes with findAllWithCriteria", async function () {
+      var components = harness.findAllWithCriteria({ types: ["COMPONENT"] });
+      if (!Array.isArray(components)) throw new Error("Component criteria search returned an invalid result.");
+      if (!components.some(function (node) { return node.type === "COMPONENT"; })) {
+        throw new Error("No component fixture was found by the supported criteria search.");
+      }
+    });
+    await runTest("Components", "Find component sets with findAllWithCriteria", async function () {
+      var componentSets = harness.findAllWithCriteria({ types: ["COMPONENT_SET"] });
+      if (!Array.isArray(componentSets)) throw new Error("Component-set criteria search returned an invalid result.");
+      if (!componentSets.some(function (node) { return node.type === "COMPONENT_SET"; })) {
+        throw new Error("No component-set fixture was found by the supported criteria search.");
+      }
+    });
     availability("Styles", "figma.getStyleByIdAsync", typeof figma.getStyleByIdAsync === "function",
       "Availability only; no style is loaded by ID.");
     availability("Document loading", "figma.loadAllPagesAsync", typeof figma.loadAllPagesAsync === "function",
