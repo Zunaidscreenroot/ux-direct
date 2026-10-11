@@ -204,12 +204,12 @@ test("rate limiter blocks bursts and resets after the window", async () => {
 
 test("monthly budget blocks paid calls when pricing is missing or projected cost exceeds cap", async () => {
   const { assertBudgetAllows } = await import("../src/model-gateway/usage-store");
-  assert.throws(() => assertBudgetAllows(100, 100, {
+  await assert.rejects(() => assertBudgetAllows(100, 100, {
     MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000",
     MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M: "0",
     MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: "0"
   }), /prices are configured/);
-  assert.throws(() => assertBudgetAllows(100_000, 100_000, {
+  await assert.rejects(() => assertBudgetAllows(100_000, 100_000, {
     MODEL_GATEWAY_MONTHLY_BUDGET_INR: "1",
     MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M: "1000",
     MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: "1000"
@@ -218,13 +218,13 @@ test("monthly budget blocks paid calls when pricing is missing or projected cost
 
 test("usage ledger records token-level counts and computes monthly budget totals", async () => {
   const { recordModelUsage, getBudgetSnapshot } = await import("../src/model-gateway/usage-store");
-  recordModelUsage({
+  await recordModelUsage({
     id: "usage-test-1", at: new Date().toISOString(), requestId: "req-test",
     provider: "groq", model: "openai/gpt-oss-20b", tier: "free-tier",
     promptTokens: 12, completionTokens: 8, totalTokens: 20, estimatedCostInr: 0,
     latencyMs: 145, status: "success"
   });
-  const snapshot = getBudgetSnapshot();
+  const snapshot = await getBudgetSnapshot();
   assert.ok(snapshot.records.some(record => record.requestId === "req-test" && record.totalTokens === 20));
   assert.equal(snapshot.currency, "INR");
 });
