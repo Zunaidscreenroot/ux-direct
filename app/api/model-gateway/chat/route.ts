@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   }
   const ip = request.headers.get("x-nf-client-connection-ip") ||
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-  const limit = checkGatewayRateLimit(`${ip}:${request.headers.get("x-model-gateway-key") || request.headers.get("authorization") || "authenticated"}`);
+  const limit = checkGatewayRateLimit(ip);
   if (!limit.allowed) {
     return NextResponse.json({ error: "Gateway request rate limit exceeded.", retryAfterSeconds: limit.retryAfterSeconds }, {
       status: 429, headers: { "Cache-Control": "no-store", "Retry-After": String(limit.retryAfterSeconds), "X-RateLimit-Limit": String(limit.limit), "X-RateLimit-Remaining": String(limit.remaining) }
