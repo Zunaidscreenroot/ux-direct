@@ -8,10 +8,13 @@
     :root { color-scheme: light dark; font: 12px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     * { box-sizing: border-box; }
     body { margin: 0; padding: 16px; color: var(--figma-color-text, #202124); background: var(--figma-color-bg, #fff); }
-    header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:16px; }
     .brand { display:flex; gap:9px; align-items:center; font-size:15px; font-weight:700; }
     .mark { display:grid; place-items:center; width:28px; height:28px; border-radius:9px; background:#242424; color:#fff; font-weight:800; }
-    .pill { border:1px solid var(--figma-color-border); border-radius:999px; padding:5px 8px; color:var(--figma-color-text-secondary); font-size:10px; }
+    .pill { border:1px solid var(--figma-color-border); border-radius:999px; padding:5px 8px; color:var(--figma-color-text-secondary); font-size:10px; white-space:nowrap; }
+    .connection { display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px solid var(--figma-color-border); border-radius:9px; margin-bottom:12px; font-size:11px; }
+    .dot { width:7px; height:7px; border-radius:50%; background:#d6a23e; }
+    .dot.ok { background:#26966b; }
     h1 { font-size:20px; line-height:1.2; margin:8px 0; letter-spacing:-.5px; }
     .sub { color:var(--figma-color-text-secondary); line-height:1.5; margin:0 0 16px; }
     label { display:block; font-weight:600; margin:14px 0 7px; }
@@ -34,6 +37,7 @@
 </head>
 <body>
   <header><div class="brand"><span class="mark">ux</span> UX Direct</div><span class="pill">FIGMA COCKPIT · MVP</span></header>
+  <div class="connection" aria-live="polite"><span id="connectionDot" class="dot"></span><strong id="connectionText">Checking backend connection…</strong></div>
   <h1>What should we improve?</h1>
   <p class="sub">Describe the product problem in natural language. UX Direct will prepare a structured plan and explain its rationale. This MVP is read-only.</p>
   <label for="project">Project</label>
@@ -44,56 +48,62 @@
   <button id="submit" class="primary">Plan with UX Direct ↗</button>
   <div id="status" class="status" role="status">Ready. No Figma changes will be made.</div>
   <div id="result" class="result" hidden></div>
-  <footer>Backend processing, task progress, rationale and audit details belong on the UX Direct backend. This plugin sends the prompt and selected node metadata only. It does not send full document contents or edit layers in this MVP.</footer>
+  <footer>Connected means the plugin can reach the UX Direct backend. Figma account OAuth is a separate setup. This plugin sends prompt text and selected node metadata only; it does not edit layers in this MVP.</footer>
 <script>
+  const API = "https://ux-direct.vercel.app";
   const $ = (id) => document.getElementById(id);
   let currentSelection = { fileKey: null, pageName: "", selection: [] };
   const status = (message) => { $("status").textContent = message; };
+  async function sendTelemetry(event, result, summary, details = {}) {
+    try { await fetch(API + "/api/telemetry", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "figma-plugin", event, status: result, summary, ...details }) }); } catch (_) {}
+  }
+  async function checkConnection() {
+    try {
+      const response = await fetch(API + "/api/health", { method: "GET" });
+      if (!response.ok) throw new Error("Backend returned " + response.status);
+      const data = await response.json();
+      $("connectionDot").className = "dot ok";
+      $("connectionText").textContent = "Connected to UX Direct · backend healthy";
+      await sendTelemetry("Plugin health check", "success", "Figma plugin reached UX Direct health endpoint.");
+      return data;
+    } catch (error) {
+      $("connectionDot").className = "dot";
+      $("connectionText").textContent = "Not connected · backend unreachable";
+      await sendTelemetry("Plugin health check", "error", "Figma plugin could not reach UX Direct health endpoint.");
+      return null;
+    }
+  }
   parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
   $("refresh").addEventListener("click", () => parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*"));
   window.onmessage = (event) => {
     const message = event.data && event.data.pluginMessage;
     if (!message || message.type !== "selection") return;
     currentSelection = message;
-    const target = $("selection");
-    target.replaceChildren();
+    const target = $("selection"); target.replaceChildren();
     if (!message.selection.length) {
-      target.textContent = "No layers selected. Select one or more frames/layers in Figma.";
-      target.className = "muted";
-      return;
+      target.textContent = "No layers selected. Select one or more frames/layers in Figma."; target.className = "muted"; return;
     }
     target.className = "";
-    const meta = document.createElement("div");
-    meta.className = "muted";
-    meta.textContent = "Page: " + message.pageName + " · " + message.selection.length + " selected";
-    target.appendChild(meta);
+    const meta = document.createElement("div"); meta.className = "muted";
+    meta.textContent = "Page: " + message.pageName + " · " + message.selection.length + " selected"; target.appendChild(meta);
     message.selection.slice(0, 8).forEach((node) => {
-      const row = document.createElement("div");
-      row.className = "node";
-      const icon = document.createElement("span");
-      icon.textContent = node.type === "FRAME" ? "▣" : "◇";
-      const title = document.createElement("strong");
-      title.textContent = node.name;
-      const detail = document.createElement("span");
-      detail.className = "muted";
-      detail.textContent = " · " + node.type + " · " + node.id;
-      row.append(icon, title, detail);
-      target.appendChild(row);
+      const row = document.createElement("div"); row.className = "node";
+      const icon = document.createElement("span"); icon.textContent = node.type === "FRAME" ? "▣" : "◇";
+      const title = document.createElement("strong"); title.textContent = node.name;
+      const detail = document.createElement("span"); detail.className = "muted"; detail.textContent = " · " + node.type + " · " + node.id;
+      row.append(icon, title, detail); target.appendChild(row);
     });
-    if (message.selection.length > 8) {
-      const more = document.createElement("div"); more.className = "muted"; more.textContent = "+" + (message.selection.length - 8) + " more"; target.appendChild(more);
-    }
+    if (message.selection.length > 8) { const more = document.createElement("div"); more.className = "muted"; more.textContent = "+" + (message.selection.length - 8) + " more"; target.appendChild(more); }
   };
   $("submit").addEventListener("click", async () => {
     const prompt = $("prompt").value.trim();
     if (prompt.length < 5) { status("Add a little more detail to your brief (at least 5 characters)."); return; }
-    $("submit").disabled = true;
-    $("result").hidden = true;
-    status("Sending task to UX Direct backend…");
+    $("submit").disabled = true; $("result").hidden = true; status("Sending task to UX Direct backend…");
+    const startedAt = Date.now();
+    await sendTelemetry("Task request started", "info", "A planning request was initiated from the Figma plugin.", { project: $("project").value });
     try {
-      const response = await fetch("https://ux-direct.vercel.app/api/tasks/plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await fetch(API + "/api/tasks/plan", {
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: prompt.split(/[.!?\n]/)[0].slice(0, 160) || "UX task",
           request: prompt + (currentSelection.selection.length ? "\n\nSelected Figma context (metadata only): " + JSON.stringify({ pageName: currentSelection.pageName, selection: currentSelection.selection }) : "\n\nNo Figma layers were selected."),
@@ -101,14 +111,19 @@
         })
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Backend returned " + response.status);
+      const durationMs = Date.now() - startedAt;
+      if (!response.ok) {
+        await sendTelemetry("Task request failed", "error", "Backend rejected the planning request.", { requestId: data.requestId, project: $("project").value, durationMs });
+        throw new Error((data.error || "Backend returned " + response.status) + (data.requestId ? " · Request ID " + data.requestId : ""));
+      }
       renderPlan(data);
-      status("Plan created · mock mode · ₹0 API cost. No Figma changes made.");
+      status("Response received · " + (data.mode || "unknown") + " mode · ₹" + (data.cost && data.cost.amount != null ? data.cost.amount : "?") + " API cost · Request " + (data.requestId || "recorded") + ". No Figma changes made.");
+      await sendTelemetry("Task response received", "success", "Planning response returned to the plugin UI.", { requestId: data.requestId, project: $("project").value, durationMs, mode: data.mode });
     } catch (error) {
-      status("Could not reach the backend. Check the deployment and Figma plugin network permissions. Details: " + (error instanceof Error ? error.message : String(error)));
-    } finally {
-      $("submit").disabled = false;
-    }
+      const message = error instanceof Error ? error.message : String(error);
+      status("Could not complete the request. " + message);
+      await sendTelemetry("Task request failed", "error", "Plugin request failed before a successful response was rendered.");
+    } finally { $("submit").disabled = false; }
   });
   function renderPlan(data) {
     const root = $("result"); root.replaceChildren(); root.hidden = false;
@@ -126,6 +141,7 @@
     (data.plan && data.plan.qualityChecks || []).forEach((check) => { const li = document.createElement("li"); li.textContent = check; checks.appendChild(li); });
     root.appendChild(checks);
   }
+  checkConnection();
 </script>
 </body>
 </html>

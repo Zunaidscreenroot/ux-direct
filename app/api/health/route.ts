@@ -1,0 +1,31 @@
+import { NextResponse } from "next/server";
+
+const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
+function corsHeaders(origin: string | null): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": origin && ALLOWED_ORIGINS.has(origin) ? origin : "https://www.figma.com",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Vary": "Origin",
+    "Cache-Control": "no-store"
+  };
+}
+export async function OPTIONS(request: Request) {
+  return new Response(null, { status: 204, headers: corsHeaders(request.headers.get("origin")) });
+}
+export async function GET(request: Request) {
+  const origin = request.headers.get("origin");
+  if (origin && !ALLOWED_ORIGINS.has(origin)) return NextResponse.json({ status: "blocked", error: "Origin not allowed" }, { status: 403, headers: corsHeaders(origin) });
+  const figmaOAuthConfigured = Boolean(process.env.FIGMA_CLIENT_ID && process.env.FIGMA_CLIENT_SECRET && process.env.FIGMA_REDIRECT_URI);
+  return NextResponse.json({
+    service: "ux-direct-backend", status: "ok", checkedAt: new Date().toISOString(),
+    mode: process.env.MODEL_PROVIDER || "mock",
+    modelProviderConfigured: Boolean(process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY),
+    figma: {
+      oauthConfigured: figmaOAuthConfigured,
+      status: figmaOAuthConfigured ? "configured_not_verified" : "not_configured",
+      note: figmaOAuthConfigured ? "OAuth credentials are present; user authorization has not been verified by this endpoint." : "Figma account login is not configured yet. Plugin-to-backend reachability is checked separately."
+    },
+    capabilities: { taskPlanning: true, figmaRead: false, figmaWrite: false, operationalLog: "best_effort_runtime" }
+  }, { headers: corsHeaders(origin) });
+}
