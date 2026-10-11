@@ -42,9 +42,9 @@ const csv = (value?: string, fallback = "") =>
 
 export function providersFromEnv(env: Record<string, string | undefined> = process.env): ProviderConfig[] {
   const providers: ProviderConfig[] = [];
-  if (env.MODEL_GATEWAY_MOCK === "true" || (!env.NODE_ENV && env.MODEL_GATEWAY_MOCK !== "false")) {
-    providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
-  }
+  // Always register a deterministic mock so tests and empty-credential installs work.
+  // Task routing prefers configured real providers and uses mock only as the last resort.
+  providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
   if (env.OPENROUTER_API_KEY) providers.push({
     name: "openrouter", baseUrl: trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"),
     apiKey: env.OPENROUTER_API_KEY, models: csv(env.OPENROUTER_MODELS, "openrouter/auto"), kind: "free-tier"
