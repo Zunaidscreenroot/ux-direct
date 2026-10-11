@@ -164,9 +164,9 @@ export async function chatCompletion(
   const usageStore = await import("./usage-store");
   if (provider.kind === "paid") {
     try {
-      usageStore.assertBudgetAllows(request.messages.reduce((n, m) => n + m.content.length, 0), request.max_tokens ?? 1024);
+      await usageStore.assertBudgetAllows(request.messages.reduce((n, m) => n + m.content.length, 0), request.max_tokens ?? 1024, process.env, resolvedModel);
     } catch (error) {
-      usageStore.recordModelUsage({
+      await usageStore.recordModelUsage({
         requestId, provider: provider.name, model: resolvedModel, tier: "paid",
         promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCostInr: 0,
         latencyMs: Date.now() - started, status: "blocked",
@@ -178,7 +178,7 @@ export async function chatCompletion(
   if (provider.kind === "mock" || provider.baseUrl.startsWith("mock://")) {
     const lastUser = [...request.messages].reverse().find(m => m.role === "user")?.content ?? "";
     const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-    usageStore.recordModelUsage({ requestId, provider: provider.name, model: resolvedModel, tier: "mock", promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCostInr: 0, latencyMs: Date.now() - started, status: "success" });
+    await usageStore.recordModelUsage({ requestId, provider: provider.name, model: resolvedModel, tier: "mock", promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCostInr: 0, latencyMs: Date.now() - started, status: "success" });
     return { id: requestId, model: resolvedModel, content: `[UX Direct mock — no model API called] Received ${lastUser.length} characters. Configure a local or free-tier provider to enable real inference.`, provider: provider.name, latencyMs: Date.now() - started, usage };
   }
   const fetchImpl = options.fetchImpl ?? fetch;
