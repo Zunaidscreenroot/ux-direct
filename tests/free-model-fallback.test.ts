@@ -4,6 +4,7 @@ import {
   chatCompletionWithFreeFallback,
   getFreeChatModelOptions,
   providersForFreeChat,
+  providersFromEnv,
   type ProviderConfig
 } from "../src/model-gateway";
 
@@ -17,10 +18,17 @@ const providers: ProviderConfig[] = [
   }
 ];
 
-test("free model options include only configured OpenRouter :free IDs", () => {
-  const options = getFreeChatModelOptions(providers);
-  assert.deepEqual(options.map(option => option.id), ["provider/static-list:free"]);
+test("free model options combine provider IDs with live-discovered :free IDs", () => {
+  const options = getFreeChatModelOptions(providers, ["live/discovered-model:free", "gpt-4o"]);
+  assert.deepEqual(options.map(option => option.id), ["provider/static-list:free", "live/discovered-model:free"]);
   assert.equal(options.every(option => option.provider === "openrouter" && option.tier === "free-tier"), true);
+});
+
+test("OpenRouter provider does not require an OPENROUTER_MODELS environment variable", () => {
+  const configured = providersFromEnv({ OPENROUTER_API_KEY: "test-key" })
+    .find(provider => provider.name === "openrouter");
+  assert.deepEqual(configured?.models, []);
+  assert.equal(configured?.apiKey, "test-key");
 });
 
 test("selected live OpenRouter :free model is allowed without adding paid IDs", () => {
