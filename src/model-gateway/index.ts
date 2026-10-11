@@ -66,10 +66,6 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
     name: "openai", baseUrl: trimSlash(env.OPENAI_BASE_URL || "https://api.openai.com/v1"),
     apiKey: env.OPENAI_API_KEY, models: csv(env.OPENAI_MODELS, "gpt-4o-mini"), kind: "paid"
   });
-  if (env.ANTHROPIC_API_KEY) providers.push({
-    name: "anthropic", baseUrl: trimSlash(env.ANTHROPIC_BASE_URL || "https://api.anthropic.com/v1"),
-    apiKey: env.ANTHROPIC_API_KEY, models: csv(env.ANTHROPIC_MODELS), kind: "paid"
-  });
   if (env.CUSTOM_OPENAI_COMPATIBLE_BASE_URL) providers.push({
     name: "custom", baseUrl: trimSlash(env.CUSTOM_OPENAI_COMPATIBLE_BASE_URL),
     apiKey: env.CUSTOM_OPENAI_COMPATIBLE_API_KEY, models: csv(env.CUSTOM_OPENAI_COMPATIBLE_MODELS, "default"),
