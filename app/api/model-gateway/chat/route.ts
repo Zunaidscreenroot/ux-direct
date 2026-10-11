@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { chatCompletion, GatewayError, type ChatMessage } from "@/src/model-gateway";
+import { chatCompletionWithFallback, GatewayError, type ChatMessage } from "@/src/model-gateway";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "max_tokens must be an integer between 1 and 16384." }, { status: 400 });
   }
   try {
-    const result = await chatCompletion({
+    const result = await chatCompletionWithFallback({
       model: value.model,
       messages,
       ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
