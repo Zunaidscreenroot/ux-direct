@@ -103,3 +103,14 @@ test("paid provider keys do not enable paid routing without explicit opt-in", as
   const enabled = providersFromEnv({ NODE_ENV: "production", OPENAI_API_KEY: "test-only", ALLOW_PAID_MODELS: "true" });
   assert.equal(enabled.some(p => p.name === "openai" && p.models.includes("gpt-4o-mini")), true);
 });
+
+
+test("UX task aliases resolve to configured providers and safely fall back to mock", async () => {
+  const providers = [{ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" as const }];
+  const result = await chatCompletion({
+    model: "uxd/critique",
+    messages: [{ role: "user", content: "Review this screen." }]
+  }, { providers });
+  assert.equal(result.model, "mock/ux-direct");
+  assert.equal(result.provider, "mock");
+});
