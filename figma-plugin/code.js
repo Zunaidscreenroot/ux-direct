@@ -15,6 +15,8 @@ function getUxDirectScopeDecision() {
   return { allowed: true, reason: "Approved file identity verified." };
 }
 function startScopedPlugin() {
+  // Create the UI only after the file allowlist succeeds, before any UI messages.
+  figma.showUI(__html__, { width: 380, height: 720, themeColors: true });
 function getSelectionSummary() {
   return figma.currentPage.selection.map(function (node) {
     return { id: node.id, name: node.name, type: node.type, visible: node.visible,
