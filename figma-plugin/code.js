@@ -1,5 +1,5 @@
 // STRICT SCOPE: reject every file except the exact allowlisted key before reading document pages.
-// STRICT SCOPE: this plugin is disabled until the exact approved Figma file key is configured.
+// STRICT SCOPE: plugin entry runs only after the exact approved Figma file key matches.
 var UXD_ALLOWED_FILE_NAME = "Zunaid_Workspace";
 var UXD_ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
 function getUxDirectScopeDecision() {
@@ -31,8 +31,10 @@ function sendSelection() {
   figma.ui.postMessage({ type: "selection", fileKey: figma.fileKey || null,
     pageName: figma.currentPage.name, selection: getSelectionSummary() });
 }
+var selectionChangeListenerRegistered = false;
 figma.on("selectionchange", sendSelection);
-function runNativeApiHealthCheck(commandId) {
+selectionChangeListenerRegistered = true;
+async function runNativeApiHealthCheck(commandId) {
   var checks = [];
   function add(category, name, level, ok, reason) {
     var status = level === "not-tested" ? "not-tested" : (ok ? "success" : "error");
@@ -46,6 +48,14 @@ function runNativeApiHealthCheck(commandId) {
   function safeRead(category, name, fn) {
     try { fn(); add(category, name, "functional", true, "Read-only operation succeeded"); }
     catch (e) { add(category, name, "functional", false, e && e.message ? e.message : String(e)); }
+  }
+  async function safeReadAsync(category, name, fn) {
+    try {
+      var reason = await fn();
+      add(category, name, "functional", true, typeof reason === "string" ? reason : "Read-only async operation succeeded");
+    } catch (e) {
+      add(category, name, "functional", false, e && e.message ? e.message : String(e));
+    }
   }
   safeRead("Selection", "Read current selection", function () {
     if (!Array.isArray(figma.currentPage.selection)) throw new Error("Selection is not an array");
@@ -68,6 +78,26 @@ function runNativeApiHealthCheck(commandId) {
   safeRead("Plugin bridge", "Read UI bridge and postMessage", function () {
     if (!figma.ui || typeof figma.ui.postMessage !== "function") throw new Error("UI message bridge unavailable");
   });
+  await safeReadAsync("Node inspection", "Resolve current page by ID (async)", async function () {
+    if (typeof figma.getNodeByIdAsync !== "function") throw new Error("getNodeByIdAsync is unavailable");
+    var page = figma.currentPage;
+    var resolved = await figma.getNodeByIdAsync(page.id);
+    if (!resolved || resolved.id !== page.id) throw new Error("Could not resolve the active page by its ID");
+    return "Read-only lookup succeeded for the active page; no page or document state changed";
+  });
+  await safeReadAsync("Variables", "Read local variable definitions", async function () {
+    if (!figma.variables || typeof figma.variables.getLocalVariablesAsync !== "function" ||
+        typeof figma.variables.getLocalVariableCollectionsAsync !== "function") {
+      throw new Error("Read-only local variable APIs are unavailable");
+    }
+    var variables = await figma.variables.getLocalVariablesAsync();
+    var collections = await figma.variables.getLocalVariableCollectionsAsync();
+    if (!Array.isArray(variables) || !Array.isArray(collections)) {
+      throw new Error("Variable API did not return arrays");
+    }
+    return "Read-only current-file query succeeded (" + variables.length + " variables, " +
+      collections.length + " collections); nothing was created or changed";
+  });
   [
     ["Selection","figma.on / selectionchange",figma.on],["Selection","figma.off",figma.off],
     ["Node inspection","figma.getNodeByIdAsync",figma.getNodeByIdAsync],["Node inspection","figma.getNodeById (legacy)",figma.getNodeById],
@@ -77,7 +107,7 @@ function runNativeApiHealthCheck(commandId) {
     ["Shapes","figma.createPolygon",figma.createPolygon],["Shapes","figma.createStar",figma.createStar],["Shapes","figma.createVector",figma.createVector],
     ["Text","figma.createText",figma.createText],["Text","figma.loadFontAsync",figma.loadFontAsync],
     ["Components","figma.createComponent",figma.createComponent],["Components","figma.createComponentFromNode",figma.createComponentFromNode],
-    ["Components","figma.combineAsVariants",figma.combineAsVariants],["Components","figma.createInstance",figma.createInstance],
+    ["Components","figma.combineAsVariants",figma.combineAsVariants],
     ["Layout and styling","figma.group",figma.group],["Layout and styling","figma.flatten",figma.flatten],
     ["Layout and styling","figma.union",figma.union],["Layout and styling","figma.intersect",figma.intersect],
     ["Layout and styling","figma.subtract",figma.subtract],["Layout and styling","figma.exclude",figma.exclude],
@@ -89,27 +119,66 @@ function runNativeApiHealthCheck(commandId) {
     ["Plugin lifecycle","figma.closePlugin",figma.closePlugin],["Plugin utilities","figma.notify",figma.notify],
     ["Plugin utilities","figma.openExternal",figma.openExternal]
   ].forEach(function (item) { api(item[0], item[1], item[2]); });
+  // createInstance is a ComponentNode method, not a global figma method.
+  // Inspect an existing component on the active page without creating an instance.
+  var componentForInstanceProbe = null;
+  try {
+    componentForInstanceProbe = figma.currentPage.findOne(function (node) { return node.type === "COMPONENT"; });
+  } catch (_) {}
+  if (componentForInstanceProbe) {
+    api("Components", "ComponentNode.createInstance", componentForInstanceProbe.createInstance);
+  }
   add("Library", "Team library access", "not-tested", false, "Skipped intentionally: the teamlibrary permission is not granted. UX Direct must not inspect or import organization library assets.");
-  [
-    ["Selection","Selection change event delivery","Requires a user to change selection after this test starts"],
-    ["Page navigation","Switch page operation","Not executed to avoid changing the user's active page"],
-    ["Shapes","Create/delete shape operation","Not executed to avoid modifying the design document"],
-    ["Text","Write text / change font operation","Not executed to avoid modifying the design document"],
-    ["Layout and styling","Modify layout or visual styles","Not executed to avoid modifying the design document"],
-    ["Components","Create component/variant operation","Not executed to avoid modifying the design document"],
-    ["Variables","Read/write variable values","Variable operations not executed in this non-destructive check"],
-    ["Export","Export selected node","Export not executed; only API availability was checked"]
-  ].forEach(function (item) { add(item[0], item[1], "not-tested", false, item[2]); });
+  var sampleSceneNode = null;
+  try {
+    sampleSceneNode = figma.currentPage.selection[0] || figma.currentPage.children[0] || null;
+  } catch (_) {}
+  function availability(category, name, ok, reason) {
+    add(category, name, "availability", !!ok, reason || (ok ? "API/property availability verified; operation not executed" : "Required API/property is unavailable"));
+  }
+  availability("Selection", "Selection change listener registration", selectionChangeListenerRegistered,
+    "The figma.on('selectionchange') listener was registered at startup; event delivery requires a user selection change and is not forced by this test.");
+  availability("Page navigation", "Page create/switch APIs",
+    typeof figma.createPage === "function" && typeof figma.setCurrentPageAsync === "function",
+    "Page APIs are checked by reference only; no page was created and the active page was not switched.");
+  availability("Shapes", "Shape creation APIs",
+    [figma.createFrame, figma.createRectangle, figma.createEllipse, figma.createLine,
+      figma.createPolygon, figma.createStar, figma.createVector].every(function (value) { return typeof value === "function"; }),
+    "Shape-creation APIs are available; no shape was created. Node.remove is inspected on a current-page node when one is present.");
+  if (sampleSceneNode) {
+    availability("Shapes", "SceneNode.remove API", typeof sampleSceneNode.remove === "function",
+      "The remove method was checked on an existing current-page node; no node was removed.");
+  }
+  availability("Text", "Text creation and font-loading APIs",
+    typeof figma.createText === "function" && typeof figma.loadFontAsync === "function",
+    "Text creation and font-loading APIs are available; no text, font, or text property was changed.");
+  availability("Layout and styling", "Node manipulation APIs",
+    [figma.group, figma.flatten, figma.union, figma.intersect, figma.subtract, figma.exclude]
+      .every(function (value) { return typeof value === "function"; }),
+    "Grouping, flattening, and boolean-operation APIs are available; no geometry, layout, fill, or stroke was changed.");
+  availability("Components", "Component and variant creation APIs",
+    typeof figma.createComponent === "function" && typeof figma.createComponentFromNode === "function" &&
+      typeof figma.combineAsVariants === "function",
+    "Component and variant APIs are available; no component or variant was created. ComponentNode.createInstance is separately checked when a component exists on this page.");
+  availability("Variables", "Variable creation APIs",
+    !!figma.variables && typeof figma.variables.createVariable === "function" &&
+      typeof figma.variables.createVariableCollection === "function",
+    "Variable write APIs are available; read-only variable queries are tested above. No variable or collection was created or changed.");
+  availability("Export", "Node export API",
+    typeof figma.currentPage.exportAsync === "function" && (!sampleSceneNode || typeof sampleSceneNode.exportAsync === "function"),
+    "exportAsync is available on the active page/sample node; an export was not generated to avoid unnecessary large output.");
+  add("Mutation safety", "Document-changing and live-interaction workflows", "not-tested", false,
+    "Actual page switching, create/delete, text/style/component/variable writes, selection-change delivery, and content export are not executed by this non-destructive self-test. Their API availability is shown above where inspectable.");
   var passed = checks.filter(function (x) { return x.status === "success"; }).length;
   var failed = checks.filter(function (x) { return x.status === "error"; }).length;
   var notTested = checks.filter(function (x) { return x.status === "not-tested"; }).length;
   figma.ui.postMessage({ type: "native-health-result", checks: checks, passed: passed, failed: failed,
     notTested: notTested, commandId: commandId || null, checkedAt: new Date().toISOString() });
 }
-figma.ui.onmessage = function (message) {
+figma.ui.onmessage = async function (message) {
   if (!message) return;
   if (message.type === "get-selection") sendSelection();
-  if (message.type === "run-native-health-check") runNativeApiHealthCheck(message.commandId);
+  if (message.type === "run-native-health-check") await runNativeApiHealthCheck(message.commandId);
   if (message.type === "close") figma.closePlugin();
 };
 sendSelection();
