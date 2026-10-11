@@ -76,9 +76,9 @@
       <button id="healthStatus" class="status-tag warn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="healthPanel" title="Automatic native API checks; click for details"><span id="healthDot" class="dot"></span><span id="healthStatusText" class="tagtext">API checks pending</span></button>
     </div>
   </header>
-  <div class="modelbar" aria-label="Free model selection">
-    <select id="modelSelect" class="model-select" aria-label="Free model selection" title="Choose a free OpenRouter model" disabled>
-      <option value="">Loading live free models…</option>
+  <div class="modelbar" aria-label="OpenRouter model selection">
+    <select id="modelSelect" class="model-select" aria-label="OpenRouter model selection" title="Choose an available OpenRouter model" disabled>
+      <option value="">Loading OpenRouter models…</option>
     </select>
     <div id="modelStatus" class="status-tag warn" aria-live="polite" title="A selected model is checked with a live test request before chat is enabled.">
       <span id="modelDot" class="dot"></span><span id="modelStatusText" class="tagtext">Model pending</span>
@@ -291,7 +291,7 @@
 
     async function loadModelOptions() {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
-      setModelStatus("warn", "Loading models…", "Fetching current free models from the OpenRouter catalog.");
+      setModelStatus("warn", "Loading models…", "Fetching free models and a budget-capped paid OpenRouter option.");
       const selector = $("modelSelect");
       selector.disabled = true;
       try {
@@ -302,11 +302,13 @@
         }
         modelOptions = payload.models.filter(model =>
           model && model.provider === "openrouter" &&
-          typeof model.id === "string" && model.id.endsWith(":free") &&
-          typeof model.label === "string"
+          typeof model.id === "string" &&
+          typeof model.label === "string" &&
+          (model.tier === "free-tier" || model.tier === "paid") &&
+          (model.tier !== "paid" || !model.id.endsWith(":free"))
         );
         if (!modelOptions.length) {
-          throw new Error(payload.reason || "OpenRouter did not return any free models.");
+          throw new Error(payload.reason || "OpenRouter did not return any free or approved paid models.");
         }
         selector.replaceChildren();
         modelOptions.forEach(model => {
@@ -333,9 +335,12 @@
       currentModel = modelOptions.find(model => model.id === selectedId) || modelOptions[0] || null;
       modelAvailable = false;
       updateSendAvailability();
-      if (openRouterFreeQuotaExhausted) {
-        $("modelSelect").disabled = true;
-        setModelStatus("bad", "Free quota exhausted", "OpenRouter blocked free-model inference for this account. Add credits or wait for the quota to reset, then reload the plugin.");
+      if (openRouterFreeQuotaExhausted && currentModel && currentModel.tier !== "paid") {
+        const hasPaidOption = modelOptions.some(model => model.tier === "paid");
+        $("modelSelect").disabled = !hasPaidOption || !backendHealthy || isSending;
+        setModelStatus("bad", "Free quota exhausted", hasPaidOption
+          ? "Free models are quota-limited. Select the paid OpenRouter model to continue with real AI."
+          : "OpenRouter blocked free-model inference. No approved paid option was returned by the live catalog.");
         updateSendAvailability();
         return;
       }
@@ -351,7 +356,10 @@
 
       const model = currentModel;
       $("modelSelect").disabled = true;
-      setModelStatus("warn", "Checking model…", "Sending one small test prompt to the selected model.");
+      const isPaidModel = currentModel.tier === "paid";
+      setModelStatus("warn", isPaidModel ? "Checking paid model…" : "Checking free model…", isPaidModel
+        ? "Sending one small, budget-capped test prompt to OpenRouter paid inference."
+        : "Sending one small test prompt to the selected free model.");
       try {
         const probeUrl = new URL(API + "/api/model-status");
         probeUrl.searchParams.set("fileKey", verifiedFileKey);
@@ -366,21 +374,26 @@
           openRouterFreeQuotaExhausted = true;
           modelAvailable = false;
           const detail = payload.reason || "OpenRouter has exhausted this account's daily free-model request quota.";
+          const hasPaidOption = modelOptions.some(option => option.tier === "paid");
           setModelStatus("bad", "Free quota exhausted", "HTTP 429: " + detail);
           const message = "OpenRouter has blocked free-model inference because the account-level daily quota is exhausted.\n\n" +
-            detail + "\n\nI stopped further probes so switching models will not waste additional requests. A saved card or future autopay does not count as a completed credit top-up until OpenRouter confirms the credits. Add credits in OpenRouter or wait for the quota to reset, then reload this plugin and retry one model. Paid-model fallback remains disabled.";
+            detail + "\n\nI stopped further free-model probes to avoid wasting requests. " +
+            (hasPaidOption
+              ? "A paid OpenRouter option is available in the model dropdown; choosing it will run one small paid probe, then enforce the gateway budget caps for chat."
+              : "A saved card or future autopay does not count as a completed credit top-up until OpenRouter confirms credits. Add credits or wait for quota reset, then reload the plugin.") +
+            " Broad paid-provider fallback remains disabled.";
           if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
           else {
             const bubble = modelProbeRow.querySelector(".bubble");
             if (bubble) bubble.textContent = message;
           }
-          $("modelSelect").disabled = true;
+          $("modelSelect").disabled = !hasPaidOption || !backendHealthy || isSending;
           updateSendAvailability();
           return;
         }
         if (payload.available === true && payload.responseReceived === true) {
           modelAvailable = true;
-          const providerLabel = "OpenRouter connected";
+          const providerLabel = isPaidModel ? "Paid model connected" : "OpenRouter connected";
           setModelStatus("ok", providerLabel, model.label + " returned a response in " + Math.max(0, Number(payload.latencyMs || 0)) + " ms.");
           if (modelProbeRow) {
             modelProbeRow.remove();
@@ -587,7 +600,7 @@
         return;
       }
       if (!currentModel || !modelAvailable) {
-        appendMessage("assistant", "Please choose a free model and wait until its top status says Connected. Chat is paused until the selected model passes a live response check.");
+        appendMessage("assistant", "Choose an OpenRouter model and wait until its status says Connected. Chat remains paused until the selected model passes a live response check.");
         return;
       }
 
