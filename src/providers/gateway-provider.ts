@@ -1,5 +1,6 @@
 import type { ModelProvider, TaskPlan, TaskProject } from "../core/types";
 import { chatCompletionWithFallback, providersFromEnv } from "../model-gateway";
+import { getGatewaySettings } from "../model-gateway/control-store";
 
 /**
  * Bridges the shared gateway into UX Direct's task planner.
@@ -11,16 +12,19 @@ export const gatewayProvider: ModelProvider = {
   mode: "remote",
   async plan({ title, request, project, requestId }: { title: string; request: string; project: TaskProject; requestId?: string }): Promise<TaskPlan> {
     const providers = providersFromEnv();
-    const paidSelected = process.env.ALLOW_PAID_MODELS === "true" &&
-      Boolean(process.env.MODEL_GATEWAY_TASK_MODEL) &&
-      providers.some(provider => provider.kind === "paid" && provider.models.includes(process.env.MODEL_GATEWAY_TASK_MODEL!));
-    const localOrFreeConfigured = providers.some(provider => provider.kind === "local" || provider.kind === "free-tier");
-    if (!localOrFreeConfigured && !paidSelected) {
-      throw new Error("No local/free model is configured. Keep using mock mode until a provider is connected.");
+    const settings = await getGatewaySettings();
+    const actualProviders = providers.filter(provider => provider.kind !== "mock");
+    const freeProviderConfigured = actualProviders.some(provider => provider.kind === "local" || provider.kind === "free-tier");
+    const paidProviderConfigured = settings.paidRoutingEnabled && process.env.ALLOW_PAID_MODELS === "true" &&
+      actualProviders.some(provider => provider.kind === "paid" || provider.name === "gemini" || provider.name === "groq" || provider.name === "cerebras");
+    if (!freeProviderConfigured && !paidProviderConfigured) {
+      throw new Error("No enabled local/free provider or explicitly activated paid route is configured. Mock mode is safer until a provider is connected.");
     }
-    const model = paidSelected ? process.env.MODEL_GATEWAY_TASK_MODEL! : "uxd/reasoning";
+    // Always use the module alias: the accountant resolves the exact model chosen in settings.
+    const model = "uxd/reasoning";
     const result = await chatCompletionWithFallback({
       model,
+      moduleId: "reasoning",
       requestId: requestId ?? crypto.randomUUID(),
       temperature: 0.2,
       max_tokens: 1800,

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getModelCatalog, providersFromEnv } from "@/src/model-gateway";
+import { GATEWAY_MODULES, getGatewaySettings, getDefaultModelPolicy, modelKey } from "@/src/model-gateway/control-store";
 import { getBudgetSnapshot } from "@/src/model-gateway/usage-store";
 
 export const runtime = "nodejs";
@@ -11,6 +12,14 @@ export async function GET() {
   const providers = providersFromEnv();
   const budget = await getBudgetSnapshot();
   const configuredProviders = new Set(providers.map(provider => provider.name));
+  const settings = await getGatewaySettings();
+  const catalog = getModelCatalog(providers);
+  const modelSettings = { ...settings.models };
+  for (const model of catalog) {
+    const key = modelKey(model.provider, model.id);
+    if (!modelSettings[key]) modelSettings[key] = getDefaultModelPolicy(model.provider, model.id, model.usdInputPerMillion ?? 0, model.usdOutputPerMillion ?? 0, settings.usdToInrRate);
+  }
+  const fullSettings = { ...settings, models: modelSettings };
   const keySlots = [
     { id: "ollama", label: "Ollama local", envName: "OLLAMA_BASE_URL", configured: configuredProviders.has("ollama"), keyDetected: false, tier: "local", secretRequired: false },
     { id: "gemini", label: "Google Gemini", envName: "GEMINI_API_KEY", configured: configuredProviders.has("gemini"), keyDetected: Boolean(env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY), tier: "free-tier", secretRequired: true },
@@ -23,13 +32,15 @@ export async function GET() {
     gateway: {
       name: "UX Direct Model Gateway",
       status: providers.some(provider => provider.kind !== "mock") ? "provider-configured" : "awaiting-keys",
-      paidModelsEnabled: providers.some(provider => provider.kind === "paid") && env.ALLOW_PAID_MODELS === "true" && budget.pricingConfigured,
+      paidModelsEnabled: fullSettings.paidRoutingEnabled && env.ALLOW_PAID_MODELS === "true",
       monthlyBudgetInr: budget.monthlyBudgetInr,
       pricingConfigured: budget.pricingConfigured,
       gatewayFeeInr: 0
     },
     providers: keySlots,
-    models: getModelCatalog(providers),
+    models: catalog.map(model => ({ ...model, selectionKey: modelKey(model.provider, model.id) })),
+    settings: fullSettings,
+    modules: GATEWAY_MODULES,
     budget,
     checkedAt: new Date().toISOString()
   }, { headers: { "Cache-Control": "no-store" } });

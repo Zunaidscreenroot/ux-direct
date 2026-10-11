@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type Health = {
   service: string; status: string; checkedAt: string; mode: string;
@@ -41,147 +41,116 @@ const navItems = [
 type Tab = typeof navItems[number]["id"];
 
 
+type GatewayMode = "free" | "paid" | "local" | "mock";
+type ModulePolicy = { enabled:boolean; mode:GatewayMode; selectedModelKey:string; monthlyBudgetInr:number; maxRequestCostInr:number; allowFallback:boolean };
+type ModelPolicy = { monthlyBudgetInr:number; maxRequestCostInr:number; inputPriceInrPerMillion:number; outputPriceInrPerMillion:number };
+type GatewaySettings = { version:1; globalMonthlyBudgetInr:number; usdToInrRate:number; paidRoutingEnabled:boolean; modules:Record<string,ModulePolicy>; models:Record<string,ModelPolicy>; updatedAt?:string };
+type GatewayModule = { id:string; label:string; description:string; alias:string; tasks:string[]; suggestedBudgetShare:number };
+type GatewayModel = { id:string; provider:string; label:string; tier:string; tasks:string[]; configured:boolean; notes:string; selectionKey:string; usdInputPerMillion?:number; usdOutputPerMillion?:number; pricingSource?:string; pricingReviewedAt?:string };
 type GatewayDashboardPayload = {
-  gateway: { name: string; status: string; paidModelsEnabled: boolean; monthlyBudgetInr: number; pricingConfigured: boolean; gatewayFeeInr: number };
-  providers: Array<{ id: string; label: string; envName: string; configured: boolean; keyDetected: boolean; tier: string; secretRequired: boolean }>;
-  models: Array<{ id: string; provider: string; label: string; tier: string; tasks: string[]; configured: boolean; notes: string }>;
-  budget: {
-    currency: string; monthlyBudgetInr: number; spentThisMonthInr: number; remainingInr: number;
-    percentUsed: number; inputPriceInrPerMillion: number; outputPriceInrPerMillion: number;
-    pricingConfigured: boolean; month: string; records: Array<{
-      id: string; at: string; requestId: string; provider: string; model: string; tier: string;
-      promptTokens: number; completionTokens: number; totalTokens: number; usageReported?: boolean; estimatedCostInr: number;
-      latencyMs: number; status: string; note?: string;
-    }>; retention: string;
-  };
-  checkedAt: string;
+ gateway:{name:string;status:string;paidModelsEnabled:boolean;monthlyBudgetInr:number;pricingConfigured:boolean;gatewayFeeInr:number};
+ providers:Array<{id:string;label:string;envName:string;configured:boolean;keyDetected:boolean;tier:string;secretRequired:boolean}>;
+ models:GatewayModel[]; modules:GatewayModule[]; settings:GatewaySettings;
+ budget:{currency:string;monthlyBudgetInr:number;spentThisMonthInr:number;remainingInr:number;percentUsed:number;inputPriceInrPerMillion:number;outputPriceInrPerMillion:number;pricingConfigured:boolean;month:string;
+ records:Array<{id:string;at:string;requestId:string;provider:string;model:string;moduleId?:string;tier:string;promptTokens:number;completionTokens:number;totalTokens:number;usageReported?:boolean;estimatedCostInr:number;latencyMs:number;status:string;note?:string}>;
+ retention:string;spentByModuleInr:Record<string,number>;spentByModelInr:Record<string,number>;paidCallsThisMonth:number};
+ checkedAt:string;
 };
-
-function inr(value: number) {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: value < 10 ? 4 : 2 }).format(value);
-}
-
-function ModelGatewayPanel() {
-  const [data, setData] = useState<GatewayDashboardPayload | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [smokeBusy, setSmokeBusy] = useState(false);
-  const [smokeMessage, setSmokeMessage] = useState("");
-  const [loadError, setLoadError] = useState("");
-  const [showAllModels, setShowAllModels] = useState(false);
-  const loadDashboard = useCallback(async () => {
-    setBusy(true);
-    try {
-      const response = await fetch("/api/model-gateway/dashboard", { cache: "no-store" });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Could not load gateway dashboard.");
-      setData(payload as GatewayDashboardPayload);
-      setLoadError("");
-    } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "Gateway dashboard is unavailable.");
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-  useEffect(() => {
-    void loadDashboard();
-    // One lightweight read-only dashboard refresh per minute; no Figma/model calls are triggered.
-    const timer = window.setInterval(() => void loadDashboard(), 60_000);
-    return () => window.clearInterval(timer);
-  }, [loadDashboard]);
-  async function runMockSmokeTest() {
-    if (smokeBusy) return;
-    setSmokeBusy(true);
-    setSmokeMessage("");
-    try {
-      const response = await fetch("/api/model-gateway/smoke", { method: "POST", cache: "no-store" });
-      const payload = await response.json();
-      if (!response.ok || !payload.ok) throw new Error(payload.error || "Mock smoke test failed.");
-      setSmokeMessage("Passed · 0 tokens · ₹0 · no provider API called · request " + String(payload.requestId).slice(0, 8));
-      await loadDashboard();
-    } catch (error) {
-      setSmokeMessage(error instanceof Error ? error.message : "Mock smoke test failed.");
-    } finally {
-      setSmokeBusy(false);
-    }
-  }
-  const records = data?.budget.records ?? [];
-  const maxTokens = Math.max(1, ...records.map(record => record.totalTokens));
-  const models = (data?.models ?? []).filter(model => showAllModels || model.configured || model.tier === "mock");
-  const budget = data?.budget;
-  const keyReady = (data?.providers ?? []).filter(provider => provider.keyDetected).length;
-  return (
-    <div className="content gateway-content">
-      <div className="eyebrow"><span className="pulse" /> MODEL OPERATIONS</div>
-      <div className="gateway-title-row">
-        <div><h1>Model gateway.<br /><em>Every token accounted for.</em></h1>
-          <p className="intro">Provider routing, per-request token usage, estimated spend and budget guardrails. API keys stay server-side and are intentionally left for your final activation step.</p>
-        </div>
-        <div className="gateway-header-actions">
-          <button className="secondary-button" type="button" onClick={() => void runMockSmokeTest()} disabled={smokeBusy}>{smokeBusy ? "Testing…" : "Run free smoke test ↗"}</button>
-          <button className="submit-button" type="button" onClick={() => void loadDashboard()} disabled={busy}>{busy ? "Refreshing…" : "Refresh data ↻"}</button>
-        </div>
-      </div>
-      {loadError && <p className="inline-note" role="alert">{loadError}</p>}
-      {smokeMessage && <p className="gateway-smoke-message" role="status">{smokeMessage}</p>}
-      <div className="gateway-mode-banner">
-        <span className={"gateway-status-dot " + (data?.gateway.paidModelsEnabled ? "gateway-dot-live" : "gateway-dot-idle")} />
-        <div><strong>{data?.gateway.paidModelsEnabled ? "Paid routing explicitly enabled" : "Safe setup mode · API keys not required yet"}</strong>
-          <p>{data?.gateway.paidModelsEnabled ? "Paid requests are subject to the configured monthly budget and token prices." : "Mock mode is available now. Local/free providers can be connected before enabling any paid model."}</p>
-        </div>
-        <span className="gateway-fee">₹0 gateway fee</span>
-      </div>
-
-      <div className="gateway-stat-grid">
-        <article className="gateway-stat-card"><span>MONTH-TO-DATE SPEND</span><strong>{inr(budget?.spentThisMonthInr ?? 0)}</strong><small>{budget?.month ?? "Current month"} · estimated from token usage</small></article>
-        <article className="gateway-stat-card"><span>MONTHLY BUDGET</span><strong>{inr(budget?.monthlyBudgetInr ?? 3000)}</strong><small>Default cap · ₹3,000 unless configured otherwise</small></article>
-        <article className="gateway-stat-card"><span>BUDGET REMAINING</span><strong>{inr(budget?.remainingInr ?? 3000)}</strong><small>{budget?.percentUsed ?? 0}% used this month</small></article>
-        <article className="gateway-stat-card"><span>MODEL CALLS RECORDED</span><strong>{records.length}</strong><small>{records.reduce((sum, item) => sum + item.totalTokens, 0).toLocaleString("en-IN")} tokens in current ledger</small></article>
-      </div>
-
-      <section className="gateway-panel budget-panel">
-        <div className="gateway-panel-heading"><div><span className="section-kicker">BUDGET GUARDRAIL</span><h2>Monthly usage</h2></div><span className={"status-chip " + (budget?.percentUsed && budget.percentUsed >= 80 ? "status-warning" : "status-success")}>{budget?.percentUsed ?? 0}% consumed</span></div>
-        <div className="budget-track"><div className={"budget-fill " + ((budget?.percentUsed ?? 0) >= 80 ? "budget-fill-warning" : "")} style={{ width: Math.min(100, budget?.percentUsed ?? 0) + "%" }} /></div>
-        <div className="budget-scale"><span>{inr(0)} used</span><strong>{inr(budget?.remainingInr ?? 3000)} remaining</strong><span>{inr(budget?.monthlyBudgetInr ?? 3000)} cap</span></div>
-        <div className="budget-config-grid">
-          <div><span>Input token price</span><strong>{budget?.pricingConfigured ? inr(budget.inputPriceInrPerMillion) + " / 1M" : "Not configured"}</strong></div>
-          <div><span>Output token price</span><strong>{budget?.pricingConfigured ? inr(budget.outputPriceInrPerMillion) + " / 1M" : "Not configured"}</strong></div>
-          <div><span>Paid model status</span><strong>{data?.gateway.paidModelsEnabled ? "Enabled with guardrails" : "Locked"}</strong></div>
-        </div>
-        {!budget?.pricingConfigured && <p className="gateway-inline-warning">Paid requests are blocked until input and output prices are entered in server environment settings. This prevents unpriced calls from being treated as free.</p>}
-        <p className="gateway-footnote">Cost figures are estimates based on configured prices. The current input/output rates apply to all paid models; only enable paid models whose current rates match these settings. Free-tier and local calls show ₹0 API cost; provider quota limits still apply. {budget?.retention === "netlify-blobs" ? "Usage records are persisted to Netlify Blobs; concurrent requests can still race the budget check until atomic reservations are added." : "The ledger is using a runtime-memory fallback and may reset on serverless restarts. Configure Netlify Blobs for persistent records."}</p>
-      </section>
-
-      <div className="gateway-section-heading"><div><span className="section-kicker">PROVIDER REGISTRY</span><h2>Connections &amp; API key placeholders</h2></div><span className="count">{keyReady} PROVIDER KEYS DETECTED</span></div>
-      <div className="gateway-provider-grid">
-        {(data?.providers ?? []).map(provider => (
-          <article className="gateway-provider-card" key={provider.id}>
-            <div className="gateway-provider-top"><span className="gateway-provider-mark">{provider.label.split(" ").map(word => word[0]).join("").slice(0, 2)}</span><span className={"status-chip " + (provider.configured ? "status-success" : "status-neutral")}>{provider.configured ? "Configured · unverified" : provider.keyDetected ? "Key detected · setup incomplete" : provider.tier === "local" ? "Endpoint not configured" : "Key not added"}</span></div>
-            <h3>{provider.label}</h3><p>{provider.tier === "paid" ? "Paid provider · stays disabled until explicitly activated." : provider.tier === "local" ? "Local inference · no model API key or per-token provider charge." : "Free-tier candidate · account quotas and availability apply."}</p>
-            <label className="gateway-key-label" htmlFor={"key-slot-" + provider.id}>{provider.envName}</label>
-            <div className="gateway-key-placeholder"><input id={"key-slot-" + provider.id} type="password" placeholder={provider.secretRequired ? "API key placeholder · add in final step" : "Local endpoint placeholder"} disabled readOnly aria-label={provider.envName + " placeholder; edit disabled"} /><span>{provider.keyDetected ? "KEY DETECTED" : provider.configured ? "CONNECTED" : "PLACEHOLDER"}</span></div>
-            <small className="gateway-provider-note">{provider.secretRequired ? "No key is requested or stored in this dashboard. Add it later as a server-side environment variable; live provider health is not verified here." : "Configure the endpoint in server environment settings when local inference is ready. Reachability is not verified by this status check."}</small>
-          </article>
-        ))}
-      </div>
-
-      <div className="gateway-section-heading"><div><span className="section-kicker">MODEL CATALOG</span><h2>Available routing options</h2></div><button className="secondary-button" type="button" onClick={() => setShowAllModels(value => !value)}>{showAllModels ? "Show configured only" : "Show all models"}</button></div>
-      <div className="gateway-table-wrap"><table className="gateway-table"><thead><tr><th>MODEL</th><th>PROVIDER</th><th>TIER</th><th>STATUS</th><th>BEST FOR</th></tr></thead><tbody>
-        {models.map(model => <tr key={model.provider + model.id}><td><strong>{model.id}</strong><small>{model.label}</small></td><td>{model.provider}</td><td><span className={"gateway-tier tier-" + model.tier}>{model.tier}</span></td><td>{model.configured ? <span className="gateway-configured">Ready</span> : <span className="gateway-unconfigured">Not configured</span>}</td><td>{model.tasks.join(", ")}</td></tr>)}
-      </tbody></table></div>
-
-      <div className="gateway-section-heading"><div><span className="section-kicker">TOKEN LEDGER</span><h2>Request-by-request usage</h2></div><span className="count">LATEST {Math.min(records.length, 200)} RECORDS THIS MONTH</span></div>
-      <section className="gateway-panel token-ledger-panel">
-        <div className="token-ledger-intro"><div><strong>Prompt tokens vs completion tokens</strong><p>Each completed gateway request records input tokens, output tokens, total tokens, provider/model, latency and estimated cost. Prompt and response content are never displayed here.</p></div><span className="ledger-retention">{budget?.retention === "netlify-blobs" ? "Persistent · Netlify Blobs" : "Runtime fallback"}</span></div>
-        {records.length === 0 ? <div className="gateway-empty-state"><div className="gateway-empty-icon">◷</div><strong>No real model calls recorded yet</strong><p>This is expected before providers are connected. Mock requests can verify the gateway wiring but do not count as real AI inference.</p></div> : <>
-          <div className="token-ledger-table-wrap"><table className="gateway-table token-table"><thead><tr><th>TIME / REQUEST</th><th>MODEL</th><th>INPUT</th><th>OUTPUT</th><th>TOTAL TOKENS</th><th>EST. COST</th><th>LATENCY</th></tr></thead><tbody>
-            {records.map(record => <tr key={record.id}><td><strong>{new Date(record.at).toLocaleString()}</strong><small>#{record.requestId.slice(0, 8)} · {record.status}</small></td><td><strong>{record.model}</strong><small>{record.provider}</small></td><td>{record.usageReported === false ? "—" : record.promptTokens.toLocaleString("en-IN")}</td><td>{record.usageReported === false ? "—" : record.completionTokens.toLocaleString("en-IN")}</td><td><div className="token-value">{record.usageReported === false ? "Usage unavailable" : record.totalTokens.toLocaleString("en-IN")}</div>{record.usageReported !== false && <div className="token-mini-track"><div style={{ width: Math.min(100, record.totalTokens / maxTokens * 100) + "%" }} /></div>}</td><td>{inr(record.estimatedCostInr)}</td><td>{record.latencyMs.toLocaleString("en-IN")} ms</td></tr>)}
-          </tbody></table></div>
-        </>}
-      </section>
-      <p className="gateway-footer-note">Last refreshed: {data?.checkedAt ? new Date(data.checkedAt).toLocaleTimeString() : "not checked"} · API key placeholders are intentionally non-editable here. The final activation step should add keys to server-side environment variables, never browser storage or client-side code. Paid usage remains disabled until prices and the budget are configured.</p>
-      <footer>UX DIRECT <span>·</span> MODEL GATEWAY &amp; COST CONTROL</footer>
-    </div>
-  );
+function inr(value:number){return new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:value<10?4:2}).format(value);}
+function modeCompatible(mode:GatewayMode,m:GatewayModel){if(mode==="free")return m.tier==="free-tier"||m.id.endsWith(":free");if(mode==="local")return m.tier==="local";if(mode==="mock")return m.tier==="mock";return m.tier!=="local"&&m.tier!=="mock"&&!m.id.endsWith(":free");}
+function exampleModelCost(policy:ModelPolicy){return (100000*policy.inputPriceInrPerMillion+20000*policy.outputPriceInrPerMillion)/1_000_000;}
+function ModelGatewayPanel(){
+ const [data,setData]=useState<GatewayDashboardPayload|null>(null);
+ const [draft,setDraft]=useState<GatewaySettings|null>(null);
+ const [busy,setBusy]=useState(false),[saving,setSaving]=useState(false),[smokeBusy,setSmokeBusy]=useState(false);
+ const [smokeMessage,setSmokeMessage]=useState(""),[message,setMessage]=useState(""),[loadError,setLoadError]=useState("");
+ const [filter,setFilter]=useState("all");
+ const dirty=useRef(false);
+ const load=useCallback(async()=>{
+  setBusy(true);
+  try{const r=await fetch("/api/model-gateway/dashboard",{cache:"no-store"});const p=await r.json();if(!r.ok)throw new Error(p.error||"Could not load gateway dashboard.");setData(p as GatewayDashboardPayload);if(!dirty.current)setDraft((p as GatewayDashboardPayload).settings);setLoadError("");}
+  catch(e){setLoadError(e instanceof Error?e.message:"Gateway dashboard unavailable.");}finally{setBusy(false);}
+ },[]);
+ useEffect(()=>{void load();const timer=window.setInterval(()=>void load(),60000);return()=>window.clearInterval(timer);},[load]);
+ function mutate(fn:(s:GatewaySettings)=>GatewaySettings){dirty.current=true;setMessage("Unsaved changes");setDraft(s=>s?fn(s):s);}
+ function updateModule(id:string,patch:Partial<ModulePolicy>){mutate(s=>({...s,modules:{...s.modules,[id]:{...s.modules[id],...patch}}}));}
+ function updateModel(key:string,patch:Partial<ModelPolicy>){mutate(s=>({...s,models:{...s.models,[key]:{...s.models[key],...patch}}}));}
+ async function save(){
+  if(!draft||saving)return;setSaving(true);setMessage("");
+  try{const r=await fetch("/api/model-gateway/settings",{method:"PUT",headers:{"Content-Type":"application/json"},cache:"no-store",body:JSON.stringify(draft)});const p=await r.json();if(!r.ok)throw new Error(p.error||"Could not save settings.");dirty.current=false;setDraft(p.settings);setMessage("Saved · current preview/environment only");await load();}
+  catch(e){setMessage(e instanceof Error?e.message:"Save failed.");}finally{setSaving(false);}
+ }
+ async function smoke(){
+  if(smokeBusy)return;setSmokeBusy(true);setSmokeMessage("");
+  try{const r=await fetch("/api/model-gateway/smoke",{method:"POST",cache:"no-store"});const p=await r.json();if(!r.ok||!p.ok)throw new Error(p.error||"Smoke test failed.");setSmokeMessage("Passed · 0 tokens · ₹0 · no provider call · request "+String(p.requestId).slice(0,8));await load();}
+  catch(e){setSmokeMessage(e instanceof Error?e.message:"Smoke test failed.");}finally{setSmokeBusy(false);}
+ }
+ const models=data?.models??[], modules=data?.modules??[], settings=draft, records=data?.budget.records??[];
+ const spent=data?.budget.spentThisMonthInr??0, globalCap=settings?.globalMonthlyBudgetInr??3000, remaining=Math.max(0,globalCap-spent), fx=settings?.usdToInrRate??97;
+ const keyReady=(data?.providers??[]).filter(p=>p.keyDetected).length;
+ function policyFor(m:GatewayModel):ModelPolicy{return settings?.models[m.selectionKey]??{monthlyBudgetInr:500,maxRequestCostInr:50,inputPriceInrPerMillion:(m.usdInputPerMillion??0)*fx,outputPriceInrPerMillion:(m.usdOutputPerMillion??0)*fx};}
+ function recommendation(module:GatewayModule,mode:GatewayMode){let choices=models.filter(m=>modeCompatible(mode,m));const fit=(m:GatewayModel)=>m.tasks.some(t=>module.tasks.some(w=>t.toLowerCase().includes(w.toLowerCase())||w.toLowerCase().includes(t.toLowerCase())))?1:0;choices.sort((a,b)=>fit(b)-fit(a)||Number(b.configured)-Number(a.configured)||(mode==="paid"?exampleModelCost(policyFor(a))-exampleModelCost(policyFor(b)):0)||a.label.localeCompare(b.label));return choices[0]??null;}
+ const modeOptions=(mode:GatewayMode)=>models.filter(m=>modeCompatible(mode,m)).sort((a,b)=>Number(b.configured)-Number(a.configured)||a.label.localeCompare(b.label));
+ function useSuggestion(module:GatewayModule,mode:GatewayMode){const m=recommendation(module,mode);if(!m)return;updateModule(module.id,{mode,selectedModelKey:m.selectionKey});setMessage("Selected "+m.label+" for "+module.label+". Save to apply.");}
+ const shownModels=models.filter(m=>filter==="all"||(filter==="connected"&&m.configured)||(filter==="free"&&(m.tier==="free-tier"||m.id.endsWith(":free")))||(filter==="paid"&&modeCompatible("paid",m))||(filter==="local"&&m.tier==="local"));
+ return <div className="content gateway-content accountant-content">
+  <div className="eyebrow"><span className="pulse"/> MODEL OPERATIONS · ACCOUNTANT</div>
+  <div className="gateway-title-row"><div><h1>Model gateway.<br/><em>Every rupee accounted for.</em></h1><p className="intro">Control each agent independently. Pick its exact model and free/paid/local mode, set global, module and model budgets, and see where every token and rupee goes.</p></div>
+   <div className="gateway-header-actions"><button className="secondary-button" type="button" onClick={()=>void smoke()} disabled={smokeBusy}>{smokeBusy?"Testing…":"Run free smoke test ↗"}</button><button className="submit-button" type="button" onClick={()=>void load()} disabled={busy}>{busy?"Refreshing…":"Refresh ↻"}</button></div></div>
+  {loadError&&<p className="inline-note" role="alert">{loadError}</p>}{smokeMessage&&<p className="gateway-smoke-message" role="status">{smokeMessage}</p>}
+  <div className="gateway-mode-banner"><span className={"gateway-status-dot "+(settings?.paidRoutingEnabled?"gateway-dot-live":"gateway-dot-idle")}/><div><strong>{settings?.paidRoutingEnabled?"Paid routing switch ON":"Free-first setup · paid routing OFF"}</strong><p>{settings?.paidRoutingEnabled?"Every paid request still requires server opt-in, keys, per-model prices and budget checks.":"You can configure modules before adding API keys. Paid requests remain locked by default."}</p></div><span className="gateway-fee">₹0 gateway fee</span></div>
+  <section className="gateway-panel accountant-global-panel">
+   <div className="gateway-panel-heading"><div><span className="section-kicker">GLOBAL FINANCIAL GUARDRAILS</span><h2>One account · separate envelopes</h2></div><span className={"status-chip "+(remaining<=0?"status-error":globalCap>0&&spent/globalCap>=.8?"status-warning":"status-success")}>{globalCap>0?Math.round(spent/globalCap*100):100}% used</span></div>
+   <div className="accountant-summary-grid">
+    <article className="gateway-stat-card"><span>MONTH-TO-DATE SPEND</span><strong>{inr(spent)}</strong><small>{data?.budget.month??"Current month"} · estimated</small></article>
+    <article className="gateway-stat-card"><span>GLOBAL MONTHLY CAP</span><strong>{inr(globalCap)}</strong><small>Paid-call guardrail</small></article>
+    <article className="gateway-stat-card"><span>AVAILABLE BALANCE</span><strong>{inr(remaining)}</strong><small>Gateway fee ₹0</small></article>
+    <article className="gateway-stat-card"><span>REQUEST ACCOUNTING</span><strong>{records.length} calls</strong><small>{records.reduce((s,r)=>s+r.totalTokens,0).toLocaleString("en-IN")} tokens · {data?.budget.paidCallsThisMonth??0} paid-mode calls</small></article>
+   </div>
+   <div className="budget-track"><div className={"budget-fill "+(globalCap>0&&spent/globalCap>=.8?"budget-fill-warning":"")} style={{width:Math.min(100,globalCap>0?spent/globalCap*100:100)+"%"}}/></div>
+   <div className="accountant-global-controls">
+    <label className="gateway-control-field"><span>Global monthly budget (₹)</span><input type="number" min="0" step="100" value={globalCap} onChange={e=>mutate(s=>({...s,globalMonthlyBudgetInr:Math.max(0,Number(e.target.value)||0)}))}/></label>
+    <label className="gateway-control-field"><span>USD → INR rate</span><input type="number" min="1" max="250" step=".5" value={fx} onChange={e=>mutate(s=>({...s,usdToInrRate:Math.max(1,Math.min(250,Number(e.target.value)||97))}))}/><small>Used to convert published USD rate suggestions; editable.</small></label>
+    <label className="gateway-master-toggle"><input type="checkbox" checked={settings?.paidRoutingEnabled??false} onChange={e=>mutate(s=>({...s,paidRoutingEnabled:e.target.checked}))}/><span><strong>Allow paid routing</strong><small>Master switch · also needs server-side ALLOW_PAID_MODELS=true</small></span></label>
+   </div>
+   <p className="gateway-footnote">{data?.budget.retention==="netlify-blobs"?"Branch-scoped Netlify Blobs persistence is active.":"Runtime fallback may reset on serverless restarts."} Blob storage is not transactional: simultaneous paid requests can race a cap. Treat budgets as best-effort until transactional reservations are implemented.</p>
+  </section>
+  <div className="gateway-section-heading"><div><span className="section-kicker">01 · MODULE CONTROL</span><h2>One model policy per agent</h2><p>Switch modules on/off. Choose a mode and exact model, then define monthly and per-request caps.</p></div><span className="count">{modules.filter(m=>settings?.modules[m.id]?.enabled).length} / {modules.length} ON</span></div>
+  <div className="gateway-module-grid">{modules.map(module=>{const p=settings?.modules[module.id];if(!p)return null;const chosen=models.find(m=>m.selectionKey===p.selectedModelKey);const rec=recommendation(module,p.mode);const used=data?.budget.spentByModuleInr?.[module.id]??0;return <article className={"gateway-module-card "+(!p.enabled?"module-disabled":"")} key={module.id}>
+   <div className="gateway-module-head"><div><span className="section-kicker">{module.id.toUpperCase()}</span><h3>{module.label}</h3></div><label className="gateway-switch"><input type="checkbox" checked={p.enabled} onChange={e=>updateModule(module.id,{enabled:e.target.checked})}/><span>{p.enabled?"ON":"OFF"}</span></label></div>
+   <p className="gateway-module-description">{module.description}</p>
+   <div className="gateway-module-usage"><span>Spent {inr(used)}</span><strong>{inr(Math.max(0,p.monthlyBudgetInr-used))} remaining</strong></div><div className="budget-track"><div className={"budget-fill "+(p.monthlyBudgetInr>0&&used/p.monthlyBudgetInr>=.8?"budget-fill-warning":"")} style={{width:Math.min(100,p.monthlyBudgetInr?used/p.monthlyBudgetInr*100:100)+"%"}}/></div>
+   <label className="gateway-control-field"><span>Mode</span><select value={p.mode} onChange={e=>{const mode=e.target.value as GatewayMode;const keep=p.selectedModelKey==="auto"||models.some(m=>m.selectionKey===p.selectedModelKey&&modeCompatible(mode,m));updateModule(module.id,{mode,...(!keep?{selectedModelKey:"auto"}:{})});}}><option value="free">Free tier only · estimated ₹0</option><option value="paid">Paid API · budgets enforced</option><option value="local">Local model</option><option value="mock">Mock only · no AI</option></select></label>
+   <label className="gateway-control-field"><span>Exact model <i>{p.selectedModelKey==="auto"?"Auto within mode":"Strict allowlist"}</i></span><select disabled={!p.enabled} value={p.selectedModelKey} onChange={e=>updateModule(module.id,{selectedModelKey:e.target.value})}><option value="auto">Auto recommendation · selected mode only</option>{modeOptions(p.mode).map(m=><option key={m.selectionKey} value={m.selectionKey}>{m.label}{m.configured?" · connected":" · not connected"}</option>)}</select></label>
+   {chosen&&<p className="gateway-selected-note"><span className={"status-dot-inline "+(chosen.configured?"green":"amber")}/>{chosen.configured?"Configured":"Not connected; request will be blocked"} · {chosen.notes}</p>}
+   <div className="gateway-policy-budget-row"><label className="gateway-control-field"><span>Module budget / month (₹)</span><input type="number" min="0" step="50" value={p.monthlyBudgetInr} onChange={e=>updateModule(module.id,{monthlyBudgetInr:Math.max(0,Number(e.target.value)||0)})}/></label><label className="gateway-control-field"><span>Max cost / request (₹)</span><input type="number" min="0" step="1" value={p.maxRequestCostInr} onChange={e=>updateModule(module.id,{maxRequestCostInr:Math.max(0,Number(e.target.value)||0)})}/></label></div>
+   <div className="gateway-recommendation"><div><strong>Gateway recommendation</strong><p>{rec?rec.label+" — task-fit and connection status guide this suggestion." : "No catalog option for this mode yet."}</p></div>{rec&&<button className="text-button" type="button" onClick={()=>useSuggestion(module,p.mode)}>Use suggestion ↗</button>}</div>
+  </article>;})}</div>
+  <div className="gateway-section-heading"><div><span className="section-kicker">02 · MODEL ACCOUNTANT</span><h2>Price and limit every model</h2><p>Rates are INR per 1 million tokens. Example assumes 100k input + 20k output tokens. No live health/pricing calls are made.</p></div><span className="count">{models.length} MODEL OPTIONS</span></div>
+  <section className="gateway-panel model-accountant-panel"><div className="model-catalog-toolbar"><label className="gateway-control-field"><span>Filter models</span><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All</option><option value="connected">Connected only</option><option value="free">Free-tier candidates</option><option value="paid">Billable models</option><option value="local">Local models</option></select></label><span className="gateway-footnote">Published rates are editable suggestions, not a live quote.</span></div>
+   <div className="model-accountant-table-wrap"><table className="gateway-table model-pricing-table"><thead><tr><th>MODEL / TASKS</th><th>TIER / STATUS</th><th>INPUT ₹ / 1M</th><th>OUTPUT ₹ / 1M</th><th>MONTHLY CAP</th><th>MAX / REQUEST</th><th>EXAMPLE COST</th><th>PRICE SOURCE</th></tr></thead><tbody>
+    {models.filter(m=>filter==="all"||(filter==="connected"&&m.configured)||(filter==="free"&&(m.tier==="free-tier"||m.id.endsWith(":free")))||(filter==="paid"&&modeCompatible("paid",m))||(filter==="local"&&m.tier==="local")).map(m=>{const p=policyFor(m);return <tr key={m.selectionKey}><td><strong>{m.label}</strong><small>{m.tasks.join(" · ")}</small><small>{m.notes}</small></td><td><span className={"gateway-tier tier-"+m.tier}>{m.tier}</span><small>{m.configured?"Configured":"Not connected"}</small></td>
+     <td><input className="model-price-input" aria-label={m.label+" input price"} type="number" min="0" step=".01" value={p.inputPriceInrPerMillion} onChange={e=>updateModel(m.selectionKey,{inputPriceInrPerMillion:Math.max(0,Number(e.target.value)||0)})}/></td>
+     <td><input className="model-price-input" aria-label={m.label+" output price"} type="number" min="0" step=".01" value={p.outputPriceInrPerMillion} onChange={e=>updateModel(m.selectionKey,{outputPriceInrPerMillion:Math.max(0,Number(e.target.value)||0)})}/></td>
+     <td><input className="model-price-input" aria-label={m.label+" monthly cap"} type="number" min="0" step="50" value={p.monthlyBudgetInr} onChange={e=>updateModel(m.selectionKey,{monthlyBudgetInr:Math.max(0,Number(e.target.value)||0)})}/><small>Spent {inr(data?.budget.spentByModelInr?.[m.selectionKey]??0)}</small></td>
+     <td><input className="model-price-input" aria-label={m.label+" per-request cap"} type="number" min="0" step="1" value={p.maxRequestCostInr} onChange={e=>updateModel(m.selectionKey,{maxRequestCostInr:Math.max(0,Number(e.target.value)||0)})}/></td>
+     <td><strong>{inr(exampleModelCost(p))}</strong>{m.usdInputPerMillion!==undefined&&<small>${m.usdInputPerMillion.toFixed(3)} / ${(m.usdOutputPerMillion??0).toFixed(3)} USD per 1M</small>}</td>
+     <td>{m.pricingSource?<><a href={m.pricingSource} target="_blank" rel="noreferrer">Official pricing ↗</a><small>Checked {m.pricingReviewedAt??"date unavailable"}</small><button className="text-button apply-price" type="button" onClick={()=>updateModel(m.selectionKey,{inputPriceInrPerMillion:Number(((m.usdInputPerMillion??0)*fx).toFixed(4)),outputPriceInrPerMillion:Number(((m.usdOutputPerMillion??0)*fx).toFixed(4))})}>Apply USD→INR suggestion</button></>:<small>Enter published provider prices before paid mode.</small>}</td>
+    </tr>;})}
+   </tbody></table></div>
+   <p className="gateway-footnote">A free-mode request is only costed at ₹0 when the provider account/request uses its actual free tier; quota policies still apply. Paid mode applies configured rates even to providers that also offer free quotas. Estimates exclude taxes, caching and search/tool charges unless those are included in entered prices.</p>
+  </section>
+  <div className="gateway-section-heading"><div><span className="section-kicker">03 · PROVIDER REGISTRY</span><h2>API key placeholders</h2></div><span className="count">{keyReady} KEYS DETECTED</span></div>
+  <div className="gateway-provider-grid">{(data?.providers??[]).map(p=><article className="gateway-provider-card" key={p.id}><div className="gateway-provider-top"><span className="gateway-provider-mark">{p.label.split(" ").map(w=>w[0]).join("").slice(0,2)}</span><span className={"status-chip "+(p.configured?"status-success":"status-neutral")}>{p.configured?"Configured · unverified":p.keyDetected?"Key detected · setup incomplete":p.tier==="local"?"Endpoint not configured":"Key not added"}</span></div><h3>{p.label}</h3><p>{p.tier==="paid"?"Paid provider · opt-in required":p.tier==="local"?"Local inference · no API token charge":"Free-tier candidate · verify account and quotas"}</p><label className="gateway-key-label" htmlFor={"key-slot-"+p.id}>{p.envName}</label><div className="gateway-key-placeholder"><input id={"key-slot-"+p.id} type="password" placeholder={p.secretRequired?"API key placeholder · final step":"Local endpoint placeholder"} disabled readOnly aria-label={p.envName+" placeholder; edit disabled"}/><span>{p.keyDetected?"KEY DETECTED":p.configured?"CONNECTED":"PLACEHOLDER"}</span></div><small className="gateway-provider-note">No keys are collected or stored in the dashboard. Add credentials later through server-side environment variables.</small></article>)}</div>
+  <div className="gateway-section-heading"><div><span className="section-kicker">04 · TOKEN LEDGER</span><h2>Every request attributed to a purpose</h2><p>Usage, model, latency, status and estimated cost; prompt/response content is never shown.</p></div><span className="count">{Math.min(records.length,200)} / 200 RECORDS</span></div>
+  <section className="gateway-panel token-ledger-panel"><div className="token-ledger-intro"><div><strong>Request-by-request accounting</strong><p>Current month only; cost is estimated from configured rates.</p></div><span className="ledger-retention">{data?.budget.retention==="netlify-blobs"?"Persistent · scoped ledger":"Runtime fallback"}</span></div>
+   {records.length===0?<div className="gateway-empty-state"><div className="gateway-empty-icon">◷</div><strong>No model calls recorded this month</strong><p>Mock smoke test verifies wiring at ₹0 but isn't AI inference.</p></div>:<div className="token-ledger-table-wrap"><table className="gateway-table token-table"><thead><tr><th>TIME / REQUEST</th><th>MODULE</th><th>MODEL</th><th>INPUT</th><th>OUTPUT</th><th>TOTAL</th><th>EST. COST</th><th>LATENCY</th></tr></thead><tbody>{records.map(r=><tr key={r.id}><td><strong>{new Date(r.at).toLocaleString()}</strong><small>#{r.requestId.slice(0,8)} · {r.status}</small></td><td>{modules.find(m=>m.id===r.moduleId)?.label??r.moduleId??"Unattributed"}</td><td><strong>{r.model}</strong><small>{r.provider} · {r.tier}</small></td><td>{r.usageReported===false?"—":r.promptTokens.toLocaleString("en-IN")}</td><td>{r.usageReported===false?"—":r.completionTokens.toLocaleString("en-IN")}</td><td>{r.usageReported===false?"Unavailable":r.totalTokens.toLocaleString("en-IN")}</td><td>{inr(r.estimatedCostInr)}</td><td>{r.latencyMs.toLocaleString("en-IN")} ms</td></tr>)}</tbody></table></div>}
+  </section>
+  <div className="gateway-savebar"><div><strong>{dirty.current?"Unsaved configuration":message||"Settings saved"}</strong><p>Applies to this Netlify environment/branch only. API keys are not entered here.</p></div><button className="submit-button" type="button" onClick={()=>void save()} disabled={!draft||saving||!dirty.current}>{saving?"Saving…":"Save gateway settings ↗"}</button></div>
+  {message&&<p className="gateway-smoke-message" role="status">{message}</p>}
+  <p className="gateway-footer-note">Last refreshed {data?.checkedAt?new Date(data.checkedAt).toLocaleTimeString():"not checked"}. Dashboard refresh is one read-only GET per minute; it never calls providers or Figma.</p>
+  <footer>UX DIRECT <span>·</span> TECHNICAL ACCOUNTANT / MODEL GATEWAY</footer>
+ </div>;
 }
 
 export default function Home() {

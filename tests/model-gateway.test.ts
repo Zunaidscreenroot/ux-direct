@@ -100,8 +100,9 @@ test("paid provider keys do not enable paid routing without explicit opt-in", as
   const { providersFromEnv } = await import("../src/model-gateway");
   const locked = providersFromEnv({ NODE_ENV: "production", OPENAI_API_KEY: "test-only" });
   assert.equal(locked.some(p => p.name === "openai"), false);
-  const missingPrices = providersFromEnv({ NODE_ENV: "production", OPENAI_API_KEY: "test-only", ALLOW_PAID_MODELS: "true" });
-  assert.equal(missingPrices.some(p => p.name === "openai"), false);
+  const missingPrices = providersFromEnv({ NODE_ENV: "production", OPENAI_API_KEY: "test-only", ALLOW_PAID_MODELS: "true", MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000" });
+  // Listing is not activation: paid requests still require exact-model prices and budgets.
+  assert.equal(missingPrices.some(p => p.name === "openai"), true);
   const enabled = providersFromEnv({
     NODE_ENV: "production", OPENAI_API_KEY: "test-only", ALLOW_PAID_MODELS: "true",
     MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M: "12", MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: "48",
@@ -162,32 +163,26 @@ test("custom endpoints are disabled unless local or paid mode is explicitly enab
 });
 
 
-test("task aliases fail over between free providers but never select paid providers", async () => {
+test("an explicitly chosen model never silently fails over to another provider", async () => {
   const { chatCompletionWithFallback } = await import("../src/model-gateway");
   const configured: ProviderConfig[] = [
     { name: "groq", baseUrl: "https://groq.example/v1", apiKey: "test", models: ["openai/gpt-oss-20b"], kind: "free-tier" },
-    { name: "gemini", baseUrl: "https://gemini.example/v1", apiKey: "test", models: ["gemini-3.5-flash"], kind: "free-tier" },
-    { name: "openai", baseUrl: "https://paid.example/v1", apiKey: "test", models: ["gpt-4o-mini"], kind: "paid" },
+    { name: "gemini", baseUrl: "https://gemini.example/v1", apiKey: "test", models: ["gemini-3.8-flash"], kind: "free-tier" },
     { name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" }
   ];
   const attempted: string[] = [];
-  const result = await chatCompletionWithFallback({
-    model: "uxd/classify",
+  await assert.rejects(() => chatCompletionWithFallback({
+    model: "openai/gpt-oss-20b", moduleId: "general", providerId: "groq",
     messages: [{ role: "user", content: "Classify this design task." }]
   }, {
     providers: configured,
     fetchImpl: (async (input: RequestInfo | URL) => {
-      const url = String(input);
-      attempted.push(url);
-      if (url.includes("groq.example")) return new Response("rate limited", { status: 429 });
-      if (url.includes("gemini.example")) return new Response(JSON.stringify({
-        choices: [{ message: { content: "classification complete" } }]
-      }), { status: 200 });
-      throw new Error("Paid provider should never be attempted");
+      attempted.push(String(input));
+      return new Response("rate limited", { status: 429 });
     }) as typeof fetch
-  });
-  assert.equal(result.provider, "gemini");
-  assert.equal(attempted.some(url => url.includes("paid.example")), false);
+  }), /Provider returned HTTP 429/);
+  assert.equal(attempted.length, 1);
+  assert.match(attempted[0], /groq\\.example/);
 });
 
 

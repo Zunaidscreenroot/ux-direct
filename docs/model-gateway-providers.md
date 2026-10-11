@@ -84,3 +84,10 @@ The `routeTask()` helper prefers local/free models for classification, extractio
 - [ ] Run the mock suite and at least one local/free-tier smoke test.
 - [ ] Confirm free-tier data-use terms are acceptable for the prompts you send.
 - [ ] Only then add paid-provider credentials and set `ALLOW_PAID_MODELS=true` alongside an explicit paid-model allowlist. A paid key alone does not enable paid routing.
+
+
+## Module-level accounting
+
+Each module (reasoning, classification, extraction, summarization, vision, critique and general) has its own on/off switch, mode, exact model selection, monthly cap and per-request cap. Every catalog model has editable monthly/per-request caps and INR input/output rates. Published USD suggestions convert using an editable INR rate and link to their source. Verify current rates and account plans before enabling billing.
+
+Routing is strict: a disabled module, disconnected explicit model, incompatible mode, or exceeded budget blocks the request—there is no silent failover. Auto mode chooses only within the selected mode. The recommendation is a deterministic task-fit/cost heuristic, not a live benchmark or provider API call.

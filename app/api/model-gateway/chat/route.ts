@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { chatCompletionWithFallback, GatewayError, type ChatMessage } from "@/src/model-gateway";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
+import { GATEWAY_MODULES } from "@/src/model-gateway/control-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,6 +61,12 @@ export async function POST(request: Request) {
     }
     messages.push({ role: message.role as ChatMessage["role"], content: message.content });
   }
+  if (value.moduleId !== undefined && (typeof value.moduleId !== "string" || !GATEWAY_MODULES.some(module => module.id === value.moduleId))) {
+    return NextResponse.json({ error: "moduleId must be a supported gateway module." }, { status: 400 });
+  }
+  if (value.providerId !== undefined && (typeof value.providerId !== "string" || !/^[a-z0-9._-]{1,60}$/.test(value.providerId))) {
+    return NextResponse.json({ error: "providerId is invalid." }, { status: 400 });
+  }
   if (value.temperature !== undefined && (typeof value.temperature !== "number" || value.temperature < 0 || value.temperature > 2)) {
     return NextResponse.json({ error: "temperature must be between 0 and 2." }, { status: 400 });
   }
@@ -72,6 +79,8 @@ export async function POST(request: Request) {
       requestId,
       model: value.model,
       messages,
+      ...(typeof value.moduleId === "string" ? { moduleId: value.moduleId } : {}),
+      ...(typeof value.providerId === "string" ? { providerId: value.providerId } : {}),
       ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
       ...(typeof value.max_tokens === "number" ? { max_tokens: value.max_tokens } : {}),
       signal: request.signal

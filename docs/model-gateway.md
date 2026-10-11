@@ -2,6 +2,14 @@
 
 UX Direct includes a small, self-hosted-in-application gateway inspired by LiteLLM's provider abstraction. There is **no gateway subscription, proxy vendor, or gateway usage fee**. Requests go from the UX Direct server directly to the chosen model provider. Provider/model usage can still cost money; free model tiers and local models may have limits or infrastructure costs.
 
+## Accountant controls and module routing
+
+Every module (reasoning, classification, extraction, summarization, vision, UX critique and general) has its own switch, mode (free, paid, local, mock), exact model selection, monthly budget and per-request cap. Each model has separate monthly/per-request caps and INR input/output prices per million tokens. Published USD prices are source-linked and converted using an editable INR rate; verify current provider pricing and account quota before activating paid calls.
+
+Exact model selection is a strict allowlist. If a model is disconnected, incompatible with the chosen mode, the module is off, or any budget cap is exhausted, the request is blocked instead of silently using another model. Paid calls require module mode=paid, gateway paid-routing switch, `ALLOW_PAID_MODELS=true` server-side, keys, positive exact-model rates and passing global/module/model/request budgets. Free-tier API usage estimates as ₹0 only while the connected provider account/request really uses its free tier.
+
+Settings and usage keys are branch/environment scoped, so preview does not overwrite production settings or usage records. Netlify Blobs is best-effort key/value storage rather than transactional accounting; concurrent paid calls may race a cap. Use transactional reservations before relying on caps as a production financial guarantee.
+
 ## What it provides
 
 - A common `chatCompletion()` interface for OpenAI-compatible chat-completion APIs.
