@@ -1,0 +1,75 @@
+import { NextResponse } from "next/server";
+import { chatCompletion, GatewayError, type ChatMessage } from "@/src/model-gateway";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function authorized(request: Request): boolean {
+  const key = process.env.MODEL_GATEWAY_ACCESS_KEY;
+  if (key) {
+    const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ||
+      request.headers.get("x-model-gateway-key");
+    return Boolean(supplied && supplied.length === key.length &&
+      supplied.split("").reduce((n, c, i) => n | (c.charCodeAt(0) ^ key.charCodeAt(i)), 0) === 0);
+  }
+  // Safe local-only escape hatch; never enabled in production.
+  const url = new URL(request.url);
+  const host = url.hostname;
+  return process.env.NODE_ENV !== "production" &&
+    process.env.MODEL_GATEWAY_ALLOW_UNAUTHENTICATED_LOCAL === "true" &&
+    ["localhost", "127.0.0.1", "::1"].includes(host);
+}
+
+export async function POST(request: Request) {
+  if (!authorized(request)) {
+    return NextResponse.json({
+      error: process.env.MODEL_GATEWAY_ACCESS_KEY
+        ? "Unauthorized model gateway request."
+        : "Gateway is locked. Set MODEL_GATEWAY_ACCESS_KEY; unauthenticated access is disabled."
+    }, { status: process.env.MODEL_GATEWAY_ACCESS_KEY ? 401 : 503, headers: { "Cache-Control": "no-store" } });
+  }
+  let body: unknown;
+  try { body = await request.json(); }
+  catch { return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 }); }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400 });
+  }
+  const value = body as Record<string, unknown>;
+  if (typeof value.model !== "string" || !Array.isArray(value.messages)) {
+    return NextResponse.json({ error: "Required fields: model (string), messages (array)." }, { status: 400 });
+  }
+  if (value.messages.length < 1 || value.messages.length > 100) {
+    return NextResponse.json({ error: "messages must contain between 1 and 100 entries." }, { status: 400 });
+  }
+  const messages: ChatMessage[] = [];
+  for (const item of value.messages) {
+    if (!item || typeof item !== "object") return NextResponse.json({ error: "Invalid message entry." }, { status: 400 });
+    const message = item as Record<string, unknown>;
+    if (!["system", "user", "assistant"].includes(String(message.role)) || typeof message.content !== "string") {
+      return NextResponse.json({ error: "Each message requires a supported role and string content." }, { status: 400 });
+    }
+    messages.push({ role: message.role as ChatMessage["role"], content: message.content });
+  }
+  if (value.temperature !== undefined && (typeof value.temperature !== "number" || value.temperature < 0 || value.temperature > 2)) {
+    return NextResponse.json({ error: "temperature must be between 0 and 2." }, { status: 400 });
+  }
+  if (value.max_tokens !== undefined && (!Number.isInteger(value.max_tokens) || Number(value.max_tokens) < 1 || Number(value.max_tokens) > 16384)) {
+    return NextResponse.json({ error: "max_tokens must be an integer between 1 and 16384." }, { status: 400 });
+  }
+  try {
+    const result = await chatCompletion({
+      model: value.model,
+      messages,
+      ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
+      ...(typeof value.max_tokens === "number" ? { max_tokens: value.max_tokens } : {}),
+      signal: request.signal
+    });
+    return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    const status = error instanceof GatewayError ? error.status : 502;
+    const message = error instanceof GatewayError ? error.message : "Model gateway request failed.";
+    // Never send credentials or arbitrary provider response bodies to the client.
+    return NextResponse.json({ error: message, provider: error instanceof GatewayError ? error.provider : undefined },
+      { status: status >= 400 && status <= 599 ? status : 502, headers: { "Cache-Control": "no-store" } });
+  }
+}
