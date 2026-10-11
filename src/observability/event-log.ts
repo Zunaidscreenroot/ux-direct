@@ -35,7 +35,7 @@ export function recordOperationalEvent(event: Omit<OperationalEvent, "id" | "at"
   };
   runtimeEvents.unshift(normalized);
   if (runtimeEvents.length > MAX_EVENTS) runtimeEvents.length = MAX_EVENTS;
-  // Structured runtime logs also appear in Vercel's function logs.
+  // Structured runtime logs also appear in the hosting platform's function logs.
   console.info("[ux-direct-event]", JSON.stringify(normalized));
   return normalized;
 }
