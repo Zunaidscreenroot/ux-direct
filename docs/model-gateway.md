@@ -17,7 +17,7 @@ Set secrets only in the server environment; never expose them through `NEXT_PUBL
 OpenRouter:
 ```env
 OPENROUTER_API_KEY=...
-OPENROUTER_MODELS=meta-llama/llama-3.3-8b-instruct:free,openrouter/auto
+OPENROUTER_MODELS=provider/model-name:free
 # Optional:
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 ```
@@ -57,4 +57,4 @@ Do not call this module directly from browser/plugin code: route requests throug
 
 ## Current scope and follow-up
 
-This first slice implements non-streaming chat completions and does not change the existing model orchestration or production deployment. Streaming, embeddings, provider-specific native APIs, budgets, retry policy, and UI controls can be added after tests and integration requirements are confirmed. The module is not yet wired to existing UX Direct task execution.
+This slice implements non-streaming chat completions, a deterministic no-network mock, a provider/model catalog, task-based model selection, and authenticated Next.js API endpoints. It does not change production deployment or wire task routing into the existing UX Direct orchestrator yet. Streaming, embeddings, budgets, persistent cost accounting, retry policy, and UI controls remain follow-up work.
