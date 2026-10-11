@@ -564,15 +564,6 @@ async function executeNativeApiHealthCheck() {
     add("Events", "Receive selection-change event from inactive page", "not-tested", "not-tested",
       "Skipped to preserve the user's active page; selectionchange events are tied to the current page.");
 
-      mutateLab("select event test node", function () { testPage.selection = [node]; });
-      var received = await Promise.race([
-        eventPromise,
-        new Promise(function (resolve) { setTimeout(function () { resolve(false); }, 1800); })
-      ]);
-      mutateLab("restore page selection after event", function () { testPage.selection = savedTestSelection; });
-      savedTestSelection = null;
-      if (!received || !delivered) throw new Error("selectionchange event did not arrive within 1.8 seconds.");
-    });
     await runTest("Events", "Register/remove listener with figma.off", async function () {
       var node = rect("UXD off API probe");
       var fired = false;
