@@ -152,13 +152,21 @@ async function handleModelProbe(request: Request, raw: unknown) {
     }
 
     stage = "live-provider-call";
-    const result = await chatCompletion({
+    // Bound the entire probe so slow gateway initialization/provider responses return JSON
+    // before the browser or Preview request goes idle. Keep this probe tiny and single-provider.
+    const probePromise = chatCompletion({
       model,
       providerId: provider,
       messages: [{ role: "user", content: "Reply with exactly: UXD_MODEL_CHECK_OK" }],
       temperature: 0,
       max_tokens: 12
-    }, { providers, timeoutMs: 15000 });
+    }, { providers, timeoutMs: 8000 });
+    const result = await Promise.race([
+      probePromise,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("Live model probe timed out after 9 seconds.")), 9000);
+      })
+    ]);
 
     if (!result.content || !result.content.trim()) {
       return NextResponse.json({
