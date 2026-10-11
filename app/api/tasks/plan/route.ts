@@ -32,7 +32,8 @@ export async function POST(request: Request) {
   const requestId = randomUUID();
   const headers = { ...corsHeaders(request.headers.get("origin")), "X-Request-Id": requestId };
   const origin = request.headers.get("origin");
-  if (origin && !ALLOWED_ORIGINS.has(origin)) {
+  const selfOrigin = new URL(request.url).origin;
+  if (origin && origin !== selfOrigin && !ALLOWED_ORIGINS.has(origin)) {
     recordOperationalEvent({ source: "backend", event: "Task request blocked", status: "warning", summary: "Request rejected by origin policy.", requestId });
     return NextResponse.json({ error: "Origin not allowed", requestId }, { status: 403, headers });
   }
@@ -45,6 +46,11 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     recordOperationalEvent({ source: "backend", event: "Task request rejected", status: "error", summary: "Input validation failed.", requestId, durationMs: Date.now() - startedAt });
     return NextResponse.json({ error: "Invalid task input", details: parsed.error.flatten(), requestId }, { status: 400, headers });
+  }
+  const isFigmaPluginOrigin = origin !== null && ["null", "https://www.figma.com", "https://figma.com"].includes(origin);
+  if (isFigmaPluginOrigin && !isAllowedFigmaFileKey(parsed.data.fileKey)) {
+    recordOperationalEvent({ source: "backend", event: "Task request blocked", status: "warning", summary: "Figma-originated task request did not carry the approved file key.", requestId });
+    return NextResponse.json({ error: "Approved Figma file key required for Figma-originated task requests", requestId }, { status: 403, headers });
   }
   if (parsed.data.fileKey && !isAllowedFigmaFileKey(parsed.data.fileKey)) {
     recordOperationalEvent({ source: "backend", event: "Task request blocked", status: "warning", summary: "Task request rejected because its Figma file key is not allowlisted.", requestId });
