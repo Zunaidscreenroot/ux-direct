@@ -64,9 +64,14 @@ function bridgeStore() {
   return getStore(STORE_NAME, { region: "us-east-2" });
 }
 async function readJson<T>(pathname: string): Promise<T | null> {
-  const value = await bridgeStore().get(pathname);
+  const store = bridgeStore();
+  // Avoid a direct content read for absent keys. Netlify Blobs listing reliably
+  // returns the index; only fetch JSON when the exact object is present.
+  const index = await store.list({ prefix: pathname });
+  if (!index.blobs.some((blob) => blob.key === pathname)) return null;
+  const value = await store.get(pathname, { type: "text" });
   if (value === null) return null;
-  return JSON.parse(new TextDecoder().decode(value)) as T;
+  return JSON.parse(value) as T;
 }
 async function writeJson(pathname: string, value: unknown): Promise<void> {
   await bridgeStore().set(pathname, JSON.stringify(value), {
