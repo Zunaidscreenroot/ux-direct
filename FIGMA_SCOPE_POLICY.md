@@ -33,7 +33,7 @@ Figma's native Plugin API exposes the current file identity to this private deve
 ## Health-check behavior
 
 - The self-test executes real smoke tests for page create/switch/remove, shapes, text/font loading, grouping/flattening/boolean operations, components/instances/variants, variables, client storage, export, events and UI-message round-trip inside `UXD API Test Lab`.
-- The first health test creates the named test page if missing. Temporary test nodes, pages, variable collections and storage keys are removed afterward; the test page remains as a dedicated workspace.
+- The first health test creates the named test page if missing and leaves a visible fixture frame with sample shapes, text, a component, and a vector. Temporary test nodes, pages, variable collections and storage keys are removed after each run; the dedicated test page and fixture frame remain.
 - `AVAILABLE` is reserved for disruptive calls such as closing the plugin, opening an external browser, and user-interrupting notifications. These are counted separately from `PASS`.
 - Future AI execution must use an explicit action allowlist/dispatcher, revalidate `figma.fileKey` before every action, and reject arbitrary external URLs/file keys. The current planner still does not execute AI-generated design edits.
 - Team Library access remains `NOT TESTED`. Do not add `"teamlibrary"` to `manifest.json` to silence an error: that would grant a wider library capability that is outside the approved scope.
