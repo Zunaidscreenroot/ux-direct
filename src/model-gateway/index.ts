@@ -1,4 +1,5 @@
 import { GATEWAY_MODULES, getGatewaySettings, getDefaultModelPolicy, modelKey } from "./control-store";
+import { findOpenRouterModel, getLiveGatewayModels, isFreeOpenRouterModel } from "./openrouter-catalog";
 /**
  * Zero-fee model gateway for UX Direct.
  * Requests go directly to provider APIs. No gateway SaaS, account, or usage fee.
@@ -52,9 +53,12 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
   const paidRoutingReady = env.ALLOW_PAID_MODELS === "true" && Number(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "3000") > 0;
   const openRouterModels = csv(env.OPENROUTER_MODELS).filter(model => model.endsWith(":free") || paidRoutingReady);
-  if (env.OPENROUTER_API_KEY && openRouterModels.length) providers.push({
+  // OPENROUTER_MODELS is a legacy pin list only. The live catalog endpoint resolves
+  // any currently listed model at request time, so this list must not restrict discovery.
+  if (env.OPENROUTER_API_KEY) providers.push({
     name: "openrouter", baseUrl: trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"),
-    apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: openRouterModels.some(model => !model.endsWith(":free")) ? "paid" : "free-tier"
+    apiKey: env.OPENROUTER_API_KEY, models: openRouterModels,
+    kind: openRouterModels.length > 0 && openRouterModels.every(model => model.endsWith(":free")) ? "free-tier" : "paid"
   });
   const geminiBillingKind = env.GEMINI_BILLING_MODE === "paid" ? "paid" : "free-tier";
   if ((env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) && (geminiBillingKind !== "paid" || paidRoutingReady)) providers.push({
@@ -221,7 +225,13 @@ export async function chatCompletion(
   const moduleId=request.moduleId??TASK_MODULES[request.model]??"general";
   const policy=settings.modules[moduleId]??settings.modules.general;
   if(!policy.enabled)throw new GatewayError("Module "+moduleId+" is switched off in Model Gateway settings.",403);
-  const catalog=getModelCatalog(providers);
+  let catalog=getModelCatalog(providers);
+  if (process.env.OPENROUTER_API_KEY && providers.some(p => p.name === "openrouter")) {
+    try {
+      const live = await getLiveGatewayModels();
+      catalog = [...catalog.filter(m => m.provider !== "openrouter"), ...live.models];
+    } catch { /* retain the known static catalog during a transient catalog outage */ }
+  }
   let selected:ModelCatalogEntry|undefined;
   let model=request.model;
   let providerId=request.providerId;
@@ -233,10 +243,18 @@ export async function chatCompletion(
   }
 
   let provider:ProviderConfig|undefined;
-  if(providerId){
+  if(providerId === "openrouter" && process.env.OPENROUTER_API_KEY) {
+    const base = providers.find(p => p.name === "openrouter");
+    if (base) {
+      const liveModel = await findOpenRouterModel(model);
+      if (!liveModel) throw new GatewayError("Model is no longer listed in the live OpenRouter catalog.", 404, "openrouter");
+      provider = { ...base, models: [model], kind: isFreeOpenRouterModel(liveModel) ? "free-tier" : "paid" };
+    }
+  }
+  if(!provider && providerId){
     const entry=selected??catalog.find(m=>m.provider===providerId&&m.id===model)??{id:model,provider:providerId,label:model,tier:"paid" as const,tasks:[],configured:true,notes:""};
     provider=providerForEntry(entry,providers);
-  }else provider=resolveProvider(model,providers);
+  }else if(!provider) provider=resolveProvider(model,providers);
   if(!provider)throw new GatewayError("Selected model \""+model+"\" is not connected. Add its server-side key/model allowlist; no other model was attempted.",503,providerId);
   const effective=selected??catalog.find(m=>m.provider===provider!.name&&m.id===model)??{id:model,provider:provider.name,label:model,tier:(provider.kind??"paid") as ModelCatalogEntry["tier"],tasks:[],configured:true,notes:""};
   const mockFallback=Boolean(TASK_MODULES[request.model]&&policy.mode==="free"&&policy.selectedModelKey==="auto"&&provider.kind==="mock");
