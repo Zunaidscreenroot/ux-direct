@@ -191,17 +191,18 @@ function chooseModuleModel(moduleId: string, policy: { mode: string; selectedMod
     }
     return m.tier === "mock";
   });
-  eligible.sort((a,b) => {
-    const score = (m: ModelCatalogEntry) => m.tasks.some(t => def.tasks.some(w => t.toLowerCase().includes(w.toLowerCase()) || w.toLowerCase().includes(t.toLowerCase()))) ? 1 : 0;
-    const match = score(b)-score(a);
+  eligible.sort((a, b) => {
+    const score = (m: ModelCatalogEntry) => m.tasks.some(t =>
+      def.tasks.some(w => t.toLowerCase().includes(w.toLowerCase()) || w.toLowerCase().includes(t.toLowerCase()))
+    ) ? 1 : 0;
+    const match = score(b) - score(a);
     if (match) return match;
     if (policy.mode === "paid") {
-      const ap=settings.models[modelKey(a.provider,a.id)], bp=settings.models[modelKey(b.provider,b.id)];
-      const ac=ap ? ap.inputPriceInrPerMillion*0.1+ap.outputPriceInrPerMillion*0.02 : Infinity;
-      const bc=bp ? bp.inputPriceInrPerMillion*0.1+bp.outputPriceInrPerMillion*0.02 : Infinity;
-      if(ac!==bc) return ac-bc;
-    }
-      if (ai !== -1 && bi !== -1 && ai !== bi) return ai - bi;
+      const ap = settings.models[modelKey(a.provider, a.id)];
+      const bp = settings.models[modelKey(b.provider, b.id)];
+      const ac = ap ? ap.inputPriceInrPerMillion * 0.1 + ap.outputPriceInrPerMillion * 0.02 : Infinity;
+      const bc = bp ? bp.inputPriceInrPerMillion * 0.1 + bp.outputPriceInrPerMillion * 0.02 : Infinity;
+      if (ac !== bc) return ac - bc;
     }
     return a.label.localeCompare(b.label);
   });
