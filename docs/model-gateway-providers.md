@@ -68,7 +68,7 @@ CEREBRAS_MODELS=gpt-oss-120b
 OpenRouter:
 ```env
 OPENROUTER_API_KEY=
-OPENROUTER_MODELS=provider/model-name:free
+# OpenRouter :free models are discovered live by the model-status probe.
 ```
 
 Set only providers that are available to your account. The gateway rejects models outside the configured allowlist.
@@ -103,6 +103,6 @@ Routing is strict: a disabled module, disconnected explicit model, incompatible 
 
 ## Additional available free and paid choices
 
-The curated OpenRouter free catalogue was refreshed from its official Free Models collection on 2026-10-11, with free routing IDs for NVIDIA Nemotron 3 Ultra, Nemotron 3.5 Lightning, Nemotron 3 Super, Nemotron Nano Omni, Poolside Laguna S 2.1, Thinking Machines Inkling and Cohere North Mini Code. Free endpoints are subject to availability, throughput and provider data terms. Some listed endpoints explicitly mention input logging or model-improvement use; do not route confidential client data through them unless the relevant terms are approved. Catalog visibility is not a guarantee that the user's account has the model enabled; the exact ID must be present in `OPENROUTER_MODELS`.
+The curated OpenRouter free catalogue was refreshed from its official Free Models collection on 2026-10-11, with free routing IDs for NVIDIA Nemotron 3 Ultra, Nemotron 3.5 Lightning, Nemotron 3 Super, Nemotron Nano Omni, Poolside Laguna S 2.1, Thinking Machines Inkling and Cohere North Mini Code. Free endpoints are subject to availability, throughput and provider data terms. Some listed endpoints explicitly mention input logging or model-improvement use; do not route confidential client data through them unless the relevant terms are approved. Catalog visibility is not a guarantee that the user's account can use a model; the live probe selects only a model that returns a real response.
 
 DeepSeek's OpenAI-compatible API is supported as a native paid provider. The catalog shows conservative peak-hour rates to avoid underestimating spend: `deepseek-flash` $0.30/M input and $1.20/M output, and `deepseek-v4-pro` $1.32/M input and $3.96/M output. Off-peak and cache-hit inputs can be lower; see the provider's current pricing page before activation. Sources: https://api-docs.deepseek.com/quick_start/pricing/ and https://openrouter.ai/collections/free-models/.
