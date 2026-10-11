@@ -113,7 +113,7 @@ async function executeNativeApiHealthCheck() {
       figma.ui.postMessage({ type: "native-health-progress", category: category, name: name,
         text: "Testing " + name + "…", startedAt: new Date().toISOString() });
       var operation = Promise.resolve().then(fn);
-      await Promise.race([
+      var operationResult = await Promise.race([
         operation,
         new Promise(function (_, reject) {
           timeoutHandle = setTimeout(function () {
@@ -125,7 +125,10 @@ async function executeNativeApiHealthCheck() {
       ]);
       assertUxDirectFileScope(name + " verification");
       if (needsLab !== false) assertLab(name + " verification");
-      add(category, name, "functional", "success", "Actual API operation executed and verified inside the allowlisted file.");
+      add(category, name, "functional", "success",
+        operationResult && operationResult.uxdResultReason
+          ? operationResult.uxdResultReason
+          : "Actual API operation executed and verified inside the allowlisted file.");
       figma.ui.postMessage({ type: "native-health-progress", category: category, name: name,
         text: "Passed: " + name, completedAt: new Date().toISOString() });
       return true;
@@ -144,11 +147,31 @@ async function executeNativeApiHealthCheck() {
       if (timeoutHandle !== null) clearTimeout(timeoutHandle);
     }
   }
+  function findNodeByName(root, name, type) {
+    if (!root) return null;
+    if (root.name === name && (!type || root.type === type)) return root;
+    if (!("children" in root)) return null;
+    var children = root.children;
+    for (var i = 0; i < children.length; i++) {
+      var found = findNodeByName(children[i], name, type);
+      if (found) return found;
+    }
+    return null;
+  }
   function createNode(factory, name, parent) {
-    var node = mutateLab("create " + name, factory);
-    createdNodes.push(node);
-    if (name) mutateLab("name " + name, function () { node.name = name; });
-    if (parent && node.parent !== parent) mutateLab("attach " + name, function () { parent.appendChild(node); });
+    var searchRoot = parent || harness || testPage;
+    var node = name ? findNodeByName(searchRoot, name) : null;
+    var reused = !!node;
+    if (!node) {
+      node = mutateLab("create " + name, factory);
+      createdNodes.push(node);
+      if (name) mutateLab("name " + name, function () { node.name = name; });
+    }
+    // Only attach newly-created nodes. Reused inputs may intentionally live inside a
+    // previously-created group, component, vector, boolean result, or variant set.
+    if (parent && !reused && node.parent !== parent) {
+      mutateLab("attach " + name, function () { parent.appendChild(node); });
+    }
     return node;
   }
   function rect(name, parent) {
@@ -163,25 +186,6 @@ async function executeNativeApiHealthCheck() {
   }
   function cleanupProgress(text) {
     figma.ui.postMessage({ type: "native-health-progress", text: text });
-  }
-  async function waitForCleanup(name, operation) {
-    cleanupProgress("Cleanup: " + name + "…");
-    var timeoutHandle = null;
-    try {
-      return await Promise.race([
-        Promise.resolve().then(operation),
-        new Promise(function (_, reject) {
-          timeoutHandle = setTimeout(function () {
-            var error = new Error("Cleanup step timed out after " + (UXD_HEALTH_TEST_TIMEOUT_MS / 1000) + " seconds: " + name + ".");
-            error.code = "UXD_HEALTH_CLEANUP_TIMEOUT";
-            healthCleanupTimedOut = true;
-            reject(error);
-          }, UXD_HEALTH_TEST_TIMEOUT_MS);
-        })
-      ]);
-    } finally {
-      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
-    }
   }
   async function postResult() {
     try { assertUxDirectFileScope("report health-check results"); } catch (_) { return; }
@@ -235,6 +239,21 @@ async function executeNativeApiHealthCheck() {
   await runTest("Test isolation", "Prepare reusable shape/text/component fixtures", async function () {
     var fixtureName = "__UXD API Test Fixtures";
     var fixture = testPage.children.find(function (node) { return node.type === "FRAME" && node.name === fixtureName; }) || null;
+    var fixtureNames = [
+      ["FRAME", "Fixture Frame"], ["RECTANGLE", "Fixture Rectangle"],
+      ["ELLIPSE", "Fixture Ellipse"], ["LINE", "Fixture Line"],
+      ["TEXT", "Fixture Text"], ["COMPONENT", "Fixture Component"],
+      ["VECTOR", "Fixture Vector"]
+    ];
+    var fixturesAlreadyReady = !!fixture && fixtureNames.every(function (expected) {
+      return fixture.children.some(function (node) { return node.type === expected[0] && node.name === expected[1]; });
+    });
+    if (fixturesAlreadyReady) {
+      var readyComponent = fixture.children.find(function (node) { return node.type === "COMPONENT" && node.name === "Fixture Component"; });
+      if (readyComponent && readyComponent.children.some(function (node) { return node.name === "Fixture Component Child"; })) {
+        return { uxdResultReason: "Reused the persistent shape/text/component fixture set; no fixtures were recreated." };
+      }
+    }
     if (!fixture) {
       fixture = mutateLab("create persistent fixture frame", function () { return figma.createFrame(); });
       mutateLab("name persistent fixture frame", function () { fixture.name = fixtureName; });
@@ -294,8 +313,14 @@ async function executeNativeApiHealthCheck() {
   }
 
   try {
-    await runTest("Test isolation", "Create temporary smoke-test container frame", async function () {
-      harness = createNode(function () { return figma.createFrame(); }, "__UXD API TEST RUN " + Date.now(), null);
+    await runTest("Test isolation", "Reuse persistent API test container", async function () {
+      var harnessName = "__UXD API TEST RUN";
+      var existingHarness = testPage.children.find(function (node) { return node.type === "FRAME" && node.name === harnessName; }) || null;
+      if (existingHarness) {
+        harness = existingHarness;
+        return { uxdResultReason: "Reused the persistent test container from the first run." };
+      }
+      harness = createNode(function () { return figma.createFrame(); }, harnessName, null);
       mutateLab("resize test container", function () { harness.resize(640, 480); });
       mutateLab("style test container", function () {
         harness.fills = [{ type: "SOLID", color: { r: 0.96, g: 0.97, b: 0.99 } }];
@@ -335,31 +360,16 @@ async function executeNativeApiHealthCheck() {
       if (!bounds || typeof zoom !== "number" || zoom <= 0) throw new Error("Viewport bounds or zoom were invalid.");
     });
 
-    await runTest("Page navigation", "Create and remove a temporary page", async function () {
-      var page = mutateFile("create temporary navigation page", function () { return figma.createPage(); });
-      temporaryPages.push(page);
-      mutateFile("name temporary navigation page", function () { page.name = "__UXD TEMP PAGE " + Date.now(); });
-      if (!figma.root.children.some(function (candidate) { return candidate.id === page.id; })) {
-        throw new Error("New page was not found in the current document.");
+    await runTest("Page navigation", "Load and reuse the persistent API Test Lab page", async function () {
+      var pages = mutateFile("verify persistent test lab page", function () { return figma.root.children; });
+      if (!pages.some(function (page) { return page.id === testPage.id && page.name === UXD_API_TEST_LAB_PAGE; })) {
+        throw new Error("Persistent UXD API Test Lab page is missing from the approved file.");
       }
-      mutateFile("remove temporary navigation page", function () { page.remove(); });
-      temporaryPages = temporaryPages.filter(function (candidate) { return candidate.id !== page.id; });
-      if (figma.root.children.some(function (candidate) { return candidate.id === page.id; })) {
-        throw new Error("Temporary page still exists after removal.");
+      await mutateFileAsync("load persistent test lab", function () { return testPage.loadAsync(); });
+      if (figma.currentPage.id !== testPage.id) {
+        await mutateFileAsync("activate persistent test lab", function () { return figma.setCurrentPageAsync(testPage); });
       }
-    });
-
-    await runTest("Page navigation", "Switch to a temporary page and back", async function () {
-      var page = mutateFile("create switch-test page", function () { return figma.createPage(); });
-      temporaryPages.push(page);
-      mutateFile("name switch-test page", function () { page.name = "__UXD NAV TEST " + Date.now(); });
-      await mutateFileAsync("load switch-test page", function () { return page.loadAsync(); });
-      await mutateFileAsync("switch to temporary page", function () { return figma.setCurrentPageAsync(page); });
-      if (figma.currentPage.id !== page.id) throw new Error("setCurrentPageAsync did not activate the temporary page.");
-      await mutateFileAsync("return to API test lab", function () { return figma.setCurrentPageAsync(testPage); });
-      if (figma.currentPage.id !== testPage.id) throw new Error("setCurrentPageAsync did not return to API test lab.");
-      mutateFile("remove switch-test page", function () { page.remove(); });
-      temporaryPages = temporaryPages.filter(function (candidate) { return candidate.id !== page.id; });
+      if (figma.currentPage.id !== testPage.id) throw new Error("Persistent UXD API Test Lab could not be activated.");
     }, false);
 
     await runTest("Shapes", "Create and resize frame", async function () {
@@ -397,11 +407,12 @@ async function executeNativeApiHealthCheck() {
       var node = createNode(function () { return figma.createVector(); }, "UXD API test vector", harness);
       if (node.type !== "VECTOR") throw new Error("Expected a VECTOR node.");
     });
-    await runTest("Shapes", "Remove a temporary node", async function () {
+    await runTest("Shapes", "Resolve a persistent node by async ID", async function () {
       var node = rect("UXD API removable rectangle");
-      var id = node.id;
-      mutateLab("remove temporary rectangle", function () { node.remove(); });
-      if (await figma.getNodeByIdAsync(id)) throw new Error("Temporary rectangle still exists after remove().");
+      var found = await mutateLabAsync("resolve persistent test node", function () { return figma.getNodeByIdAsync(node.id); });
+      if (!found || found.id !== node.id) throw new Error("Persistent node could not be resolved after reuse.");
+      if (typeof node.remove !== "function") throw new Error("Node remove API is not exposed.");
+      return { uxdResultReason: "Resolved a persistent node and verified the remove API is exposed; no node was deleted." };
     });
 
     await runTest("Text", "Create text, load font, write characters", async function () {
@@ -409,23 +420,37 @@ async function executeNativeApiHealthCheck() {
       var fontName = node.fontName;
       if (!fontName || fontName === figma.mixed) throw new Error("Text node did not expose a single font.");
       await mutateLabAsync("load font for test text", function () { return figma.loadFontAsync(fontName); });
-      mutateLab("write test characters", function () { node.characters = "UX Direct API test"; });
+      if (node.characters !== "UX Direct API test") mutateLab("write test characters", function () { node.characters = "UX Direct API test"; });
       if (node.characters !== "UX Direct API test") throw new Error("Text write did not persist.");
     });
 
-    await runTest("Layout and styling", "Group two test nodes", async function () {
+    await runTest("Layout and styling", "Group two persistent test nodes", async function () {
+      var groupName = "__UXD GROUP RESULT";
+      var existingGroup = findNodeByName(harness, groupName, "GROUP");
+      if (existingGroup) {
+        if (existingGroup.children.length !== 2) throw new Error("Persistent group fixture no longer contains two children.");
+        return { uxdResultReason: "Reused the group created on the first run; did not create another group." };
+      }
       var a = rect("UXD group item A"), b = ellipse("UXD group item B");
       mutateLab("position group item A", function () { a.x = 5; a.y = 5; });
       mutateLab("position group item B", function () { b.x = 35; b.y = 25; });
       var group = mutateLab("group test nodes", function () { return figma.group([a, b], harness); });
       createdNodes.push(group);
+      mutateLab("name persistent test group", function () { group.name = groupName; });
       if (group.type !== "GROUP" || group.children.length !== 2) throw new Error("Group did not contain both nodes.");
     });
-    await runTest("Layout and styling", "Flatten test nodes", async function () {
+    await runTest("Layout and styling", "Reuse persistent flattened vector", async function () {
+      var vectorName = "__UXD FLATTEN RESULT";
+      var existingVector = findNodeByName(harness, vectorName, "VECTOR");
+      if (existingVector) {
+        if (existingVector.type !== "VECTOR") throw new Error("Persistent flatten fixture is invalid.");
+        return { uxdResultReason: "Reused the vector created on the first run; flatten is not rerun to create duplicates." };
+      }
       var a = rect("UXD flatten item A"), b = ellipse("UXD flatten item B");
       mutateLab("position flatten item", function () { b.x = 25; b.y = 25; });
       var vector = mutateLab("flatten test nodes", function () { return figma.flatten([a, b], harness); });
       createdNodes.push(vector);
+      mutateLab("name persistent flattened vector", function () { vector.name = vectorName; });
       if (vector.type !== "VECTOR") throw new Error("Flatten did not return a VECTOR node.");
     });
     var booleanOperations = [
@@ -436,60 +461,87 @@ async function executeNativeApiHealthCheck() {
     ];
     for (var opIndex = 0; opIndex < booleanOperations.length; opIndex++) {
       var operation = booleanOperations[opIndex];
-      await runTest("Layout and styling", "Execute " + operation.name + " boolean operation", async function () {
+      await runTest("Layout and styling", "Verify persistent " + operation.name + " boolean fixture", async function () {
+        var resultName = "__UXD BOOLEAN RESULT " + operation.name;
+        var existingResult = findNodeByName(harness, resultName, "BOOLEAN_OPERATION");
+        if (existingResult) {
+          return { uxdResultReason: "Reused the persistent " + operation.name + " result created on the first run." };
+        }
         var a = rect("UXD boolean A"), b = ellipse("UXD boolean B");
         mutateLab("position boolean-test node", function () { b.x = 25; });
         var result = mutateLab("execute boolean operation", function () { return operation.fn([a, b], harness); });
         createdNodes.push(result);
+        mutateLab("name persistent boolean result", function () { result.name = resultName; });
         if (result.type !== "BOOLEAN_OPERATION") throw new Error(operation.name + " did not return a BOOLEAN_OPERATION.");
       });
     }
 
-    await runTest("Components", "Create component and instance", async function () {
+    await runTest("Components", "Reuse persistent component and instance", async function () {
       var component = createNode(function () { return figma.createComponent(); }, "UXD API test component", harness);
-      mutateLab("resize test component", function () { component.resize(100, 60); });
+      if (component.width !== 100 || component.height !== 60) mutateLab("size persistent test component", function () { component.resize(100, 60); });
       rect("UXD component child", component);
-      var instance = mutateLab("create test component instance", function () { return component.createInstance(); });
-      createdNodes.push(instance);
+      var instanceName = "UXD API test component instance";
+      var instance = findNodeByName(harness, instanceName, "INSTANCE");
+      if (!instance) {
+        instance = mutateLab("create test component instance", function () { return component.createInstance(); });
+        createdNodes.push(instance);
+        mutateLab("name persistent test instance", function () { instance.name = instanceName; });
+        if (instance.parent !== harness) mutateLab("attach persistent test instance", function () { harness.appendChild(instance); });
+      }
       var main = await mutateLabAsync("resolve instance main component", function () { return instance.getMainComponentAsync(); });
       if (!main || main.id !== component.id) throw new Error("Instance did not resolve to its main component.");
     });
-    await runTest("Components", "Create component from frame", async function () {
+    await runTest("Components", "Reuse component created from frame", async function () {
+      var componentName = "__UXD FRAME TO COMPONENT RESULT";
+      var existingComponent = findNodeByName(harness, componentName, "COMPONENT");
+      if (existingComponent) {
+        return { uxdResultReason: "Reused the component produced on the first run; did not convert a new frame." };
+      }
       var frame = createNode(function () { return figma.createFrame(); }, "UXD frame to component", harness);
       rect("UXD component source child", frame);
       var component = mutateLab("convert frame to component", function () { return figma.createComponentFromNode(frame); });
       createdNodes.push(component);
+      mutateLab("name persistent frame component", function () { component.name = componentName; });
       if (component.type !== "COMPONENT") throw new Error("createComponentFromNode did not produce a component.");
     });
-    await runTest("Components", "Combine components as variants", async function () {
+    await runTest("Components", "Reuse persistent component variant set", async function () {
+      var setName = "__UXD COMPONENT VARIANT SET";
+      var existingSet = findNodeByName(harness, setName, "COMPONENT_SET");
+      if (existingSet) {
+        if (existingSet.children.length !== 2) throw new Error("Persistent component set no longer contains two variants.");
+        return { uxdResultReason: "Reused the variant set created on the first run." };
+      }
       var a = createNode(function () { return figma.createComponent(); }, "UXD variant A", harness);
       var b = createNode(function () { return figma.createComponent(); }, "UXD variant B", harness);
       mutateLab("resize variant A", function () { a.resize(100, 60); });
       mutateLab("resize variant B", function () { b.resize(100, 60); });
       var set = mutateLab("combine variants", function () { return figma.combineAsVariants([a, b], harness); });
       createdNodes.push(set);
+      mutateLab("name persistent component set", function () { set.name = setName; });
       if (set.type !== "COMPONENT_SET" || set.children.length !== 2) throw new Error("Component set did not contain both variants.");
     });
 
-    await runTest("Variables", "Create/write/read/remove temporary variable collection", async function () {
+    await runTest("Variables", "Reuse persistent health variable collection", async function () {
       if (!figma.variables || typeof figma.variables.createVariableCollection !== "function" || typeof figma.variables.createVariable !== "function") {
         throw new Error("Variable write APIs are unavailable.");
       }
-      var collection = mutateLab("create temporary variable collection", function () {
-        return figma.variables.createVariableCollection("__UXD TEMP HEALTH " + Date.now());
+      var allCollections = await mutateLabAsync("read variable collections for reuse", function () { return figma.variables.getLocalVariableCollectionsAsync(); });
+      var collectionName = "__UXD API HEALTH VARIABLES";
+      var collection = allCollections.find(function (item) { return item.name === collectionName; }) || null;
+      if (!collection) collection = mutateLab("create persistent health variable collection", function () {
+        return figma.variables.createVariableCollection(collectionName);
       });
-      temporaryCollections.push(collection);
-      var variable = mutateLab("create temporary variable", function () {
+      var allVariables = await mutateLabAsync("read variables for reuse", function () { return figma.variables.getLocalVariablesAsync(); });
+      var variable = allVariables.find(function (item) { return item.name === "probe/color" && item.variableCollectionId === collection.id; }) || null;
+      if (!variable) variable = mutateLab("create persistent health variable", function () {
         return figma.variables.createVariable("probe/color", collection, "COLOR");
       });
-      mutateLab("write temporary variable", function () {
+      mutateLab("write persistent health variable", function () {
         variable.setValueForMode(collection.defaultModeId, { r: 0.2, g: 0.4, b: 0.6 });
       });
-      var loaded = await mutateLabAsync("read temporary variable", function () { return figma.variables.getVariableByIdAsync(variable.id); });
-      if (!loaded || loaded.valuesByMode[collection.defaultModeId].r !== 0.2) throw new Error("Temporary variable value did not read back.");
-      mutateLab("remove temporary variable collection", function () { collection.remove(); });
-      temporaryCollections = temporaryCollections.filter(function (item) { return item.id !== collection.id; });
-      if (await figma.variables.getVariableByIdAsync(variable.id)) throw new Error("Temporary variable still exists after collection removal.");
+      var loaded = await mutateLabAsync("read persistent health variable", function () { return figma.variables.getVariableByIdAsync(variable.id); });
+      if (!loaded || loaded.valuesByMode[collection.defaultModeId].r !== 0.2) throw new Error("Persistent variable value did not read back.");
+      return { uxdResultReason: "Reused a named variable collection and variable; nothing was deleted." };
     });
     await runTest("Variables", "Read local variables and collections", async function () {
       var variables = await mutateLabAsync("read local variable list", function () { return figma.variables.getLocalVariablesAsync(); });
@@ -497,13 +549,12 @@ async function executeNativeApiHealthCheck() {
       if (!Array.isArray(variables) || !Array.isArray(collections)) throw new Error("Local variable APIs returned invalid results.");
     });
 
-    await runTest("Storage", "Write/read/delete temporary client-storage key", async function () {
-      storageKey = "uxd.health.probe." + Date.now();
-      await mutateLabAsync("write client-storage test key", function () { return figma.clientStorage.setAsync(storageKey, "uxd-test-value"); });
-      var value = await mutateLabAsync("read client-storage test key", function () { return figma.clientStorage.getAsync(storageKey); });
+    await runTest("Storage", "Write/read persistent client-storage key", async function () {
+      storageKey = "uxd.health.probe.persistent";
+      await mutateLabAsync("write persistent client-storage key", function () { return figma.clientStorage.setAsync(storageKey, "uxd-test-value"); });
+      var value = await mutateLabAsync("read persistent client-storage key", function () { return figma.clientStorage.getAsync(storageKey); });
       if (value !== "uxd-test-value") throw new Error("clientStorage returned a different value.");
-      await mutateLabAsync("delete client-storage test key", function () { return figma.clientStorage.deleteAsync(storageKey); });
-      storageKey = null;
+      return { uxdResultReason: "Reused the fixed client-storage key; it was not deleted." };
     });
 
     await runTest("Export", "Export a temporary shape to PNG", async function () {
@@ -571,87 +622,46 @@ async function executeNativeApiHealthCheck() {
   } catch (error) {
     add("Test runner", "Unexpected health-check failure", "functional", "error", error && error.message ? error.message : String(error));
   } finally {
-    if (healthTestTimedOut) {
-      // Do not mutate the document while the timed-out API promise could still be pending.
-      // Incomplete test artefacts stay confined to UXD API Test Lab for a later safe cleanup.
-      if (selectionHandlerPaused) {
-        try { assertUxDirectFileScope("restore selection listener after timeout"); figma.on("selectionchange", sendSelection); } catch (_) {}
-      }
-      figma.ui.postMessage({ type: "native-health-progress", text: "Timed out safely; cleanup was deferred to avoid concurrent API writes." });
-    } else {
-
-    cleanupProgress("Starting temporary artifact cleanup…");
-    if (testPage) {
-      try {
-        if (figma.currentPage.id !== testPage.id) await waitForCleanup("return to API Test Lab", function () { return mutateFileAsync("return to lab for cleanup", function () { return figma.setCurrentPageAsync(testPage); }); });
-      } catch (error) { cleanupErrors.push("Could not return to API Test Lab: " + (error.message || String(error))); }
-      if (!healthCleanupTimedOut && savedTestSelection) {
-        try { mutateLab("restore test-page selection during cleanup", function () { testPage.selection = savedTestSelection; }); }
-        catch (error) { cleanupErrors.push("Could not restore test-page selection: " + (error.message || String(error))); }
-      }
-      function belongsToHarness(node) {
-        var current = node;
-        while (current) {
-          if (harness && current.id === harness.id) return true;
-          current = current.parent;
-        }
-        return false;
-      }
-      cleanupProgress("Removing temporary test nodes…");
-      // Removing the lab's single temporary harness removes all descendants in one scoped operation.
-      // If any API failed before attaching a node to the harness, clean that orphan separately.
-      for (var i = createdNodes.length - 1; i >= 0 && !healthCleanupTimedOut; i--) {
-        var node = createdNodes[i];
-        try {
-          if (node && node.parent && !belongsToHarness(node)) {
-            assertLab("remove orphaned temporary test node");
-            node.remove();
-          }
-        } catch (error) {
-          cleanupErrors.push("Could not remove orphaned " + (node && node.name ? node.name : "test node") + ": " + (error.message || String(error)));
-        }
-      }
-      if (!healthCleanupTimedOut && harness) {
-        cleanupProgress("Removing temporary test frame…");
-        try {
-          if (harness.parent) mutateLab("remove all temporary harness contents", function () { harness.remove(); });
-        } catch (error) {
-          cleanupErrors.push("Could not remove temporary test harness and its children: " + (error.message || String(error)));
-        }
-      }
-      for (var c = temporaryCollections.length - 1; c >= 0 && !healthCleanupTimedOut; c--) {
-        try { assertUxDirectFileScope("remove temporary variable collection"); temporaryCollections[c].remove(); }
-        catch (error) { cleanupErrors.push("Could not remove temporary variable collection: " + (error.message || String(error))); }
-      }
-      if (!healthCleanupTimedOut && storageKey) {
-        try { await waitForCleanup("clearing temporary client storage", function () { assertUxDirectFileScope("delete temporary client-storage key"); return figma.clientStorage.deleteAsync(storageKey); }); }
-        catch (error) { cleanupErrors.push("Could not clear temporary client storage: " + (error.message || String(error))); }
-      }
-    }
-    cleanupProgress("Removing temporary pages…");
-    for (var p = temporaryPages.length - 1; p >= 0 && !healthCleanupTimedOut; p--) {
-      try {
-        assertUxDirectFileScope("remove temporary page");
-        if (figma.root.children.some(function (page) { return page.id === temporaryPages[p].id; }) &&
-            temporaryPages[p].id !== (testPage && testPage.id) &&
-            temporaryPages[p].id !== (originalPage && originalPage.id)) temporaryPages[p].remove();
-      } catch (error) { cleanupErrors.push("Could not remove temporary page: " + (error.message || String(error))); }
-    }
-    if (!healthCleanupTimedOut && originalPage) {
-      try { await waitForCleanup("restoring the original page", function () { return mutateFileAsync("restore originally active page", function () { return figma.setCurrentPageAsync(originalPage); }); }); }
-      catch (error) { cleanupErrors.push("Could not restore original page: " + (error.message || String(error))); }
-    }
+    cleanupProgress("Keeping UXD API Test Lab, nodes, components, variables, and storage for reuse; nothing is being deleted.");
     if (selectionHandlerPaused) {
-      try { assertUxDirectFileScope("restore selection context listener"); figma.on("selectionchange", sendSelection); }
-      catch (error) { cleanupErrors.push("Could not restore selection listener: " + (error.message || String(error))); }
+      try {
+        assertUxDirectFileScope("restore selection context listener");
+        figma.on("selectionchange", sendSelection);
+      } catch (error) {
+        cleanupErrors.push("Could not restore selection listener: " + (error.message || String(error)));
+      }
     }
-    if (!healthCleanupTimedOut && originalPage) { try { sendSelection(); } catch (_) {} }
     cleanupErrors.forEach(function (reason, index) {
-      add("Test cleanup", "Cleanup issue " + (index + 1), "functional", "error", reason);
+      add("Test cleanup", "Listener restoration issue " + (index + 1), "functional", "error", reason);
     });
-    if (healthCleanupTimedOut) cleanupProgress("Cleanup timed out safely; remaining cleanup was skipped. Incomplete artifacts may remain only in UXD API Test Lab.");
-    else cleanupProgress("Cleanup complete; preparing final report…");
+    if (originalPage && testPage && originalPage.id !== testPage.id) {
+      // Switch back without holding the health report hostage to a slow Figma navigation promise.
+      try {
+        assertUxDirectFileScope("restore original page after health check");
+        var restorePromise = mutateFileAsync("restore originally active page", function () {
+          return figma.setCurrentPageAsync(originalPage);
+        });
+        var restoreTimer = null;
+        Promise.race([
+          Promise.resolve(restorePromise).then(function () { return true; }),
+          new Promise(function (resolve) {
+            restoreTimer = setTimeout(function () { resolve(false); }, 5000);
+          })
+        ]).then(function (restored) {
+          if (restoreTimer !== null) clearTimeout(restoreTimer);
+          if (restored) {
+            try { sendSelection(); } catch (_) {}
+          } else {
+            figma.ui.postMessage({ type: "native-health-progress", text: "Page restoration is taking longer than expected; persistent fixtures were kept and results will still be reported." });
+          }
+        }).catch(function (error) {
+          figma.ui.postMessage({ type: "native-health-progress", text: "Could not restore the original page: " + (error && error.message ? error.message : String(error)) + ". Persistent fixtures were kept." });
+        });
+      } catch (error) {
+        cleanupErrors.push("Could not start original-page restoration: " + (error.message || String(error)));
+      }
     }
+    cleanupProgress("Persistent fixtures retained; preparing final report…");
   }
   await postResult();
 }
