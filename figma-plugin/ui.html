@@ -22,6 +22,9 @@
     .status-tag.bad { color:#c53f45; border-color:rgba(197,63,69,.3); background:rgba(197,63,69,.08); }
     .status-tag.bad .dot { background:#d14343; }
     .status-tag.warn .dot { background:#c18a24; }
+    .modelbar { display:flex; align-items:center; gap:6px; min-width:0; flex:0 0 auto; margin:0 0 3px; }
+    .model-select { flex:1 1 auto; width:0; min-width:0; max-width:68%; padding:5px 7px; border:1px solid var(--figma-color-border); border-radius:8px; background:var(--figma-color-bg); color:var(--figma-color-text); font:inherit; font-size:10px; }
+    #modelStatus { flex:0 0 auto; max-width:49%; }
     .muted { color:var(--figma-color-text-secondary); }
     .chat { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; overflow:hidden; }
     .chatlog { display:flex; flex:1 1 auto; flex-direction:column; gap:12px; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px 2px 14px; scroll-behavior:smooth; }
@@ -61,6 +64,7 @@
       body { padding-left:8px; padding-right:8px; }
       .brand { font-size:14px; }
       .status-tag { padding:4px 5px; max-width:112px; font-size:8px; }
+      .model-select { font-size:9px; padding:5px; }
     }
   </style>
 </head>
@@ -72,6 +76,14 @@
       <button id="healthStatus" class="status-tag warn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="healthPanel" title="Automatic native API checks; click for details"><span id="healthDot" class="dot"></span><span id="healthStatusText" class="tagtext">API checks pending</span></button>
     </div>
   </header>
+  <div class="modelbar" aria-label="Free model selection">
+    <select id="modelSelect" class="model-select" aria-label="Choose a free AI model" disabled>
+      <option value="">Loading free models…</option>
+    </select>
+    <div id="modelStatus" class="status-tag warn" aria-live="polite" title="A selected model is checked with a live test request before chat is enabled.">
+      <span id="modelDot" class="dot"></span><span id="modelStatusText" class="tagtext">Model pending</span>
+    </div>
+  </div>
 
   <main class="chat">
     <div id="chatLog" class="chatlog" role="log" aria-live="polite" aria-relevant="additions text"></div>
@@ -105,6 +117,11 @@
     let heartbeatTimer = null;
     let isSending = false;
     let connectionDiagnosticRow = null;
+    let modelProbeRow = null;
+    let currentModel = null;
+    let modelAvailable = false;
+    let modelOptions = [];
+    let modelProbeVersion = 0;
     let currentSelection = { fileKey: null, pageName: "", selection: [] };
     const chatHistory = [];
     const handledBridgeCommands = new Set();
@@ -129,6 +146,21 @@
       $("healthDot").className = "dot";
       $("healthStatusText").textContent = label;
       $("healthStatus").title = state === "ok" ? "All executed health checks passed. Click for details." : "Click to inspect Plugin API health-check details.";
+    }
+    function setModelStatus(state, label, detail) {
+      $("modelStatus").className = "status-tag " + state;
+      $("modelDot").className = "dot";
+      $("modelStatusText").textContent = label;
+      $("modelStatus").title = detail || label;
+    }
+    function modelLabel(model) {
+      return model ? model.label : "No model selected";
+    }
+    function modelSelectValue(model) {
+      return model ? model.provider + "::" + model.id : "";
+    }
+    function updateSendAvailability() {
+      $("send").disabled = isSending || !backendHealthy || !modelAvailable || !currentModel;
     }
     function toggleHealthPanel(open) {
       const show = typeof open === "boolean" ? open : $("healthPanel").hidden;
@@ -229,17 +261,116 @@
           connectionDiagnosticRow.remove();
           connectionDiagnosticRow = null;
         }
-        $("send").disabled = isSending;
+        updateSendAvailability();
         return data;
       } catch (error) {
         backendHealthy = false;
+        modelAvailable = false;
         setConnection("bad", "Netlify Preview offline");
-        $("send").disabled = true;
+        setModelStatus("bad", "Model blocked", "The Preview backend must connect before checking a model.");
+        updateSendAvailability();
         if (!connectionDiagnosticRow) connectionDiagnosticRow = appendMessage("assistant", connectionDiagnostic(error));
         console.warn("[UX Direct backend health]", error);
         return null;
       }
     }
+
+    async function loadModelOptions() {
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
+      $("modelSelect").disabled = true;
+      setModelStatus("warn", "Loading models…", "Loading the curated free-tier model list from the Preview backend.");
+      try {
+        const response = await fetch(API + "/api/model-status?fileKey=" + encodeURIComponent(verifiedFileKey), { method: "GET", cache: "no-store" });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !Array.isArray(payload.models)) {
+          throw new Error(payload.error || "Model list endpoint returned HTTP " + response.status + ".");
+        }
+        modelOptions = payload.models.filter(model =>
+          model && (model.provider === "gemini" || model.provider === "openrouter") &&
+          typeof model.id === "string" && typeof model.label === "string"
+        );
+        const select = $("modelSelect");
+        select.replaceChildren();
+        const groups = {
+          gemini: document.createElement("optgroup"),
+          openrouter: document.createElement("optgroup")
+        };
+        groups.gemini.label = "Gemini · Free tier";
+        groups.openrouter.label = "OpenRouter · Free models";
+        modelOptions.forEach(model => {
+          const option = document.createElement("option");
+          option.value = modelSelectValue(model);
+          option.textContent = model.label + (model.configured ? "" : " · key not configured");
+          option.dataset.configured = String(Boolean(model.configured));
+          groups[model.provider].appendChild(option);
+        });
+        if (groups.gemini.children.length) select.appendChild(groups.gemini);
+        if (groups.openrouter.children.length) select.appendChild(groups.openrouter);
+        const preferred = modelOptions.find(model => model.provider === "gemini" && model.id === "gemini-3.5-flash-lite") ||
+          modelOptions.find(model => model.configured) || modelOptions[0];
+        if (!preferred) throw new Error("No approved free models were returned by the backend.");
+        select.value = modelSelectValue(preferred);
+        select.disabled = false;
+        currentModel = preferred;
+        await checkSelectedModel();
+      } catch (error) {
+        const detail = error && error.message ? error.message : "Could not load models.";
+        setModelStatus("bad", "Model list failed", detail);
+        if (!modelProbeRow) modelProbeRow = appendMessage("assistant", "I couldn’t load the free-model list from Netlify Preview.\n\n" + detail);
+        console.warn("[UX Direct free model list]", error);
+      }
+    }
+
+    async function checkSelectedModel() {
+      const version = ++modelProbeVersion;
+      const value = $("modelSelect").value;
+      currentModel = modelOptions.find(model => modelSelectValue(model) === value) || null;
+      modelAvailable = false;
+      updateSendAvailability();
+      if (!currentModel) {
+        setModelStatus("warn", "Choose a model", "Select a free model to run a connection probe.");
+        return;
+      }
+      if (!backendHealthy || !verifiedFileKey) {
+        setModelStatus("bad", "Preview offline", "Reconnect Netlify Preview before checking models.");
+        return;
+      }
+
+      const model = currentModel;
+      setModelStatus("warn", "Checking model…", "Sending a small test prompt and waiting for a real model response.");
+      try {
+        const response = await fetch(API + "/api/model-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileKey: verifiedFileKey, provider: model.provider, model: model.id })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (version !== modelProbeVersion) return;
+        if (!response.ok) throw new Error(payload.error || "Model check returned HTTP " + response.status + ".");
+        if (payload.available === true && payload.responseReceived === true) {
+          modelAvailable = true;
+          const providerLabel = model.provider === "gemini" ? "Gemini connected" : "OpenRouter connected";
+          setModelStatus("ok", providerLabel, model.label + " returned a response in " + Math.max(0, Number(payload.latencyMs || 0)) + " ms.");
+          if (modelProbeRow) {
+            modelProbeRow.remove();
+            modelProbeRow = null;
+          }
+        } else {
+          modelAvailable = false;
+          const reason = payload.reason || payload.error || "The provider did not return a usable response.";
+          setModelStatus("bad", "Not available", model.label + ": " + reason);
+        }
+      } catch (error) {
+        if (version !== modelProbeVersion) return;
+        modelAvailable = false;
+        const detail = error && error.message ? error.message : String(error || "Unknown model check failure.");
+        setModelStatus("bad", "Model check failed", detail);
+        console.warn("[UX Direct model probe]", detail);
+      }
+      updateSendAvailability();
+    }
+
+    $("modelSelect").addEventListener("change", () => { void checkSelectedModel(); });
 
     function queueAutoHealthCheck() {
       if (autoHealthStarted || healthCheckRunning || !backendHealthy || !bridgeReady || verifiedFileKey !== ALLOWED_FILE_KEY) return;
@@ -293,6 +424,7 @@
       void sendTelemetry("Plugin opened", "success", "UX Direct conversational cockpit initialized in the approved Figma file.");
       const connection = await checkConnection();
       if (connection) {
+        void loadModelOptions();
         const bridge = await syncPluginBridge();
         if (!bridge.ok) {
           setActivity("Backend is connected; the plugin bridge is reconnecting. Health checks will start once it is ready.");
@@ -403,6 +535,10 @@
         appendMessage("assistant", "The UX Direct backend is offline right now. I’ll reconnect automatically—please send your message again once the top status returns to Connected.");
         return;
       }
+      if (!currentModel || !modelAvailable) {
+        appendMessage("assistant", "Please choose a free model and wait until its top status says Connected. Chat is paused until the selected model passes a live response check.");
+        return;
+      }
 
       chatHistory.push({ role: "user", content: prompt });
       appendMessage("user", prompt);
@@ -427,6 +563,8 @@
           body: JSON.stringify({
             fileKey: verifiedFileKey,
             project: "general",
+            provider: currentModel.provider,
+            model: currentModel.id,
             messages: chatHistory.slice(-12),
             selection: {
               pageName: String(currentSelection.pageName || "").slice(0, 160),
@@ -439,6 +577,15 @@
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
         chatHistory.push({ role: "assistant", content: data.content });
+        if (data.provider && data.model) {
+          const actual = modelOptions.find(model => model.provider === data.provider && model.id === data.model);
+          if (actual) {
+            currentModel = actual;
+            modelAvailable = true;
+            $("modelSelect").value = modelSelectValue(actual);
+            setModelStatus("ok", actual.provider === "gemini" ? "Gemini connected" : "OpenRouter connected", actual.label + " returned the chat response.");
+          }
+        }
         appendMessage("assistant", data.content);
         setActivity("Response received. Continue the conversation or give me the next task.");
       } catch (error) {
@@ -449,7 +596,7 @@
         hideTyping();
         isSending = false;
         $("prompt").disabled = false;
-        $("send").disabled = !backendHealthy;
+        updateSendAvailability();
         $("prompt").focus();
       }
     }
