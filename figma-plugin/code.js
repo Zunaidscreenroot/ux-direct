@@ -58,6 +58,9 @@ async function executeNativeApiHealthCheck() {
   var testPage = null;
   var harness = null;
   var storageKey = null;
+  var healthPaintStyleId = null;
+  var healthVariableCollectionId = null;
+  var pngExportBytes = null;
   var selectionHandlerPaused = false;
   var cleanupErrors = [];
 
@@ -221,10 +224,10 @@ async function executeNativeApiHealthCheck() {
   }, false);
 
   if (!labReady || !testPage) {
-    availability("Plugin lifecycle", "figma.closePlugin", typeof figma.closePlugin === "function",
-      "Available, not invoked because it would close the plugin.");
-    availability("External navigation", "figma.openExternal", typeof figma.openExternal === "function",
-      "Available, not invoked because it would open an external browser.");
+    add("Plugin lifecycle", "figma.closePlugin", "not-tested", "not-tested",
+      "Not tested intentionally: invoking it would terminate the active plugin session.");
+    add("External navigation", "figma.openExternal", "not-tested", "not-tested",
+      "Not tested intentionally: invoking it would open an external browser.");
     add("Library", "Team Library", "not-tested", "not-tested",
       "Not tested intentionally: team-library APIs are out of scope; no teamlibrary permission, shared-library lookup, or import is enabled.");
     await postResult();
@@ -606,6 +609,7 @@ async function executeNativeApiHealthCheck() {
       if (!collection) collection = mutateLab("create persistent health variable collection", function () {
         return figma.variables.createVariableCollection(collectionName);
       });
+      healthVariableCollectionId = collection.id;
       var allVariables = await mutateLabAsync("read variables for reuse", function () { return figma.variables.getLocalVariablesAsync(); });
       var variable = allVariables.find(function (item) { return item.name === "probe/color" && item.variableCollectionId === collection.id; }) || null;
       if (!variable) variable = mutateLab("create persistent health variable", function () {
@@ -643,6 +647,7 @@ async function executeNativeApiHealthCheck() {
         return node.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 1 } });
       });
       if (!bytes || !bytes.length) throw new Error("PNG export produced no bytes.");
+      pngExportBytes = bytes;
     });
 
     add("Events", "Receive selection-change event from inactive page", "not-tested", "not-tested",
@@ -675,21 +680,75 @@ async function executeNativeApiHealthCheck() {
       await ack;
     });
 
-    // These APIs exist, but executing them would disrupt the person using the plugin.
-    availability("Plugin lifecycle", "figma.closePlugin", typeof figma.closePlugin === "function",
-      "Available but not invoked because it would terminate the current session.");
-    availability("External navigation", "figma.openExternal", typeof figma.openExternal === "function",
-      "Available but not invoked because it would open an external browser.");
+    // Keep side-effectful/session UI APIs explicitly out of functional execution.
+    add("Plugin lifecycle", "figma.closePlugin", "not-tested", "not-tested",
+      "Not tested intentionally: invoking it would terminate the active plugin session.");
+    add("External navigation", "figma.openExternal", "not-tested", "not-tested",
+      "Not tested intentionally: invoking it would open an external browser.");
     availability("Notifications", "figma.notify", typeof figma.notify === "function",
-      "Available but not invoked to avoid interrupting the user.");
-    availability("Styles", "figma.getLocalPaintStylesAsync", typeof figma.getLocalPaintStylesAsync === "function",
-      "Availability only; local paint styles are not fetched during this check.");
-    availability("Styles", "figma.getLocalTextStylesAsync", typeof figma.getLocalTextStylesAsync === "function",
-      "Availability only; local text styles are not fetched during this check.");
-    availability("Styles", "figma.getLocalEffectStylesAsync", typeof figma.getLocalEffectStylesAsync === "function",
-      "Availability only; local effect styles are not fetched during this check.");
-    availability("Styles", "figma.getLocalGridStylesAsync", typeof figma.getLocalGridStylesAsync === "function",
-      "Availability only; local grid styles are not fetched during this check.");
+      "Availability only; not invoked to avoid interrupting the user.");
+
+    await runTest("Styles", "figma.getLocalPaintStylesAsync", async function () {
+      var styles = await mutateFileAsync("read local paint styles", function () { return figma.getLocalPaintStylesAsync(); });
+      if (!Array.isArray(styles)) throw new Error("Local paint styles API did not return an array.");
+      var styleName = "__UXD API HEALTH PAINT STYLE";
+      var style = styles.find(function (item) { return item.name === styleName; }) || null;
+      if (!style) {
+        style = mutateFile("create persistent health paint style", function () { return figma.createPaintStyle(); });
+        mutateFile("name persistent health paint style", function () { style.name = styleName; });
+        mutateFile("set persistent health paint style", function () {
+          style.paints = [{ type: "SOLID", color: { r: 0.18, g: 0.38, b: 0.9 } }];
+        });
+        styles = await mutateFileAsync("verify local paint style list", function () { return figma.getLocalPaintStylesAsync(); });
+      }
+      if (!styles.some(function (item) { return item.id === style.id; })) {
+        throw new Error("The persistent test paint style was not returned by getLocalPaintStylesAsync.");
+      }
+      healthPaintStyleId = style.id;
+    });
+    await runTest("Styles", "figma.getLocalTextStylesAsync", async function () {
+      var styles = await mutateFileAsync("read local text styles", function () { return figma.getLocalTextStylesAsync(); });
+      if (!Array.isArray(styles)) throw new Error("Local text styles API did not return an array.");
+      var name = "__UXD API HEALTH TEXT STYLE";
+      var style = styles.find(function (item) { return item.name === name; }) || null;
+      if (!style) {
+        style = mutateFile("create persistent health text style", function () { return figma.createTextStyle(); });
+        mutateFile("name persistent health text style", function () { style.name = name; });
+        styles = await mutateFileAsync("verify local text style list", function () { return figma.getLocalTextStylesAsync(); });
+      }
+      if (!styles.some(function (item) { return item.id === style.id; })) {
+        throw new Error("The persistent test text style was not returned by getLocalTextStylesAsync.");
+      }
+    });
+    await runTest("Styles", "figma.getLocalEffectStylesAsync", async function () {
+      var styles = await mutateFileAsync("read local effect styles", function () { return figma.getLocalEffectStylesAsync(); });
+      if (!Array.isArray(styles)) throw new Error("Local effect styles API did not return an array.");
+      var name = "__UXD API HEALTH EFFECT STYLE";
+      var style = styles.find(function (item) { return item.name === name; }) || null;
+      if (!style) {
+        style = mutateFile("create persistent health effect style", function () { return figma.createEffectStyle(); });
+        mutateFile("name persistent health effect style", function () { style.name = name; });
+        styles = await mutateFileAsync("verify local effect style list", function () { return figma.getLocalEffectStylesAsync(); });
+      }
+      if (!styles.some(function (item) { return item.id === style.id; })) {
+        throw new Error("The persistent test effect style was not returned by getLocalEffectStylesAsync.");
+      }
+    });
+    await runTest("Styles", "figma.getLocalGridStylesAsync", async function () {
+      var styles = await mutateFileAsync("read local grid styles", function () { return figma.getLocalGridStylesAsync(); });
+      if (!Array.isArray(styles)) throw new Error("Local grid styles API did not return an array.");
+      var name = "__UXD API HEALTH GRID STYLE";
+      var style = styles.find(function (item) { return item.name === name; }) || null;
+      if (!style) {
+        style = mutateFile("create persistent health grid style", function () { return figma.createGridStyle(); });
+        mutateFile("name persistent health grid style", function () { style.name = name; });
+        styles = await mutateFileAsync("verify local grid style list", function () { return figma.getLocalGridStylesAsync(); });
+      }
+      if (!styles.some(function (item) { return item.id === style.id; })) {
+        throw new Error("The persistent test grid style was not returned by getLocalGridStylesAsync.");
+      }
+    });
+
     await runTest("Components", "Find component nodes with findAllWithCriteria", async function () {
       var components = harness.findAllWithCriteria({ types: ["COMPONENT"] });
       if (!Array.isArray(components)) throw new Error("Component criteria search returned an invalid result.");
@@ -704,25 +763,94 @@ async function executeNativeApiHealthCheck() {
         throw new Error("No component-set fixture was found by the supported criteria search.");
       }
     });
-    availability("Styles", "figma.getStyleByIdAsync", typeof figma.getStyleByIdAsync === "function",
-      "Availability only; no style is loaded by ID.");
-    availability("Document loading", "figma.loadAllPagesAsync", typeof figma.loadAllPagesAsync === "function",
-      "Availability only; full-document page loading is intentionally not invoked.");
-    availability("Image API", "figma.createImage", typeof figma.createImage === "function",
-      "Availability only; creating an image resource is not necessary for this self-test.");
-    availability("Slice API", "figma.createSlice", typeof figma.createSlice === "function",
-      "Availability only; no additional visible canvas nodes are created.");
-    availability("Undo API", "figma.triggerUndo", typeof figma.triggerUndo === "function",
-      "Availability only; undo is never triggered because it could alter the user's edit history.");
-    availability("Plugin UI", "figma.ui.resize", typeof figma.ui.resize === "function",
-      "Availability only; the running plugin panel is not resized.");
+    await runTest("Styles", "figma.getStyleByIdAsync", async function () {
+      var styleId = healthPaintStyleId;
+      if (!styleId) {
+        var styles = await mutateFileAsync("find paint style for style ID probe", function () { return figma.getLocalPaintStylesAsync(); });
+        var style = styles.find(function (item) { return item.name === "__UXD API HEALTH PAINT STYLE"; }) || null;
+        if (!style) {
+          style = mutateFile("create paint style for style ID probe", function () { return figma.createPaintStyle(); });
+          mutateFile("name paint style for style ID probe", function () { style.name = "__UXD API HEALTH PAINT STYLE"; });
+          mutateFile("set paint style for style ID probe", function () {
+            style.paints = [{ type: "SOLID", color: { r: 0.18, g: 0.38, b: 0.9 } }];
+          });
+        }
+        styleId = style.id;
+        healthPaintStyleId = styleId;
+      }
+      var resolved = await mutateFileAsync("resolve local style by ID", function () { return figma.getStyleByIdAsync(styleId); });
+      if (!resolved || resolved.id !== styleId) throw new Error("getStyleByIdAsync did not resolve the persistent paint style.");
+    });
+    await runTest("Document loading", "figma.loadAllPagesAsync", async function () {
+      var before = mutateFile("snapshot pages before loading", function () { return figma.root.children.map(function (page) { return page.id; }); });
+      await mutateFileAsync("load all document pages", function () { return figma.loadAllPagesAsync(); });
+      var after = mutateFile("verify pages after loading", function () { return figma.root.children; });
+      if (!Array.isArray(after) || after.length !== before.length || !after.length) {
+        throw new Error("loadAllPagesAsync did not preserve the document's page inventory.");
+      }
+    });
+    await runTest("Image API", "figma.createImage", async function () {
+      if (!pngExportBytes || !pngExportBytes.length) throw new Error("PNG export fixture bytes are missing.");
+      var image = mutateFile("create image resource from PNG export", function () { return figma.createImage(pngExportBytes); });
+      if (!image || typeof image.hash !== "string" || !image.hash) throw new Error("createImage did not return an image hash.");
+      var bytes = await mutateFileAsync("read created image bytes", function () { return image.getBytesAsync(); });
+      if (!bytes || !bytes.length) throw new Error("Created image resource did not return bytes.");
+    });
+    await runTest("Slice API", "figma.createSlice", async function () {
+      var sliceName = "__UXD API HEALTH SLICE";
+      var node = findNodeByName(harness, sliceName, "SLICE");
+      if (!node) {
+        node = mutateFile("create isolated slice probe", function () { return figma.createSlice(); });
+        mutateLab("move slice into isolated Test Lab", function () { harness.appendChild(node); });
+        mutateLab("name isolated slice probe", function () { node.name = sliceName; });
+      }
+      mutateLab("size isolated slice probe", function () { node.resize(24, 24); });
+      if (node.type !== "SLICE" || node.parent !== harness || node.width !== 24 || node.height !== 24) {
+        throw new Error("createSlice did not produce a reusable slice inside the Test Lab.");
+      }
+    });
+    await runTest("Undo API", "figma.triggerUndo", async function () {
+      if (typeof figma.commitUndo !== "function" || typeof figma.triggerUndo !== "function") {
+        throw new Error("Undo checkpoint APIs are unavailable.");
+      }
+      var nodeName = "__UXD UNDO PROBE " + Date.now();
+      mutateFile("commit undo probe baseline", function () { figma.commitUndo(); });
+      var probe = mutateFile("create undo probe node", function () { return figma.createRectangle(); });
+      mutateLab("attach undo probe to isolated Test Lab", function () { harness.appendChild(probe); });
+      mutateLab("name undo probe node", function () { probe.name = nodeName; });
+      mutateFile("trigger undo for isolated probe", function () { figma.triggerUndo(); });
+      assertLab("verify undo probe was reverted");
+      if (findNodeByName(harness, nodeName, "RECTANGLE")) {
+        throw new Error("triggerUndo did not revert the isolated probe created after the undo checkpoint.");
+      }
+    });
+    await runTest("Plugin UI", "figma.ui.resize", async function () {
+      if (typeof figma.ui.resize !== "function") throw new Error("Plugin UI resize API is unavailable.");
+      // Match the dimensions passed to showUI so the health check has no visible resize side effect.
+      mutateFile("verify plugin UI dimensions", function () { figma.ui.resize(380, 720); });
+    });
     availability("Plugin UI", "figma.ui.on", typeof figma.ui.on === "function",
-      "Availability only; the existing message wiring is left unchanged.");
+      "Availability only; intentionally not invoked.");
     availability("Plugin UI", "figma.ui.off", typeof figma.ui.off === "function",
-      "Availability only; no user message handlers are removed.");
-    availability("Variables", "figma.variables.getVariableCollectionByIdAsync",
-      !!figma.variables && typeof figma.variables.getVariableCollectionByIdAsync === "function",
-      "Availability only; collections are not looked up by an arbitrary ID.");
+      "Availability only; intentionally not invoked.");
+    await runTest("Variables", "figma.variables.getVariableCollectionByIdAsync", async function () {
+      if (!figma.variables || typeof figma.variables.getVariableCollectionByIdAsync !== "function") {
+        throw new Error("Variable collection ID lookup API is unavailable.");
+      }
+      var collectionId = healthVariableCollectionId;
+      if (!collectionId) {
+        var collections = await mutateLabAsync("find persistent health variable collection", function () { return figma.variables.getLocalVariableCollectionsAsync(); });
+        var existing = collections.find(function (item) { return item.name === "__UXD API HEALTH VARIABLES"; }) || null;
+        if (!existing) throw new Error("Persistent health variable collection fixture was not found.");
+        collectionId = existing.id;
+      }
+      var collection = await mutateFileAsync("resolve variable collection by ID", function () {
+        return figma.variables.getVariableCollectionByIdAsync(collectionId);
+      });
+      if (!collection || collection.id !== collectionId) {
+        throw new Error("getVariableCollectionByIdAsync did not resolve the persistent test collection.");
+      }
+    });
     add("Library", "Team Library", "not-tested", "not-tested",
       "Not tested intentionally: team-library APIs are out of scope; no teamlibrary permission, shared-library lookup, or import is enabled.");
   } catch (error) {
