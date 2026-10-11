@@ -1,4 +1,4 @@
-import { get, list, put } from "@vercel/blob";
+import { getStore } from "@netlify/blobs";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { recordOperationalEvent } from "@/src/observability/event-log";
@@ -58,18 +58,19 @@ function isPluginRequest(request: Request): boolean {
   const origin = request.headers.get("origin");
   return !!origin && PLUGIN_ORIGINS.has(origin);
 }
-function storageReady(): boolean {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+const STORE_NAME = "ux-direct-plugin-bridge";
+function bridgeStore() {
+  // Netlify Functions provide site identity and Blobs authorization automatically.
+  return getStore(STORE_NAME, { region: "us-east-2" });
 }
 async function readJson<T>(pathname: string): Promise<T | null> {
-  const entry = await get(pathname, { access: "private", useCache: false });
-  if (!entry || entry.statusCode !== 200 || !entry.stream) return null;
-  return JSON.parse(await new Response(entry.stream).text()) as T;
+  const value = await bridgeStore().get(pathname);
+  if (value === null) return null;
+  return JSON.parse(value) as T;
 }
 async function writeJson(pathname: string, value: unknown): Promise<void> {
-  await put(pathname, JSON.stringify(value), {
-    access: "private", addRandomSuffix: false, allowOverwrite: true,
-    contentType: "application/json", cacheControlMaxAge: 0,
+  await bridgeStore().set(pathname, JSON.stringify(value), {
+    metadata: { contentType: "application/json" },
   });
 }
 function publicSession(session: Session) {
@@ -77,10 +78,10 @@ function publicSession(session: Session) {
   return safe;
 }
 async function listSessions() {
-  const result = await list({ prefix: `${PREFIX}/sessions/`, limit: 1000 });
-  const sessionBlobs = result.blobs.filter((blob) => blob.pathname.endsWith("/session.json"));
+  const result = await bridgeStore().list({ prefix: `${PREFIX}/sessions/`, limit: 1000 });
+  const sessionBlobs = result.blobs.filter((blob) => blob.key.endsWith("/session.json"));
   const sessions = await Promise.all(sessionBlobs.map(async (blob) => {
-    try { return await readJson<Session>(blob.pathname); } catch { return null; }
+    try { return await readJson<Session>(blob.key); } catch { return null; }
   }));
   const now = Date.now();
   return sessions.filter((session): session is Session => !!session && isAllowedFigmaFileKey(session.fileKey)).map((session) => ({
@@ -98,7 +99,6 @@ export async function GET(request: Request) {
   if (!isDashboardRequest(request)) {
     return NextResponse.json({ error: "Dashboard origin required for bridge inspection." }, { status: 403, headers });
   }
-  if (!storageReady()) return NextResponse.json({ error: "Private bridge storage is not configured for this deployment." }, { status: 503, headers });
   const url = new URL(request.url);
   const mode = url.searchParams.get("mode");
   try {
@@ -115,8 +115,8 @@ export async function GET(request: Request) {
     }
     return NextResponse.json({ error: "Unsupported bridge mode." }, { status: 400, headers });
   } catch (error) {
-    console.error("[ux-direct-bridge] read failed", error);
-    return NextResponse.json({ error: "Could not read bridge state from private storage." }, { status: 500, headers });
+    console.error("[ux-direct-bridge] Netlify Blobs read failed", error);
+    return NextResponse.json({ error: "Could not read bridge state from Netlify Blobs storage." }, { status: 500, headers });
   }
 }
 
@@ -134,7 +134,6 @@ export async function POST(request: Request) {
   if (!isDashboardCommand && !isAllowedFigmaFileKey(body.fileKey)) {
     return NextResponse.json({ error: "Figma plugin request blocked: file key is not allowlisted." }, { status: 403, headers });
   }
-  if (!storageReady()) return NextResponse.json({ error: "Private bridge storage is not configured for this deployment." }, { status: 503, headers });
 
   const idResult = ID.safeParse(body.clientId);
   if (!idResult.success) return NextResponse.json({ error: "A valid clientId is required." }, { status: 400, headers });
@@ -249,7 +248,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Unsupported bridge mode." }, { status: 400, headers });
   } catch (error) {
-    console.error("[ux-direct-bridge] request failed", error);
-    return NextResponse.json({ error: "Bridge request failed while reading or writing private storage." }, { status: 500, headers });
+    console.error("[ux-direct-bridge] Netlify Blobs request failed", error);
+    return NextResponse.json({ error: "Bridge request failed while reading or writing Netlify Blobs storage." }, { status: 500, headers });
   }
 }
