@@ -17,6 +17,7 @@ export type GatewayRequest = {
   providerId?: string;
 };
 export type TokenUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+type ProviderChatPayload = { id?: unknown; model?: unknown; choices?: Array<{ message?: { content?: unknown } }>; usage?: TokenUsage };
 export type GatewayResponse = {
   id?: string;
   model?: string;
@@ -260,8 +261,8 @@ export async function chatCompletion(
     const headers:Record<string,string>={"Content-Type":"application/json",...(provider.apiKey?(provider.apiKeyHeader?{[provider.apiKeyHeader]:provider.apiKey}:{Authorization:`Bearer ${provider.apiKey}`}):{}),...provider.headers};
     const response=await fetchImpl(`${trimSlash(provider.baseUrl)}/chat/completions`,{method:"POST",headers,body:JSON.stringify({model,messages:request.messages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{})}),signal:controller.signal});
     if(!response.ok)throw new GatewayError(`Provider returned HTTP ${response.status}.`,response.status===429?429:502,provider.name);
-    let payload:any;try{payload=await response.json();}catch{throw new GatewayError("Provider returned invalid JSON.",502,provider.name);}
-    const content=payload?.choices?.[0]?.message?.content;
+    let payload:ProviderChatPayload;try{payload=await response.json() as ProviderChatPayload;}catch{throw new GatewayError("Provider returned invalid JSON.",502,provider.name);}
+    const content=payload.choices?.[0]?.message?.content;
     if(typeof content!=="string")throw new GatewayError("Provider response did not contain choices[0].message.content.",502,provider.name);
     const latencyMs=Date.now()-started;const tokenUsage=usageStore.tokenUsageValues(payload.usage);
     const estimatedCostInr=tokenUsage.usageReported

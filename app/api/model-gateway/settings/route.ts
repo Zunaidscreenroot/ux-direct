@@ -20,14 +20,15 @@ export async function PUT(request: Request) {
   try { body = await request.json(); } catch { return jsonError("Invalid JSON settings payload.", 400); }
   if (!body || typeof body !== "object") return jsonError("A settings object is required.", 400);
   const input = body as Record<string, unknown>;
-  const rawModules = input.modules && typeof input.modules === "object" ? input.modules as Record<string, any> : {};
-  const rawModels = input.models && typeof input.models === "object" ? input.models as Record<string, any> : {};
+  const rawModules = input.modules && typeof input.modules === "object" ? input.modules as Record<string, unknown> : {};
+  const rawModels = input.models && typeof input.models === "object" ? input.models as Record<string, unknown> : {};
   const catalog = getModelCatalog(providersFromEnv());
   const allowed = new Set(catalog.map(m => modelKey(m.provider, m.id)));
   for (const def of GATEWAY_MODULES) {
-    const m = rawModules[def.id];
-    if (!m || typeof m !== "object") return jsonError("Missing module settings: " + def.id, 400);
-    if (!["free", "paid", "local", "mock"].includes(m.mode)) return jsonError("Invalid routing mode for " + def.id, 400);
+    const rawModule = rawModules[def.id];
+    if (!rawModule || typeof rawModule !== "object" || Array.isArray(rawModule)) return jsonError("Missing module settings: " + def.id, 400);
+    const m = rawModule as Record<string, unknown>;
+    if (!["free", "paid", "local", "mock"].includes(String(m.mode))) return jsonError("Invalid routing mode for " + def.id, 400);
     const selected = typeof m.selectedModelKey === "string" ? m.selectedModelKey : "";
     if (selected !== "auto" && !allowed.has(selected)) return jsonError("Unknown selected model for " + def.id, 400);
     if (selected !== "auto") {
@@ -39,10 +40,11 @@ export async function PUT(request: Request) {
     }
   }
   if (Object.keys(rawModels).length > catalog.length + 10) return jsonError("Too many model budget entries.", 413);
-  for (const [key, model] of Object.entries(rawModels)) {
-    if (!allowed.has(key) || !model || typeof model !== "object") return jsonError("Unknown model budget entry: " + key, 400);
+  for (const [key, rawModel] of Object.entries(rawModels)) {
+    if (!allowed.has(key) || !rawModel || typeof rawModel !== "object" || Array.isArray(rawModel)) return jsonError("Unknown model budget entry: " + key, 400);
+    const model = rawModel as Record<string, unknown>;
     for (const field of ["monthlyBudgetInr", "maxRequestCostInr", "inputPriceInrPerMillion", "outputPriceInrPerMillion"]) {
-      const n = Number((model as Record<string, unknown>)[field]);
+      const n = Number(model[field]);
       if (!Number.isFinite(n) || n < 0 || n > 1_000_000_000) return jsonError("Invalid " + field + " for " + key, 400);
     }
   }

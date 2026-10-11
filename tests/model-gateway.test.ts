@@ -15,7 +15,7 @@ test("routes only explicitly configured models", () => {
 
 test("normalizes a successful OpenAI-compatible response", async () => {
   let calledUrl = "";
-  let calledBody: any;
+  let calledBody: Record<string, unknown> = {};
   const result = await chatCompletion({
     model: "gpt-test",
     messages: [{ role: "user", content: "hello" }],
