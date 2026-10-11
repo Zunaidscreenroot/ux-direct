@@ -50,7 +50,7 @@ type GatewayDashboardPayload = {
     percentUsed: number; inputPriceInrPerMillion: number; outputPriceInrPerMillion: number;
     pricingConfigured: boolean; month: string; records: Array<{
       id: string; at: string; requestId: string; provider: string; model: string; tier: string;
-      promptTokens: number; completionTokens: number; totalTokens: number; estimatedCostInr: number;
+      promptTokens: number; completionTokens: number; totalTokens: number; usageReported?: boolean; estimatedCostInr: number;
       latencyMs: number; status: string; note?: string;
     }>; retention: string;
   };
@@ -169,7 +169,7 @@ function ModelGatewayPanel() {
         <div className="token-ledger-intro"><div><strong>Prompt tokens vs completion tokens</strong><p>Each completed gateway request records input tokens, output tokens, total tokens, provider/model, latency and estimated cost. Prompt and response content are never displayed here.</p></div><span className="ledger-retention">{budget?.retention === "netlify-blobs" ? "Persistent · Netlify Blobs" : "Runtime fallback"}</span></div>
         {records.length === 0 ? <div className="gateway-empty-state"><div className="gateway-empty-icon">◷</div><strong>No real model calls recorded yet</strong><p>This is expected before providers are connected. Mock requests can verify the gateway wiring but do not count as real AI inference.</p></div> : <>
           <div className="token-ledger-table-wrap"><table className="gateway-table token-table"><thead><tr><th>TIME / REQUEST</th><th>MODEL</th><th>INPUT</th><th>OUTPUT</th><th>TOTAL TOKENS</th><th>EST. COST</th><th>LATENCY</th></tr></thead><tbody>
-            {records.map(record => <tr key={record.id}><td><strong>{new Date(record.at).toLocaleString()}</strong><small>#{record.requestId.slice(0, 8)} · {record.status}</small></td><td><strong>{record.model}</strong><small>{record.provider}</small></td><td>{record.promptTokens.toLocaleString("en-IN")}</td><td>{record.completionTokens.toLocaleString("en-IN")}</td><td><div className="token-value">{record.totalTokens.toLocaleString("en-IN")}</div><div className="token-mini-track"><div style={{ width: Math.min(100, record.totalTokens / maxTokens * 100) + "%" }} /></div></td><td>{inr(record.estimatedCostInr)}</td><td>{record.latencyMs.toLocaleString("en-IN")} ms</td></tr>)}
+            {records.map(record => <tr key={record.id}><td><strong>{new Date(record.at).toLocaleString()}</strong><small>#{record.requestId.slice(0, 8)} · {record.status}</small></td><td><strong>{record.model}</strong><small>{record.provider}</small></td><td>{record.usageReported === false ? "—" : record.promptTokens.toLocaleString("en-IN")}</td><td>{record.usageReported === false ? "—" : record.completionTokens.toLocaleString("en-IN")}</td><td><div className="token-value">{record.usageReported === false ? "Usage unavailable" : record.totalTokens.toLocaleString("en-IN")}</div>{record.usageReported !== false && <div className="token-mini-track"><div style={{ width: Math.min(100, record.totalTokens / maxTokens * 100) + "%" }} /></div>}</td><td>{inr(record.estimatedCostInr)}</td><td>{record.latencyMs.toLocaleString("en-IN")} ms</td></tr>)}
           </tbody></table></div>
         </>}
       </section>
