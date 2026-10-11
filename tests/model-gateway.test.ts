@@ -61,3 +61,36 @@ test("allows a local OpenAI-compatible endpoint without an API key", async () =>
   });
   assert.equal(result.content, "hello");
 });
+
+
+test("built-in mock works with no provider credentials and never calls network", async () => {
+  const result = await chatCompletion({
+    model: "mock/ux-direct",
+    messages: [{ role: "user", content: "design a loan repayment screen" }]
+  }, { providers: [{ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" }] });
+  assert.equal(result.provider, "mock");
+  assert.equal(result.usage?.total_tokens, 0);
+  assert.match(result.content, /no model API called/);
+});
+
+test("provider environment config enables free-tier options only when a key exists", async () => {
+  const { providersFromEnv, getModelCatalog, routeTask } = await import("../src/model-gateway");
+  const empty = providersFromEnv({ NODE_ENV: "production" });
+  assert.deepEqual(empty.map(p => p.name), ["mock"]);
+  const configured = providersFromEnv({
+    NODE_ENV: "production",
+    GROQ_API_KEY: "test-only",
+    GROQ_MODELS: "openai/gpt-oss-20b"
+  });
+  assert.equal(configured.some(p => p.name === "groq"), true);
+  assert.equal(getModelCatalog(configured).find(m => m.id === "openai/gpt-oss-20b")?.configured, true);
+  assert.equal(routeTask("classify", configured).provider, "groq");
+});
+
+test("rejects oversized message payloads before provider invocation", async () => {
+  await assert.rejects(() => chatCompletion({
+    model: "gpt-test",
+    messages: [{ role: "user", content: "x".repeat(200_001) }]
+  }, { providers }), (error: unknown) =>
+    error instanceof GatewayError && error.status === 413);
+});
