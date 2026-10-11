@@ -41,7 +41,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     events: getOperationalEvents(Number.isFinite(limit) ? limit : 30),
     retention: "best_effort_runtime",
-    note: "Recent events are held in server memory and may reset when serverless instances restart. Structured events are also written to Vercel runtime logs."
+    note: "Recent events are held in server memory and may reset when serverless instances restart; the full native API health report is persisted separately in the plugin bridge store."
   }, { headers: corsHeaders(origin) });
 }
 export async function POST(request: Request) {
