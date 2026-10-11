@@ -19,7 +19,7 @@ type PlanResult = {
   mode: string; cost: { currency: string; amount: number }; requestId?: string;
 };
 type PluginCheck = { category: string; name: string; level: "availability" | "functional" | "not-tested"; status: "success" | "error" | "not-tested"; reason: string };
-type PluginHealthReport = { passed: number; failed: number; notTested: number; checkedAt: string; checks: PluginCheck[] };
+type PluginHealthReport = { passed: number; available?: number; failed: number; notTested: number; checkedAt: string; checks: PluginCheck[] };
 type PluginSession = {
   clientId: string; status: "online" | "offline"; connectedAt: string; lastHeartbeatAt: string;
   disconnectedAt?: string; lastTestAt?: string; isOnline: boolean;
@@ -127,7 +127,7 @@ export default function Home() {
         if (session.latestCommand?.commandId !== commandId) continue;
         if (session.latestCommand.status === "completed" && session.healthReport) {
           const report = session.healthReport;
-          setPluginHealthMessage("Completed in Figma: " + report.passed + " passed, " + report.failed + " failed, " + report.notTested + " not tested.");
+          setPluginHealthMessage("Completed in Figma: " + report.passed + " passed, " + report.failed + " failed, " + (report.available ?? 0) + " available, " + report.notTested + " not tested.");
           await logDashboardEvent("Plugin health check completed", report.failed ? "warning" : "success", "Figma returned its native Plugin API inventory.", { requestId: commandId });
           setBridgeSessions((current) => current.map((item) => item.clientId === session.clientId ? session : item));
           await refreshConnections();
@@ -186,7 +186,7 @@ export default function Home() {
   const pluginStatusLabel = pluginOnline ? "Online" : displayPluginSession ? "Offline" : "Not connected";
   const latestPluginTest = displayPluginSession?.healthReport ?? null;
   const latestPluginTestSummary = latestPluginTest
-    ? latestPluginTest.passed + " passed · " + latestPluginTest.failed + " failed · " + latestPluginTest.notTested + " not tested"
+    ? latestPluginTest.passed + " passed · " + latestPluginTest.failed + " failed · " + (latestPluginTest.available ?? 0) + " available · " + latestPluginTest.notTested + " not tested"
     : "Not run yet";
   const breadcrumb = navItems.find((item) => item.id === activeTab)?.label ?? "Cockpit";
 
@@ -240,13 +240,14 @@ export default function Home() {
                   <div className="health-counts">
                     <span><strong>{latestPluginTest.passed}</strong> PASS</span>
                     <span><strong>{latestPluginTest.failed}</strong> FAIL</span>
+                    <span><strong>{latestPluginTest.available ?? 0}</strong> AVAILABLE</span>
                     <span><strong>{latestPluginTest.notTested}</strong> NOT TESTED</span>
                   </div>
                   <details>
                     <summary>View action inventory ({latestPluginTest.checks.length} checks)</summary>
                     <div className="plugin-check-list">
                       {latestPluginTest.checks.map((item, index) => <div className="plugin-check-row" key={item.category + item.name + index}>
-                        <span className={"plugin-check-badge " + (item.level === "not-tested" ? "check-untested" : item.status === "success" ? "check-pass" : "check-fail")}>{item.level === "not-tested" ? "NOT TESTED" : item.status === "success" ? (item.level === "availability" ? "AVAILABLE" : "PASS") : "FAIL"}</span>
+                        <span className={"plugin-check-badge " + (item.level === "not-tested" ? "check-untested" : item.status === "success" ? (item.level === "availability" ? "check-available" : "check-pass") : "check-fail")}>{item.level === "not-tested" ? "NOT TESTED" : item.status === "success" ? (item.level === "availability" ? "AVAILABLE" : "PASS") : "FAIL"}</span>
                         <div><strong>{item.name}</strong><span>{item.category} · {item.level}</span><p>{item.reason}</p></div>
                       </div>)}
                     </div>
