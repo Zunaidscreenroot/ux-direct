@@ -66,6 +66,7 @@ async function executeNativeApiHealthCheck() {
   var selectionHandlerPaused = false;
   var cleanupErrors = [];
   var healthTestTimedOut = false;
+  var healthCleanupTimedOut = false;
 
   function add(category, name, level, status, reason) {
     checks.push({ category: category, name: name, level: level, status: status,
@@ -159,6 +160,28 @@ async function executeNativeApiHealthCheck() {
   function availability(category, name, ok, reason) {
     add(category, name, "availability", ok ? "success" : "error",
       reason || (ok ? "API is exposed but intentionally not executed." : "API is unavailable in this runtime."));
+  }
+  function cleanupProgress(text) {
+    figma.ui.postMessage({ type: "native-health-progress", text: text });
+  }
+  async function waitForCleanup(name, operation) {
+    cleanupProgress("Cleanup: " + name + "…");
+    var timeoutHandle = null;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(operation),
+        new Promise(function (_, reject) {
+          timeoutHandle = setTimeout(function () {
+            var error = new Error("Cleanup step timed out after " + (UXD_HEALTH_TEST_TIMEOUT_MS / 1000) + " seconds: " + name + ".");
+            error.code = "UXD_HEALTH_CLEANUP_TIMEOUT";
+            healthCleanupTimedOut = true;
+            reject(error);
+          }, UXD_HEALTH_TEST_TIMEOUT_MS);
+        })
+      ]);
+    } finally {
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+    }
   }
   async function postResult() {
     try { assertUxDirectFileScope("report health-check results"); } catch (_) { return; }
@@ -557,11 +580,12 @@ async function executeNativeApiHealthCheck() {
       figma.ui.postMessage({ type: "native-health-progress", text: "Timed out safely; cleanup was deferred to avoid concurrent API writes." });
     } else {
 
+    cleanupProgress("Starting temporary artifact cleanup…");
     if (testPage) {
       try {
-        if (figma.currentPage.id !== testPage.id) await mutateFileAsync("return to lab for cleanup", function () { return figma.setCurrentPageAsync(testPage); });
+        if (figma.currentPage.id !== testPage.id) await waitForCleanup("return to API Test Lab", function () { return mutateFileAsync("return to lab for cleanup", function () { return figma.setCurrentPageAsync(testPage); }); });
       } catch (error) { cleanupErrors.push("Could not return to API Test Lab: " + (error.message || String(error))); }
-      if (savedTestSelection) {
+      if (!healthCleanupTimedOut && savedTestSelection) {
         try { mutateLab("restore test-page selection during cleanup", function () { testPage.selection = savedTestSelection; }); }
         catch (error) { cleanupErrors.push("Could not restore test-page selection: " + (error.message || String(error))); }
       }
@@ -573,9 +597,10 @@ async function executeNativeApiHealthCheck() {
         }
         return false;
       }
+      cleanupProgress("Removing temporary test nodes…");
       // Removing the lab's single temporary harness removes all descendants in one scoped operation.
       // If any API failed before attaching a node to the harness, clean that orphan separately.
-      for (var i = createdNodes.length - 1; i >= 0; i--) {
+      for (var i = createdNodes.length - 1; i >= 0 && !healthCleanupTimedOut; i--) {
         var node = createdNodes[i];
         try {
           if (node && node.parent && !belongsToHarness(node)) {
@@ -586,23 +611,25 @@ async function executeNativeApiHealthCheck() {
           cleanupErrors.push("Could not remove orphaned " + (node && node.name ? node.name : "test node") + ": " + (error.message || String(error)));
         }
       }
-      if (harness) {
+      if (!healthCleanupTimedOut && harness) {
+        cleanupProgress("Removing temporary test frame…");
         try {
           if (harness.parent) mutateLab("remove all temporary harness contents", function () { harness.remove(); });
         } catch (error) {
           cleanupErrors.push("Could not remove temporary test harness and its children: " + (error.message || String(error)));
         }
       }
-      for (var c = temporaryCollections.length - 1; c >= 0; c--) {
+      for (var c = temporaryCollections.length - 1; c >= 0 && !healthCleanupTimedOut; c--) {
         try { assertUxDirectFileScope("remove temporary variable collection"); temporaryCollections[c].remove(); }
         catch (error) { cleanupErrors.push("Could not remove temporary variable collection: " + (error.message || String(error))); }
       }
-      if (storageKey) {
-        try { assertUxDirectFileScope("delete temporary client-storage key"); await figma.clientStorage.deleteAsync(storageKey); }
+      if (!healthCleanupTimedOut && storageKey) {
+        try { await waitForCleanup("clearing temporary client storage", function () { assertUxDirectFileScope("delete temporary client-storage key"); return figma.clientStorage.deleteAsync(storageKey); }); }
         catch (error) { cleanupErrors.push("Could not clear temporary client storage: " + (error.message || String(error))); }
       }
     }
-    for (var p = temporaryPages.length - 1; p >= 0; p--) {
+    cleanupProgress("Removing temporary pages…");
+    for (var p = temporaryPages.length - 1; p >= 0 && !healthCleanupTimedOut; p--) {
       try {
         assertUxDirectFileScope("remove temporary page");
         if (figma.root.children.some(function (page) { return page.id === temporaryPages[p].id; }) &&
@@ -610,18 +637,20 @@ async function executeNativeApiHealthCheck() {
             temporaryPages[p].id !== (originalPage && originalPage.id)) temporaryPages[p].remove();
       } catch (error) { cleanupErrors.push("Could not remove temporary page: " + (error.message || String(error))); }
     }
-    if (originalPage) {
-      try { await mutateFileAsync("restore originally active page", function () { return figma.setCurrentPageAsync(originalPage); }); }
+    if (!healthCleanupTimedOut && originalPage) {
+      try { await waitForCleanup("restoring the original page", function () { return mutateFileAsync("restore originally active page", function () { return figma.setCurrentPageAsync(originalPage); }); }); }
       catch (error) { cleanupErrors.push("Could not restore original page: " + (error.message || String(error))); }
     }
     if (selectionHandlerPaused) {
       try { assertUxDirectFileScope("restore selection context listener"); figma.on("selectionchange", sendSelection); }
       catch (error) { cleanupErrors.push("Could not restore selection listener: " + (error.message || String(error))); }
     }
-    if (originalPage) { try { sendSelection(); } catch (_) {} }
+    if (!healthCleanupTimedOut && originalPage) { try { sendSelection(); } catch (_) {} }
     cleanupErrors.forEach(function (reason, index) {
       add("Test cleanup", "Cleanup issue " + (index + 1), "functional", "error", reason);
     });
+    if (healthCleanupTimedOut) cleanupProgress("Cleanup timed out safely; remaining cleanup was skipped. Incomplete artifacts may remain only in UXD API Test Lab.");
+    else cleanupProgress("Cleanup complete; preparing final report…");
     }
   }
   await postResult();
