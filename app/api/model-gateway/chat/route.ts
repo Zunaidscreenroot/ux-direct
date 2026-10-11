@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { chatCompletionWithFallback, GatewayError, type ChatMessage } from "@/src/model-gateway";
+import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,6 +28,14 @@ export async function POST(request: Request) {
         ? "Unauthorized model gateway request."
         : "Gateway is locked. Set MODEL_GATEWAY_ACCESS_KEY; unauthenticated access is disabled."
     }, { status: process.env.MODEL_GATEWAY_ACCESS_KEY ? 401 : 503, headers: { "Cache-Control": "no-store" } });
+  }
+  const ip = request.headers.get("x-nf-client-connection-ip") ||
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const limit = checkGatewayRateLimit(`${ip}:${request.headers.get("x-model-gateway-key") || request.headers.get("authorization") || "authenticated"}`);
+  if (!limit.allowed) {
+    return NextResponse.json({ error: "Gateway request rate limit exceeded.", retryAfterSeconds: limit.retryAfterSeconds }, {
+      status: 429, headers: { "Cache-Control": "no-store", "Retry-After": String(limit.retryAfterSeconds), "X-RateLimit-Limit": String(limit.limit), "X-RateLimit-Remaining": String(limit.remaining) }
+    });
   }
   let body: unknown;
   try { body = await request.json(); }
@@ -64,7 +73,16 @@ export async function POST(request: Request) {
       ...(typeof value.max_tokens === "number" ? { max_tokens: value.max_tokens } : {}),
       signal: request.signal
     });
-    return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
+    // Operational telemetry only: never log prompt text, response content, or credentials.
+    console.info("[model-gateway]", JSON.stringify({
+      event: "completion", provider: result.provider, model: result.model,
+      latencyMs: result.latencyMs, usage: result.usage ?? null, at: new Date().toISOString()
+    }));
+    return NextResponse.json(result, { headers: {
+      "Cache-Control": "no-store",
+      "X-RateLimit-Limit": String(limit.limit),
+      "X-RateLimit-Remaining": String(limit.remaining)
+    } });
   } catch (error) {
     const status = error instanceof GatewayError ? error.status : 502;
     const message = error instanceof GatewayError ? error.message : "Model gateway request failed.";
