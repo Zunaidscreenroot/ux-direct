@@ -54,7 +54,7 @@ export const REQUIRED_FIGMA_ACTION_CHECKS = [
   "Reorder nodes with insertChild",
 ] as const;
 
-export const MIN_HEALTH_INVENTORY_SIZE = 52;
+export const MIN_HEALTH_INVENTORY_SIZE = 58;
 
 export function inspectHealthReport(report: PluginHealthReport): HealthReportAudit {
   const checks = Array.isArray(report.checks) ? report.checks : [];
