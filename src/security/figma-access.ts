@@ -5,6 +5,12 @@
  * scoped to explicitly allowlisted file keys. An empty allowlist denies all.
  */
 export const ALLOWED_WORKSPACE_LABEL = "zunaid_workspace";
+export const ALLOWED_FIGMA_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
+
+/** Defense-in-depth validation; only the native plugin can inspect the live document identity. */
+export function isAllowedFigmaFileKey(fileKey: unknown): fileKey is string {
+  return typeof fileKey === "string" && fileKey === ALLOWED_FIGMA_FILE_KEY;
+}
 
 export type FigmaAccessConfig = {
   allowedFileIds: string[];

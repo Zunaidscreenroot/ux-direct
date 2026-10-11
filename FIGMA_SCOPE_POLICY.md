@@ -18,7 +18,9 @@ Figma's native Plugin API exposes the current file identity to this private deve
 - No other Figma file, page-file, folder, draft, project, workspace, account content, or Screenroot-owned content.
 - No Figma REST API, Figma OAuth, or cross-file API access.
 - No `teamlibrary` permission and no querying/importing team-library assets.
-- No design-document mutations. Health checks must remain read-only and label operations that would modify content as `NOT TESTED`.
+- Normal AI design operations may use any page inside the exact allowlisted file, but must re-check the live `figma.fileKey` before each operation.
+- Health-check mutations are limited to the dedicated `UXD API Test Lab` page inside the allowlisted file. Temporary nodes, pages, variables and client-storage entries are cleaned up after each run.
+- No native Plugin API action may accept a destination file key, use a REST API/OAuth route, or resolve/import external file/library assets as part of AI execution.
 - No telemetry, selected-node metadata, prompt, or task data leaves Figma unless the exact allowlisted file identity is verified first.
 
 ## Change-control rules
@@ -30,11 +32,10 @@ Figma's native Plugin API exposes the current file identity to this private deve
 
 ## Health-check behavior
 
-- Health checks remain read-only: no create, delete, page-switch, text/style, component, or variable-write operation is invoked.
-- For the current read-only MVP, use `PASS` for successful read-only functional checks, `FAIL` for checks that genuinely fail, and `AVAILABLE` for API/property probes whose full operation is intentionally not executed. Keep Team Library and the grouped live-operation summary as `NOT TESTED`.
-- Count `AVAILABLE` separately from `PASS` in the plugin panel, telemetry, and dashboard.
-- Run safe read-only calls where practical, including resolving the active page by ID and listing local variables/collections within this file.
-- Future execution phase: once the AI actually performs page, shape, text, layout, component, variable, or export actions, replace availability-only checks for those capabilities with real execution tests and report only `PASS` or `FAIL` for those tested operations. Do not introduce write operations into this read-only MVP.
+- The self-test executes real smoke tests for page create/switch/remove, shapes, text/font loading, grouping/flattening/boolean operations, components/instances/variants, variables, client storage, export, events and UI-message round-trip inside `UXD API Test Lab`.
+- The first health test creates the named test page if missing and leaves a visible fixture frame with sample shapes, text, a component, and a vector. Temporary test nodes, pages, variable collections and storage keys are removed after each run; the dedicated test page and fixture frame remain.
+- `AVAILABLE` is reserved for disruptive calls such as closing the plugin, opening an external browser, and user-interrupting notifications. These are counted separately from `PASS`.
+- Future AI execution must use an explicit action allowlist/dispatcher, revalidate `figma.fileKey` before every action, and reject arbitrary external URLs/file keys. The current planner still does not execute AI-generated design edits.
 - Team Library access remains `NOT TESTED`. Do not add `"teamlibrary"` to `manifest.json` to silence an error: that would grant a wider library capability that is outside the approved scope.
 
 ## No full-document loading

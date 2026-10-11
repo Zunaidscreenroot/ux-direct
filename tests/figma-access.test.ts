@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { authorizeFigmaFile, assertFigmaFileAccess, parseAllowedFileIds } from "../src/security/figma-access";
+import { ALLOWED_FIGMA_FILE_KEY, isAllowedFigmaFileKey, authorizeFigmaFile, assertFigmaFileAccess, parseAllowedFileIds } from "../src/security/figma-access";
 
 test("empty allowlist denies all access", () => {
   assert.deepEqual(authorizeFigmaFile("file-a", "zunaid_workspace", { allowedFileIds: [] }), {
@@ -27,4 +27,11 @@ test("denies a listed file if workspace label mismatches", () => {
 
 test("assertion throws for denied access", () => {
   assert.throws(() => assertFigmaFileAccess("file-a", "zunaid_workspace", { allowedFileIds: [] }), /Figma access denied/);
+});
+
+
+test("only the exact Zunaid_Workspace file key is accepted by the API allowlist", () => {
+  assert.equal(isAllowedFigmaFileKey(ALLOWED_FIGMA_FILE_KEY), true);
+  assert.equal(isAllowedFigmaFileKey("another-client-file-key"), false);
+  assert.equal(isAllowedFigmaFileKey(undefined), false);
 });

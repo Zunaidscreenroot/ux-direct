@@ -4,11 +4,14 @@ import { z } from "zod";
 import { planUXTask } from "@/src/core/orchestrator";
 import { mockProvider } from "@/src/providers/mock-provider";
 import { recordOperationalEvent } from "@/src/observability/event-log";
+import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 
 const requestSchema = z.object({
   title: z.string().trim().min(1).max(160),
   request: z.string().trim().min(5).max(8000),
   project: z.enum(["general", "express-computers", "dmi-finance"]),
+  source: z.enum(["dashboard", "figma-plugin"]).optional(),
+  fileKey: z.string().max(200).optional(),
 });
 
 const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
@@ -29,7 +32,8 @@ export async function POST(request: Request) {
   const requestId = randomUUID();
   const headers = { ...corsHeaders(request.headers.get("origin")), "X-Request-Id": requestId };
   const origin = request.headers.get("origin");
-  if (origin && !ALLOWED_ORIGINS.has(origin)) {
+  const selfOrigin = new URL(request.url).origin;
+  if (origin && origin !== selfOrigin && !ALLOWED_ORIGINS.has(origin)) {
     recordOperationalEvent({ source: "backend", event: "Task request blocked", status: "warning", summary: "Request rejected by origin policy.", requestId });
     return NextResponse.json({ error: "Origin not allowed", requestId }, { status: 403, headers });
   }
@@ -43,9 +47,23 @@ export async function POST(request: Request) {
     recordOperationalEvent({ source: "backend", event: "Task request rejected", status: "error", summary: "Input validation failed.", requestId, durationMs: Date.now() - startedAt });
     return NextResponse.json({ error: "Invalid task input", details: parsed.error.flatten(), requestId }, { status: 400, headers });
   }
+  const isFigmaPluginOrigin = origin !== null && ["null", "https://www.figma.com", "https://figma.com"].includes(origin);
+  if (isFigmaPluginOrigin && !isAllowedFigmaFileKey(parsed.data.fileKey)) {
+    recordOperationalEvent({ source: "backend", event: "Task request blocked", status: "warning", summary: "Figma-originated task request did not carry the approved file key.", requestId });
+    return NextResponse.json({ error: "Approved Figma file key required for Figma-originated task requests", requestId }, { status: 403, headers });
+  }
+  if (parsed.data.fileKey && !isAllowedFigmaFileKey(parsed.data.fileKey)) {
+    recordOperationalEvent({ source: "backend", event: "Task request blocked", status: "warning", summary: "Task request rejected because its Figma file key is not allowlisted.", requestId });
+    return NextResponse.json({ error: "Figma file key is not allowlisted", requestId }, { status: 403, headers });
+  }
+  if (parsed.data.source === "figma-plugin" && !isAllowedFigmaFileKey(parsed.data.fileKey)) {
+    recordOperationalEvent({ source: "backend", event: "Task request blocked", status: "warning", summary: "Plugin task request did not carry the approved Figma file key.", requestId });
+    return NextResponse.json({ error: "Approved Figma file key required for plugin-originated task requests", requestId }, { status: 403, headers });
+  }
+  const taskInput = { title: parsed.data.title, request: parsed.data.request, project: parsed.data.project };
   recordOperationalEvent({ source: "backend", event: "Task request received", status: "info", summary: "Task planning request accepted; prompt contents are not stored in the operational log.", requestId, project: parsed.data.project, mode: "mock" });
   try {
-    const result = await planUXTask({ ...parsed.data, provider: mockProvider });
+    const result = await planUXTask({ ...taskInput, provider: mockProvider });
     const durationMs = Date.now() - startedAt;
     recordOperationalEvent({ source: "backend", event: "Task response returned", status: "success", summary: "Mock plan returned to caller. No model API or Figma edit was performed.", requestId, project: parsed.data.project, durationMs, mode: "mock" });
     return NextResponse.json({ ...result, requestId, mode: "mock", cost: { currency: "INR", amount: 0 }, diagnostics: { durationMs, responseStatus: "success", figmaChangesMade: false } }, { headers });

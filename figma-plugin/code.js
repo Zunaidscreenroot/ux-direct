@@ -2,6 +2,18 @@
 // STRICT SCOPE: plugin entry runs only after the exact approved Figma file key matches.
 var UXD_ALLOWED_FILE_NAME = "Zunaid_Workspace";
 var UXD_ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
+var UXD_API_TEST_LAB_PAGE = "UXD API Test Lab";
+var UXD_NATIVE_API_PROBE_WAITERS = Object.create(null);
+function assertUxDirectFileScope(actionName) {
+  var key = "";
+  try { key = typeof figma.fileKey === "string" ? figma.fileKey : ""; } catch (_) {}
+  if (!UXD_ALLOWED_FILE_KEY || !key || key !== UXD_ALLOWED_FILE_KEY) {
+    var message = "UX Direct blocked " + (actionName || "the operation") + ": current file key is not allowlisted.";
+    try { figma.closePlugin(message); } catch (_) {}
+    throw new Error(message);
+  }
+  return true;
+}
 function getUxDirectScopeDecision() {
   // Fail closed using file identity only. Do not read figma.root, currentPage,
   // selection, or other document/page nodes before the exact key is approved.
@@ -22,13 +34,16 @@ function startScopedPlugin() {
   // Create the UI only after the file allowlist succeeds, before any UI messages.
   figma.showUI(__html__, { width: 380, height: 720, themeColors: true });
 function getSelectionSummary() {
+  assertUxDirectFileScope("reading selection metadata");
   return figma.currentPage.selection.map(function (node) {
     return { id: node.id, name: node.name, type: node.type, visible: node.visible,
       childCount: "children" in node ? node.children.length : undefined };
   });
 }
 function sendSelection() {
-  figma.ui.postMessage({ type: "selection", fileKey: figma.fileKey || null,
+  assertUxDirectFileScope("sending Figma context");
+  figma.ui.postMessage({ type: "scope-approved", fileKey: figma.fileKey });
+  figma.ui.postMessage({ type: "selection", fileKey: figma.fileKey,
     pageName: figma.currentPage.name, selection: getSelectionSummary() });
 }
 var selectionChangeListenerRegistered = false;
@@ -36,162 +51,548 @@ figma.on("selectionchange", sendSelection);
 selectionChangeListenerRegistered = true;
 async function runNativeApiHealthCheck(commandId) {
   var checks = [];
-  function add(category, name, level, ok, reason) {
-    var status = level === "not-tested" ? "not-tested" : (ok ? "success" : "error");
+  var createdNodes = [];
+  var temporaryPages = [];
+  var temporaryCollections = [];
+  var testPage = null;
+  var harness = null;
+  var originalPage = null;
+  var savedTestSelection = null;
+  var storageKey = null;
+  var selectionHandlerPaused = false;
+  var cleanupErrors = [];
+
+  function add(category, name, level, status, reason) {
     checks.push({ category: category, name: name, level: level, status: status,
-      reason: reason || (ok ? "Verified" : "Check failed") });
+      reason: reason || (status === "success" ? "Executed and verified" : "Operation failed") });
   }
-  function api(category, name, value) {
-    add(category, name, "availability", value !== undefined && value !== null, value == null ?
-      "API/property unavailable in this plugin runtime" : "API exists; operation not executed");
+  function assertLab(name) {
+    assertUxDirectFileScope(name);
+    if (!testPage || !figma.currentPage || figma.currentPage.id !== testPage.id) {
+      throw new Error("Blocked " + name + ": the active page is not UXD API Test Lab.");
+    }
+    if (!figma.root.children.some(function (page) { return page.id === testPage.id; })) {
+      throw new Error("Blocked " + name + ": test page is not inside the allowlisted document.");
+    }
   }
-  function safeRead(category, name, fn) {
-    try { fn(); add(category, name, "functional", true, "Read-only operation succeeded"); }
-    catch (e) { add(category, name, "functional", false, e && e.message ? e.message : String(e)); }
+  function mutateLab(name, fn) {
+    assertLab(name);
+    var value = fn();
+    assertUxDirectFileScope(name + " complete");
+    return value;
   }
-  async function safeReadAsync(category, name, fn) {
+  async function mutateLabAsync(name, fn) {
+    assertLab(name);
+    var value = await fn();
+    assertLab(name + " complete");
+    return value;
+  }
+  function mutateFile(name, fn) {
+    assertUxDirectFileScope(name);
+    var value = fn();
+    assertUxDirectFileScope(name + " complete");
+    return value;
+  }
+  async function mutateFileAsync(name, fn) {
+    assertUxDirectFileScope(name);
+    var value = await fn();
+    assertUxDirectFileScope(name + " complete");
+    return value;
+  }
+  async function runTest(category, name, fn, needsLab) {
     try {
-      var reason = await fn();
-      add(category, name, "functional", true, typeof reason === "string" ? reason : "Read-only async operation succeeded");
-    } catch (e) {
-      add(category, name, "functional", false, e && e.message ? e.message : String(e));
+      assertUxDirectFileScope(name);
+      if (needsLab !== false) assertLab(name);
+      await fn();
+      assertUxDirectFileScope(name + " verification");
+      if (needsLab !== false) assertLab(name + " verification");
+      add(category, name, "functional", "success", "Actual API operation executed and verified inside the allowlisted file.");
+      return true;
+    } catch (error) {
+      add(category, name, "functional", "error", error && error.message ? error.message : String(error));
+      return false;
     }
   }
-  safeRead("Selection", "Read current selection", function () {
-    if (!Array.isArray(figma.currentPage.selection)) throw new Error("Selection is not an array");
-  });
-  safeRead("Selection", "Read selection metadata", function () {
-    if (!Array.isArray(getSelectionSummary())) throw new Error("Metadata extraction did not return an array");
-  });
-  safeRead("Node inspection", "Read current page name and ID", function () {
-    if (!figma.currentPage.name || !figma.currentPage.id) throw new Error("Page name or ID missing");
-  });
-  safeRead("Node inspection", "Read current page children", function () {
-    if (!Array.isArray(figma.currentPage.children)) throw new Error("Page children unavailable");
-  });
-  safeRead("Node inspection", "Read selected node parent/visibility", function () {
-    figma.currentPage.selection.forEach(function (n) { void n.parent; void n.visible; void n.type; void n.name; });
-  });
-  safeRead("Viewport", "Read viewport bounds and zoom", function () {
-    if (!figma.viewport.bounds || typeof figma.viewport.zoom !== "number") throw new Error("Viewport data unavailable");
-  });
-  safeRead("Plugin bridge", "Read UI bridge and postMessage", function () {
-    if (!figma.ui || typeof figma.ui.postMessage !== "function") throw new Error("UI message bridge unavailable");
-  });
-  await safeReadAsync("Node inspection", "Resolve current page by ID (async)", async function () {
-    if (typeof figma.getNodeByIdAsync !== "function") throw new Error("getNodeByIdAsync is unavailable");
-    var page = figma.currentPage;
-    var resolved = await figma.getNodeByIdAsync(page.id);
-    if (!resolved || resolved.id !== page.id) throw new Error("Could not resolve the active page by its ID");
-    return "Read-only lookup succeeded for the active page; no page or document state changed";
-  });
-  await safeReadAsync("Variables", "Read local variable definitions", async function () {
-    if (!figma.variables || typeof figma.variables.getLocalVariablesAsync !== "function" ||
-        typeof figma.variables.getLocalVariableCollectionsAsync !== "function") {
-      throw new Error("Read-only local variable APIs are unavailable");
-    }
-    var variables = await figma.variables.getLocalVariablesAsync();
-    var collections = await figma.variables.getLocalVariableCollectionsAsync();
-    if (!Array.isArray(variables) || !Array.isArray(collections)) {
-      throw new Error("Variable API did not return arrays");
-    }
-    return "Read-only current-file query succeeded (" + variables.length + " variables, " +
-      collections.length + " collections); nothing was created or changed";
-  });
-  [
-    ["Selection","figma.on / selectionchange",figma.on],["Selection","figma.off",figma.off],
-    ["Node inspection","figma.getNodeByIdAsync",figma.getNodeByIdAsync],["Node inspection","figma.getNodeById (legacy)",figma.getNodeById],
-    ["Page navigation","figma.createPage",figma.createPage],["Page navigation","figma.setCurrentPageAsync",figma.setCurrentPageAsync],
-    ["Shapes","figma.createFrame",figma.createFrame],["Shapes","figma.createRectangle",figma.createRectangle],
-    ["Shapes","figma.createEllipse",figma.createEllipse],["Shapes","figma.createLine",figma.createLine],
-    ["Shapes","figma.createPolygon",figma.createPolygon],["Shapes","figma.createStar",figma.createStar],["Shapes","figma.createVector",figma.createVector],
-    ["Text","figma.createText",figma.createText],["Text","figma.loadFontAsync",figma.loadFontAsync],
-    ["Components","figma.createComponent",figma.createComponent],["Components","figma.createComponentFromNode",figma.createComponentFromNode],
-    ["Components","figma.combineAsVariants",figma.combineAsVariants],
-    ["Layout and styling","figma.group",figma.group],["Layout and styling","figma.flatten",figma.flatten],
-    ["Layout and styling","figma.union",figma.union],["Layout and styling","figma.intersect",figma.intersect],
-    ["Layout and styling","figma.subtract",figma.subtract],["Layout and styling","figma.exclude",figma.exclude],
-    ["Variables","figma.variables",figma.variables],
-    ["Storage","figma.clientStorage",figma.clientStorage],["Viewport","figma.viewport",figma.viewport],
-    ["Export","Node exportAsync",figma.currentPage && figma.currentPage.exportAsync],
-    ["Events","figma.on",figma.on],["Events","figma.once",figma.once],
-    ["Plugin bridge","figma.ui.onmessage",figma.ui && figma.ui.onmessage],
-    ["Plugin lifecycle","figma.closePlugin",figma.closePlugin],["Plugin utilities","figma.notify",figma.notify],
-    ["Plugin utilities","figma.openExternal",figma.openExternal]
-  ].forEach(function (item) { api(item[0], item[1], item[2]); });
-  // createInstance is a ComponentNode method, not a global figma method.
-  // Inspect an existing component on the active page without creating an instance.
-  var componentForInstanceProbe = null;
+  function createNode(factory, name, parent) {
+    var node = mutateLab("create " + name, factory);
+    createdNodes.push(node);
+    if (name) mutateLab("name " + name, function () { node.name = name; });
+    if (parent && node.parent !== parent) mutateLab("attach " + name, function () { parent.appendChild(node); });
+    return node;
+  }
+  function rect(name, parent) {
+    return createNode(function () { return figma.createRectangle(); }, name || "UXD test rectangle", parent || harness);
+  }
+  function ellipse(name, parent) {
+    return createNode(function () { return figma.createEllipse(); }, name || "UXD test ellipse", parent || harness);
+  }
+  function availability(category, name, ok, reason) {
+    add(category, name, "availability", ok ? "success" : "error",
+      reason || (ok ? "API is exposed but intentionally not executed." : "API is unavailable in this runtime."));
+  }
+  async function postResult() {
+    try { assertUxDirectFileScope("report health-check results"); } catch (_) { return; }
+    var passed = checks.filter(function (x) { return x.status === "success" && x.level !== "availability"; }).length;
+    var available = checks.filter(function (x) { return x.status === "success" && x.level === "availability"; }).length;
+    var failed = checks.filter(function (x) { return x.status === "error"; }).length;
+    var notTested = checks.filter(function (x) { return x.status === "not-tested"; }).length;
+    figma.ui.postMessage({ type: "native-health-result", checks: checks, passed: passed,
+      available: available, failed: failed, notTested: notTested,
+      commandId: commandId || null, checkedAt: new Date().toISOString() });
+  }
+
   try {
-    componentForInstanceProbe = figma.currentPage.findOne(function (node) { return node.type === "COMPONENT"; });
-  } catch (_) {}
-  if (componentForInstanceProbe) {
-    api("Components", "ComponentNode.createInstance", componentForInstanceProbe.createInstance);
+    assertUxDirectFileScope("starting native API health check");
+    originalPage = figma.currentPage;
+  } catch (error) {
+    add("Security", "Revalidate exact Figma file key", "functional", "error", error && error.message ? error.message : String(error));
+    await postResult();
+    return;
   }
-  add("Library", "Team library access", "not-tested", false, "Skipped intentionally: the teamlibrary permission is not granted. UX Direct must not inspect or import organization library assets.");
-  var sampleSceneNode = null;
+
+  var labReady = await runTest("Test isolation", "Create/find UXD API Test Lab page", async function () {
+    var pages = mutateFile("locate test lab in current file", function () { return figma.root.children; });
+    testPage = pages.find(function (page) { return page.name === UXD_API_TEST_LAB_PAGE; }) || null;
+    if (!testPage) {
+      testPage = mutateFile("create isolated test page", function () { return figma.createPage(); });
+      mutateFile("name isolated test page", function () { testPage.name = UXD_API_TEST_LAB_PAGE; });
+    }
+    await mutateFileAsync("load isolated test page", function () { return testPage.loadAsync(); });
+    await mutateFileAsync("navigate to isolated test page", function () { return figma.setCurrentPageAsync(testPage); });
+    if (figma.currentPage.id !== testPage.id) throw new Error("Figma did not activate UXD API Test Lab.");
+  }, false);
+
+  if (!labReady || !testPage) {
+    availability("Plugin lifecycle", "figma.closePlugin", typeof figma.closePlugin === "function",
+      "Available, not invoked because it would close the plugin.");
+    availability("External navigation", "figma.openExternal", typeof figma.openExternal === "function",
+      "Available, not invoked because it would open an external browser.");
+    add("Library", "Team Library access", "not-tested", "not-tested",
+      "Intentionally outside scope: no teamlibrary permission, shared-library lookup, or import is enabled.");
+    await postResult();
+    return;
+  }
+
+  // Keep a small visible fixture set on the lab page so the owner and future agents have known nodes to inspect.
+  await runTest("Test isolation", "Prepare reusable shape/text/component fixtures", async function () {
+    var fixtureName = "__UXD API Test Fixtures";
+    var fixture = testPage.children.find(function (node) { return node.type === "FRAME" && node.name === fixtureName; }) || null;
+    if (!fixture) {
+      fixture = mutateLab("create persistent fixture frame", function () { return figma.createFrame(); });
+      mutateLab("name persistent fixture frame", function () { fixture.name = fixtureName; });
+      mutateLab("size persistent fixture frame", function () { fixture.resize(720, 420); });
+      mutateLab("style persistent fixture frame", function () {
+        fixture.fills = [{ type: "SOLID", color: { r: 0.985, g: 0.99, b: 1 } }];
+      });
+    }
+    function ensureFixture(type, name, factory) {
+      var node = fixture.children.find(function (item) { return item.type === type && item.name === name; }) || null;
+      if (!node) {
+        node = mutateLab("create persistent fixture " + name, factory);
+        mutateLab("name persistent fixture " + name, function () { node.name = name; });
+        mutateLab("attach persistent fixture " + name, function () { fixture.appendChild(node); });
+      }
+      return node;
+    }
+    var sampleFrame = ensureFixture("FRAME", "Fixture Frame", function () { return figma.createFrame(); });
+    mutateLab("size fixture frame", function () { sampleFrame.resize(180, 110); });
+    mutateLab("position fixture frame", function () { sampleFrame.x = 20; sampleFrame.y = 20; });
+    var sampleRect = ensureFixture("RECTANGLE", "Fixture Rectangle", function () { return figma.createRectangle(); });
+    mutateLab("size fixture rectangle", function () { sampleRect.resize(100, 64); });
+    mutateLab("position fixture rectangle", function () { sampleRect.x = 230; sampleRect.y = 24; });
+    mutateLab("fill fixture rectangle", function () { sampleRect.fills = [{ type: "SOLID", color: { r: 0.18, g: 0.38, b: 0.9 } }]; });
+    var sampleEllipse = ensureFixture("ELLIPSE", "Fixture Ellipse", function () { return figma.createEllipse(); });
+    mutateLab("size fixture ellipse", function () { sampleEllipse.resize(72, 52); });
+    mutateLab("position fixture ellipse", function () { sampleEllipse.x = 360; sampleEllipse.y = 24; });
+    var sampleLine = ensureFixture("LINE", "Fixture Line", function () { return figma.createLine(); });
+    mutateLab("position fixture line", function () { sampleLine.x = 455; sampleLine.y = 35; });
+    var sampleText = ensureFixture("TEXT", "Fixture Text", function () { return figma.createText(); });
+    var fixtureFont = sampleText.fontName;
+    if (!fixtureFont || fixtureFont === figma.mixed) throw new Error("Fixture text has no single font.");
+    await mutateLabAsync("load fixture text font", function () { return figma.loadFontAsync(fixtureFont); });
+    if (sampleText.characters !== "UXD API Fixture") {
+      mutateLab("write fixture text", function () { sampleText.characters = "UXD API Fixture"; });
+    }
+    mutateLab("position fixture text", function () { sampleText.x = 20; sampleText.y = 160; });
+    var sampleComponent = ensureFixture("COMPONENT", "Fixture Component", function () { return figma.createComponent(); });
+    mutateLab("size fixture component", function () { sampleComponent.resize(140, 80); });
+    mutateLab("position fixture component", function () { sampleComponent.x = 20; sampleComponent.y = 225; });
+    if (!sampleComponent.children.some(function (node) { return node.name === "Fixture Component Child"; })) {
+      var child = mutateLab("create fixture component child", function () { return figma.createRectangle(); });
+      mutateLab("name fixture component child", function () { child.name = "Fixture Component Child"; });
+      mutateLab("size fixture component child", function () { child.resize(56, 36); });
+      mutateLab("attach fixture component child", function () { sampleComponent.appendChild(child); });
+    }
+    var sampleVector = ensureFixture("VECTOR", "Fixture Vector", function () { return figma.createVector(); });
+    mutateLab("position fixture vector", function () { sampleVector.x = 230; sampleVector.y = 130; });
+  });
+  // Avoid sending temporary test-page selections to backend telemetry during the suite.
   try {
-    sampleSceneNode = figma.currentPage.selection[0] || figma.currentPage.children[0] || null;
-  } catch (_) {}
-  function availability(category, name, ok, successReason, failureReason) {
-    add(category, name, "availability", !!ok,
-      ok ? (successReason || "API/property availability verified; operation not executed") :
-        (failureReason || "Required API/property is unavailable"));
+    assertLab("pause selection context listener");
+    figma.off("selectionchange", sendSelection);
+    selectionHandlerPaused = true;
+  } catch (error) {
+    add("Events", "Pause selection context messaging", "functional", "error", error && error.message ? error.message : String(error));
   }
-  availability("Selection", "Selection change listener registration", selectionChangeListenerRegistered,
-    "The figma.on('selectionchange') listener was registered at startup; event delivery requires a user selection change and is not forced by this test.",
-    "Could not register the selection-change listener.");
-  availability("Page navigation", "Page create/switch APIs",
-    typeof figma.createPage === "function" && typeof figma.setCurrentPageAsync === "function",
-    "Page APIs are exposed by this runtime; no page was created and the active page was not switched.",
-    "One or more page create/switch APIs are unavailable in this runtime.");
-  availability("Shapes", "Shape creation APIs",
-    [figma.createFrame, figma.createRectangle, figma.createEllipse, figma.createLine,
-      figma.createPolygon, figma.createStar, figma.createVector].every(function (value) { return typeof value === "function"; }),
-    "Shape-creation APIs are exposed by this runtime; no shape was created. Node.remove is inspected on a current-page node when one is present.",
-    "One or more shape-creation APIs are unavailable in this runtime.");
-  if (sampleSceneNode) {
-    availability("Shapes", "SceneNode.remove API", typeof sampleSceneNode.remove === "function",
-      "The existing current-page node's remove method was inspected; no node was removed.",
-      "The existing current-page node does not expose a remove method.");
+
+  try {
+    await runTest("Test isolation", "Create temporary smoke-test container frame", async function () {
+      harness = createNode(function () { return figma.createFrame(); }, "__UXD API TEST RUN " + Date.now(), null);
+      mutateLab("resize test container", function () { harness.resize(640, 480); });
+      mutateLab("style test container", function () {
+        harness.fills = [{ type: "SOLID", color: { r: 0.96, g: 0.97, b: 0.99 } }];
+      });
+    });
+
+    await runTest("Security", "Confirm test page is contained by approved file", async function () {
+      if (figma.fileKey !== UXD_ALLOWED_FILE_KEY) throw new Error("Live file key no longer matches the allowlist.");
+      if (!figma.root.children.some(function (page) { return page.id === testPage.id; })) {
+        throw new Error("Test page is not a child of the approved document.");
+      }
+    });
+
+    await runTest("Node inspection", "Resolve a node by async ID lookup", async function () {
+      var found = await mutateLabAsync("resolve test node using getNodeByIdAsync", function () { return figma.getNodeByIdAsync(harness.id); });
+      if (!found || found.id !== harness.id) throw new Error("getNodeByIdAsync failed to resolve the test frame.");
+    });
+    await runTest("Node inspection", "Verify legacy getNodeById restriction in dynamic-page mode", async function () {
+      if (typeof figma.getNodeById !== "function") {
+        // The deprecated sync method may be absent; the async ID lookup above is the supported path.
+        return;
+      }
+      var expectedBlock = false;
+      try {
+        assertLab("verify dynamic-page sync lookup restriction");
+        figma.getNodeById(harness.id);
+      } catch (error) {
+        var message = error && error.message ? error.message : String(error);
+        if (/dynamic-page|deprecated|async/i.test(message)) expectedBlock = true;
+        else throw error;
+      }
+      if (!expectedBlock) throw new Error("Legacy getNodeById was not blocked despite dynamic-page mode; review manifest/API compatibility.");
+    });
+    await runTest("Viewport", "Read viewport zoom and bounds", async function () {
+      var bounds = mutateLab("read viewport bounds", function () { return figma.viewport.bounds; });
+      var zoom = mutateLab("read viewport zoom", function () { return figma.viewport.zoom; });
+      if (!bounds || typeof zoom !== "number" || zoom <= 0) throw new Error("Viewport bounds or zoom were invalid.");
+    });
+
+    await runTest("Page navigation", "Create and remove a temporary page", async function () {
+      var page = mutateFile("create temporary navigation page", function () { return figma.createPage(); });
+      temporaryPages.push(page);
+      mutateFile("name temporary navigation page", function () { page.name = "__UXD TEMP PAGE " + Date.now(); });
+      if (!figma.root.children.some(function (candidate) { return candidate.id === page.id; })) {
+        throw new Error("New page was not found in the current document.");
+      }
+      mutateFile("remove temporary navigation page", function () { page.remove(); });
+      temporaryPages = temporaryPages.filter(function (candidate) { return candidate.id !== page.id; });
+      if (figma.root.children.some(function (candidate) { return candidate.id === page.id; })) {
+        throw new Error("Temporary page still exists after removal.");
+      }
+    });
+
+    await runTest("Page navigation", "Switch to a temporary page and back", async function () {
+      var page = mutateFile("create switch-test page", function () { return figma.createPage(); });
+      temporaryPages.push(page);
+      mutateFile("name switch-test page", function () { page.name = "__UXD NAV TEST " + Date.now(); });
+      await mutateFileAsync("load switch-test page", function () { return page.loadAsync(); });
+      await mutateFileAsync("switch to temporary page", function () { return figma.setCurrentPageAsync(page); });
+      if (figma.currentPage.id !== page.id) throw new Error("setCurrentPageAsync did not activate the temporary page.");
+      await mutateFileAsync("return to API test lab", function () { return figma.setCurrentPageAsync(testPage); });
+      if (figma.currentPage.id !== testPage.id) throw new Error("setCurrentPageAsync did not return to API test lab.");
+      mutateFile("remove switch-test page", function () { page.remove(); });
+      temporaryPages = temporaryPages.filter(function (candidate) { return candidate.id !== page.id; });
+    }, false);
+
+    await runTest("Shapes", "Create and resize frame", async function () {
+      var node = createNode(function () { return figma.createFrame(); }, "UXD API test frame", harness);
+      mutateLab("resize test frame", function () { node.resize(120, 90); });
+      if (node.width !== 120 || node.height !== 90) throw new Error("Frame dimensions did not persist.");
+    });
+    await runTest("Shapes", "Create rectangle and edit fill/opacity", async function () {
+      var node = rect("UXD API test rectangle");
+      mutateLab("resize test rectangle", function () { node.resize(80, 60); });
+      mutateLab("set rectangle fill", function () { node.fills = [{ type: "SOLID", color: { r: 0.18, g: 0.38, b: 0.9 } }]; });
+      mutateLab("set rectangle opacity", function () { node.opacity = 0.6; });
+      if (node.opacity !== 0.6 || node.fills.length !== 1) throw new Error("Rectangle style update did not persist.");
+    });
+    await runTest("Shapes", "Create ellipse", async function () {
+      var node = ellipse("UXD API test ellipse");
+      mutateLab("resize test ellipse", function () { node.resize(70, 50); });
+      if (node.type !== "ELLIPSE") throw new Error("Expected an ELLIPSE node.");
+    });
+    await runTest("Shapes", "Create line", async function () {
+      var node = createNode(function () { return figma.createLine(); }, "UXD API test line", harness);
+      if (node.type !== "LINE") throw new Error("Expected a LINE node.");
+    });
+    await runTest("Shapes", "Create polygon and update point count", async function () {
+      var node = createNode(function () { return figma.createPolygon(); }, "UXD API test polygon", harness);
+      mutateLab("set polygon point count", function () { node.pointCount = 5; });
+      if (node.pointCount !== 5) throw new Error("Polygon point count did not persist.");
+    });
+    await runTest("Shapes", "Create star and update point count", async function () {
+      var node = createNode(function () { return figma.createStar(); }, "UXD API test star", harness);
+      mutateLab("set star point count", function () { node.pointCount = 5; });
+      if (node.type !== "STAR" || node.pointCount !== 5) throw new Error("Star API did not persist.");
+    });
+    await runTest("Shapes", "Create vector node", async function () {
+      var node = createNode(function () { return figma.createVector(); }, "UXD API test vector", harness);
+      if (node.type !== "VECTOR") throw new Error("Expected a VECTOR node.");
+    });
+    await runTest("Shapes", "Remove a temporary node", async function () {
+      var node = rect("UXD API removable rectangle");
+      var id = node.id;
+      mutateLab("remove temporary rectangle", function () { node.remove(); });
+      if (await figma.getNodeByIdAsync(id)) throw new Error("Temporary rectangle still exists after remove().");
+    });
+
+    await runTest("Text", "Create text, load font, write characters", async function () {
+      var node = createNode(function () { return figma.createText(); }, "UXD API test text", harness);
+      var fontName = node.fontName;
+      if (!fontName || fontName === figma.mixed) throw new Error("Text node did not expose a single font.");
+      await mutateLabAsync("load font for test text", function () { return figma.loadFontAsync(fontName); });
+      mutateLab("write test characters", function () { node.characters = "UX Direct API test"; });
+      if (node.characters !== "UX Direct API test") throw new Error("Text write did not persist.");
+    });
+
+    await runTest("Layout and styling", "Group two test nodes", async function () {
+      var a = rect("UXD group item A"), b = ellipse("UXD group item B");
+      mutateLab("position group item A", function () { a.x = 5; a.y = 5; });
+      mutateLab("position group item B", function () { b.x = 35; b.y = 25; });
+      var group = mutateLab("group test nodes", function () { return figma.group([a, b], harness); });
+      createdNodes.push(group);
+      if (group.type !== "GROUP" || group.children.length !== 2) throw new Error("Group did not contain both nodes.");
+    });
+    await runTest("Layout and styling", "Flatten test nodes", async function () {
+      var a = rect("UXD flatten item A"), b = ellipse("UXD flatten item B");
+      mutateLab("position flatten item", function () { b.x = 25; b.y = 25; });
+      var vector = mutateLab("flatten test nodes", function () { return figma.flatten([a, b], harness); });
+      createdNodes.push(vector);
+      if (vector.type !== "VECTOR") throw new Error("Flatten did not return a VECTOR node.");
+    });
+    var booleanOperations = [
+      { name: "union", fn: function (nodes, parent) { return figma.union(nodes, parent); } },
+      { name: "intersect", fn: function (nodes, parent) { return figma.intersect(nodes, parent); } },
+      { name: "subtract", fn: function (nodes, parent) { return figma.subtract(nodes, parent); } },
+      { name: "exclude", fn: function (nodes, parent) { return figma.exclude(nodes, parent); } }
+    ];
+    for (var opIndex = 0; opIndex < booleanOperations.length; opIndex++) {
+      var operation = booleanOperations[opIndex];
+      await runTest("Layout and styling", "Execute " + operation.name + " boolean operation", async function () {
+        var a = rect("UXD boolean A"), b = ellipse("UXD boolean B");
+        mutateLab("position boolean-test node", function () { b.x = 25; });
+        var result = mutateLab("execute boolean operation", function () { return operation.fn([a, b], harness); });
+        createdNodes.push(result);
+        if (result.type !== "BOOLEAN_OPERATION") throw new Error(operation.name + " did not return a BOOLEAN_OPERATION.");
+      });
+    }
+
+    await runTest("Components", "Create component and instance", async function () {
+      var component = createNode(function () { return figma.createComponent(); }, "UXD API test component", harness);
+      mutateLab("resize test component", function () { component.resize(100, 60); });
+      rect("UXD component child", component);
+      var instance = mutateLab("create test component instance", function () { return component.createInstance(); });
+      createdNodes.push(instance);
+      var main = await mutateLabAsync("resolve instance main component", function () { return instance.getMainComponentAsync(); });
+      if (!main || main.id !== component.id) throw new Error("Instance did not resolve to its main component.");
+    });
+    await runTest("Components", "Create component from frame", async function () {
+      var frame = createNode(function () { return figma.createFrame(); }, "UXD frame to component", harness);
+      rect("UXD component source child", frame);
+      var component = mutateLab("convert frame to component", function () { return figma.createComponentFromNode(frame); });
+      createdNodes.push(component);
+      if (component.type !== "COMPONENT") throw new Error("createComponentFromNode did not produce a component.");
+    });
+    await runTest("Components", "Combine components as variants", async function () {
+      var a = createNode(function () { return figma.createComponent(); }, "UXD variant A", harness);
+      var b = createNode(function () { return figma.createComponent(); }, "UXD variant B", harness);
+      mutateLab("resize variant A", function () { a.resize(100, 60); });
+      mutateLab("resize variant B", function () { b.resize(100, 60); });
+      var set = mutateLab("combine variants", function () { return figma.combineAsVariants([a, b], harness); });
+      createdNodes.push(set);
+      if (set.type !== "COMPONENT_SET" || set.children.length !== 2) throw new Error("Component set did not contain both variants.");
+    });
+
+    await runTest("Variables", "Create/write/read/remove temporary variable collection", async function () {
+      if (!figma.variables || typeof figma.variables.createVariableCollection !== "function" || typeof figma.variables.createVariable !== "function") {
+        throw new Error("Variable write APIs are unavailable.");
+      }
+      var collection = mutateLab("create temporary variable collection", function () {
+        return figma.variables.createVariableCollection("__UXD TEMP HEALTH " + Date.now());
+      });
+      temporaryCollections.push(collection);
+      var variable = mutateLab("create temporary variable", function () {
+        return figma.variables.createVariable("probe/color", collection, "COLOR");
+      });
+      mutateLab("write temporary variable", function () {
+        variable.setValueForMode(collection.defaultModeId, { r: 0.2, g: 0.4, b: 0.6 });
+      });
+      var loaded = await mutateLabAsync("read temporary variable", function () { return figma.variables.getVariableByIdAsync(variable.id); });
+      if (!loaded || loaded.valuesByMode[collection.defaultModeId].r !== 0.2) throw new Error("Temporary variable value did not read back.");
+      mutateLab("remove temporary variable collection", function () { collection.remove(); });
+      temporaryCollections = temporaryCollections.filter(function (item) { return item.id !== collection.id; });
+      if (await figma.variables.getVariableByIdAsync(variable.id)) throw new Error("Temporary variable still exists after collection removal.");
+    });
+    await runTest("Variables", "Read local variables and collections", async function () {
+      var variables = await mutateLabAsync("read local variable list", function () { return figma.variables.getLocalVariablesAsync(); });
+      var collections = await mutateLabAsync("read local variable collection list", function () { return figma.variables.getLocalVariableCollectionsAsync(); });
+      if (!Array.isArray(variables) || !Array.isArray(collections)) throw new Error("Local variable APIs returned invalid results.");
+    });
+
+    await runTest("Storage", "Write/read/delete temporary client-storage key", async function () {
+      storageKey = "uxd.health.probe." + Date.now();
+      await mutateLabAsync("write client-storage test key", function () { return figma.clientStorage.setAsync(storageKey, "uxd-test-value"); });
+      var value = await mutateLabAsync("read client-storage test key", function () { return figma.clientStorage.getAsync(storageKey); });
+      if (value !== "uxd-test-value") throw new Error("clientStorage returned a different value.");
+      await mutateLabAsync("delete client-storage test key", function () { return figma.clientStorage.deleteAsync(storageKey); });
+      storageKey = null;
+    });
+
+    await runTest("Export", "Export a temporary shape to PNG", async function () {
+      var node = rect("UXD export probe");
+      mutateLab("resize export probe", function () { node.resize(40, 32); });
+      mutateLab("style export probe", function () { node.fills = [{ type: "SOLID", color: { r: 0.1, g: 0.3, b: 0.8 } }]; });
+      var bytes = await mutateLabAsync("export test shape", function () {
+        return node.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 1 } });
+      });
+      if (!bytes || !bytes.length) throw new Error("PNG export produced no bytes.");
+    });
+
+    await runTest("Events", "Receive a selection-change event", async function () {
+      var node = rect("UXD selection event probe");
+      savedTestSelection = Array.from(testPage.selection);
+      var delivered = false;
+      var eventPromise = new Promise(function (resolve) {
+        figma.once("selectionchange", function () { delivered = true; resolve(true); });
+      });
+      mutateLab("select event test node", function () { testPage.selection = [node]; });
+      var received = await Promise.race([
+        eventPromise,
+        new Promise(function (resolve) { setTimeout(function () { resolve(false); }, 1800); })
+      ]);
+      mutateLab("restore page selection after event", function () { testPage.selection = savedTestSelection; });
+      savedTestSelection = null;
+      if (!received || !delivered) throw new Error("selectionchange event did not arrive within 1.8 seconds.");
+    });
+    await runTest("Events", "Register/remove listener with figma.off", async function () {
+      var node = rect("UXD off API probe");
+      var fired = false;
+      var previousSelection = Array.from(testPage.selection);
+      var listener = function () { fired = true; };
+      mutateLab("register test selection listener", function () { figma.on("selectionchange", listener); });
+      mutateLab("remove test selection listener", function () { figma.off("selectionchange", listener); });
+      mutateLab("trigger selection after removal", function () { testPage.selection = [node]; });
+      await new Promise(function (resolve) { setTimeout(resolve, 120); });
+      mutateLab("restore selection after listener removal test", function () { testPage.selection = previousSelection; });
+      if (fired) throw new Error("Removed listener still fired.");
+    });
+
+    await runTest("Plugin bridge", "Round-trip a probe through UI messaging", async function () {
+      var probeId = "uxd-probe-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+      var ack = new Promise(function (resolve, reject) {
+        var timer = setTimeout(function () {
+          delete UXD_NATIVE_API_PROBE_WAITERS[probeId];
+          reject(new Error("Plugin UI did not acknowledge the probe within 1.8 seconds."));
+        }, 1800);
+        UXD_NATIVE_API_PROBE_WAITERS[probeId] = function () { clearTimeout(timer); resolve(true); };
+      });
+      assertLab("send probe to plugin UI");
+      figma.ui.postMessage({ type: "native-api-probe", probeId: probeId });
+      await ack;
+    });
+
+    // These APIs exist, but executing them would disrupt the person using the plugin.
+    availability("Plugin lifecycle", "figma.closePlugin", typeof figma.closePlugin === "function",
+      "Available but not invoked because it would terminate the current session.");
+    availability("External navigation", "figma.openExternal", typeof figma.openExternal === "function",
+      "Available but not invoked because it would open an external browser.");
+    availability("Notifications", "figma.notify", typeof figma.notify === "function",
+      "Available but not invoked to avoid interrupting the user.");
+    add("Library", "Team Library access", "not-tested", "not-tested",
+      "Intentionally outside scope. No teamlibrary permission or shared-library import/query is enabled.");
+  } catch (error) {
+    add("Test runner", "Unexpected health-check failure", "functional", "error", error && error.message ? error.message : String(error));
+  } finally {
+    try { assertUxDirectFileScope("health-test cleanup"); } catch (_) {}
+    if (testPage) {
+      try {
+        if (figma.currentPage.id !== testPage.id) await mutateFileAsync("return to lab for cleanup", function () { return figma.setCurrentPageAsync(testPage); });
+      } catch (error) { cleanupErrors.push("Could not return to API Test Lab: " + (error.message || String(error))); }
+      if (savedTestSelection) {
+        try { mutateLab("restore test-page selection during cleanup", function () { testPage.selection = savedTestSelection; }); }
+        catch (error) { cleanupErrors.push("Could not restore test-page selection: " + (error.message || String(error))); }
+      }
+      function belongsToHarness(node) {
+        var current = node;
+        while (current) {
+          if (harness && current.id === harness.id) return true;
+          current = current.parent;
+        }
+        return false;
+      }
+      // Removing the lab's single temporary harness removes all descendants in one scoped operation.
+      // If any API failed before attaching a node to the harness, clean that orphan separately.
+      for (var i = createdNodes.length - 1; i >= 0; i--) {
+        var node = createdNodes[i];
+        try {
+          if (node && node.parent && !belongsToHarness(node)) {
+            assertLab("remove orphaned temporary test node");
+            node.remove();
+          }
+        } catch (error) {
+          cleanupErrors.push("Could not remove orphaned " + (node && node.name ? node.name : "test node") + ": " + (error.message || String(error)));
+        }
+      }
+      if (harness) {
+        try {
+          if (harness.parent) mutateLab("remove all temporary harness contents", function () { harness.remove(); });
+        } catch (error) {
+          cleanupErrors.push("Could not remove temporary test harness and its children: " + (error.message || String(error)));
+        }
+      }
+      for (var c = temporaryCollections.length - 1; c >= 0; c--) {
+        try { assertUxDirectFileScope("remove temporary variable collection"); temporaryCollections[c].remove(); }
+        catch (error) { cleanupErrors.push("Could not remove temporary variable collection: " + (error.message || String(error))); }
+      }
+      if (storageKey) {
+        try { assertUxDirectFileScope("delete temporary client-storage key"); await figma.clientStorage.deleteAsync(storageKey); }
+        catch (error) { cleanupErrors.push("Could not clear temporary client storage: " + (error.message || String(error))); }
+      }
+    }
+    for (var p = temporaryPages.length - 1; p >= 0; p--) {
+      try {
+        assertUxDirectFileScope("remove temporary page");
+        if (figma.root.children.some(function (page) { return page.id === temporaryPages[p].id; }) &&
+            temporaryPages[p].id !== (testPage && testPage.id) &&
+            temporaryPages[p].id !== (originalPage && originalPage.id)) temporaryPages[p].remove();
+      } catch (error) { cleanupErrors.push("Could not remove temporary page: " + (error.message || String(error))); }
+    }
+    if (originalPage) {
+      try { await mutateFileAsync("restore originally active page", function () { return figma.setCurrentPageAsync(originalPage); }); }
+      catch (error) { cleanupErrors.push("Could not restore original page: " + (error.message || String(error))); }
+    }
+    if (selectionHandlerPaused) {
+      try { assertUxDirectFileScope("restore selection context listener"); figma.on("selectionchange", sendSelection); }
+      catch (error) { cleanupErrors.push("Could not restore selection listener: " + (error.message || String(error))); }
+    }
+    if (originalPage) { try { sendSelection(); } catch (_) {} }
+    cleanupErrors.forEach(function (reason, index) {
+      add("Test cleanup", "Cleanup issue " + (index + 1), "functional", "error", reason);
+    });
   }
-  availability("Text", "Text creation and font-loading APIs",
-    typeof figma.createText === "function" && typeof figma.loadFontAsync === "function",
-    "Text creation and font-loading APIs are exposed by this runtime; no text, font, or text property was changed.",
-    "Text creation or font-loading API is unavailable in this runtime.");
-  availability("Layout and styling", "Node manipulation APIs",
-    [figma.group, figma.flatten, figma.union, figma.intersect, figma.subtract, figma.exclude]
-      .every(function (value) { return typeof value === "function"; }),
-    "Node grouping, flattening, and boolean-operation APIs are exposed by this runtime; no geometry, layout, fill, or stroke was changed.",
-    "One or more node manipulation APIs are unavailable in this runtime.");
-  availability("Components", "Component and variant creation APIs",
-    typeof figma.createComponent === "function" && typeof figma.createComponentFromNode === "function" &&
-      typeof figma.combineAsVariants === "function",
-    "Component and variant APIs are exposed by this runtime; no component or variant was created. ComponentNode.createInstance is separately checked when a component exists on this page.",
-    "One or more component/variant creation APIs are unavailable in this runtime.");
-  availability("Variables", "Variable creation APIs",
-    !!figma.variables && typeof figma.variables.createVariable === "function" &&
-      typeof figma.variables.createVariableCollection === "function",
-    "Variable write APIs are exposed by this runtime; read-only variable queries are tested above. No variable or collection was created or changed.",
-    "One or more variable creation APIs are unavailable in this runtime.");
-  availability("Export", "Node export API",
-    typeof figma.currentPage.exportAsync === "function" && (!sampleSceneNode || typeof sampleSceneNode.exportAsync === "function"),
-    "exportAsync is exposed on the active page/sample node; an export was not generated to avoid unnecessary large output.",
-    "The active page or sample node does not expose exportAsync.");
-  add("Mutation safety", "Document-changing and live-interaction workflows", "not-tested", false,
-    "Actual page switching, create/delete, text/style/component/variable writes, selection-change delivery, and content export are not executed by this non-destructive self-test. Their API availability is shown above where inspectable.");
-  var passed = checks.filter(function (x) { return x.status === "success" && x.level !== "availability"; }).length;
-  var available = checks.filter(function (x) { return x.status === "success" && x.level === "availability"; }).length;
-  var failed = checks.filter(function (x) { return x.status === "error"; }).length;
-  var notTested = checks.filter(function (x) { return x.status === "not-tested"; }).length;
-  figma.ui.postMessage({ type: "native-health-result", checks: checks, passed: passed, available: available,
-    failed: failed, notTested: notTested, commandId: commandId || null, checkedAt: new Date().toISOString() });
+  await postResult();
 }
 figma.ui.onmessage = async function (message) {
   if (!message) return;
-  if (message.type === "get-selection") sendSelection();
-  if (message.type === "run-native-health-check") await runNativeApiHealthCheck(message.commandId);
-  if (message.type === "close") figma.closePlugin();
+  if (message.type === "native-api-probe-ack" && message.probeId && UXD_NATIVE_API_PROBE_WAITERS[message.probeId]) {
+    var resolveProbe = UXD_NATIVE_API_PROBE_WAITERS[message.probeId];
+    delete UXD_NATIVE_API_PROBE_WAITERS[message.probeId];
+    resolveProbe();
+    return;
+  }
+  if (message.type === "get-selection") { assertUxDirectFileScope("refresh selection"); sendSelection(); }
+  if (message.type === "run-native-health-check") { assertUxDirectFileScope("start health-check command"); await runNativeApiHealthCheck(message.commandId); }
+  if (message.type === "close") { assertUxDirectFileScope("close plugin"); figma.closePlugin(); }
 };
 sendSelection();
 
