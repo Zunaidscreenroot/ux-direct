@@ -46,6 +46,10 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   // Always register a deterministic mock so tests and empty-credential installs work.
   // Task routing prefers configured real providers and uses mock only as the last resort.
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
+  // Paid routing requires an explicit opt-in, a nonzero budget, and token prices.
+  const paidPricingReady = Number(env.MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M) > 0 &&
+    Number(env.MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M) > 0 &&
+    Number(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "3000") > 0;
   const openRouterModels = csv(env.OPENROUTER_MODELS).filter(model =>
     model.endsWith(":free") || (env.ALLOW_PAID_MODELS === "true" && paidPricingReady)
   );
@@ -66,10 +70,6 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
     name: "cerebras", baseUrl: trimSlash(env.CEREBRAS_BASE_URL || "https://api.cerebras.ai/v1"),
     apiKey: env.CEREBRAS_API_KEY, models: csv(env.CEREBRAS_MODELS, "gpt-oss-120b"), kind: "free-tier"
   });
-  // Paid inference requires a key, explicit opt-in, and configured token prices.
-  const paidPricingReady = Number(env.MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M) > 0 &&
-    Number(env.MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M) > 0 &&
-    Number(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "3000") > 0;
   if (env.OPENAI_API_KEY && env.ALLOW_PAID_MODELS === "true" && paidPricingReady) providers.push({
     name: "openai", baseUrl: trimSlash(env.OPENAI_BASE_URL || "https://api.openai.com/v1"),
     apiKey: env.OPENAI_API_KEY, models: csv(env.OPENAI_MODELS, "gpt-4o-mini"), kind: "paid"
