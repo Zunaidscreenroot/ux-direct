@@ -180,3 +180,14 @@ test("task aliases fail over between free providers but never select paid provid
   assert.equal(result.provider, "gemini");
   assert.equal(attempted.some(url => url.includes("paid.example")), false);
 });
+
+
+test("rate limiter blocks bursts and resets after the window", async () => {
+  const { checkGatewayRateLimit } = await import("../src/model-gateway/rate-limit");
+  const key = "unit-test-rate-limit";
+  for (let i = 0; i < 30; i++) assert.equal(checkGatewayRateLimit(key, 1_000).allowed, true);
+  const blocked = checkGatewayRateLimit(key, 1_001);
+  assert.equal(blocked.allowed, false);
+  assert.equal(blocked.remaining, 0);
+  assert.equal(checkGatewayRateLimit(key, 61_001).allowed, true);
+});
