@@ -64,6 +64,8 @@ function inr(value: number) {
 function ModelGatewayPanel() {
   const [data, setData] = useState<GatewayDashboardPayload | null>(null);
   const [busy, setBusy] = useState(false);
+  const [smokeBusy, setSmokeBusy] = useState(false);
+  const [smokeMessage, setSmokeMessage] = useState("");
   const [loadError, setLoadError] = useState("");
   const [showAllModels, setShowAllModels] = useState(false);
   const loadDashboard = useCallback(async () => {
@@ -81,6 +83,22 @@ function ModelGatewayPanel() {
     }
   }, []);
   useEffect(() => { void loadDashboard(); }, [loadDashboard]);
+  async function runMockSmokeTest() {
+    if (smokeBusy) return;
+    setSmokeBusy(true);
+    setSmokeMessage("");
+    try {
+      const response = await fetch("/api/model-gateway/smoke", { method: "POST", cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "Mock smoke test failed.");
+      setSmokeMessage("Passed · 0 tokens · ₹0 · no provider API called · request " + String(payload.requestId).slice(0, 8));
+      await loadDashboard();
+    } catch (error) {
+      setSmokeMessage(error instanceof Error ? error.message : "Mock smoke test failed.");
+    } finally {
+      setSmokeBusy(false);
+    }
+  }
   const records = data?.budget.records ?? [];
   const maxTokens = Math.max(1, ...records.map(record => record.totalTokens));
   const models = (data?.models ?? []).filter(model => showAllModels || model.configured || model.tier === "mock");
@@ -93,9 +111,13 @@ function ModelGatewayPanel() {
         <div><h1>Model gateway.<br /><em>Every token accounted for.</em></h1>
           <p className="intro">Provider routing, per-request token usage, estimated spend and budget guardrails. API keys stay server-side and are intentionally left for your final activation step.</p>
         </div>
-        <button className="submit-button" type="button" onClick={() => void loadDashboard()} disabled={busy}>{busy ? "Refreshing…" : "Refresh data ↻"}</button>
+        <div className="gateway-header-actions">
+          <button className="secondary-button" type="button" onClick={() => void runMockSmokeTest()} disabled={smokeBusy}>{smokeBusy ? "Testing…" : "Run free smoke test ↗"}</button>
+          <button className="submit-button" type="button" onClick={() => void loadDashboard()} disabled={busy}>{busy ? "Refreshing…" : "Refresh data ↻"}</button>
+        </div>
       </div>
       {loadError && <p className="inline-note" role="alert">{loadError}</p>}
+      {smokeMessage && <p className="gateway-smoke-message" role="status">{smokeMessage}</p>}
       <div className="gateway-mode-banner">
         <span className={"gateway-status-dot " + (data?.gateway.paidModelsEnabled ? "gateway-dot-live" : "gateway-dot-idle")} />
         <div><strong>{data?.gateway.paidModelsEnabled ? "Paid routing explicitly enabled" : "Safe setup mode · API keys not required yet"}</strong>
