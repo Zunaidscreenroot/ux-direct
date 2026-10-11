@@ -88,11 +88,15 @@ async function probeModel(provider: ProviderId, model: string) {
     headers: { "Content-Type": "application/json", ...config.headers },
     body: JSON.stringify({
       model,
-      messages: [{ role: "user", content: "Reply with exactly: UXD_MODEL_CHECK_OK" }],
+      messages: [
+        { role: "system", content: "This is a connectivity check. Do not explain. Output only the requested short confirmation text." },
+        { role: "user", content: "Reply with exactly: UXD_MODEL_CHECK_OK" }
+      ],
       temperature: 0,
-      // Reasoning-oriented free models can spend more than 12 tokens thinking
-      // before producing the tiny confirmation text. Keep a modest hard cap.
-      max_tokens: 128
+      // OpenRouter supports configurable reasoning effort for compatible models.
+      // Keep probe reasoning minimal and leave enough room for a final text token sequence.
+      reasoning: { effort: "minimal" },
+      max_tokens: 256
     })
   }, 18000);
   if (!response.ok) {
