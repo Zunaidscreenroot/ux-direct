@@ -291,3 +291,9 @@ footer span { margin: 0 6px; color: #9bb98b; }
   .gateway-stat-card { padding:13px; }
   .gateway-stat-card strong { font-size:23px; }
 }
+
+.gateway-header-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:8px; flex:0 0 auto; }
+.gateway-header-actions .submit-button { margin:8px 0 0; }
+.gateway-header-actions .secondary-button { margin-top:8px; }
+.gateway-smoke-message { margin:-8px 0 17px; padding:10px 12px; background:#eef7e8; border:1px solid #dcebd2; color:#315e37; border-radius:8px; font-size:11px; line-height:1.55; overflow-wrap:anywhere; }
+@media (max-width:700px) { .gateway-header-actions { justify-content:flex-start; } .gateway-header-actions .submit-button, .gateway-header-actions .secondary-button { margin-top:0; } }
