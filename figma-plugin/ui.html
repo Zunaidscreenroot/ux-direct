@@ -84,6 +84,7 @@
   }
   const pluginClientId = makeId();
   const pluginSessionToken = makeId() + makeId();
+  const handledBridgeCommands = new Set();
   async function bridgeRequest(payload) {
     const fileKey = verifiedFileKey || currentSelection.fileKey;
     if (!fileKey || fileKey !== ALLOWED_FILE_KEY) throw new Error("Plugin bridge blocked: approved file scope is not verified.");
@@ -100,7 +101,13 @@
     // Heartbeat requests use the same Netlify production origin as the health check.
     // Native API checks remain local/manual and never start automatically on open.
     try {
-      await bridgeRequest({ mode: "heartbeat" });
+      const heartbeat = await bridgeRequest({ mode: "heartbeat" });
+      const command = heartbeat && heartbeat.command;
+      if (command && command.action === "native-api-health-check" && command.commandId && !handledBridgeCommands.has(command.commandId)) {
+        handledBridgeCommands.add(command.commandId);
+        status("Dashboard requested a native API health check. Running inside Figma…");
+        parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: command.commandId } }, "*");
+      }
       $("connectionDot").className = "dot ok";
       $("connectionText").textContent = "Netlify production connected · plugin bridge online";
       return { ok: true, error: "" };
@@ -125,10 +132,10 @@
       : connection
         ? "Netlify health check passed, but plugin bridge is unavailable: " + bridge.error
         : "Could not verify the Netlify production backend. Check the connection before proceeding.";
+    // Bridge heartbeat is sufficient for liveness; do not emit a separate telemetry POST each interval.
     heartbeatTimer = window.setInterval(() => {
-      void sendTelemetry("Plugin heartbeat", "success", "Plugin UI is active and recently reached its event loop.");
       void syncPluginBridge();
-    }, 20000);
+    }, 30000);
   }
   window.addEventListener("pagehide", () => {
     if (heartbeatTimer) window.clearInterval(heartbeatTimer);
@@ -185,14 +192,6 @@
     if (message.type === "native-health-progress") {
       if (message.text) $("healthSummary").textContent = message.text;
       if (message.text) status(message.text);
-      if (message.text) {
-        const progressStatus = message.text.startsWith("Passed:") ? "success" :
-          /^(Failed:|Stopped:|Timed out|Cleanup timed out)/.test(message.text) ? "error" : "info";
-        void sendTelemetry("Native API health progress", progressStatus, message.text, {
-          category: message.category,
-          action: message.name
-        });
-      }
       return;
     }
     if (message.type === "scope-approved") {
@@ -220,7 +219,7 @@
       message.checks.forEach((item) => {
         const row = document.createElement("div");
         row.style.cssText = "display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-top:1px solid var(--figma-color-border)";
-        const labelText = item.level === "not-tested" ? "NOT TESTED" : item.status === "success" ? (item.level === "availability" ? "AVAILABLE" : "PASS") : "FAIL";
+        const labelText = item.level === "not-tested" ? (/team library/i.test(item.name) ? "NOT TESTED INTENTIONALLY" : "NOT TESTED") : item.status === "success" ? (item.level === "availability" ? "AVAILABLE" : "PASS") : "FAIL";
         const badge = document.createElement("strong"); badge.textContent = labelText;
         badge.style.color = item.level === "not-tested" ? "#a07827" : item.status === "success" ? "#26966b" : "#d14343";
         badge.style.minWidth = "78px";
@@ -230,9 +229,6 @@
       $("healthResults").replaceChildren(list);
       $("runHealth").disabled = false;
       void sendTelemetry("Plugin API health check completed", failed ? "warning" : "success", "Native Plugin API self-test: " + passed + " passed, " + failed + " failed, " + available + " available, " + notTested + " not tested.");
-      message.checks.forEach((item) => {
-        void sendTelemetry("Plugin API check: " + item.name, item.level === "not-tested" ? "warning" : item.status, item.name + ": " + item.reason, { category: item.category, action: item.name, testType: item.level });
-      });
       void bridgeRequest({
         mode: "result",
         commandId: message.commandId || undefined,
