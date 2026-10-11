@@ -362,7 +362,8 @@ export async function getCapabilityRecommendations(forceRefresh = false): Promis
     recommendationCache = { expiresAt: Date.now() + RECOMMENDATION_CACHE_MS, signature, value: fallback };
     return fallback;
   }
-  const candidatePayload: Record<string, { free: Array<{ id: string; name: string; modalities: string[]; context: number; inputUsdPerMillion: number; outputUsdPerMillion: number; tasks: string[] }>; paid: Array<{ id: string; name: string; modalities: string[]; context: number; inputUsdPerMillion: number; outputUsdPerMillion: number; tasks: string[] }> }> = {};
+  type CandidateSummary = { id: string; name: string; modalities: string[]; context: number; inputUsdPerMillion: number; outputUsdPerMillion: number; tasks: string[] };
+  const candidatePayload: Record<string, { free: CandidateSummary[]; paid: CandidateSummary[] }> = {};
   for (const module of GATEWAY_MODULES) {
     const makeSummary = (mode: "free" | "paid") => candidateModels(module.id, mode, live.models).map(model => ({
       id: model.id,
@@ -374,8 +375,8 @@ export async function getCapabilityRecommendations(forceRefresh = false): Promis
       tasks: model.tasks.slice(0, 12)
     }));
     candidatePayload[module.id] = {
-      free: makeSummary("free") as typeof candidatePayload[string]["free"],
-      paid: makeSummary("paid") as typeof candidatePayload[string]["paid"]
+      free: makeSummary("free"),
+      paid: makeSummary("paid")
     };
   }
   const taskContexts: Record<string, string> = {
