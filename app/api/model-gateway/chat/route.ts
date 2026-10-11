@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { chatCompletionWithFallback, GatewayError, type ChatMessage } from "@/src/model-gateway";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 
@@ -65,8 +66,10 @@ export async function POST(request: Request) {
   if (value.max_tokens !== undefined && (!Number.isInteger(value.max_tokens) || Number(value.max_tokens) < 1 || Number(value.max_tokens) > 16384)) {
     return NextResponse.json({ error: "max_tokens must be an integer between 1 and 16384." }, { status: 400 });
   }
+  const requestId = randomUUID();
   try {
     const result = await chatCompletionWithFallback({
+      requestId,
       model: value.model,
       messages,
       ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
@@ -78,16 +81,16 @@ export async function POST(request: Request) {
       event: "completion", provider: result.provider, model: result.model,
       latencyMs: result.latencyMs, usage: result.usage ?? null, at: new Date().toISOString()
     }));
-    return NextResponse.json(result, { headers: {
+    return NextResponse.json({ ...result, requestId }, { headers: {
       "Cache-Control": "no-store",
       "X-RateLimit-Limit": String(limit.limit),
       "X-RateLimit-Remaining": String(limit.remaining)
     } });
   } catch (error) {
-    const status = error instanceof GatewayError ? error.status : 502;
-    const message = error instanceof GatewayError ? error.message : "Model gateway request failed.";
+    const status = error instanceof GatewayError ? error.status : (typeof error === "object" && error !== null && "status" in error && typeof error.status === "number" ? error.status : 502);
+    const message = error instanceof Error ? error.message : "Model gateway request failed.";
     // Never send credentials or arbitrary provider response bodies to the client.
-    return NextResponse.json({ error: message, provider: error instanceof GatewayError ? error.provider : undefined },
+    return NextResponse.json({ error: message, requestId, provider: error instanceof GatewayError ? error.provider : undefined },
       { status: status >= 400 && status <= 599 ? status : 502, headers: { "Cache-Control": "no-store" } });
   }
 }
