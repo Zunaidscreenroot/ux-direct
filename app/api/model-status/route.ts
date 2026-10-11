@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 // Preview-only diagnostic route: model discovery and probes call provider APIs directly.
 
 const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
-type ProviderId = "gemini" | "openrouter";
+type ProviderId = "openrouter";
 
 function corsHeaders() {
   return {
@@ -36,19 +36,10 @@ function safeError(error: unknown) {
   return message.replace(/(Bearer\s+)[^\s]+/gi, "$1[redacted]").slice(0, 220);
 }
 function providerConfig(provider: ProviderId) {
-  if (provider === "gemini") {
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-    return apiKey ? {
-      apiKey,
-      baseUrl: (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/+$/, ""),
-      modelsUrl: "https://generativelanguage.googleapis.com/v1beta/models",
-      headers: { "x-goog-api-key": apiKey }
-    } : null;
-  }
   const apiKey = process.env.OPENROUTER_API_KEY;
   return apiKey ? {
     apiKey,
-    baseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, ""),
+    baseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\\/+$/, ""),
     modelsUrl: "https://openrouter.ai/api/v1/models",
     headers: { Authorization: `Bearer ${apiKey}` }
   } : null;
@@ -69,17 +60,10 @@ async function discoverModels(provider: ProviderId) {
   if (!response.ok) return { provider, configured: true, models: [], reason: `Provider model-list endpoint returned HTTP ${response.status}.` };
   const payload = await response.json() as { data?: Array<{ id?: string; name?: string; supportedGenerationMethods?: string[]; pricing?: { prompt?: string; completion?: string } }>; models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> };
   let models: string[];
-  if (provider === "openrouter") {
-    models = (payload.data ?? [])
-      .filter(item => typeof item.id === "string" && item.id.endsWith(":free"))
-      .map(item => item.id)
-      .filter((id): id is string => Boolean(id));
-  } else {
-    models = (payload.models ?? [])
-      .filter(item => (item.supportedGenerationMethods ?? []).includes("generateContent"))
-      .map(item => item.name?.replace(/^models\//, ""))
-      .filter((id): id is string => Boolean(id));
-  }
+  models = (payload.data ?? [])
+    .filter(item => typeof item.id === "string" && item.id.endsWith(":free"))
+    .map(item => item.id)
+    .filter((id): id is string => Boolean(id));
   return { provider, configured: true, models, checkedAt: new Date().toISOString() };
 }
 async function probeModel(provider: ProviderId, model: string) {
@@ -132,7 +116,7 @@ export async function GET(request: Request) {
     const provider = url.searchParams.get("provider");
     const model = url.searchParams.get("model");
     if (provider && model) {
-      if (provider !== "gemini" && provider !== "openrouter") {
+      if (provider !== "openrouter") {
         return NextResponse.json({ available: false, error: "Unsupported provider.", diagnosticId: id }, { status: 400, headers });
       }
       // Probe exactly one requested model; no fallback and no fan-out to other providers.
@@ -140,25 +124,19 @@ export async function GET(request: Request) {
       return NextResponse.json({ ...result, diagnosticId: id }, { headers });
     }
     if (provider) {
-      if (provider !== "gemini" && provider !== "openrouter") {
+      if (provider !== "openrouter") {
         return NextResponse.json({ error: "Unsupported provider.", diagnosticId: id }, { status: 400, headers });
       }
       const result = await discoverModels(provider);
       return NextResponse.json({ ...result, diagnosticId: id, note: "Models are fetched live from the provider API; no static model allowlist is used by this endpoint." }, { headers });
     }
     // One lightweight catalog request per configured provider; no inference calls during discovery.
-    const results = await Promise.allSettled([discoverModels("gemini"), discoverModels("openrouter")]);
+    const results = await Promise.allSettled([discoverModels("openrouter")]);
     const providers = results.map((result, index) => result.status === "fulfilled"
       ? result.value
-      : { provider: index === 0 ? "gemini" : "openrouter", configured: Boolean(providerConfig(index === 0 ? "gemini" : "openrouter")), models: [], reason: safeError(result.reason) });
-    const models = providers.flatMap(entry => entry.models.map(modelId => ({
-      provider: entry.provider,
-      id: modelId,
-      label: entry.provider === "openrouter" ? `${modelId} · Free` : modelId,
-      configured: entry.configured,
-      tier: entry.provider === "openrouter" ? "free-tier" : "provider-managed"
-    })));
-    return NextResponse.json({ models, providers, checkedAt: new Date().toISOString(), diagnosticId: id, note: "Models are discovered live from provider APIs. OpenRouter is restricted to model IDs marked :free; Gemini model listing does not expose account-specific billing eligibility." }, { headers });
+      : { provider: "openrouter", configured: Boolean(providerConfig(index === 0 ? "gemini" : "openrouter")), models: [], reason: safeError(result.reason) });
+    const models = providers.flatMap(entry => entry.models.map(modelId => ({ provider: "openrouter", id: modelId, label: modelId + " · Free", configured: entry.configured, tier: "free-tier" })));
+    return NextResponse.json({ models, providers, checkedAt: new Date().toISOString(), diagnosticId: id, note: "Models are discovered live from provider APIs. OpenRouter is restricted to model IDs marked :free; Only OpenRouter model IDs marked :free are returned." }, { headers });
   } catch (error) {
     console.error("[model-status] request failed", JSON.stringify({ diagnosticId: id, message: safeError(error) }));
     const timedOut = error instanceof Error && (error.name === "AbortError" || /timed out/i.test(error.message));
