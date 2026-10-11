@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getModelCatalog, modelKey, providersFromEnv } from "@/src/model-gateway";
+import { getModelCatalog, providersFromEnv } from "@/src/model-gateway";
+import { modelKey } from "@/src/model-gateway/control-store";
 import { getLiveGatewayModels } from "@/src/model-gateway/openrouter-catalog";
 
 export const runtime = "nodejs";
