@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { assertFigmaFileAccess, parseAllowedFileIds } from "./figma-access";
+import { assertFigmaFileAccess, parseAllowedFileIds } from "../security/figma-access";
 
 const figmaNodeSchema = z.object({
   id: z.string().min(1),
