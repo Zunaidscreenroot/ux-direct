@@ -114,7 +114,7 @@
   });
   window.onmessage = (event) => {
     const message = event.data && event.data.pluginMessage;
-    if (!message || message.type !== "selection") return;
+    if (!message) return;
     if (message.type === "native-health-result") {
       const passed = message.passed || 0, failed = message.failed || 0;
       $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + new Date(message.checkedAt).toLocaleTimeString();
@@ -129,7 +129,10 @@
       });
       $("healthResults").replaceChildren(list);
       $("runHealth").disabled = false;
-      void sendTelemetry("Plugin API health check completed", failed ? "warning" : "success", "Native Plugin API self-test: " + passed + " passed, " + failed + " failed. " + message.checks.filter((item) => item.status === "error").map((item) => item.name).slice(0, 4).join(", "));
+      void sendTelemetry("Plugin API health check completed", failed ? "warning" : "success", "Native Plugin API self-test: " + passed + " passed, " + failed + " failed.");
+      message.checks.forEach((item) => {
+        void sendTelemetry("Plugin API check: " + item.name, item.status, item.name + ": " + item.reason);
+      });
       return;
     }
     if (message.type !== "selection") return;

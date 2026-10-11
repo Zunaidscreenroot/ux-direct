@@ -41,8 +41,10 @@ export default function Home() {
   const [healthError, setHealthError] = useState("");
   const [events, setEvents] = useState<EventItem[]>([]);
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
+  const [refreshingConnections, setRefreshingConnections] = useState(false);
 
   const refreshConnections = useCallback(async () => {
+    setRefreshingConnections(true);
     try {
       const [healthResponse, eventsResponse] = await Promise.all([
         fetch(API + "/api/health", { cache: "no-store" }),
@@ -59,6 +61,8 @@ export default function Home() {
       setLastRefresh(new Date().toISOString());
     } catch (err) {
       setHealthError(err instanceof Error ? err.message : "Backend health check failed");
+    } finally {
+      setRefreshingConnections(false);
     }
   }, []);
 
@@ -158,7 +162,7 @@ export default function Home() {
                 <h2>Figma plugin bridge</h2><p>Native Plugin API + backend reachability</p>
                 <dl><div><dt>Plugin activity</dt><dd>{pluginStatusLabel}</dd></div><div><dt>Last heartbeat</dt><dd>{lastHeartbeat ? new Date(lastHeartbeat.at).toLocaleTimeString() : "Not received"}</dd></div><div><dt>Plugin → backend</dt><dd>{backendHealthy ? "Backend healthy" : "Not verified"}</dd></div><div><dt>Latest API self-test</dt><dd>{latestPluginTest ? latestPluginTest.summary.slice(0, 90) : "Not run yet"}</dd></div></dl>
                 <p className="connection-note">No Figma OAuth or REST API is used. Run the native API self-test inside the open plugin; its result will appear in activity when telemetry reaches this backend instance.</p>
-                <button className="secondary-button" type="button" onClick={() => void refreshConnections()}>Refresh plugin activity ↻</button>
+                <button className="secondary-button" type="button" onClick={() => void refreshConnections()} disabled={refreshingConnections}>{refreshingConnections ? "Refreshing…" : "Refresh plugin activity ↻"}</button>
               </article>
               <article className="connection-card">
                 <div className="connection-card-top"><span className="service-icon">AI</span><span className={"status-chip " + (health?.modelProviderConfigured ? "status-warning" : "status-neutral")}>{health?.modelProviderConfigured ? "Key detected" : "Mock mode"}</span></div>
