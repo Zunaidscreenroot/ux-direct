@@ -39,7 +39,7 @@
   <header><div class="brand"><span class="mark">ux</span> UX Direct</div><span class="pill">FIGMA COCKPIT · MVP</span></header>
   <div class="connection" aria-live="polite"><span id="connectionDot" class="dot"></span><strong id="connectionText">Checking backend connection…</strong></div>
   <h1>What should we improve?</h1>
-  <p class="sub">Describe the product problem in natural language. UX Direct will prepare a structured plan and explain its rationale. This MVP is read-only.</p>
+  <p class="sub">Describe the product problem in natural language. UX Direct prepares a structured plan. Its native API self-test runs only inside the approved file's dedicated UXD API Test Lab page.</p>
   <label for="project">Project</label>
   <select id="project"><option value="general">General UX</option><option value="express-computers">Express Computers</option><option value="dmi-finance">DMI Finance</option></select>
   <label for="prompt">Your brief</label>
@@ -54,7 +54,7 @@
   <button id="submit" class="primary">Plan with UX Direct ↗</button>
   <div id="status" class="status" role="status">Ready. No Figma changes will be made.</div>
   <div id="result" class="result" hidden></div>
-  <footer>Connected means the plugin can reach the UX Direct backend. Figma account OAuth is a separate setup. This plugin sends prompt text and selected node metadata only; it does not edit layers in this MVP.</footer>
+  <footer>Planning sends prompt text and selected-node metadata only. The API self-test creates a persistent fixture set and temporary test artifacts only on the dedicated UXD API Test Lab page; temporary artifacts are cleaned up after each run. No Figma REST API or OAuth access is used.</footer>
 <script>
   const API = "https://ux-direct.vercel.app";
   const $ = (id) => document.getElementById(id);
