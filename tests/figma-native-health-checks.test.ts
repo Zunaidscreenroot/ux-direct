@@ -59,21 +59,18 @@ test("closePlugin/openExternal are not tested, while notify and UI on/off remain
   assert.equal(pluginSource.includes('await runTest("Notifications", "figma.notify"'), false);
 });
 
-test("selectionchange is functionally tested on the active Test Lab page and page/selection are restored", () => {
-  assert.ok(pluginSource.includes('await runTest("Events", "Receive selection-change event on Test Lab page"'));
-  assert.ok(pluginSource.includes('await withActiveTestLabPage("selection-change event probe"'));
-  assert.ok(pluginSource.includes('return figma.setCurrentPageAsync(testPage)'));
-  assert.ok(pluginSource.includes('return figma.setCurrentPageAsync(originalPage)'));
-  assert.ok(pluginSource.includes('original page selection was not restored unchanged'));
-  assert.ok(pluginSource.includes('selected[0].id === target.id'));
-  assert.equal(pluginSource.includes('add("Events", "Receive selection-change event from inactive page", "not-tested"'), false);
+test("selectionchange is intentionally not-tested on inactive Test Lab to preserve the user's active page", () => {
+  assert.ok(pluginSource.includes('add("Events", "Receive selection-change event from inactive page", "not-tested", "not-tested"'));
+  assert.ok(pluginSource.includes("selectionchange is tied to the current page"));
+  assert.ok(pluginSource.includes("Testing the UXD API Test Lab page in the background would require switching away"));
 });
 
-test("figma.off is tested against an active-page selection change after listener removal", () => {
-  assert.ok(pluginSource.includes('await withActiveTestLabPage("listener removal probe"'));
-  assert.ok(pluginSource.includes('figma.off("selectionchange", listener)'));
-  assert.ok(pluginSource.includes('trigger selection after listener removal'));
-  assert.ok(pluginSource.includes('Removed selectionchange listener still fired.'));
+test("figma.off is availability-only and native health checks never navigate away from the active page", () => {
+  assert.ok(pluginSource.includes('availability("Events", "Register/remove listener with figma.off"'));
+  assert.ok(pluginSource.includes('typeof figma.off === "function"'));
+  assert.equal(pluginSource.includes('await runTest("Events", "Register/remove listener with figma.off"'), false);
+  assert.equal(pluginSource.includes("withActiveTestLabPage"), false);
+  assert.equal(pluginSource.includes("figma.setCurrentPageAsync"), false);
 });
 
 test("native health check preserves strict file scope and intentionally skips Team Library", () => {
