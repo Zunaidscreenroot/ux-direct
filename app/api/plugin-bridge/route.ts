@@ -40,12 +40,11 @@ const commandPath = (id: string) => `${PREFIX}/sessions/${id}/command.json`;
 const latestReportPath = `${PREFIX}/reports/latest.json`;
 type PersistedHealthReport = { clientId: string; commandId?: string; savedAt: string; healthReport: HealthReport };
 
-function corsHeaders(request: Request): Record<string, string> {
-  const origin = request.headers.get("origin");
-  const selfOrigin = new URL(request.url).origin;
-  const allowedOrigin = origin && (origin === selfOrigin || PLUGIN_ORIGINS.has(origin)) ? origin : selfOrigin;
+function corsHeaders(_request: Request): Record<string, string> {
   return {
-    "Access-Control-Allow-Origin": allowedOrigin,
+    // Figma plugin iframes use an opaque "null" origin and require wildcard CORS.
+    // Actual access remains guarded by server-side origin, file-key, and session-token validation.
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Vary": "Origin",
