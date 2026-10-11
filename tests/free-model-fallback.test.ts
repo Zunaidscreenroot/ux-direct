@@ -24,7 +24,7 @@ test("free model options combine provider IDs with live-discovered :free IDs", (
   assert.equal(options.every(option => option.provider === "openrouter" && option.tier === "free-tier"), true);
 });
 
-test("OpenRouter provider does not require an OPENROUTER_MODELS environment variable", () => {
+test("OpenRouter provider starts with no static model list", () => {
   const configured = providersFromEnv({ OPENROUTER_API_KEY: "test-key" })
     .find(provider => provider.name === "openrouter");
   assert.deepEqual(configured?.models, []);
