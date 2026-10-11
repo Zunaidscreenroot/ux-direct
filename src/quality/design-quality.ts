@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { TaskProject } from "./types";
+import type { TaskProject } from "../core/types";
 import { ProjectMemory, type ProjectMemoryEntry } from "../memory/project-memory";
 
 const designInstructionSchema = z.object({
