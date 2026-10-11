@@ -27,6 +27,7 @@ export async function GET(request: Request) {
   const figmaOAuthConfigured = Boolean(process.env.FIGMA_CLIENT_ID && process.env.FIGMA_CLIENT_SECRET && process.env.FIGMA_REDIRECT_URI);
   return NextResponse.json({
     service: "ux-direct-backend", status: "ok", checkedAt: new Date().toISOString(),
+    deployment: { platform: "netlify", host: new URL(request.url).host },
     mode: process.env.MODEL_PROVIDER || "mock",
     modelProviderConfigured: Boolean(process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY),
     figma: {
