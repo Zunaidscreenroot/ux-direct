@@ -84,7 +84,7 @@ export async function POST(request: Request) {
         requestProviders = providersFromEnv().filter(provider => provider.name !== "openrouter");
         requestProviders.push({
           name: "openrouter",
-          baseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\\/+$/, ""),
+          baseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, ""),
           apiKey: process.env.OPENROUTER_API_KEY,
           models: [value.model],
           kind: isFreeOpenRouterModel(liveModel) ? "free-tier" : "paid",
