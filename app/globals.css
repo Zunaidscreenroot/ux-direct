@@ -180,7 +180,7 @@ footer span { margin: 0 6px; color: #9bb98b; }
 .plugin-help, .plugin-health-message { margin:10px 0 0 !important; font-size:11px !important; line-height:1.55 !important; }
 .plugin-health-message { padding:9px 10px; border-radius:8px; background:#f7f9f5; border:1px solid var(--line); color:var(--ink) !important; overflow-wrap:anywhere; }
 .plugin-health-report { margin-top:13px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
-.health-counts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; padding:10px; background:#f7f9f5; }
+.health-counts { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; padding:10px; background:#f7f9f5; }
 .health-counts span { font-size:9px; color:var(--muted); display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
 .health-counts strong { font-size:17px; color:var(--ink); }
 .plugin-health-report details > summary { cursor:pointer; padding:11px 10px; font-size:11px; font-weight:700; border-top:1px solid var(--line); }
@@ -188,6 +188,7 @@ footer span { margin: 0 6px; color: #9bb98b; }
 .plugin-check-row { display:grid; grid-template-columns:78px minmax(0,1fr); gap:8px; padding:10px; border-bottom:1px solid #edf0ec; align-items:start; }
 .plugin-check-badge { display:inline-block; font-size:8px; font-weight:800; padding:4px 5px; border-radius:4px; text-align:center; }
 .check-pass { background:#e5f5eb; color:#216b4c; }
+.check-available { background:#e9efff; color:#3158a6; }
 .check-fail { background:#fdecec; color:#a63737; }
 .check-untested { background:#fff3d9; color:#875b16; }
 .plugin-check-row div { min-width:0; }

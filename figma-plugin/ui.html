@@ -154,8 +154,8 @@
     const message = event.data && event.data.pluginMessage;
     if (!message) return;
     if (message.type === "native-health-result") {
-      const passed = message.passed || 0, failed = message.failed || 0, notTested = message.notTested || 0;
-      $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + notTested + " not tested · " + new Date(message.checkedAt).toLocaleTimeString();
+      const passed = message.passed || 0, available = message.available || 0, failed = message.failed || 0, notTested = message.notTested || 0;
+      $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + available + " available · " + notTested + " not tested · " + new Date(message.checkedAt).toLocaleTimeString();
       const list = document.createElement("div");
       message.checks.forEach((item) => {
         const row = document.createElement("div");
@@ -169,7 +169,7 @@
       });
       $("healthResults").replaceChildren(list);
       $("runHealth").disabled = false;
-      void sendTelemetry("Plugin API health check completed", failed ? "warning" : "success", "Native Plugin API self-test: " + passed + " passed, " + failed + " failed, " + notTested + " not tested.");
+      void sendTelemetry("Plugin API health check completed", failed ? "warning" : "success", "Native Plugin API self-test: " + passed + " passed, " + failed + " failed, " + available + " available, " + notTested + " not tested.");
       message.checks.forEach((item) => {
         void sendTelemetry("Plugin API check: " + item.name, item.level === "not-tested" ? "warning" : item.status, item.name + ": " + item.reason, { category: item.category, action: item.name, testType: item.level });
       });
@@ -177,7 +177,7 @@
         mode: "result",
         commandId: message.commandId || undefined,
         healthReport: {
-          passed, failed, notTested, checkedAt: message.checkedAt,
+          passed, available, failed, notTested, checkedAt: message.checkedAt,
           checks: message.checks
         }
       }).then(() => {

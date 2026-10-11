@@ -18,6 +18,7 @@ const CHECK = z.object({
 });
 const REPORT = z.object({
   passed: z.number().int().nonnegative(),
+  available: z.number().int().nonnegative().optional().default(0),
   failed: z.number().int().nonnegative(),
   notTested: z.number().int().nonnegative(),
   checkedAt: z.string().max(50),
@@ -197,7 +198,7 @@ export async function POST(request: Request) {
       recordOperationalEvent({
         source: "figma-plugin", event: "Plugin API health check completed",
         status: parsedReport.data.failed > 0 ? "warning" : "success",
-        summary: `Figma native API check: ${parsedReport.data.passed} passed, ${parsedReport.data.failed} failed, ${parsedReport.data.notTested} not tested.`,
+        summary: `Figma native API check: ${parsedReport.data.passed} passed, ${parsedReport.data.failed} failed, ${parsedReport.data.available} available, ${parsedReport.data.notTested} not tested.`,
         category: "Native Plugin API", action: commandId ? "Dashboard-triggered health check" : "Plugin-triggered health check",
         testType: "functional", requestId: commandId,
       });

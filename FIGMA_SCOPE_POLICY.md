@@ -30,7 +30,12 @@ Figma's native Plugin API exposes the current file identity to this private deve
 
 ## Health-check behavior
 
-The native health check deliberately reports Team Library access as `NOT TESTED`. Do not add `"teamlibrary"` to `manifest.json` to silence an error: that would grant a wider library capability that is outside the approved scope.
+- Health checks remain read-only: no create, delete, page-switch, text/style, component, or variable-write operation is invoked.
+- For the current read-only MVP, use `PASS` for successful read-only functional checks, `FAIL` for checks that genuinely fail, and `AVAILABLE` for API/property probes whose full operation is intentionally not executed. Keep Team Library and the grouped live-operation summary as `NOT TESTED`.
+- Count `AVAILABLE` separately from `PASS` in the plugin panel, telemetry, and dashboard.
+- Run safe read-only calls where practical, including resolving the active page by ID and listing local variables/collections within this file.
+- Future execution phase: once the AI actually performs page, shape, text, layout, component, variable, or export actions, replace availability-only checks for those capabilities with real execution tests and report only `PASS` or `FAIL` for those tested operations. Do not introduce write operations into this read-only MVP.
+- Team Library access remains `NOT TESTED`. Do not add `"teamlibrary"` to `manifest.json` to silence an error: that would grant a wider library capability that is outside the approved scope.
 
 ## No full-document loading
 
