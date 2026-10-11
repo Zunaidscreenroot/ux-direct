@@ -28,30 +28,22 @@
     .message { display:flex; flex-direction:column; gap:4px; width:100%; }
     .message.user { align-items:flex-end; }
     .message.assistant { align-items:flex-start; }
-    .message-label { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary)); font-size:10px; padding:0 3px; }
     .bubble { max-width:94%; border-radius:12px; padding:9px 11px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
     .assistant .bubble { background:var(--figma-color-bg-secondary,#f3f4f6); border:1px solid var(--figma-color-border, #e6e6e6); border-top-left-radius:4px; }
     .user .bubble { color:var(--figma-color-text-onbrand,#fff); background:var(--figma-color-bg-brand,#2563eb); border-top-right-radius:4px; }
-    .message-meta { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary)); font-size:9px; padding:0 3px; }
-    .suggestions { display:flex; flex-wrap:wrap; gap:5px; margin:0 1px 4px; }
-    .suggestion { border:1px solid var(--figma-color-border); border-radius:999px; padding:6px 8px; background:transparent; color:var(--figma-color-text); font-size:10px; line-height:1.2; font-weight:550; cursor:pointer; }
-    .suggestion:hover { background:var(--figma-color-bg-secondary); }
     .typing { display:flex; align-items:center; gap:5px; color:var(--figma-color-text-secondary); font-size:10px; padding:7px 10px; }
     .typing-dot { width:4px; height:4px; border-radius:50%; background:currentColor; animation:pulse 1s infinite alternate; }
     .typing-dot:nth-child(2) { animation-delay:.2s; }
     .typing-dot:nth-child(3) { animation-delay:.4s; }
     @keyframes pulse { from { opacity:.25; } to { opacity:1; } }
     .composer { flex:0 0 auto; border-top:1px solid var(--figma-color-border); padding:8px 0 10px; background:var(--figma-color-bg); }
-    .composer-context { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:22px; margin-bottom:6px; color:var(--figma-color-text-secondary); font-size:10px; }
     #contextText { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .project-select { width:auto; max-width:118px; border:1px solid var(--figma-color-border); border-radius:7px; padding:4px 6px; background:var(--figma-color-bg); color:var(--figma-color-text); font-size:10px; }
     .input-shell { display:flex; align-items:flex-end; gap:7px; padding:6px; border:1px solid var(--figma-color-border); border-radius:12px; background:var(--figma-color-bg); }
     textarea { display:block; flex:1 1 auto; width:100%; min-width:0; min-height:54px; max-height:132px; resize:vertical; border:0; outline:0; padding:6px 4px; background:transparent; color:var(--figma-color-text); font:inherit; line-height:1.5; }
     textarea:focus-visible { outline:none; }
     textarea::placeholder { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary)); }
     .send { display:grid; place-items:center; flex:0 0 34px; width:34px; height:34px; padding:0; border-radius:9px; background:var(--figma-color-bg-brand,#2563eb); color:var(--figma-color-text-onbrand,#fff); font-size:17px; font-weight:700; }
     .send:disabled { cursor:not-allowed; opacity:.4; }
-    .activity { min-height:14px; padding:4px 3px 0; color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary)); font-size:9px; line-height:1.35; }
     .health-panel { position:fixed; z-index:20; top:47px; left:10px; right:10px; max-height:calc(100vh - 58px); overflow:hidden; display:flex; flex-direction:column; border:1px solid var(--figma-color-border); border-radius:12px; background:var(--figma-color-bg); box-shadow:0 8px 32px rgba(0,0,0,.18); }
     .health-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:11px 12px 8px; border-bottom:1px solid var(--figma-color-border); }
     .health-head strong { font-size:12px; }
@@ -205,8 +197,10 @@
         const response = await fetch(API + "/api/health?fileKey=" + encodeURIComponent(verifiedFileKey), { method: "GET", cache: "no-store" });
         if (!response.ok) throw new Error("Backend returned HTTP " + response.status);
         const data = await response.json();
-        if (!data || data.status !== "ok" || !data.deployment || data.deployment.platform !== "netlify") {
-          throw new Error("The endpoint did not verify itself as the UX Direct backend.");
+        const expectedPreviewHost = new URL(API).host;
+        if (!data || data.status !== "ok" || !data.deployment ||
+            data.deployment.platform !== "netlify" || data.deployment.host !== expectedPreviewHost) {
+          throw new Error("The endpoint did not verify itself as the configured Netlify Deploy Preview.");
         }
         backendHealthy = true;
         setConnection("ok", "Preview connected");
