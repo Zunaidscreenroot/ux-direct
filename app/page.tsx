@@ -117,7 +117,7 @@ export default function Home() {
       if (!response.ok) throw new Error(payload.error ?? "Could not send the command to Figma");
       const commandId = String(payload.commandId);
       setPluginHealthMessage("Command sent. Waiting for Figma to run the test and return its report…");
-      const deadline = Date.now() + 65000;
+      const deadline = Date.now() + 180000;
       while (Date.now() < deadline) {
         await new Promise((resolve) => window.setTimeout(resolve, 2000));
         const stateResponse = await fetch("/api/plugin-bridge?mode=state&clientId=" + encodeURIComponent(clientId), { cache: "no-store" });

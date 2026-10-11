@@ -4,6 +4,10 @@ var UXD_ALLOWED_FILE_NAME = "Zunaid_Workspace";
 var UXD_ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
 var UXD_API_TEST_LAB_PAGE = "UXD API Test Lab";
 var UXD_NATIVE_API_PROBE_WAITERS = Object.create(null);
+var UXD_HEALTH_CHECK_RUNNING = false;
+var UXD_HEALTH_CHECK_PENDING_COMMAND_IDS = [];
+var UXD_HEALTH_CHECK_LAST_REPORT = null;
+var UXD_HEALTH_TEST_TIMEOUT_MS = 15000;
 function assertUxDirectFileScope(actionName) {
   var key = "";
   try { key = typeof figma.fileKey === "string" ? figma.fileKey : ""; } catch (_) {}
@@ -49,7 +53,7 @@ function sendSelection() {
 var selectionChangeListenerRegistered = false;
 figma.on("selectionchange", sendSelection);
 selectionChangeListenerRegistered = true;
-async function runNativeApiHealthCheck(commandId) {
+async function executeNativeApiHealthCheck() {
   var checks = [];
   var createdNodes = [];
   var temporaryPages = [];
@@ -61,6 +65,7 @@ async function runNativeApiHealthCheck(commandId) {
   var storageKey = null;
   var selectionHandlerPaused = false;
   var cleanupErrors = [];
+  var healthTestTimedOut = false;
 
   function add(category, name, level, status, reason) {
     checks.push({ category: category, name: name, level: level, status: status,
@@ -100,17 +105,42 @@ async function runNativeApiHealthCheck(commandId) {
     return value;
   }
   async function runTest(category, name, fn, needsLab) {
+    var timeoutHandle = null;
     try {
       assertUxDirectFileScope(name);
       if (needsLab !== false) assertLab(name);
-      await fn();
+      figma.ui.postMessage({ type: "native-health-progress", category: category, name: name,
+        text: "Testing " + name + "…", startedAt: new Date().toISOString() });
+      var operation = Promise.resolve().then(fn);
+      await Promise.race([
+        operation,
+        new Promise(function (_, reject) {
+          timeoutHandle = setTimeout(function () {
+            var error = new Error("API test timed out after " + (UXD_HEALTH_TEST_TIMEOUT_MS / 1000) + " seconds. Suite stopped to avoid overlapping document mutations.");
+            error.code = "UXD_HEALTH_TEST_TIMEOUT";
+            reject(error);
+          }, UXD_HEALTH_TEST_TIMEOUT_MS);
+        })
+      ]);
       assertUxDirectFileScope(name + " verification");
       if (needsLab !== false) assertLab(name + " verification");
       add(category, name, "functional", "success", "Actual API operation executed and verified inside the allowlisted file.");
+      figma.ui.postMessage({ type: "native-health-progress", category: category, name: name,
+        text: "Passed: " + name, completedAt: new Date().toISOString() });
       return true;
     } catch (error) {
       add(category, name, "functional", "error", error && error.message ? error.message : String(error));
+      if (error && error.code === "UXD_HEALTH_TEST_TIMEOUT") {
+        healthTestTimedOut = true;
+        figma.ui.postMessage({ type: "native-health-progress", category: category, name: name,
+          text: "Stopped: " + name + " exceeded the safe test timeout.", failedAt: new Date().toISOString() });
+        throw error;
+      }
+      figma.ui.postMessage({ type: "native-health-progress", category: category, name: name,
+        text: "Failed: " + name, failedAt: new Date().toISOString() });
       return false;
+    } finally {
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
     }
   }
   function createNode(factory, name, parent) {
@@ -136,9 +166,14 @@ async function runNativeApiHealthCheck(commandId) {
     var available = checks.filter(function (x) { return x.status === "success" && x.level === "availability"; }).length;
     var failed = checks.filter(function (x) { return x.status === "error"; }).length;
     var notTested = checks.filter(function (x) { return x.status === "not-tested"; }).length;
-    figma.ui.postMessage({ type: "native-health-result", checks: checks, passed: passed,
-      available: available, failed: failed, notTested: notTested,
-      commandId: commandId || null, checkedAt: new Date().toISOString() });
+    var report = { type: "native-health-result", checks: checks, passed: passed,
+      available: available, failed: failed, notTested: notTested, checkedAt: new Date().toISOString() };
+    UXD_HEALTH_CHECK_LAST_REPORT = report;
+    var commandIds = UXD_HEALTH_CHECK_PENDING_COMMAND_IDS.splice(0);
+    if (!commandIds.length) commandIds = [null];
+    commandIds.forEach(function (id) {
+      figma.ui.postMessage(Object.assign({}, report, { commandId: id || null }));
+    });
   }
 
   try {
@@ -513,7 +548,15 @@ async function runNativeApiHealthCheck(commandId) {
   } catch (error) {
     add("Test runner", "Unexpected health-check failure", "functional", "error", error && error.message ? error.message : String(error));
   } finally {
-    try { assertUxDirectFileScope("health-test cleanup"); } catch (_) {}
+    if (healthTestTimedOut) {
+      // Do not mutate the document while the timed-out API promise could still be pending.
+      // Incomplete test artefacts stay confined to UXD API Test Lab for a later safe cleanup.
+      if (selectionHandlerPaused) {
+        try { assertUxDirectFileScope("restore selection listener after timeout"); figma.on("selectionchange", sendSelection); } catch (_) {}
+      }
+      figma.ui.postMessage({ type: "native-health-progress", text: "Timed out safely; cleanup was deferred to avoid concurrent API writes." });
+    } else {
+
     if (testPage) {
       try {
         if (figma.currentPage.id !== testPage.id) await mutateFileAsync("return to lab for cleanup", function () { return figma.setCurrentPageAsync(testPage); });
@@ -579,8 +622,30 @@ async function runNativeApiHealthCheck(commandId) {
     cleanupErrors.forEach(function (reason, index) {
       add("Test cleanup", "Cleanup issue " + (index + 1), "functional", "error", reason);
     });
+    }
   }
   await postResult();
+}
+async function runNativeApiHealthCheck(commandId) {
+  assertUxDirectFileScope("request health check");
+  if (commandId && UXD_HEALTH_CHECK_PENDING_COMMAND_IDS.indexOf(commandId) === -1) UXD_HEALTH_CHECK_PENDING_COMMAND_IDS.push(commandId);
+  if (UXD_HEALTH_CHECK_RUNNING) {
+    figma.ui.postMessage({ type: "native-health-progress", text: "A health check is already running; this request will receive that run's result." });
+    return;
+  }
+  UXD_HEALTH_CHECK_RUNNING = true;
+  try {
+    await executeNativeApiHealthCheck();
+  } finally {
+    UXD_HEALTH_CHECK_RUNNING = false;
+    // Cover a command that arrived at the exact boundary after the report was sent.
+    if (UXD_HEALTH_CHECK_PENDING_COMMAND_IDS.length && UXD_HEALTH_CHECK_LAST_REPORT) {
+      var lateIds = UXD_HEALTH_CHECK_PENDING_COMMAND_IDS.splice(0);
+      lateIds.forEach(function (id) {
+        figma.ui.postMessage(Object.assign({}, UXD_HEALTH_CHECK_LAST_REPORT, { commandId: id }));
+      });
+    }
+  }
 }
 figma.ui.onmessage = async function (message) {
   if (!message) return;

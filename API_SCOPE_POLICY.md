@@ -21,3 +21,10 @@
 
 ## Future AI executor
 Build a closed dispatcher with approved action IDs (for example, inspect selection, switch page within the current file, create shape on a target page, and edit node). Validate the live file key and resolve every target node from the current document before a write. Never expose arbitrary method names or executable code to the model.
+
+
+## Health-check reliability
+- Only one suite runs at a time. If a dashboard request arrives while startup tests are already running, that request attaches to the active run instead of starting concurrent document writes.
+- The panel displays the currently executing test. Each functional check has a 15-second watchdog; if an operation does not resolve, the suite stops and reports the timed-out test instead of waiting indefinitely.
+- On timeout, cleanup writes are deferred because an unresolved native API operation cannot safely be cancelled. Incomplete test artifacts remain confined to the dedicated test lab.
+- Dashboard polling waits for up to three minutes. Stale claimed commands are cleared after three minutes so a stuck request does not lock the dashboard permanently.
