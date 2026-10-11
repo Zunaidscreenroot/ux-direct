@@ -31,7 +31,7 @@ Set secrets only in the server environment; never expose them through `NEXT_PUBL
 OpenRouter:
 ```env
 OPENROUTER_API_KEY=...
-OPENROUTER_MODELS=provider/model-name:free
+# OpenRouter :free models are discovered live by the model-status probe.
 # Optional:
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 ```
