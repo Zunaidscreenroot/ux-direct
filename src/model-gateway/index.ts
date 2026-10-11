@@ -304,6 +304,12 @@ export async function chatCompletion(
 }
 export function routeTask(task: "classify" | "extract" | "summarize" | "ux-reasoning" | "vision" | "critique", providers = providersFromEnv()) {
   const priorities: Record<typeof task, string[]> = {
+    classify: [],
+    extract: [],
+    summarize: [],
+    "ux-reasoning": [],
+    vision: [],
+    critique: []
   };
   const catalog = getModelCatalog(providers);
   for (const id of priorities[task]) {
