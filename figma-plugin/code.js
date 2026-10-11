@@ -158,12 +158,11 @@ async function executeNativeApiHealthCheck() {
     var reused = !!node;
     if (!node) {
       node = mutateLab("create " + name, factory);
+      // Reparent the fresh node immediately, before any further mutation or await.
+      if (targetParent && node.parent !== targetParent) {
+        mutateLab("attach " + name, function () { targetParent.appendChild(node); });
+      }
       if (name) mutateLab("name " + name, function () { node.name = name; });
-    }
-    // Constructors may initially attach a fresh node to the visible page. Reparent
-    // it synchronously to the persistent, inactive test page/container before yielding.
-    if (targetParent && !reused && node.parent !== targetParent) {
-      mutateLab("attach " + name, function () { targetParent.appendChild(node); });
     }
     return node;
   }
