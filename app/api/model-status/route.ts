@@ -35,13 +35,13 @@ function safeError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown model-status error.";
   return message.replace(/(Bearer\s+)[^\s]+/gi, "$1[redacted]").slice(0, 220);
 }
-function providerConfig(provider: ProviderId) {
+function providerConfig(_provider: ProviderId) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   return apiKey ? {
     apiKey,
-    baseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\\/+$/, ""),
+    baseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, ""),
     modelsUrl: "https://openrouter.ai/api/v1/models",
-    headers: { Authorization: `Bearer ${apiKey}` }
+    headers: { Authorization: \`Bearer \${apiKey}\` }
   } : null;
 }
 async function timedFetch(url: string, init: RequestInit = {}, timeoutMs = 12000) {
@@ -72,7 +72,7 @@ async function probeModel(provider: ProviderId, model: string) {
   const startedAt = Date.now();
   const response = await timedFetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(provider === "gemini" ? { Authorization: `Bearer ${config.apiKey}` } : config.headers) },
+    headers: { "Content-Type": "application/json", ...config.headers },
     body: JSON.stringify({
       model,
       messages: [{ role: "user", content: "Reply with exactly: UXD_MODEL_CHECK_OK" }],
@@ -95,6 +95,30 @@ async function probeModel(provider: ProviderId, model: string) {
     latencyMs: Date.now() - startedAt,
     checkedAt: new Date().toISOString()
   };
+}
+
+async function discoverWorkingFreeModel() {
+  const catalog = await discoverModels("openrouter");
+  if (!catalog.configured || catalog.models.length === 0) return { ...catalog, models: [] as string[] };
+  const candidates = catalog.models.slice(0, 5);
+  for (const model of candidates) {
+    try {
+      const result = await probeModel("openrouter", model);
+      if (result.available && result.responseReceived) {
+        return {
+          provider: "openrouter",
+          configured: true,
+          models: [model],
+          selectedModel: model,
+          checkedAt: new Date().toISOString(),
+          probe: { available: true, latencyMs: result.latencyMs }
+        };
+      }
+    } catch {
+      // Try the next free model only when this one fails. Never try paid IDs.
+    }
+  }
+  return { provider: "openrouter", configured: true, models: [], reason: "The first five listed :free models did not return a usable response." };
 }
 
 export async function OPTIONS() {
@@ -127,14 +151,14 @@ export async function GET(request: Request) {
       if (provider !== "openrouter") {
         return NextResponse.json({ error: "Unsupported provider.", diagnosticId: id }, { status: 400, headers });
       }
-      const result = await discoverModels(provider);
+      const result = await discoverWorkingFreeModel();
       return NextResponse.json({ ...result, diagnosticId: id, note: "Models are fetched live from the provider API; no static model allowlist is used by this endpoint." }, { headers });
     }
     // One lightweight catalog request per configured provider; no inference calls during discovery.
-    const results = await Promise.allSettled([discoverModels("openrouter")]);
+    const results = await Promise.allSettled([discoverWorkingFreeModel()]);
     const providers = results.map((result, index) => result.status === "fulfilled"
       ? result.value
-      : { provider: "openrouter", configured: Boolean(providerConfig(index === 0 ? "gemini" : "openrouter")), models: [], reason: safeError(result.reason) });
+      : { provider: "openrouter", configured: Boolean(providerConfig("openrouter")), models: [], reason: safeError(result.reason) });
     const models = providers.flatMap(entry => entry.models.map(modelId => ({ provider: "openrouter", id: modelId, label: modelId + " · Free", configured: entry.configured, tier: "free-tier" })));
     return NextResponse.json({ models, providers, checkedAt: new Date().toISOString(), diagnosticId: id, note: "Models are discovered live from provider APIs. OpenRouter is restricted to model IDs marked :free; Only OpenRouter model IDs marked :free are returned." }, { headers });
   } catch (error) {
@@ -157,7 +181,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ available: false, error: "Request body must be valid JSON.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
   }
   const parsed = body as { provider?: unknown; model?: unknown; fileKey?: unknown };
-  if ((parsed.provider !== "gemini" && parsed.provider !== "openrouter") || typeof parsed.model !== "string" || typeof parsed.fileKey !== "string") {
+  if (parsed.provider !== "openrouter" || typeof parsed.model !== "string" || typeof parsed.fileKey !== "string") {
     return NextResponse.json({ available: false, error: "Valid provider, model and fileKey are required.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
   }
   if (!originAllowed(request) || !approvedFileKey(request, parsed.fileKey) || !isAllowedFigmaFileKey(parsed.fileKey)) {
