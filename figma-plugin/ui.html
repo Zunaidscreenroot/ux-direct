@@ -259,7 +259,7 @@
     }
 
     function queueAutoHealthCheck() {
-      if (autoHealthStarted || !backendHealthy || !bridgeReady || verifiedFileKey !== ALLOWED_FILE_KEY) return;
+      if (autoHealthStarted || healthCheckRunning || !backendHealthy || !bridgeReady || verifiedFileKey !== ALLOWED_FILE_KEY) return;
       autoHealthStarted = true;
       healthCheckRunning = true;
       setHealth("warn", "Checking health…");
@@ -290,6 +290,7 @@
         if (command && command.action === "native-api-health-check" && command.commandId && !handledBridgeCommands.has(command.commandId)) {
           handledBridgeCommands.add(command.commandId);
           if (!healthCheckRunning) {
+            autoHealthStarted = true;
             healthCheckRunning = true;
             setHealth("warn", "Checking health…");
             parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: command.commandId } }, "*");
@@ -431,7 +432,6 @@
       isSending = true;
       showTyping();
       setActivity("Thinking…");
-      void sendTelemetry("Assistant chat sent", "info", "A conversational request was sent. Prompt text is not logged by telemetry.", { project: $("project").value });
 
       const selectedNodes = Array.isArray(currentSelection.selection) ? currentSelection.selection.slice(0, 12).map((node) => ({
         name: String(node.name || "").slice(0, 160),
@@ -461,12 +461,10 @@
         chatHistory.push({ role: "assistant", content: data.content });
         appendMessage("assistant", data.content, (data.provider || "AI") + " · " + (data.model || "model") + " · " + Math.max(0, Math.round(Number(data.latencyMs || 0))) + " ms");
         setActivity("Response received. Continue the conversation or give me the next task.");
-        void sendTelemetry("Assistant chat received", "success", "A conversational model response was returned.", { requestId: data.requestId, provider: data.provider, model: data.model });
       } catch (error) {
         const message = error && error.message ? error.message : "Unknown chat error";
         appendMessage("assistant", "I couldn’t complete that response: " + message + "\n\nYour message is still in this session’s conversation context. You can retry or continue with a smaller request.");
         setActivity("Response failed. Your Figma document was not changed by this chat request.");
-        void sendTelemetry("Assistant chat failed", "error", "Conversational request failed: " + message.slice(0, 200));
       } finally {
         hideTyping();
         isSending = false;
