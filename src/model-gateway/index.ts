@@ -45,9 +45,12 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   // Always register a deterministic mock so tests and empty-credential installs work.
   // Task routing prefers configured real providers and uses mock only as the last resort.
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
-  if (env.OPENROUTER_API_KEY) providers.push({
+  const openRouterModels = csv(env.OPENROUTER_MODELS).filter(model =>
+    env.ALLOW_PAID_MODELS === "true" || model.endsWith(":free")
+  );
+  if (env.OPENROUTER_API_KEY && openRouterModels.length) providers.push({
     name: "openrouter", baseUrl: trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"),
-    apiKey: env.OPENROUTER_API_KEY, models: csv(env.OPENROUTER_MODELS), kind: "free-tier"
+    apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: env.ALLOW_PAID_MODELS === "true" ? "paid" : "free-tier"
   });
   if (env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) providers.push({
     name: "gemini", baseUrl: trimSlash(env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai"),
@@ -67,10 +70,11 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
     name: "openai", baseUrl: trimSlash(env.OPENAI_BASE_URL || "https://api.openai.com/v1"),
     apiKey: env.OPENAI_API_KEY, models: csv(env.OPENAI_MODELS, "gpt-4o-mini"), kind: "paid"
   });
-  if (env.CUSTOM_OPENAI_COMPATIBLE_BASE_URL) providers.push({
+  const customKind = env.CUSTOM_OPENAI_COMPATIBLE_KIND === "local" ? "local" : "paid";
+  if (env.CUSTOM_OPENAI_COMPATIBLE_BASE_URL && (customKind === "local" || env.ALLOW_PAID_MODELS === "true")) providers.push({
     name: "custom", baseUrl: trimSlash(env.CUSTOM_OPENAI_COMPATIBLE_BASE_URL),
     apiKey: env.CUSTOM_OPENAI_COMPATIBLE_API_KEY, models: csv(env.CUSTOM_OPENAI_COMPATIBLE_MODELS, "default"),
-    kind: env.CUSTOM_OPENAI_COMPATIBLE_KIND === "local" ? "local" : "paid"
+    kind: customKind
   });
   if (env.OLLAMA_BASE_URL) providers.push({
     name: "ollama", baseUrl: trimSlash(env.OLLAMA_BASE_URL),
