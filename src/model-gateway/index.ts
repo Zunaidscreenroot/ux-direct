@@ -91,13 +91,30 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
     { id: "openai/gpt-oss-120b", provider: "groq", label: "GPT OSS 120B on Groq", tier: "free-tier", tasks: ["reasoning", "critique", "structured output"], notes: "Free developer quotas are rate-limited and may change." },
     { id: "openai/gpt-oss-20b", provider: "groq", label: "GPT OSS 20B on Groq", tier: "free-tier", tasks: ["classification", "extraction", "fast drafts"], notes: "Free developer quotas are rate-limited and may change." },
     { id: "gpt-oss-120b", provider: "cerebras", label: "GPT OSS 120B on Cerebras", tier: "free-tier", tasks: ["reasoning", "critique"], notes: "Check account-specific free quota and model ID in provider console." },
-    { id: "openrouter/auto", provider: "openrouter", label: "OpenRouter auto-routing", tier: "free-tier", tasks: ["fallback", "general"], notes: "Use only free model IDs to avoid accidental paid routing; free quotas and model availability vary." },
-    { id: "gpt-4o-mini", provider: "openai", label: "OpenAI GPT-4o mini", tier: "paid", tasks: ["reasoning", "vision"], notes: "Not enabled until an API key is supplied; usage is billed." }
+    { id: "gpt-4o-mini", provider: "openai", label: "OpenAI GPT-4o mini", tier: "paid", tasks: ["reasoning", "vision"], notes: "Paid provider; deliberately disabled until a key and model allowlist are configured." }
   ];
-  return defaults.map(entry => ({
+  const known = defaults.map(entry => ({
     ...entry,
-    configured: providers.some(p => p.name === entry.provider && (p.models.includes(entry.id) || p.models.includes("default") || p.models.includes("openrouter/auto")))
+    configured: providers.some(p => p.name === entry.provider &&
+      (p.models.includes(entry.id) || p.models.includes("default")))
   }));
+  const extras: ModelCatalogEntry[] = providers.flatMap(provider =>
+    provider.models.filter(model => model !== "default" && !known.some(entry => entry.id === model && entry.provider === provider.name))
+      .map(id => ({
+        id, provider: provider.name,
+        label: `${provider.name}: ${id}`,
+        tier: provider.kind ?? "paid",
+        tasks: provider.kind === "local" ? ["classification", "extraction", "summaries"] :
+          provider.kind === "free-tier" ? ["general", "reasoning", "critique"] : ["general"],
+        configured: true,
+        notes: provider.kind === "free-tier" ? "Provider free quota and availability can change; verify before production use." :
+          provider.kind === "local" ? "Runs on your configured local/custom endpoint." : "Provider usage may be billed."
+      }))
+  );
+  const combined = [...known, ...extras];
+  return combined.filter((entry, index) =>
+    combined.findIndex(other => other.id === entry.id && other.provider === entry.provider) === index
+  );
 }
 
 export function resolveProvider(model: string, providers: ProviderConfig[]): ProviderConfig {
@@ -185,5 +202,7 @@ export function routeTask(task: "classify" | "extract" | "summarize" | "ux-reaso
     const entry = catalog.find(m => m.id === id && m.configured);
     if (entry) return entry;
   }
-  return catalog.find(m => m.provider === "mock") ?? catalog[0];
+  return catalog.find(m => m.configured && m.tier === "local") ??
+    catalog.find(m => m.configured && m.tier === "free-tier") ??
+    catalog.find(m => m.provider === "mock") ?? catalog[0];
 }
