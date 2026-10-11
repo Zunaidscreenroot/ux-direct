@@ -12,7 +12,6 @@ export async function GET() {
   const env = process.env;
   const providers = providersFromEnv();
   const budget = await getBudgetSnapshot();
-  const configuredProviders = new Set(providers.map(provider => provider.name));
   const settings = await getGatewaySettings();
   const staticCatalog = getModelCatalog(providers);
   let catalog = staticCatalog.filter(model => model.provider === "mock");
