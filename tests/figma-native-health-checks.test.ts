@@ -28,6 +28,37 @@ test("component discovery uses supported node criteria rather than nonexistent g
   assert.doesNotMatch(pluginSource, /figma[.]getLocalComponentsAsync|figma[.]getLocalComponentSetsAsync/);
 });
 
+test("remaining safe availability APIs are executed as functional tests", () => {
+  const functionalApis = [
+    'await runTest("Styles", "figma.getLocalPaintStylesAsync"',
+    'await runTest("Styles", "figma.getLocalTextStylesAsync"',
+    'await runTest("Styles", "figma.getLocalEffectStylesAsync"',
+    'await runTest("Styles", "figma.getLocalGridStylesAsync"',
+    'await runTest("Styles", "figma.getStyleByIdAsync"',
+    'await runTest("Document loading", "figma.loadAllPagesAsync"',
+    'await runTest("Image API", "figma.createImage"',
+    'await runTest("Slice API", "figma.createSlice"',
+    'await runTest("Undo API", "figma.triggerUndo"',
+    'await runTest("Plugin UI", "figma.ui.resize"',
+    'await runTest("Variables", "figma.variables.getVariableCollectionByIdAsync"',
+  ];
+  for (const api of functionalApis) assert.ok(pluginSource.includes(api), `Expected a functional test for ${api}`);
+  assert.ok(pluginSource.includes("image.getBytesAsync()"), "Image test reads the created resource back");
+  assert.ok(pluginSource.includes("figma.commitUndo()"), "Undo test establishes an isolated checkpoint");
+  assert.ok(pluginSource.includes("getLocalPaintStylesAsync"), "Style tests verify results from local style reads");
+});
+
+test("closePlugin/openExternal are not tested, while notify and UI on/off remain availability-only", () => {
+  assert.ok(pluginSource.includes('add("Plugin lifecycle", "figma.closePlugin", "not-tested", "not-tested"'));
+  assert.ok(pluginSource.includes('add("External navigation", "figma.openExternal", "not-tested", "not-tested"'));
+  assert.ok(pluginSource.includes('availability("Notifications", "figma.notify"'));
+  assert.ok(pluginSource.includes('availability("Plugin UI", "figma.ui.on"'));
+  assert.ok(pluginSource.includes('availability("Plugin UI", "figma.ui.off"'));
+  assert.equal(pluginSource.includes('await runTest("Plugin UI", "figma.ui.on"'), false);
+  assert.equal(pluginSource.includes('await runTest("Plugin UI", "figma.ui.off"'), false);
+  assert.equal(pluginSource.includes('await runTest("Notifications", "figma.notify"'), false);
+});
+
 test("native health check preserves strict file scope and intentionally skips Team Library", () => {
   assert.ok(pluginSource.includes('assertUxDirectFileScope("starting native API health check")'));
   assert.ok(pluginSource.includes('add("Library", "Team Library", "not-tested", "not-tested"'));
