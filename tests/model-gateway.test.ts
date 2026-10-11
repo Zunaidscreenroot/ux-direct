@@ -247,3 +247,29 @@ test("direct provider billing tier is explicit and paid providers stay unavailab
   const free = providersFromEnv({ ...base, GEMINI_BILLING_MODE: "free-tier", ALLOW_PAID_MODELS: "false" });
   assert.equal(free.find(provider => provider.name === "gemini")?.kind, "free-tier");
 });
+
+
+test("live OpenRouter metadata distinguishes explicit free routes and infers vision capability", async () => {
+  const { isFreeOpenRouterModel, toLiveGatewayModel } = await import("../src/model-gateway/openrouter-catalog");
+  const free = {
+    id: "google/gemma-4-31b-it:free",
+    name: "Gemma 4 31B",
+    context_length: 131072,
+    architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] },
+    supported_parameters: ["tools", "response_format"],
+    pricing: { prompt: "0", completion: "0", image: "0", request: "0" }
+  };
+  assert.equal(isFreeOpenRouterModel(free), true);
+  const model = toLiveGatewayModel(free);
+  assert.equal(model.tier, "free-tier");
+  assert.ok(model.tasks.includes("vision"));
+  assert.equal(model.usdInputPerMillion, 0);
+  assert.ok(model.selectionKey.endsWith("::google/gemma-4-31b-it:free"));
+
+  const zeroPriceNonFree = { id: "vendor/zero-price", pricing: { prompt: "0", completion: "0" } };
+  assert.equal(isFreeOpenRouterModel(zeroPriceNonFree), false);
+  const paid = { id: "vendor/paid-model", pricing: { prompt: "0.000002", completion: "0.000008" } };
+  assert.equal(isFreeOpenRouterModel(paid), false);
+  assert.equal(toLiveGatewayModel(paid).usdInputPerMillion, 2);
+  assert.equal(toLiveGatewayModel(paid).usdOutputPerMillion, 8);
+});
