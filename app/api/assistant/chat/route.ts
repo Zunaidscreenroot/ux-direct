@@ -30,7 +30,7 @@ export async function OPTIONS(request: Request) {
 const requestSchema = z.object({
   fileKey: z.string().trim().min(1).max(200),
   project: z.enum(["general", "express-computers", "dmi-finance"]),
-  provider: z.enum(["gemini", "openrouter"]).optional(),
+  provider: z.literal("openrouter").optional(),
   model: z.string().trim().min(1).max(180).optional(),
   messages: z.array(z.object({
     role: z.enum(["user", "assistant"]),
