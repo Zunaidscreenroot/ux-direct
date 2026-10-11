@@ -364,7 +364,12 @@ export default function Home() {
       <section className="main-panel">
         <header className="topbar">
           <div className="breadcrumb">Workspace <span>/</span> {breadcrumb}</div>
-          <div className="topbar-right"><span className="environment">{health?.mode ? health.mode + " mode" : "Checking backend"}</span><div className="avatar">Z</div></div>
+          <div className="topbar-right">
+            <select className="mobile-nav-select" value={activeTab} onChange={(event) => setActiveTab(event.target.value as Tab)} aria-label="Navigate workspace">
+              {navItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </select>
+            <span className="environment">{health?.mode ? health.mode + " mode" : "Checking backend"}</span><div className="avatar">Z</div>
+          </div>
         </header>
 
         {activeTab === "gateway" ? (
