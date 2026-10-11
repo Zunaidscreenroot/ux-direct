@@ -169,11 +169,12 @@ async function runNativeApiHealthCheck(commandId) {
     "exportAsync is available on the active page/sample node; an export was not generated to avoid unnecessary large output.");
   add("Mutation safety", "Document-changing and live-interaction workflows", "not-tested", false,
     "Actual page switching, create/delete, text/style/component/variable writes, selection-change delivery, and content export are not executed by this non-destructive self-test. Their API availability is shown above where inspectable.");
-  var passed = checks.filter(function (x) { return x.status === "success"; }).length;
+  var passed = checks.filter(function (x) { return x.status === "success" && x.level !== "availability"; }).length;
+  var available = checks.filter(function (x) { return x.status === "success" && x.level === "availability"; }).length;
   var failed = checks.filter(function (x) { return x.status === "error"; }).length;
   var notTested = checks.filter(function (x) { return x.status === "not-tested"; }).length;
-  figma.ui.postMessage({ type: "native-health-result", checks: checks, passed: passed, failed: failed,
-    notTested: notTested, commandId: commandId || null, checkedAt: new Date().toISOString() });
+  figma.ui.postMessage({ type: "native-health-result", checks: checks, passed: passed, available: available,
+    failed: failed, notTested: notTested, commandId: commandId || null, checkedAt: new Date().toISOString() });
 }
 figma.ui.onmessage = async function (message) {
   if (!message) return;
