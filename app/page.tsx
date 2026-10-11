@@ -43,7 +43,7 @@ type Tab = typeof navItems[number]["id"];
 
 type GatewayDashboardPayload = {
   gateway: { name: string; status: string; paidModelsEnabled: boolean; monthlyBudgetInr: number; pricingConfigured: boolean; gatewayFeeInr: number };
-  providers: Array<{ id: string; label: string; envName: string; configured: boolean; tier: string; secretRequired: boolean }>;
+  providers: Array<{ id: string; label: string; envName: string; configured: boolean; keyDetected: boolean; tier: string; secretRequired: boolean }>;
   models: Array<{ id: string; provider: string; label: string; tier: string; tasks: string[]; configured: boolean; notes: string }>;
   budget: {
     currency: string; monthlyBudgetInr: number; spentThisMonthInr: number; remainingInr: number;
@@ -128,10 +128,10 @@ function ModelGatewayPanel() {
       <div className="gateway-provider-grid">
         {(data?.providers ?? []).map(provider => (
           <article className="gateway-provider-card" key={provider.id}>
-            <div className="gateway-provider-top"><span className="gateway-provider-mark">{provider.label.split(" ").map(word => word[0]).join("").slice(0, 2)}</span><span className={"status-chip " + (provider.configured ? "status-success" : "status-neutral")}>{provider.configured ? "Configured" : provider.tier === "local" ? "Not connected" : "Key not added"}</span></div>
+            <div className="gateway-provider-top"><span className="gateway-provider-mark">{provider.label.split(" ").map(word => word[0]).join("").slice(0, 2)}</span><span className={"status-chip " + (provider.configured ? "status-success" : "status-neutral")}>{provider.configured ? "Ready" : provider.keyDetected ? "Key detected · setup incomplete" : provider.tier === "local" ? "Not connected" : "Key not added"}</span></div>
             <h3>{provider.label}</h3><p>{provider.tier === "paid" ? "Paid provider · stays disabled until explicitly activated." : provider.tier === "local" ? "Local inference · no model API key or per-token provider charge." : "Free-tier candidate · account quotas and availability apply."}</p>
             <label className="gateway-key-label" htmlFor={"key-slot-" + provider.id}>{provider.envName}</label>
-            <div className="gateway-key-placeholder"><input id={"key-slot-" + provider.id} type="password" placeholder={provider.secretRequired ? "API key placeholder · add in final step" : "Local endpoint placeholder"} disabled readOnly aria-label={provider.envName + " placeholder; edit disabled"} /><span>{provider.configured ? "DETECTED" : "PLACEHOLDER"}</span></div>
+            <div className="gateway-key-placeholder"><input id={"key-slot-" + provider.id} type="password" placeholder={provider.secretRequired ? "API key placeholder · add in final step" : "Local endpoint placeholder"} disabled readOnly aria-label={provider.envName + " placeholder; edit disabled"} /><span>{provider.keyDetected ? "KEY DETECTED" : provider.configured ? "CONNECTED" : "PLACEHOLDER"}</span></div>
             <small className="gateway-provider-note">{provider.secretRequired ? "No key is requested or stored in this dashboard. Add it later as a server-side environment variable." : "Configure the endpoint in server environment settings when local inference is ready."}</small>
           </article>
         ))}
