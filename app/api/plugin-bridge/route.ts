@@ -37,6 +37,8 @@ type Session = {
 };
 const sessionPath = (id: string) => `${PREFIX}/sessions/${id}/session.json`;
 const commandPath = (id: string) => `${PREFIX}/sessions/${id}/command.json`;
+const latestReportPath = `${PREFIX}/reports/latest.json`;
+type PersistedHealthReport = { clientId: string; commandId?: string; savedAt: string; healthReport: HealthReport };
 
 function corsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("origin");
@@ -61,7 +63,7 @@ function isPluginRequest(request: Request): boolean {
 const STORE_NAME = "ux-direct-plugin-bridge";
 function bridgeStore() {
   // Netlify Functions provide site identity and Blobs authorization automatically.
-  return getStore(STORE_NAME, { region: "us-east-2" });
+  return getStore(STORE_NAME, { region: "us-east-2", consistency: "strong" });
 }
 async function readJson<T>(pathname: string): Promise<T | null> {
   const store = bridgeStore();
@@ -91,7 +93,7 @@ async function listSessions() {
   const now = Date.now();
   return sessions.filter((session): session is Session => !!session && isAllowedFigmaFileKey(session.fileKey)).map((session) => ({
     ...publicSession(session),
-    isOnline: session.status === "online" && now - Date.parse(session.lastHeartbeatAt) < 65000,
+    isOnline: session.status === "online" && now - Date.parse(session.lastHeartbeatAt) < 75000,
   })).sort((a, b) => Date.parse(b.lastHeartbeatAt) - Date.parse(a.lastHeartbeatAt)).slice(0, 20);
 }
 
@@ -107,15 +109,22 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const mode = url.searchParams.get("mode");
   try {
-    if (mode === "sessions") return NextResponse.json({ sessions: await listSessions() }, { headers });
+    if (mode === "sessions") {
+      const [sessions, latestReport] = await Promise.all([
+        listSessions(), readJson<PersistedHealthReport>(latestReportPath),
+      ]);
+      return NextResponse.json({ sessions, latestReport }, { headers });
+    }
     if (mode === "state") {
       const parsedId = ID.safeParse(url.searchParams.get("clientId"));
       if (!parsedId.success) return NextResponse.json({ error: "A valid clientId is required." }, { status: 400, headers });
       const session = await readJson<Session>(sessionPath(parsedId.data));
       if (!session || !isAllowedFigmaFileKey(session.fileKey)) return NextResponse.json({ error: "Allowlisted plugin session not found." }, { status: 404, headers });
       const now = Date.now();
+      const latestReport = await readJson<PersistedHealthReport>(latestReportPath);
       return NextResponse.json({
-        session: { ...publicSession(session), isOnline: session.status === "online" && now - Date.parse(session.lastHeartbeatAt) < 65000 }
+        session: { ...publicSession(session), isOnline: session.status === "online" && now - Date.parse(session.lastHeartbeatAt) < 75000 },
+        latestReport,
       }, { headers });
     }
     return NextResponse.json({ error: "Unsupported bridge mode." }, { status: 400, headers });
@@ -206,6 +215,9 @@ export async function POST(request: Request) {
       current.lastHeartbeatAt = new Date().toISOString();
       current.status = "online";
       await writeJson(path, current);
+      await writeJson(latestReportPath, {
+        clientId, commandId, savedAt: new Date().toISOString(), healthReport: parsedReport.data,
+      } satisfies PersistedHealthReport);
       recordOperationalEvent({
         source: "figma-plugin", event: "Plugin API health check completed",
         status: parsedReport.data.failed > 0 ? "warning" : "success",
@@ -221,12 +233,12 @@ export async function POST(request: Request) {
       if (!action.success) return NextResponse.json({ error: "Unsupported plugin action." }, { status: 400, headers });
       const current = await readJson<Session>(path);
       if (!current || !isAllowedFigmaFileKey(current.fileKey)) return NextResponse.json({ error: "Allowlisted plugin session not found. Open UX Direct in Zunaid_Workspace first." }, { status: 404, headers });
-      if (current.status !== "online" || Date.now() - Date.parse(current.lastHeartbeatAt) >= 65000) {
+      if (current.status !== "online" || Date.now() - Date.parse(current.lastHeartbeatAt) >= 75000) {
         return NextResponse.json({ error: "Figma plugin is offline. Open the plugin and try again." }, { status: 409, headers });
       }
       if (current.latestCommand && ["pending", "claimed"].includes(current.latestCommand.status)) {
         const commandAgeMs = Date.now() - Date.parse(current.latestCommand.issuedAt);
-        if (Number.isFinite(commandAgeMs) && commandAgeMs < 180000) {
+        if (Number.isFinite(commandAgeMs) && commandAgeMs < 240000) {
           return NextResponse.json({ error: "A plugin action is already running. Wait for it to finish." }, { status: 409, headers });
         }
         current.latestCommand = {
@@ -238,7 +250,7 @@ export async function POST(request: Request) {
       const now = new Date();
       const command: BridgeCommand = {
         commandId: crypto.randomUUID(), action: "native-api-health-check", status: "pending",
-        issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 90000).toISOString(),
+        issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 240000).toISOString(),
       };
       await writeJson(commandPath(clientId), command);
       current.latestCommand = command;
