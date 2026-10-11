@@ -5,7 +5,6 @@ import {
   getFreeChatModelOptions,
   providersForFreeChat,
   providersFromEnv,
-  type FreeChatModel
 } from "@/src/model-gateway";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 
