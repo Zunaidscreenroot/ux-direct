@@ -9,6 +9,9 @@ export type OperationalEvent = {
   project?: string;
   durationMs?: number;
   mode?: string;
+  category?: string;
+  action?: string;
+  testType?: "availability" | "functional" | "not-tested";
 };
 
 const MAX_EVENTS = 100;
