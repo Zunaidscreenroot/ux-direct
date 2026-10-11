@@ -114,9 +114,12 @@ async function probeModel(provider: ProviderId, model: string) {
     } catch {
       // Keep the HTTP status even when the upstream response is not JSON.
     }
+    const quotaExhausted = response.status === 429 &&
+      /free-models-per-day|free model requests per day|add\\s*10\\s*credits/i.test(providerMessage ?? "");
     return {
       available: false, provider, model, status: response.status,
       ...(providerCode === undefined ? {} : { providerCode }),
+      ...(quotaExhausted ? { quotaExhausted: true, quotaType: "free-models-per-day" } : {}),
       reason: providerMessage ? `OpenRouter HTTP ${response.status}: ${providerMessage}` : `OpenRouter returned HTTP ${response.status}.`,
       latencyMs: Date.now() - startedAt
     };
@@ -200,6 +203,7 @@ async function discoverWorkingFreeModel() {
     status?: number;
     providerCode?: string | number;
     reason?: string;
+    quotaExhausted?: boolean;
     finishReason?: string;
     nativeFinishReason?: string;
     messageFields?: string[];
@@ -214,12 +218,28 @@ async function discoverWorkingFreeModel() {
         ...("status" in result && typeof result.status === "number" ? { status: result.status } : {}),
         ...("providerCode" in result && (typeof result.providerCode === "string" || typeof result.providerCode === "number") ? { providerCode: result.providerCode } : {}),
         ...("reason" in result && typeof result.reason === "string" ? { reason: result.reason } : {}),
+        ...("quotaExhausted" in result && result.quotaExhausted === true ? { quotaExhausted: true } : {}),
         ...("finishReason" in result && typeof result.finishReason === "string" ? { finishReason: result.finishReason } : {}),
         ...("nativeFinishReason" in result && typeof result.nativeFinishReason === "string" ? { nativeFinishReason: result.nativeFinishReason } : {}),
         ...("messageFields" in result && Array.isArray(result.messageFields) ? { messageFields: result.messageFields.filter((field): field is string => typeof field === "string") } : {}),
         ...("completionTokens" in result && typeof result.completionTokens === "number" ? { completionTokens: result.completionTokens } : {}),
         ...("latencyMs" in result && typeof result.latencyMs === "number" ? { latencyMs: result.latencyMs } : {})
       });
+      // This is an account-level free-tier quota, not a model-specific outage.
+      // Stop here so discovery does not issue more completion requests against the same exhausted quota.
+      if ("quotaExhausted" in result && result.quotaExhausted === true) {
+        return {
+          provider: "openrouter",
+          configured: true,
+          models: [],
+          candidateCount: catalog.models.length,
+          attemptedCount: attempts.length,
+          attempts,
+          quotaExhausted: true,
+          quotaType: "free-models-per-day",
+          reason: result.reason ?? "OpenRouter's daily free-model request quota is exhausted."
+        };
+      }
       if (result.available && "responseReceived" in result && result.responseReceived) {
         return {
           provider: "openrouter",
