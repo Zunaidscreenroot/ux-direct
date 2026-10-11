@@ -207,6 +207,11 @@ async function runNativeApiHealthCheck(commandId) {
       var found = mutateLab("resolve test node using getNodeById", function () { return figma.getNodeById(harness.id); });
       if (!found || found.id !== harness.id) throw new Error("getNodeById failed to resolve the test frame.");
     });
+    await runTest("Viewport", "Read viewport zoom and bounds", async function () {
+      var bounds = mutateLab("read viewport bounds", function () { return figma.viewport.bounds; });
+      var zoom = mutateLab("read viewport zoom", function () { return figma.viewport.zoom; });
+      if (!bounds || typeof zoom !== "number" || zoom <= 0) throw new Error("Viewport bounds or zoom were invalid.");
+    });
 
     await runTest("Page navigation", "Create and remove a temporary page", async function () {
       var page = mutateFile("create temporary navigation page", function () { return figma.createPage(); });
@@ -453,13 +458,32 @@ async function runNativeApiHealthCheck(commandId) {
         try { mutateLab("restore test-page selection during cleanup", function () { testPage.selection = savedTestSelection; }); }
         catch (error) { cleanupErrors.push("Could not restore test-page selection: " + (error.message || String(error))); }
       }
+      function belongsToHarness(node) {
+        var current = node;
+        while (current) {
+          if (harness && current.id === harness.id) return true;
+          current = current.parent;
+        }
+        return false;
+      }
+      // Removing the lab's single temporary harness removes all descendants in one scoped operation.
+      // If any API failed before attaching a node to the harness, clean that orphan separately.
       for (var i = createdNodes.length - 1; i >= 0; i--) {
+        var node = createdNodes[i];
         try {
-          assertLab("remove temporary test node");
-          var node = createdNodes[i];
-          if (node && node.parent && typeof node.remove === "function") node.remove();
+          if (node && node.parent && !belongsToHarness(node)) {
+            assertLab("remove orphaned temporary test node");
+            node.remove();
+          }
         } catch (error) {
-          try { if (createdNodes[i] && createdNodes[i].parent) cleanupErrors.push("Could not remove " + createdNodes[i].name + ": " + (error.message || String(error))); } catch (_) {}
+          cleanupErrors.push("Could not remove orphaned " + (node && node.name ? node.name : "test node") + ": " + (error.message || String(error)));
+        }
+      }
+      if (harness) {
+        try {
+          if (harness.parent) mutateLab("remove all temporary harness contents", function () { harness.remove(); });
+        } catch (error) {
+          cleanupErrors.push("Could not remove temporary test harness and its children: " + (error.message || String(error)));
         }
       }
       for (var c = temporaryCollections.length - 1; c >= 0; c--) {
