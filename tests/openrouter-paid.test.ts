@@ -15,12 +15,12 @@ const providers: ProviderConfig[] = [{
 }];
 
 test("paid OpenRouter helper only admits its explicit low-cost allowlist", () => {
-  const selected = providersForOpenRouterPaidChat(providers, "openai/gpt-oss-20b");
+  const selected = providersForOpenRouterPaidChat("openai/gpt-oss-20b", providers);
   const openrouter = selected.find(provider => provider.name === "openrouter");
   assert.equal(openrouter?.kind, "paid");
   assert.deepEqual(openrouter?.models, ["openai/gpt-oss-20b"]);
   assert.throws(
-    () => providersForOpenRouterPaidChat(providers, "openai/gpt-4o"),
+    () => providersForOpenRouterPaidChat("openai/gpt-4o", providers),
     /approved low-cost allowlist/
   );
 });
