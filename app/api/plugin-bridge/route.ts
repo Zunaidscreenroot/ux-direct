@@ -66,7 +66,7 @@ function bridgeStore() {
 async function readJson<T>(pathname: string): Promise<T | null> {
   const value = await bridgeStore().get(pathname);
   if (value === null) return null;
-  return JSON.parse(value) as T;
+  return JSON.parse(new TextDecoder().decode(value)) as T;
 }
 async function writeJson(pathname: string, value: unknown): Promise<void> {
   await bridgeStore().set(pathname, JSON.stringify(value), {
@@ -78,7 +78,7 @@ function publicSession(session: Session) {
   return safe;
 }
 async function listSessions() {
-  const result = await bridgeStore().list({ prefix: `${PREFIX}/sessions/`, limit: 1000 });
+  const result = await bridgeStore().list({ prefix: `${PREFIX}/sessions/` });
   const sessionBlobs = result.blobs.filter((blob) => blob.key.endsWith("/session.json"));
   const sessions = await Promise.all(sessionBlobs.map(async (blob) => {
     try { return await readJson<Session>(blob.key); } catch { return null; }
