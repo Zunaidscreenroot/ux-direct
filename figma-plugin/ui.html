@@ -264,8 +264,10 @@
         const actualContext = deployment.context || "missing";
         const actualBranch = deployment.branch || "missing";
         const hostMatches = isExpectedPreviewHost(expectedPreviewHost, actualHost);
+        // Netlify's Next.js runtime does not consistently expose CONTEXT to route handlers.
+        // Validate the real site host and branch; treat context as diagnostic-only.
         if (!data || data.status !== "ok" || actualPlatform !== "netlify" || !hostMatches ||
-            actualContext !== "deploy-preview" || actualBranch !== "feat/conversational-cockpit") {
+            actualBranch !== "feat/conversational-cockpit") {
           throw new Error("Expected UX Direct Netlify Deploy Preview for branch feat/conversational-cockpit; received platform=" + actualPlatform + ", host=" + actualHost + ", context=" + actualContext + ", branch=" + actualBranch + ", status=" + (data && data.status ? data.status : "missing") + ".");
         }
         backendHealthy = true;
