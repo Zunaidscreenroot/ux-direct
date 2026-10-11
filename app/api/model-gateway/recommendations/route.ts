@@ -19,8 +19,9 @@ function authorized(request: Request): boolean {
 
 export async function GET(request: Request) {
   const origin = request.headers.get("origin");
-  const sameOriginBrowser = Boolean(origin && origin === new URL(request.url).origin &&
-    request.headers.get("sec-fetch-site") !== "cross-site");
+  const fetchSite = request.headers.get("sec-fetch-site");
+  const sameOriginBrowser = fetchSite === "same-origin" &&
+    (!origin || origin === new URL(request.url).origin);
   // The planner uses a zero-price :free model and sends only public capability
   // metadata. Same-origin dashboard calls may run without a client-held secret;
   // direct API callers still need the access key, and the route is rate limited.
