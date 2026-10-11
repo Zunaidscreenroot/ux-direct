@@ -17,15 +17,60 @@ const starterTasks = [
   },
 ];
 
+type PlanResult = {
+  task: { id: string; status: string; steps: Array<{ id: string; label: string; status: string }> };
+  plan: {
+    summary: string;
+    assumptions: string[];
+    steps: Array<{ id: string; label: string; capabilityId: string }>;
+    qualityChecks: string[];
+    requiresHumanReview: boolean;
+  };
+  mode: string;
+  cost: { currency: string; amount: number };
+};
+
 export default function Home() {
   const [task, setTask] = useState("");
   const [activeProject, setActiveProject] = useState("General UX");
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [planResult, setPlanResult] = useState<PlanResult | null>(null);
 
-  function submitTask(event: React.FormEvent<HTMLFormElement>) {
+  async function submitTask(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!task.trim()) return;
-    setSubmitted(true);
+    if (!task.trim() || loading) return;
+    setLoading(true);
+    setError("");
+    setPlanResult(null);
+    setSubmitted(false);
+
+    const projectMap: Record<string, "general" | "express-computers" | "dmi-finance"> = {
+      "General UX": "general",
+      "Express Computers": "express-computers",
+      "DMI Finance": "dmi-finance",
+    };
+
+    try {
+      const response = await fetch("/api/tasks/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: task.trim().split(/[.!?\n]/)[0].slice(0, 160) || "UX task",
+          request: task.trim(),
+          project: projectMap[activeProject] ?? "general",
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Unable to plan this task");
+      setPlanResult(result as PlanResult);
+      setSubmitted(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unexpected error");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -51,8 +96,8 @@ export default function Home() {
         <div className="sidebar-bottom">
           <div className="status-dot" />
           <div>
-            <strong>Foundation mode</strong>
-            <span>Model gateway not connected</span>
+            <strong>Zero-cost foundation</strong>
+            <span>Mock provider · no API calls</span>
           </div>
         </div>
       </aside>
@@ -60,15 +105,15 @@ export default function Home() {
       <section className="main-panel">
         <header className="topbar">
           <div className="breadcrumb">Workspace <span>/</span> Cockpit</div>
-          <div className="topbar-right"><span className="environment">MVP · local-ready</span><div className="avatar">Z</div></div>
+          <div className="topbar-right"><span className="environment">MVP · mock mode</span><div className="avatar">Z</div></div>
         </header>
 
         <div className="content">
           <div className="eyebrow"><span className="pulse" /> YOUR AI UX EMPLOYEE</div>
           <h1>Good design starts<br />with <em>good thinking.</em></h1>
           <p className="intro">
-            Give UX Direct a real product problem. It will structure the task, surface assumptions,
-            plan the work, and prepare a reasoned design outcome—not just generate a screen.
+            Give UX Direct a real product problem. It structures the task, surfaces assumptions,
+            and creates a reviewable plan. This first vertical slice uses a deterministic mock provider.
           </p>
 
           <form className="task-composer" onSubmit={submitTask}>
@@ -76,25 +121,54 @@ export default function Home() {
             <textarea
               id="task"
               value={task}
-              onChange={(event) => { setTask(event.target.value); setSubmitted(false); }}
+              onChange={(event) => { setTask(event.target.value); setSubmitted(false); setPlanResult(null); setError(""); }}
               placeholder="e.g. Analyse the existing DMI screens and plan the VKYC entry journey. Preserve product patterns and cover failure states."
               rows={4}
+              maxLength={8000}
+              required
             />
             <div className="composer-footer">
               <label className="select-label" htmlFor="project">Project context</label>
-              <select id="project" value={activeProject} onChange={(event) => setActiveProject(event.target.value)}>
+              <select id="project" value={activeProject} onChange={(event) => { setActiveProject(event.target.value); setPlanResult(null); }}>
                 <option>General UX</option>
                 <option>Express Computers</option>
                 <option>DMI Finance</option>
               </select>
-              <button className="submit-button" type="submit">Plan task <span aria-hidden="true">↗</span></button>
+              <button className="submit-button" type="submit" disabled={loading}>
+                {loading ? "Planning…" : "Plan task"} <span aria-hidden="true">↗</span>
+              </button>
             </div>
-            {submitted && (
+            {error && <p className="inline-note" role="alert">{error}</p>}
+            {submitted && planResult && (
               <p className="inline-note" role="status">
-                Task captured in the cockpit UI. Execution is not connected yet; the next milestone is the task orchestrator and mock provider.
+                Plan created in mock mode. Model/API cost: ₹0. No Figma file was accessed or modified.
               </p>
             )}
           </form>
+
+          {planResult && (
+            <section className="plan-results" aria-labelledby="plan-heading">
+              <div className="section-heading">
+                <div><span className="section-kicker">TASK PLAN · MOCK MODE</span><h2 id="plan-heading">Work breakdown</h2></div>
+                <span className="count">₹0 API COST</span>
+              </div>
+              <p className="plan-summary">{planResult.plan.summary}</p>
+              <ol className="plan-steps">
+                {planResult.plan.steps.map((step) => (
+                  <li key={step.id}>
+                    <span className="step-index">{String(planResult.plan.steps.findIndex((item) => item.id === step.id) + 1).padStart(2, "0")}</span>
+                    <div><strong>{step.label}</strong><span>{step.capabilityId}</span></div>
+                    <span className="step-state">Planned</span>
+                  </li>
+                ))}
+              </ol>
+              <div className="plan-columns">
+                <div><h3>Quality gates</h3><ul>{planResult.plan.qualityChecks.map((check) => <li key={check}>{check}</li>)}</ul></div>
+                <div><h3>Assumptions to validate</h3><ul>{planResult.plan.assumptions.map((assumption) => <li key={assumption}>{assumption}</li>)}</ul></div>
+              </div>
+              <p className="review-note">Human review required · Planning only. Execution and Figma integration are not connected yet.</p>
+            </section>
+          )}
 
           <div className="section-heading">
             <div><span className="section-kicker">FIRST PROVING GROUNDS</span><h2>Where we begin</h2></div>
@@ -103,7 +177,7 @@ export default function Home() {
 
           <div className="project-grid">
             {starterTasks.map((item, index) => (
-              <button className="project-card" key={item.label} type="button" onClick={() => { setActiveProject(item.label); setTask(item.title + ". " + item.detail); setSubmitted(false); }}>
+              <button className="project-card" key={item.label} type="button" onClick={() => { setActiveProject(item.label); setTask(item.title + ". " + item.detail); setSubmitted(false); setPlanResult(null); setError(""); }}>
                 <div className="card-top"><span className={"project-icon icon-" + index}>{index === 0 ? "EC" : "DM"}</span><span className="card-arrow">↗</span></div>
                 <span className="card-tag">{item.tag}</span>
                 <h3>{item.label}</h3>
