@@ -52,6 +52,8 @@ export function defaultGatewaySettings(): GatewaySettings {
     [modelKey("gemini", "gemini-2.5-flash-lite")]: pricePolicy(.1, .4),
     [modelKey("groq", "openai/gpt-oss-120b")]: pricePolicy(.15, .6),
     [modelKey("groq", "openai/gpt-oss-20b")]: pricePolicy(.075, .3),
+    [modelKey("deepseek", "deepseek-flash")]: pricePolicy(.30, 1.20),
+    [modelKey("deepseek", "deepseek-v4-pro")]: pricePolicy(1.32, 3.96),
     [modelKey("openrouter", "apodex/apodex-1.1-mini:free")]: pricePolicy(),
     [modelKey("ollama", "qwen2.5:7b")]: pricePolicy(),
     [modelKey("ollama", "gemma4:31b")]: pricePolicy(),

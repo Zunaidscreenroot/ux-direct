@@ -27,6 +27,7 @@ export async function GET() {
     { id: "cerebras", label: "Cerebras", envName: "CEREBRAS_API_KEY", configured: configuredProviders.has("cerebras"), keyDetected: Boolean(env.CEREBRAS_API_KEY), tier: "free-tier", secretRequired: true },
     { id: "openrouter", label: "OpenRouter", envName: "OPENROUTER_API_KEY", configured: configuredProviders.has("openrouter"), keyDetected: Boolean(env.OPENROUTER_API_KEY), tier: "free-tier", secretRequired: true },
     { id: "openai", label: "OpenAI (paid)", envName: "OPENAI_API_KEY", configured: configuredProviders.has("openai"), keyDetected: Boolean(env.OPENAI_API_KEY), tier: "paid", secretRequired: true },
+    { id: "deepseek", label: "DeepSeek (paid)", envName: "DEEPSEEK_API_KEY", configured: configuredProviders.has("deepseek"), keyDetected: Boolean(env.DEEPSEEK_API_KEY), tier: "paid", secretRequired: true },
   ];
   return NextResponse.json({
     gateway: {

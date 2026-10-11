@@ -13,6 +13,14 @@ test("routes only explicitly configured models", () => {
     error instanceof GatewayError && error.status === 400);
 });
 
+test("registers DeepSeek paid models only after the paid master switch is enabled", async () => {
+  const { providersFromEnv } = await import("../src/model-gateway");
+  const off = providersFromEnv({ NODE_ENV: "test", DEEPSEEK_API_KEY: "test-key", ALLOW_PAID_MODELS: "false" });
+  assert.equal(off.some(provider => provider.name === "deepseek"), false);
+  const on = providersFromEnv({ NODE_ENV: "test", DEEPSEEK_API_KEY: "test-key", DEEPSEEK_MODELS: "deepseek-flash,deepseek-v4-pro", ALLOW_PAID_MODELS: "true", MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000" });
+  assert.equal(on.some(provider => provider.name === "deepseek" && provider.models.includes("deepseek-flash") && provider.models.includes("deepseek-v4-pro")), true);
+});
+
 test("normalizes a successful OpenAI-compatible response", async () => {
   let calledUrl = "";
   let calledBody: Record<string, unknown> = {};
