@@ -68,8 +68,8 @@ export function getFreeChatModelOptions(providers = providersFromEnv(), discover
 
 /** Restrict paid inference through OpenRouter to a tiny server-side allowlist. */
 export function providersForOpenRouterPaidChat(
-  providers = providersFromEnv(),
-  selectedModel: string
+  selectedModel: string,
+  providers = providersFromEnv()
 ): ProviderConfig[] {
   if (!getOpenRouterPaidChatModel(selectedModel)) {
     throw new GatewayError("This OpenRouter paid model is not on the approved low-cost allowlist.", 400, "openrouter");
@@ -400,7 +400,7 @@ export async function chatCompletionWithOpenRouterPaid(
   if (request.providerId !== "openrouter" || !getOpenRouterPaidChatModel(request.model) || request.model.endsWith(":free")) {
     throw new GatewayError("Only an explicitly selected allowlisted paid OpenRouter model is allowed.", 400, "openrouter");
   }
-  const providers = providersForOpenRouterPaidChat(options.providers ?? providersFromEnv(), request.model);
+  const providers = providersForOpenRouterPaidChat(request.model, options.providers ?? providersFromEnv());
   const provider = providers.find(item => item.name === "openrouter" && Boolean(item.apiKey) && item.models.includes(request.model));
   if (!provider) throw new GatewayError("OpenRouter API key is not configured for this Preview deployment.", 503, "openrouter");
   return chatCompletion({
