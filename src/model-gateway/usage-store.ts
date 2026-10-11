@@ -11,6 +11,7 @@ export type UsageRecord = {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  usageReported?: boolean;
   estimatedCostInr: number;
   latencyMs: number;
   status: "success" | "error" | "blocked";
@@ -161,5 +162,8 @@ export function tokenUsageValues(usage?: TokenUsage) {
   const promptTokens = Math.max(0, Math.round(usage?.prompt_tokens ?? 0));
   const completionTokens = Math.max(0, Math.round(usage?.completion_tokens ?? 0));
   const totalTokens = Math.max(0, Math.round(usage?.total_tokens ?? promptTokens + completionTokens));
-  return { promptTokens, completionTokens, totalTokens };
+  const usageReported = Boolean(usage && (
+    usage.prompt_tokens !== undefined || usage.completion_tokens !== undefined || usage.total_tokens !== undefined
+  ));
+  return { promptTokens, completionTokens, totalTokens, usageReported };
 }
