@@ -173,6 +173,59 @@ async function runNativeApiHealthCheck(commandId) {
     return;
   }
 
+  // Keep a small visible fixture set on the lab page so the owner and future agents have known nodes to inspect.
+  await runTest("Test isolation", "Prepare reusable shape/text/component fixtures", async function () {
+    var fixtureName = "__UXD API Test Fixtures";
+    var fixture = testPage.children.find(function (node) { return node.type === "FRAME" && node.name === fixtureName; }) || null;
+    if (!fixture) {
+      fixture = mutateLab("create persistent fixture frame", function () { return figma.createFrame(); });
+      mutateLab("name persistent fixture frame", function () { fixture.name = fixtureName; });
+      mutateLab("size persistent fixture frame", function () { fixture.resize(720, 420); });
+      mutateLab("style persistent fixture frame", function () {
+        fixture.fills = [{ type: "SOLID", color: { r: 0.985, g: 0.99, b: 1 } }];
+      });
+    }
+    function ensureFixture(type, name, factory) {
+      var node = fixture.children.find(function (item) { return item.type === type && item.name === name; }) || null;
+      if (!node) {
+        node = mutateLab("create persistent fixture " + name, factory);
+        mutateLab("name persistent fixture " + name, function () { node.name = name; });
+        mutateLab("attach persistent fixture " + name, function () { fixture.appendChild(node); });
+      }
+      return node;
+    }
+    var sampleFrame = ensureFixture("FRAME", "Fixture Frame", function () { return figma.createFrame(); });
+    mutateLab("size fixture frame", function () { sampleFrame.resize(180, 110); });
+    mutateLab("position fixture frame", function () { sampleFrame.x = 20; sampleFrame.y = 20; });
+    var sampleRect = ensureFixture("RECTANGLE", "Fixture Rectangle", function () { return figma.createRectangle(); });
+    mutateLab("size fixture rectangle", function () { sampleRect.resize(100, 64); });
+    mutateLab("position fixture rectangle", function () { sampleRect.x = 230; sampleRect.y = 24; });
+    mutateLab("fill fixture rectangle", function () { sampleRect.fills = [{ type: "SOLID", color: { r: 0.18, g: 0.38, b: 0.9 } }]; });
+    var sampleEllipse = ensureFixture("ELLIPSE", "Fixture Ellipse", function () { return figma.createEllipse(); });
+    mutateLab("size fixture ellipse", function () { sampleEllipse.resize(72, 52); });
+    mutateLab("position fixture ellipse", function () { sampleEllipse.x = 360; sampleEllipse.y = 24; });
+    var sampleLine = ensureFixture("LINE", "Fixture Line", function () { return figma.createLine(); });
+    mutateLab("position fixture line", function () { sampleLine.x = 455; sampleLine.y = 35; });
+    var sampleText = ensureFixture("TEXT", "Fixture Text", function () { return figma.createText(); });
+    var fixtureFont = sampleText.fontName;
+    if (!fixtureFont || fixtureFont === figma.mixed) throw new Error("Fixture text has no single font.");
+    await mutateLabAsync("load fixture text font", function () { return figma.loadFontAsync(fixtureFont); });
+    if (sampleText.characters !== "UXD API Fixture") {
+      mutateLab("write fixture text", function () { sampleText.characters = "UXD API Fixture"; });
+    }
+    mutateLab("position fixture text", function () { sampleText.x = 20; sampleText.y = 160; });
+    var sampleComponent = ensureFixture("COMPONENT", "Fixture Component", function () { return figma.createComponent(); });
+    mutateLab("size fixture component", function () { sampleComponent.resize(140, 80); });
+    mutateLab("position fixture component", function () { sampleComponent.x = 20; sampleComponent.y = 225; });
+    if (!sampleComponent.children.some(function (node) { return node.name === "Fixture Component Child"; })) {
+      var child = mutateLab("create fixture component child", function () { return figma.createRectangle(); });
+      mutateLab("name fixture component child", function () { child.name = "Fixture Component Child"; });
+      mutateLab("size fixture component child", function () { child.resize(56, 36); });
+      mutateLab("attach fixture component child", function () { sampleComponent.appendChild(child); });
+    }
+    var sampleVector = ensureFixture("VECTOR", "Fixture Vector", function () { return figma.createVector(); });
+    mutateLab("position fixture vector", function () { sampleVector.x = 230; sampleVector.y = 130; });
+  });
   // Avoid sending temporary test-page selections to backend telemetry during the suite.
   try {
     assertLab("pause selection context listener");
