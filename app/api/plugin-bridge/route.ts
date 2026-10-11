@@ -2,6 +2,7 @@ import { get, list, put } from "@vercel/blob";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { recordOperationalEvent } from "@/src/observability/event-log";
+import { ALLOWED_FIGMA_FILE_KEY, isAllowedFigmaFileKey } from "@/src/security/figma-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ type BridgeCommand = {
   issuedAt: string; expiresAt: string; completedAt?: string; failure?: string;
 };
 type Session = {
-  clientId: string; sessionToken: string; status: "online" | "offline";
+  clientId: string; sessionToken: string; fileKey: string; status: "online" | "offline";
   connectedAt: string; lastHeartbeatAt: string; disconnectedAt?: string; lastTestAt?: string;
   latestCommand?: BridgeCommand; healthReport?: HealthReport;
 };
@@ -82,7 +83,7 @@ async function listSessions() {
     try { return await readJson<Session>(blob.pathname); } catch { return null; }
   }));
   const now = Date.now();
-  return sessions.filter((session): session is Session => !!session).map((session) => ({
+  return sessions.filter((session): session is Session => !!session && isAllowedFigmaFileKey(session.fileKey)).map((session) => ({
     ...publicSession(session),
     isOnline: session.status === "online" && now - Date.parse(session.lastHeartbeatAt) < 65000,
   })).sort((a, b) => Date.parse(b.lastHeartbeatAt) - Date.parse(a.lastHeartbeatAt)).slice(0, 20);
@@ -106,7 +107,7 @@ export async function GET(request: Request) {
       const parsedId = ID.safeParse(url.searchParams.get("clientId"));
       if (!parsedId.success) return NextResponse.json({ error: "A valid clientId is required." }, { status: 400, headers });
       const session = await readJson<Session>(sessionPath(parsedId.data));
-      if (!session) return NextResponse.json({ error: "Plugin session not found." }, { status: 404, headers });
+      if (!session || !isAllowedFigmaFileKey(session.fileKey)) return NextResponse.json({ error: "Allowlisted plugin session not found." }, { status: 404, headers });
       const now = Date.now();
       return NextResponse.json({
         session: { ...publicSession(session), isOnline: session.status === "online" && now - Date.parse(session.lastHeartbeatAt) < 65000 }
@@ -130,6 +131,9 @@ export async function POST(request: Request) {
   if (isDashboardCommand ? !isDashboardRequest(request, true) : !isPluginRequest(request)) {
     return NextResponse.json({ error: isDashboardCommand ? "Dashboard origin required to issue a command." : "Figma plugin origin required." }, { status: 403, headers });
   }
+  if (!isDashboardCommand && !isAllowedFigmaFileKey(body.fileKey)) {
+    return NextResponse.json({ error: "Figma plugin request blocked: file key is not allowlisted." }, { status: 403, headers });
+  }
   if (!storageReady()) return NextResponse.json({ error: "Private bridge storage is not configured for this deployment." }, { status: 503, headers });
 
   const idResult = ID.safeParse(body.clientId);
@@ -143,9 +147,10 @@ export async function POST(request: Request) {
       if (!token.success) return NextResponse.json({ error: "Session token is missing." }, { status: 400, headers });
       const current = await readJson<Session>(path);
       if (current && current.sessionToken !== token.data) return NextResponse.json({ error: "Plugin session token mismatch." }, { status: 403, headers });
+      if (current && current.fileKey !== body.fileKey) return NextResponse.json({ error: "Plugin session file-key mismatch." }, { status: 403, headers });
       const now = new Date().toISOString();
       const session: Session = {
-        clientId, sessionToken: token.data, status: "online",
+        clientId, sessionToken: token.data, fileKey: ALLOWED_FIGMA_FILE_KEY, status: "online",
         connectedAt: current?.connectedAt ?? now, lastHeartbeatAt: now,
         lastTestAt: current?.lastTestAt, healthReport: current?.healthReport,
         latestCommand: current?.latestCommand, disconnectedAt: undefined,
@@ -166,7 +171,7 @@ export async function POST(request: Request) {
       const token = z.string().min(20).max(200).safeParse(body.sessionToken);
       if (!token.success) return NextResponse.json({ error: "Session token is missing." }, { status: 400, headers });
       const current = await readJson<Session>(path);
-      if (current && current.sessionToken === token.data) {
+      if (current && current.sessionToken === token.data && isAllowedFigmaFileKey(current.fileKey) && current.fileKey === body.fileKey) {
         current.status = "offline";
         current.disconnectedAt = new Date().toISOString();
         await writeJson(path, current);
@@ -179,7 +184,9 @@ export async function POST(request: Request) {
       const parsedReport = REPORT.safeParse(body.healthReport);
       if (!token.success || !parsedReport.success) return NextResponse.json({ error: "Session token or health report is invalid." }, { status: 400, headers });
       const current = await readJson<Session>(path);
-      if (!current || current.sessionToken !== token.data) return NextResponse.json({ error: "Plugin session not found or token mismatch." }, { status: 403, headers });
+      if (!current || current.sessionToken !== token.data || !isAllowedFigmaFileKey(current.fileKey) || current.fileKey !== body.fileKey) {
+        return NextResponse.json({ error: "Allowlisted plugin session not found or token/file-key mismatch." }, { status: 403, headers });
+      }
       const commandId = typeof body.commandId === "string" ? body.commandId : undefined;
       if (commandId) {
         const command = await readJson<BridgeCommand>(commandPath(clientId));
@@ -209,7 +216,7 @@ export async function POST(request: Request) {
       const action = z.literal("native-api-health-check").safeParse(body.action);
       if (!action.success) return NextResponse.json({ error: "Unsupported plugin action." }, { status: 400, headers });
       const current = await readJson<Session>(path);
-      if (!current) return NextResponse.json({ error: "Plugin has not registered a session. Open UX Direct in Figma first." }, { status: 404, headers });
+      if (!current || !isAllowedFigmaFileKey(current.fileKey)) return NextResponse.json({ error: "Allowlisted plugin session not found. Open UX Direct in Zunaid_Workspace first." }, { status: 404, headers });
       if (current.status !== "online" || Date.now() - Date.parse(current.lastHeartbeatAt) >= 65000) {
         return NextResponse.json({ error: "Figma plugin is offline. Open the plugin and try again." }, { status: 409, headers });
       }
