@@ -141,11 +141,20 @@ export async function chatCompletion(
   }
   if (request.messages.reduce((n, m) => n + m.content.length, 0) > 200_000) throw new GatewayError("Request content exceeds the 200,000-character limit.", 413);
   const providers = options.providers ?? providersFromEnv();
-  const provider = resolveProvider(request.model, providers);
+  const aliases: Record<string, "classify" | "extract" | "summarize" | "ux-reasoning" | "vision" | "critique"> = {
+    "uxd/classify": "classify",
+    "uxd/extract": "extract",
+    "uxd/summarize": "summarize",
+    "uxd/reasoning": "ux-reasoning",
+    "uxd/vision": "vision",
+    "uxd/critique": "critique"
+  };
+  const resolvedModel = aliases[request.model] ? routeTask(aliases[request.model], providers).id : request.model;
+  const provider = resolveProvider(resolvedModel, providers);
   const started = Date.now();
   if (provider.kind === "mock" || provider.baseUrl.startsWith("mock://")) {
     const lastUser = [...request.messages].reverse().find(m => m.role === "user")?.content ?? "";
-    return { model: request.model, content: `[UX Direct mock — no model API called] Received ${lastUser.length} characters. Configure a local or free-tier provider to enable real inference.`, provider: provider.name, latencyMs: Date.now() - started, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } };
+    return { model: resolvedModel, content: `[UX Direct mock — no model API called] Received ${lastUser.length} characters. Configure a local or free-tier provider to enable real inference.`, provider: provider.name, latencyMs: Date.now() - started, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } };
   }
   const fetchImpl = options.fetchImpl ?? fetch;
   const controller = new AbortController();
@@ -161,7 +170,7 @@ export async function chatCompletion(
     const response = await fetchImpl(`${trimSlash(provider.baseUrl)}/chat/completions`, {
       method: "POST", headers,
       body: JSON.stringify({
-        model: request.model, messages: request.messages,
+        model: resolvedModel, messages: request.messages,
         ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
         ...(request.max_tokens !== undefined ? { max_tokens: request.max_tokens } : {})
       }), signal: controller.signal
@@ -176,7 +185,7 @@ export async function chatCompletion(
     if (typeof content !== "string") throw new GatewayError("Provider response did not contain choices[0].message.content.", 502, provider.name);
     return {
       id: typeof payload.id === "string" ? payload.id : undefined,
-      model: typeof payload.model === "string" ? payload.model : request.model,
+      model: typeof payload.model === "string" ? payload.model : resolvedModel,
       content, usage: payload.usage, provider: provider.name, latencyMs: Date.now() - started
     };
   } catch (error) {
