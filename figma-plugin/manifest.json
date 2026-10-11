@@ -9,9 +9,10 @@
   ],
   "networkAccess": {
     "allowedDomains": [
-      "https://uxdirect.netlify.app"
+      "https://uxdirect.netlify.app",
+      "https://deploy-preview-21--uxdirect.netlify.app"
     ],
-    "reasoning": "UX Direct sends the user's prompt and selected node metadata to its backend to create a task plan. It does not upload file contents or modify the design in this MVP."
+    "reasoning": "Temporary Figma smoke-test build: sends prompt text and selected-node metadata to the UX Direct Netlify Deploy Preview backend. No API key is embedded in the plugin. Restore the production API URL and remove the preview domain before merging."
   },
   "enablePrivatePluginApi": true,
   "documentAccess": "dynamic-page"
