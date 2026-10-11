@@ -108,18 +108,12 @@ export type ModelCatalogEntry = {
   id: string; provider: string; label: string; tier: "local" | "free-tier" | "paid" | "mock"; tasks: string[];
   configured: boolean; notes: string; usdInputPerMillion?: number; usdOutputPerMillion?: number; pricingSource?: string; pricingReviewedAt?: string;
 };
-const GOOGLE_PRICE_SOURCE = "https://ai.google.dev/gemini-api/docs/pricing.md";
 const GROQ_PRICE_SOURCE = "https://console.groq.com/docs/models";
 export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEntry[] {
   const base: Omit<ModelCatalogEntry, "configured">[] = [
     { id: "mock/ux-direct", provider: "mock", label: "UX Direct deterministic mock", tier: "mock", tasks: ["tests","scaffolding"], notes: "No credentials, network, model inference, or billing." },
     { id: "qwen2.5:7b", provider: "ollama", label: "Qwen 2.5 7B · local", tier: "local", tasks: ["classification","extraction","summaries"], notes: "Local compute; install/download with Ollama." },
     { id: "gemma4:31b", provider: "ollama", label: "Gemma 4 31B · local", tier: "local", tasks: ["ux critique","reasoning","vision"], notes: "Large local model; hardware requirements can be substantial." },
-    { id: "gemini-3.5-flash", provider: "gemini", label: "Gemini 3.5 Flash", tier: "free-tier", tasks: ["reasoning","summaries","vision"], notes: "Free tier where available; standard paid reference $1.50 input / $9.00 output per 1M tokens.", usdInputPerMillion: 1.5, usdOutputPerMillion: 9, pricingSource: GOOGLE_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
-    { id: "gemini-3-flash-preview", provider: "gemini", label: "Gemini 3 Flash Preview", tier: "free-tier", tasks: ["reasoning","summaries","vision"], notes: "Preview model; verify availability before activation. Standard price reference $0.50 input / $3 output per 1M tokens.", usdInputPerMillion: .5, usdOutputPerMillion: 3, pricingSource: GOOGLE_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
-    { id: "gemini-3.1-flash-lite", provider: "gemini", label: "Gemini 3.1 Flash-Lite", tier: "free-tier", tasks: ["classification","extraction","summaries"], notes: "Standard paid price reference $0.25 input / $1.50 output per 1M tokens.", usdInputPerMillion: .25, usdOutputPerMillion: 1.5, pricingSource: GOOGLE_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
-    { id: "gemini-2.5-flash", provider: "gemini", label: "Gemini 2.5 Flash", tier: "free-tier", tasks: ["reasoning","summaries","vision"], notes: "Standard paid price reference $0.30 input / $2.50 output per 1M text tokens.", usdInputPerMillion: .3, usdOutputPerMillion: 2.5, pricingSource: GOOGLE_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
-    { id: "gemini-2.5-flash-lite", provider: "gemini", label: "Gemini 2.5 Flash-Lite", tier: "free-tier", tasks: ["classification","extraction","summaries"], notes: "Standard paid price reference $0.10 input / $0.40 output per 1M tokens.", usdInputPerMillion: .1, usdOutputPerMillion: .4, pricingSource: GOOGLE_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
     { id: "openai/gpt-oss-120b", provider: "groq", label: "GPT OSS 120B · Groq", tier: "free-tier", tasks: ["reasoning","critique","structured output"], notes: "Free quotas may apply. Published paid price $0.15 input / $0.60 output per 1M tokens.", usdInputPerMillion: .15, usdOutputPerMillion: .6, pricingSource: GROQ_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
     { id: "openai/gpt-oss-20b", provider: "groq", label: "GPT OSS 20B · Groq", tier: "free-tier", tasks: ["classification","extraction","fast drafts"], notes: "Free quotas may apply. Published paid price $0.075 input / $0.30 output per 1M tokens.", usdInputPerMillion: .075, usdOutputPerMillion: .3, pricingSource: GROQ_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
     { id: "gpt-oss-120b", provider: "cerebras", label: "GPT OSS 120B · Cerebras", tier: "free-tier", tasks: ["reasoning","critique"], notes: "Check model ID and available quota in your account." },
@@ -207,9 +201,6 @@ function chooseModuleModel(moduleId: string, policy: { mode: string; selectedMod
       const bc=bp ? bp.inputPriceInrPerMillion*0.1+bp.outputPriceInrPerMillion*0.02 : Infinity;
       if(ac!==bc) return ac-bc;
     }
-    const geminiOrder = csv(process.env.GEMINI_MODELS || process.env.GOOGLE_GENERATIVE_AI_MODELS, "gemini-3.5-flash-lite,gemini-2.5-flash-lite");
-    if (a.provider === "gemini" && b.provider === "gemini") {
-      const ai = geminiOrder.indexOf(a.id), bi = geminiOrder.indexOf(b.id);
       if (ai !== -1 && bi !== -1 && ai !== bi) return ai - bi;
     }
     return a.label.localeCompare(b.label);
@@ -312,12 +303,6 @@ export async function chatCompletion(
 }
 export function routeTask(task: "classify" | "extract" | "summarize" | "ux-reasoning" | "vision" | "critique", providers = providersFromEnv()) {
   const priorities: Record<typeof task, string[]> = {
-    classify: ["qwen2.5:7b", "openai/gpt-oss-20b", "gemini-3.1-flash-lite", "mock/ux-direct"],
-    extract: ["qwen2.5:7b", "openai/gpt-oss-20b", "gemini-3.1-flash-lite", "mock/ux-direct"],
-    summarize: ["qwen2.5:7b", "openai/gpt-oss-20b", "gemini-3.1-flash-lite", "mock/ux-direct"],
-    "ux-reasoning": ["gemini-3.1-flash-lite", "openai/gpt-oss-120b", "gpt-oss-120b", "mock/ux-direct"],
-    vision: ["gemini-3.1-flash-lite", "mock/ux-direct"],
-    critique: ["openai/gpt-oss-120b", "gpt-oss-120b", "gemini-3.1-flash-lite", "mock/ux-direct"]
   };
   const catalog = getModelCatalog(providers);
   for (const id of priorities[task]) {
@@ -336,8 +321,6 @@ export function routeTask(task: "classify" | "extract" | "summarize" | "ux-reaso
  * remain single-provider; task aliases can use this policy.
  */
 /**
- * Controlled Gemini-only fallback for modules where allowFallback is enabled.
- * Fallback models must be in the configured Gemini allowlist and free-tier provider;
  * paid providers are never used as implicit fallbacks.
  */
 export async function chatCompletionWithFallback(
