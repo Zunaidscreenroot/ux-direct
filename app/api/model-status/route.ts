@@ -32,7 +32,7 @@ function diagnosticId() {
 }
 function safeError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown model-status error.";
-  return message.replace(/(Bearer\\s+)[^\\s]+/gi, "$1[redacted]").slice(0, 220);
+  return message.replace(/(Bearer\s+)[^\s]+/gi, "$1[redacted]").slice(0, 220);
 }
 function providerConfig(provider: ProviderId) {
   if (provider === "gemini") {
