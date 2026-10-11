@@ -52,6 +52,6 @@ test("task planning endpoint handles malformed JSON without crashing", async () 
   const response = await POST(request);
   const body = await response.json();
 
-  assert.equal(response.status, 500);
-  assert.equal(body.error, "Could not create task plan");
+  assert.equal(response.status, 400);
+  assert.equal(body.error, "Malformed JSON body");
 });
