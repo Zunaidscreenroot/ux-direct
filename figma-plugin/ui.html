@@ -77,7 +77,9 @@
     </div>
   </header>
   <div class="modelbar" aria-label="Free model selection">
-    <div id="modelSelect" class="model-select" aria-label="Active free AI model">Detecting working OpenRouter model…</div>
+    <select id="modelSelect" class="model-select" aria-label="Free model selection" title="Choose a free OpenRouter model" disabled>
+      <option value="">Loading live free models…</option>
+    </select>
     <div id="modelStatus" class="status-tag warn" aria-live="polite" title="A selected model is checked with a live test request before chat is enabled.">
       <span id="modelDot" class="dot"></span><span id="modelStatusText" class="tagtext">Model pending</span>
     </div>
@@ -288,7 +290,9 @@
 
     async function loadModelOptions() {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
-      setModelStatus("warn", "Loading models…", "Fetching free models from OpenRouter API.");
+      setModelStatus("warn", "Loading models…", "Fetching current free models from the OpenRouter catalog.");
+      const selector = $("modelSelect");
+      selector.disabled = true;
       try {
         const response = await fetch(API + "/api/model-status?fileKey=" + encodeURIComponent(verifiedFileKey), { method: "GET", cache: "no-store" });
         const payload = await response.json().catch(() => ({}));
@@ -297,28 +301,25 @@
         }
         modelOptions = payload.models.filter(model =>
           model && model.provider === "openrouter" &&
-          typeof model.id === "string" && typeof model.label === "string"
+          typeof model.id === "string" && model.id.endsWith(":free") &&
+          typeof model.label === "string"
         );
-        const preferred = modelOptions[0];
-        if (!preferred || payload.probe?.available !== true) {
-          const attemptDetails = Array.isArray(payload.attempts)
-            ? payload.attempts.map(attempt => {
-                const model = attempt && typeof attempt.model === "string" ? attempt.model : "Unknown model";
-                const status = attempt && typeof attempt.status === "number" ? "HTTP " + attempt.status : "Request failed";
-                const reason = attempt && typeof attempt.reason === "string" ? attempt.reason : "No additional error details.";
-                return "• " + model + " — " + status + ": " + reason;
-              }).join("\n")
-            : "";
-          const failure = payload.reason || "No free OpenRouter model passed the automatic response test.";
-          throw new Error(attemptDetails ? failure + "\n\nAttempt details:\n" + attemptDetails : failure);
+        if (!modelOptions.length) {
+          throw new Error(payload.reason || "OpenRouter did not return any free models.");
         }
-        currentModel = preferred;
-        $("modelSelect").textContent = preferred.label;
-        modelAvailable = true;
-        setModelStatus("ok", "OpenRouter connected", preferred.label + " passed the automatic live response test in " + Number(payload.probe.latencyMs || 0) + " ms.");
-        updateSendAvailability();
+        selector.replaceChildren();
+        modelOptions.forEach(model => {
+          const option = document.createElement("option");
+          option.value = model.id;
+          option.textContent = model.label;
+          selector.appendChild(option);
+        });
+        const preferred = modelOptions.find(model => model.id === payload.selectedModel) || modelOptions[0];
+        selector.value = preferred.id;
+        await checkSelectedModel();
       } catch (error) {
         const detail = error && error.message ? error.message : "Could not load models.";
+        selector.disabled = true;
         setModelStatus("bad", "Model list failed", detail);
         if (!modelProbeRow) modelProbeRow = appendMessage("assistant", "I couldn’t load the free-model list from Netlify Preview.\n\n" + detail);
         console.warn("[UX Direct free model list]", error);
@@ -327,11 +328,13 @@
 
     async function checkSelectedModel() {
       const version = ++modelProbeVersion;
-      currentModel = modelOptions[0] || null;
+      const selectedId = $("modelSelect").value;
+      currentModel = modelOptions.find(model => model.id === selectedId) || modelOptions[0] || null;
       modelAvailable = false;
       updateSendAvailability();
       if (!currentModel) {
-        setModelStatus("warn", "Choose a model", "Select a free model to run a connection probe.");
+        $("modelSelect").disabled = true;
+        setModelStatus("warn", "Choose a model", "No free model is available to probe.");
         return;
       }
       if (!backendHealthy || !verifiedFileKey) {
@@ -340,7 +343,8 @@
       }
 
       const model = currentModel;
-      setModelStatus("warn", "Checking model…", "Sending a small test prompt and waiting for a real model response.");
+      $("modelSelect").disabled = true;
+      setModelStatus("warn", "Checking model…", "Sending one small test prompt to the selected model.");
       try {
         const probeUrl = new URL(API + "/api/model-status");
         probeUrl.searchParams.set("fileKey", verifiedFileKey);
@@ -382,9 +386,14 @@
         }
         console.warn("[UX Direct model probe]", detail);
       }
+      $("modelSelect").disabled = !backendHealthy || modelOptions.length === 0 || isSending;
       updateSendAvailability();
     }
 
+    $("modelSelect").addEventListener("change", () => {
+      if (isSending) return;
+      void checkSelectedModel();
+    });
 
     function queueAutoHealthCheck() {
       if (autoHealthStarted || healthCheckRunning || !backendHealthy || !bridgeReady || verifiedFileKey !== ALLOWED_FILE_KEY) return;
