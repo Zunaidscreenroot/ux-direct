@@ -94,3 +94,12 @@ test("rejects oversized message payloads before provider invocation", async () =
   }, { providers }), (error: unknown) =>
     error instanceof GatewayError && error.status === 413);
 });
+
+
+test("paid provider keys do not enable paid routing without explicit opt-in", async () => {
+  const { providersFromEnv } = await import("../src/model-gateway");
+  const locked = providersFromEnv({ NODE_ENV: "production", OPENAI_API_KEY: "test-only" });
+  assert.equal(locked.some(p => p.name === "openai"), false);
+  const enabled = providersFromEnv({ NODE_ENV: "production", OPENAI_API_KEY: "test-only", ALLOW_PAID_MODELS: "true" });
+  assert.equal(enabled.some(p => p.name === "openai" && p.models.includes("gpt-4o-mini")), true);
+});
