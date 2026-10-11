@@ -55,9 +55,6 @@ figma.on("selectionchange", sendSelection);
 selectionChangeListenerRegistered = true;
 async function executeNativeApiHealthCheck() {
   var checks = [];
-  var createdNodes = [];
-  var temporaryPages = [];
-  var temporaryCollections = [];
   var testPage = null;
   var harness = null;
   var originalPage = null;
@@ -66,7 +63,6 @@ async function executeNativeApiHealthCheck() {
   var selectionHandlerPaused = false;
   var cleanupErrors = [];
   var healthTestTimedOut = false;
-  var healthCleanupTimedOut = false;
 
   function add(category, name, level, status, reason) {
     checks.push({ category: category, name: name, level: level, status: status,
@@ -164,7 +160,7 @@ async function executeNativeApiHealthCheck() {
     var reused = !!node;
     if (!node) {
       node = mutateLab("create " + name, factory);
-      createdNodes.push(node);
+
       if (name) mutateLab("name " + name, function () { node.name = name; });
     }
     // Only attach newly-created nodes. Reused inputs may intentionally live inside a
@@ -212,16 +208,24 @@ async function executeNativeApiHealthCheck() {
     return;
   }
 
-  var labReady = await runTest("Test isolation", "Create/find UXD API Test Lab page", async function () {
+  var labReady = await runTest("Test isolation", "Find and reuse UXD API Test Lab page", async function () {
     var pages = mutateFile("locate test lab in current file", function () { return figma.root.children; });
     testPage = pages.find(function (page) { return page.name === UXD_API_TEST_LAB_PAGE; }) || null;
+    var newlyCreated = false;
     if (!testPage) {
       testPage = mutateFile("create isolated test page", function () { return figma.createPage(); });
       mutateFile("name isolated test page", function () { testPage.name = UXD_API_TEST_LAB_PAGE; });
+      newlyCreated = true;
     }
-    await mutateFileAsync("load isolated test page", function () { return testPage.loadAsync(); });
-    await mutateFileAsync("navigate to isolated test page", function () { return figma.setCurrentPageAsync(testPage); });
+    // Avoid a load/navigation round-trip when the persistent page is already active.
+    if (newlyCreated || figma.currentPage.id !== testPage.id) {
+      await mutateFileAsync("load isolated test page", function () { return testPage.loadAsync(); });
+    }
+    if (figma.currentPage.id !== testPage.id) {
+      await mutateFileAsync("navigate to isolated test page", function () { return figma.setCurrentPageAsync(testPage); });
+    }
     if (figma.currentPage.id !== testPage.id) throw new Error("Figma did not activate UXD API Test Lab.");
+    return { uxdResultReason: newlyCreated ? "Created the dedicated test page once." : "Reused the existing dedicated test page without recreating it." };
   }, false);
 
   if (!labReady || !testPage) {
@@ -435,7 +439,7 @@ async function executeNativeApiHealthCheck() {
       mutateLab("position group item A", function () { a.x = 5; a.y = 5; });
       mutateLab("position group item B", function () { b.x = 35; b.y = 25; });
       var group = mutateLab("group test nodes", function () { return figma.group([a, b], harness); });
-      createdNodes.push(group);
+
       mutateLab("name persistent test group", function () { group.name = groupName; });
       if (group.type !== "GROUP" || group.children.length !== 2) throw new Error("Group did not contain both nodes.");
     });
@@ -449,7 +453,7 @@ async function executeNativeApiHealthCheck() {
       var a = rect("UXD flatten item A"), b = ellipse("UXD flatten item B");
       mutateLab("position flatten item", function () { b.x = 25; b.y = 25; });
       var vector = mutateLab("flatten test nodes", function () { return figma.flatten([a, b], harness); });
-      createdNodes.push(vector);
+
       mutateLab("name persistent flattened vector", function () { vector.name = vectorName; });
       if (vector.type !== "VECTOR") throw new Error("Flatten did not return a VECTOR node.");
     });
@@ -470,7 +474,7 @@ async function executeNativeApiHealthCheck() {
         var a = rect("UXD boolean A"), b = ellipse("UXD boolean B");
         mutateLab("position boolean-test node", function () { b.x = 25; });
         var result = mutateLab("execute boolean operation", function () { return operation.fn([a, b], harness); });
-        createdNodes.push(result);
+
         mutateLab("name persistent boolean result", function () { result.name = resultName; });
         if (result.type !== "BOOLEAN_OPERATION") throw new Error(operation.name + " did not return a BOOLEAN_OPERATION.");
       });
@@ -484,7 +488,7 @@ async function executeNativeApiHealthCheck() {
       var instance = findNodeByName(harness, instanceName, "INSTANCE");
       if (!instance) {
         instance = mutateLab("create test component instance", function () { return component.createInstance(); });
-        createdNodes.push(instance);
+
         mutateLab("name persistent test instance", function () { instance.name = instanceName; });
         if (instance.parent !== harness) mutateLab("attach persistent test instance", function () { harness.appendChild(instance); });
       }
@@ -500,7 +504,7 @@ async function executeNativeApiHealthCheck() {
       var frame = createNode(function () { return figma.createFrame(); }, "UXD frame to component", harness);
       rect("UXD component source child", frame);
       var component = mutateLab("convert frame to component", function () { return figma.createComponentFromNode(frame); });
-      createdNodes.push(component);
+
       mutateLab("name persistent frame component", function () { component.name = componentName; });
       if (component.type !== "COMPONENT") throw new Error("createComponentFromNode did not produce a component.");
     });
@@ -516,7 +520,7 @@ async function executeNativeApiHealthCheck() {
       mutateLab("resize variant A", function () { a.resize(100, 60); });
       mutateLab("resize variant B", function () { b.resize(100, 60); });
       var set = mutateLab("combine variants", function () { return figma.combineAsVariants([a, b], harness); });
-      createdNodes.push(set);
+
       mutateLab("name persistent component set", function () { set.name = setName; });
       if (set.type !== "COMPONENT_SET" || set.children.length !== 2) throw new Error("Component set did not contain both variants.");
     });
