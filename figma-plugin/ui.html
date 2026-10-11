@@ -226,7 +226,7 @@
       if (autoHealthStarted || healthCheckRunning || !backendHealthy || !bridgeReady || verifiedFileKey !== ALLOWED_FILE_KEY) return;
       autoHealthStarted = true;
       healthCheckRunning = true;
-      setHealth("warn", "Checking health…");
+      setHealth("warn", "Checking APIs…");
       $("healthSummary").textContent = "Running the native Plugin API suite in the dedicated UXD API Test Lab page. The active design page and selected frames are not used as test fixtures.";
       $("healthResults").replaceChildren();
       setActivity("Connected. Running automatic Plugin API checks…");
@@ -236,7 +236,7 @@
         healthTimeout = window.setTimeout(() => {
           if (!healthCheckRunning) return;
           healthCheckRunning = false;
-          setHealth("bad", "Health check failed");
+          setHealth("bad", "API check failed");
           $("healthSummary").textContent = "The health suite did not return a complete report within 90 seconds.";
           $("healthResults").replaceChildren();
           appendHealthRow("FAIL", "Health suite response", "No complete report was returned within 90 seconds.", "fail");
@@ -256,7 +256,7 @@
           if (!healthCheckRunning) {
             autoHealthStarted = true;
             healthCheckRunning = true;
-            setHealth("warn", "Checking health…");
+            setHealth("warn", "Checking APIs…");
             parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: command.commandId } }, "*");
           }
         }
@@ -277,13 +277,13 @@
         const bridge = await syncPluginBridge();
         if (!bridge.ok) {
           setActivity("Backend is connected; the plugin bridge is reconnecting. Health checks will start once it is ready.");
-          setHealth("warn", "Health queued");
+          setHealth("warn", "APIs queued");
         } else {
           setActivity("Connected. Running health checks automatically, then you can start chatting.");
           queueAutoHealthCheck();
         }
       } else {
-        setHealth("bad", "Health check blocked");
+        setHealth("bad", "APIs blocked");
       }
       if (heartbeatTimer) window.clearInterval(heartbeatTimer);
       heartbeatTimer = window.setInterval(async () => {
@@ -368,14 +368,8 @@
     }
 
     function updateSelectionContext(message) {
+      // Selection is chat context only; intentionally render no project/context panel.
       currentSelection = message;
-      const count = Array.isArray(message.selection) ? message.selection.length : 0;
-      $("contextText").textContent = count
-        ? (message.pageName || "Current page") + " · " + count + " selected"
-        : (message.pageName || "Current page") + " · No selection";
-      $("contextText").title = count
-        ? "Selected frame/layer metadata will be shared with the assistant; screenshots are not sent by this chat."
-        : "Select frames or layers in Figma to provide node metadata as context.";
     }
 
     async function sendChatMessage(overrideText) {
@@ -465,7 +459,7 @@
       if (message.type === "scope-approved") {
         if (message.fileKey !== ALLOWED_FILE_KEY) {
           setConnection("bad", "File blocked");
-          setHealth("bad", "Health blocked");
+          setHealth("bad", "APIs blocked");
           setActivity("UX Direct is restricted to the approved Figma document.");
           appendMessage("assistant", "This file is not allowlisted for UX Direct. No backend connection, health suite or task request will run.");
           return;
@@ -486,7 +480,7 @@
 
       if (message.type === "native-health-progress") {
         healthCheckRunning = true;
-        setHealth("warn", "Checking health…");
+        setHealth("warn", "Checking APIs…");
         if (message.text) $("healthSummary").textContent = message.text;
         return;
       }
