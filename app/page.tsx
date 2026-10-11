@@ -143,7 +143,7 @@ function ModelGatewayPanel() {
           <div><span>Paid model status</span><strong>{data?.gateway.paidModelsEnabled ? "Enabled with guardrails" : "Locked"}</strong></div>
         </div>
         {!budget?.pricingConfigured && <p className="gateway-inline-warning">Paid requests are blocked until input and output prices are entered in server environment settings. This prevents unpriced calls from being treated as free.</p>}
-        <p className="gateway-footnote">Cost figures are estimates based on configured prices. The current input/output rates apply to all paid models; only enable paid models whose current rates match these settings. Free-tier and local calls show ₹0 API cost; provider quota limits still apply. Budget/usage records are currently best-effort runtime memory and may reset on serverless restarts.</p>
+        <p className="gateway-footnote">Cost figures are estimates based on configured prices. The current input/output rates apply to all paid models; only enable paid models whose current rates match these settings. Free-tier and local calls show ₹0 API cost; provider quota limits still apply. {budget?.retention === "netlify-blobs" ? "Usage records are persisted to Netlify Blobs; concurrent requests can still race the budget check until atomic reservations are added." : "The ledger is using a runtime-memory fallback and may reset on serverless restarts. Configure Netlify Blobs for persistent records."}</p>
       </section>
 
       <div className="gateway-section-heading"><div><span className="section-kicker">PROVIDER REGISTRY</span><h2>Connections &amp; API key placeholders</h2></div><span className="count">{keyReady} PROVIDER KEYS DETECTED</span></div>
@@ -166,14 +166,14 @@ function ModelGatewayPanel() {
 
       <div className="gateway-section-heading"><div><span className="section-kicker">TOKEN LEDGER</span><h2>Request-by-request usage</h2></div><span className="count">LATEST {Math.min(records.length, 200)} RECORDS THIS MONTH</span></div>
       <section className="gateway-panel token-ledger-panel">
-        <div className="token-ledger-intro"><div><strong>Prompt tokens vs completion tokens</strong><p>Each completed gateway request records input tokens, output tokens, total tokens, provider/model, latency and estimated cost. Prompt and response content are never displayed here.</p></div><span className="ledger-retention">Runtime ledger</span></div>
+        <div className="token-ledger-intro"><div><strong>Prompt tokens vs completion tokens</strong><p>Each completed gateway request records input tokens, output tokens, total tokens, provider/model, latency and estimated cost. Prompt and response content are never displayed here.</p></div><span className="ledger-retention">{budget?.retention === "netlify-blobs" ? "Persistent · Netlify Blobs" : "Runtime fallback"}</span></div>
         {records.length === 0 ? <div className="gateway-empty-state"><div className="gateway-empty-icon">◷</div><strong>No real model calls recorded yet</strong><p>This is expected before providers are connected. Mock requests can verify the gateway wiring but do not count as real AI inference.</p></div> : <>
           <div className="token-ledger-table-wrap"><table className="gateway-table token-table"><thead><tr><th>TIME / REQUEST</th><th>MODEL</th><th>INPUT</th><th>OUTPUT</th><th>TOTAL TOKENS</th><th>EST. COST</th><th>LATENCY</th></tr></thead><tbody>
             {records.map(record => <tr key={record.id}><td><strong>{new Date(record.at).toLocaleString()}</strong><small>#{record.requestId.slice(0, 8)} · {record.status}</small></td><td><strong>{record.model}</strong><small>{record.provider}</small></td><td>{record.promptTokens.toLocaleString("en-IN")}</td><td>{record.completionTokens.toLocaleString("en-IN")}</td><td><div className="token-value">{record.totalTokens.toLocaleString("en-IN")}</div><div className="token-mini-track"><div style={{ width: Math.min(100, record.totalTokens / maxTokens * 100) + "%" }} /></div></td><td>{inr(record.estimatedCostInr)}</td><td>{record.latencyMs.toLocaleString("en-IN")} ms</td></tr>)}
           </tbody></table></div>
         </>}
       </section>
-      <p className="gateway-footer-note">Last refreshed: {data?.checkedAt ? new Date(data.checkedAt).toLocaleTimeString() : "not checked"} · API key placeholders are intentionally non-editable here. The final activation step should add keys to server-side environment variables, never browser storage or client-side code.</p>
+      <p className="gateway-footer-note">Last refreshed: {data?.checkedAt ? new Date(data.checkedAt).toLocaleTimeString() : "not checked"} · API key placeholders are intentionally non-editable here. The final activation step should add keys to server-side environment variables, never browser storage or client-side code. Paid usage remains disabled until prices and the budget are configured.</p>
       <footer>UX DIRECT <span>·</span> MODEL GATEWAY &amp; COST CONTROL</footer>
     </div>
   );
