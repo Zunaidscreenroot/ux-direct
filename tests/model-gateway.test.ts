@@ -151,3 +151,32 @@ test("custom endpoints are disabled unless local or paid mode is explicitly enab
   });
   assert.equal(local.some(p => p.name === "custom" && p.kind === "local"), true);
 });
+
+
+test("task aliases fail over between free providers but never select paid providers", async () => {
+  const { chatCompletionWithFallback } = await import("../src/model-gateway");
+  const configured: ProviderConfig[] = [
+    { name: "groq", baseUrl: "https://groq.example/v1", apiKey: "test", models: ["openai/gpt-oss-20b"], kind: "free-tier" },
+    { name: "gemini", baseUrl: "https://gemini.example/v1", apiKey: "test", models: ["gemini-3.5-flash"], kind: "free-tier" },
+    { name: "openai", baseUrl: "https://paid.example/v1", apiKey: "test", models: ["gpt-4o-mini"], kind: "paid" },
+    { name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" }
+  ];
+  const attempted: string[] = [];
+  const result = await chatCompletionWithFallback({
+    model: "uxd/classify",
+    messages: [{ role: "user", content: "Classify this design task." }]
+  }, {
+    providers: configured,
+    fetchImpl: (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      attempted.push(url);
+      if (url.includes("groq.example")) return new Response("rate limited", { status: 429 });
+      if (url.includes("gemini.example")) return new Response(JSON.stringify({
+        choices: [{ message: { content: "classification complete" } }]
+      }), { status: 200 });
+      throw new Error("Paid provider should never be attempted");
+    }) as typeof fetch
+  });
+  assert.equal(result.provider, "gemini");
+  assert.equal(attempted.some(url => url.includes("paid.example")), false);
+});
