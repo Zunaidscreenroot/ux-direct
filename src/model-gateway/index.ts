@@ -178,7 +178,7 @@ export async function chatCompletion(
   if (provider.kind === "mock" || provider.baseUrl.startsWith("mock://")) {
     const lastUser = [...request.messages].reverse().find(m => m.role === "user")?.content ?? "";
     const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-    await usageStore.recordModelUsage({ requestId, provider: provider.name, model: resolvedModel, tier: "mock", promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCostInr: 0, latencyMs: Date.now() - started, status: "success" });
+    await usageStore.recordModelUsage({ requestId, provider: provider.name, model: resolvedModel, tier: "mock", promptTokens: 0, completionTokens: 0, totalTokens: 0, usageReported: true, estimatedCostInr: 0, latencyMs: Date.now() - started, status: "success" });
     return { id: requestId, model: resolvedModel, content: `[UX Direct mock — no model API called] Received ${lastUser.length} characters. Configure a local or free-tier provider to enable real inference.`, provider: provider.name, latencyMs: Date.now() - started, usage };
   }
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -210,10 +210,13 @@ export async function chatCompletion(
     if (typeof content !== "string") throw new GatewayError("Provider response did not contain choices[0].message.content.", 502, provider.name);
     const latencyMs = Date.now() - started;
     const tokenUsage = usageStore.tokenUsageValues(payload.usage);
-    const estimatedCostInr = usageStore.estimateCostInr(tokenUsage.promptTokens, tokenUsage.completionTokens, provider, process.env, resolvedModel);
+    const estimatedCostInr = tokenUsage.usageReported
+      ? usageStore.estimateCostInr(tokenUsage.promptTokens, tokenUsage.completionTokens, provider, process.env, resolvedModel)
+      : usageStore.estimateCostInr(Math.ceil(request.messages.reduce((n, m) => n + m.content.length, 0) / 4), request.max_tokens ?? 1024, provider, process.env, resolvedModel);
     await usageStore.recordModelUsage({
       requestId, provider: provider.name, model: typeof payload.model === "string" ? payload.model : resolvedModel,
-      tier: provider.kind ?? "paid", ...tokenUsage, estimatedCostInr, latencyMs, status: "success"
+      tier: provider.kind ?? "paid", ...tokenUsage, estimatedCostInr, latencyMs, status: "success",
+      note: tokenUsage.usageReported ? undefined : "Provider did not return token usage; counts are unavailable and cost uses a conservative estimate."
     });
     return {
       id: typeof payload.id === "string" ? payload.id : undefined,
@@ -226,7 +229,7 @@ export async function chatCompletion(
       new GatewayError(error instanceof Error ? error.message : "Unknown provider error.", 502, provider.name);
     usageStore.recordModelUsage({
       requestId, provider: provider.name, model: resolvedModel, tier: provider.kind ?? "paid",
-      promptTokens: 0, completionTokens: 0, totalTokens: 0,
+      promptTokens: 0, completionTokens: 0, totalTokens: 0, usageReported: false,
       estimatedCostInr: usageStore.estimateCostInr(Math.ceil(request.messages.reduce((n, m) => n + m.content.length, 0) / 4), request.max_tokens ?? 1024, provider, process.env, resolvedModel),
       latencyMs: Date.now() - started, status: "error",
       note: failure.message + " Provider usage was unavailable; cost is a conservative estimate for this request."
