@@ -9,7 +9,7 @@ import { chatCompletionWithFallback, providersFromEnv } from "../model-gateway";
 export const gatewayProvider: ModelProvider = {
   id: "model-gateway",
   mode: "remote",
-  async plan({ title, request, project }: { title: string; request: string; project: TaskProject }): Promise<TaskPlan> {
+  async plan({ title, request, project, requestId }: { title: string; request: string; project: TaskProject; requestId?: string }): Promise<TaskPlan> {
     const providers = providersFromEnv();
     const paidSelected = process.env.ALLOW_PAID_MODELS === "true" &&
       Boolean(process.env.MODEL_GATEWAY_TASK_MODEL) &&
@@ -21,7 +21,7 @@ export const gatewayProvider: ModelProvider = {
     const model = paidSelected ? process.env.MODEL_GATEWAY_TASK_MODEL! : "uxd/reasoning";
     const result = await chatCompletionWithFallback({
       model,
-      requestId: crypto.randomUUID(),
+      requestId: requestId ?? crypto.randomUUID(),
       temperature: 0.2,
       max_tokens: 1800,
       messages: [
