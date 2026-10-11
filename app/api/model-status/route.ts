@@ -190,7 +190,18 @@ async function discoverWorkingFreeModel() {
     return { ...catalog, models: [] as string[], attempts: [] as Array<Record<string, unknown>> };
   }
   const candidates = catalog.models.slice(0, 5);
-  const attempts: Array<{ model: string; available: boolean; status?: number; providerCode?: string | number; reason?: string; latencyMs?: number }> = [];
+  const attempts: Array<{
+    model: string;
+    available: boolean;
+    status?: number;
+    providerCode?: string | number;
+    reason?: string;
+    finishReason?: string;
+    nativeFinishReason?: string;
+    messageFields?: string[];
+    completionTokens?: number;
+    latencyMs?: number;
+  }> = [];
   for (const model of candidates) {
     try {
       const result = await probeModel("openrouter", model);
@@ -199,6 +210,10 @@ async function discoverWorkingFreeModel() {
         ...("status" in result && typeof result.status === "number" ? { status: result.status } : {}),
         ...("providerCode" in result && (typeof result.providerCode === "string" || typeof result.providerCode === "number") ? { providerCode: result.providerCode } : {}),
         ...("reason" in result && typeof result.reason === "string" ? { reason: result.reason } : {}),
+        ...("finishReason" in result && typeof result.finishReason === "string" ? { finishReason: result.finishReason } : {}),
+        ...("nativeFinishReason" in result && typeof result.nativeFinishReason === "string" ? { nativeFinishReason: result.nativeFinishReason } : {}),
+        ...("messageFields" in result && Array.isArray(result.messageFields) ? { messageFields: result.messageFields.filter((field): field is string => typeof field === "string") } : {}),
+        ...("completionTokens" in result && typeof result.completionTokens === "number" ? { completionTokens: result.completionTokens } : {}),
         ...("latencyMs" in result && typeof result.latencyMs === "number" ? { latencyMs: result.latencyMs } : {})
       });
       if (result.available && "responseReceived" in result && result.responseReceived) {
