@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { planUXTask } from "@/src/core/orchestrator";
 import { mockProvider } from "@/src/providers/mock-provider";
+import { gatewayProvider } from "@/src/providers/gateway-provider";
+import { providersFromEnv } from "@/src/model-gateway";
+import { getBudgetSnapshot } from "@/src/model-gateway/usage-store";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 
@@ -61,14 +64,32 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Approved Figma file key required for plugin-originated task requests", requestId }, { status: 403, headers });
   }
   const taskInput = { title: parsed.data.title, request: parsed.data.request, project: parsed.data.project };
-  recordOperationalEvent({ source: "backend", event: "Task request received", status: "info", summary: "Task planning request accepted; prompt contents are not stored in the operational log.", requestId, project: parsed.data.project, mode: "mock" });
+  const configuredProviders = providersFromEnv();
+  const hasLocalOrFreeProvider = configuredProviders.some(provider => provider.kind === "local" || provider.kind === "free-tier");
+  const explicitlySelectedPaidModel = process.env.ALLOW_PAID_MODELS === "true" &&
+    Boolean(process.env.MODEL_GATEWAY_TASK_MODEL) &&
+    configuredProviders.some(provider => provider.kind === "paid" && provider.models.includes(process.env.MODEL_GATEWAY_TASK_MODEL!));
+  const selectedProvider = hasLocalOrFreeProvider || explicitlySelectedPaidModel ? gatewayProvider : mockProvider;
+  const executionMode = selectedProvider === mockProvider ? "mock" : "gateway";
+  recordOperationalEvent({ source: "backend", event: "Task request received", status: "info", summary: "Task planning request accepted; prompt contents are not stored in the operational log.", requestId, project: parsed.data.project, mode: executionMode });
   try {
-    const result = await planUXTask({ ...taskInput, provider: mockProvider });
+    const result = await planUXTask({ ...taskInput, requestId, provider: selectedProvider });
     const durationMs = Date.now() - startedAt;
-    recordOperationalEvent({ source: "backend", event: "Task response returned", status: "success", summary: "Mock plan returned to caller. No model API or Figma edit was performed.", requestId, project: parsed.data.project, durationMs, mode: "mock" });
-    return NextResponse.json({ ...result, requestId, mode: "mock", cost: { currency: "INR", amount: 0 }, diagnostics: { durationMs, responseStatus: "success", figmaChangesMade: false } }, { headers });
-  } catch {
-    recordOperationalEvent({ source: "backend", event: "Task planning failed", status: "error", summary: "The planner could not create a task plan.", requestId, project: parsed.data.project, durationMs: Date.now() - startedAt, mode: "mock" });
-    return NextResponse.json({ error: "Could not create task plan", requestId }, { status: 500, headers });
+    const usage = getBudgetSnapshot().records.find(record => record.requestId === requestId);
+    recordOperationalEvent({ source: "backend", event: "Task response returned", status: "success", summary: executionMode === "mock" ? "Mock plan returned. No model API or Figma edit was performed." : "Model gateway plan returned; no Figma edit was performed.", requestId, project: parsed.data.project, durationMs, mode: executionMode });
+    return NextResponse.json({
+      ...result, requestId, mode: executionMode,
+      cost: { currency: "INR", amount: usage?.estimatedCostInr ?? 0 },
+      diagnostics: {
+        durationMs, responseStatus: "success", figmaChangesMade: false,
+        provider: usage?.provider ?? "mock", model: usage?.model ?? "mock/ux-direct",
+        promptTokens: usage?.promptTokens ?? 0, completionTokens: usage?.completionTokens ?? 0,
+        totalTokens: usage?.totalTokens ?? 0
+      }
+    }, { headers });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not create task plan";
+    recordOperationalEvent({ source: "backend", event: "Task planning failed", status: "error", summary: message.slice(0, 220), requestId, project: parsed.data.project, durationMs: Date.now() - startedAt, mode: executionMode });
+    return NextResponse.json({ error: message, requestId }, { status: 500, headers });
   }
 }
