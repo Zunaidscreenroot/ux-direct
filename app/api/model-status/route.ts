@@ -12,14 +12,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
-const MODEL_PAIRS = new Set<string>();
 const modelKey = (provider: string, model: string) => provider + "::" + model;
-const freeModels = getFreeChatModelOptions();
-for (const model of freeModels) MODEL_PAIRS.add(modelKey(model.provider, model.id));
 
 function corsHeaders() {
   return {
-    // Figma plugin iframes use an opaque "null" origin and require wildcard CORS.
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
@@ -39,8 +35,21 @@ function approvedFileKey(request: Request, fileKey: unknown) {
   return !pluginOrigin(request) || isAllowedFigmaFileKey(typeof fileKey === "string" ? fileKey : null);
 }
 function safeError(error: unknown) {
-  const message = error instanceof Error ? error.message : "Model probe failed.";
-  return message.slice(0, 220);
+  const message = error instanceof Error ? error.message : "Unknown model-status error.";
+  return message.replace(/(Bearer\s+)[^\s]+/gi, "$1[redacted]").slice(0, 220);
+}
+function diagnosticId() {
+  return `ms-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+function logFailure(id: string, stage: string, error: unknown, provider?: string, model?: string) {
+  console.error("[model-status] request failed", JSON.stringify({
+    diagnosticId: id,
+    stage,
+    provider,
+    model,
+    errorName: error instanceof Error ? error.name : "UnknownError",
+    message: safeError(error)
+  }));
 }
 
 export async function OPTIONS() {
@@ -49,8 +58,6 @@ export async function OPTIONS() {
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  // Probe requests use GET so a Figma iframe does not need a JSON POST preflight.
-  // This route never accepts a user prompt; it sends only a fixed, tiny server-side test.
   if (url.searchParams.has("provider") || url.searchParams.has("model")) {
     return handleModelProbe(request, {
       fileKey: url.searchParams.get("fileKey"),
@@ -60,20 +67,35 @@ export async function GET(request: Request) {
   }
 
   const headers = corsHeaders();
-  if (!originAllowed(request)) {
-    return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
+  const id = diagnosticId();
+  let stage = "request-validation";
+  try {
+    if (!originAllowed(request)) {
+      return NextResponse.json({ error: "Origin not allowed.", diagnosticId: id }, { status: 403, headers });
+    }
+    const fileKey = url.searchParams.get("fileKey");
+    if (!approvedFileKey(request, fileKey)) {
+      return NextResponse.json({ error: "Approved Figma file key required.", diagnosticId: id }, { status: 403, headers });
+    }
+
+    stage = "provider-configuration";
+    const providers = providersFromEnv();
+    const configuredOptions = getFreeChatModelOptions(providers);
+    return NextResponse.json({
+      models: configuredOptions,
+      checkedAt: new Date().toISOString(),
+      diagnosticId: id,
+      note: "This response lists configuration only. To test live availability, pass provider, model and fileKey."
+    }, { headers });
+  } catch (error) {
+    logFailure(id, stage, error);
+    return NextResponse.json({
+      error: "Model-status configuration check failed.",
+      diagnosticId: id,
+      stage,
+      detail: safeError(error)
+    }, { status: 500, headers });
   }
-  const fileKey = url.searchParams.get("fileKey");
-  if (!approvedFileKey(request, fileKey)) {
-    return NextResponse.json({ error: "Approved Figma file key required." }, { status: 403, headers });
-  }
-  const providers = providersFromEnv();
-  const configuredOptions = getFreeChatModelOptions(providers);
-  return NextResponse.json({
-    models: configuredOptions,
-    checkedAt: new Date().toISOString(),
-    note: "A model is marked connected only after a live probe receives a non-empty model response."
-  }, { headers });
 }
 
 const probeSchema = z.object({
@@ -84,37 +106,51 @@ const probeSchema = z.object({
 
 async function handleModelProbe(request: Request, raw: unknown) {
   const headers = corsHeaders();
-  if (!originAllowed(request)) {
-    return NextResponse.json({ available: false, error: "Origin not allowed." }, { status: 403, headers });
-  }
-
-  const parsed = probeSchema.safeParse(raw);
-  if (!parsed.success) {
-    return NextResponse.json({ available: false, error: "A valid model, provider and approved file key are required." }, { status: 400, headers });
-  }
-  const { fileKey, provider, model } = parsed.data;
-  if (!approvedFileKey(request, fileKey) || !isAllowedFigmaFileKey(fileKey)) {
-    return NextResponse.json({ available: false, error: "Approved Figma file key required." }, { status: 403, headers });
-  }
-  if (!MODEL_PAIRS.has(modelKey(provider, model))) {
-    return NextResponse.json({ available: false, error: "This model is not in the approved free-model list." }, { status: 400, headers });
-  }
-
+  const id = diagnosticId();
   const startedAt = Date.now();
-  const providers = providersForFreeChat(providersFromEnv());
-  const configuredProvider = providers.find(item => item.name === provider &&
-    (provider === "gemini" ? item.kind === "free-tier" && Boolean(item.apiKey) : Boolean(item.apiKey)) &&
-    item.models.includes(model));
-
-  if (!configuredProvider) {
-    return NextResponse.json({
-      available: false, provider, model,
-      reason: provider === "gemini" ? "Gemini API key or free-tier model access is not configured in this Preview." : "OpenRouter API key is not configured in this Preview.",
-      checkedAt: new Date().toISOString(), latencyMs: Date.now() - startedAt
-    }, { headers });
-  }
+  let stage = "request-validation";
+  let providerName: string | undefined;
+  let modelName: string | undefined;
 
   try {
+    if (!originAllowed(request)) {
+      return NextResponse.json({ available: false, error: "Origin not allowed.", diagnosticId: id }, { status: 403, headers });
+    }
+
+    const parsed = probeSchema.safeParse(raw);
+    if (!parsed.success) {
+      return NextResponse.json({ available: false, error: "A valid model, provider and approved file key are required.", diagnosticId: id }, { status: 400, headers });
+    }
+    const { fileKey, provider, model } = parsed.data;
+    providerName = provider;
+    modelName = model;
+
+    if (!approvedFileKey(request, fileKey) || !isAllowedFigmaFileKey(fileKey)) {
+      return NextResponse.json({ available: false, error: "Approved Figma file key required.", diagnosticId: id }, { status: 403, headers });
+    }
+
+    stage = "model-allowlist";
+    const allowedModels = getFreeChatModelOptions();
+    if (!allowedModels.some(item => modelKey(item.provider, item.id) === modelKey(provider, model))) {
+      return NextResponse.json({ available: false, provider, model, error: "This model is not in the approved free-model list.", diagnosticId: id }, { status: 400, headers });
+    }
+
+    stage = "provider-configuration";
+    const providers = providersForFreeChat(providersFromEnv());
+    const configuredProvider = providers.find(item => item.name === provider &&
+      (provider === "gemini" ? item.kind === "free-tier" && Boolean(item.apiKey) : Boolean(item.apiKey)) &&
+      item.models.includes(model));
+
+    if (!configuredProvider) {
+      return NextResponse.json({
+        available: false, provider, model,
+        reason: provider === "gemini" ? "Gemini API key or free-tier model access is not configured in this Preview." : "OpenRouter API key is not configured in this Preview.",
+        diagnosticId: id,
+        checkedAt: new Date().toISOString(), latencyMs: Date.now() - startedAt
+      }, { headers });
+    }
+
+    stage = "live-provider-call";
     const result = await chatCompletion({
       model,
       providerId: provider,
@@ -127,27 +163,37 @@ async function handleModelProbe(request: Request, raw: unknown) {
       return NextResponse.json({
         available: false, provider, model,
         reason: "The provider returned an empty response.",
+        diagnosticId: id,
         checkedAt: new Date().toISOString(), latencyMs: Date.now() - startedAt
       }, { headers });
     }
     return NextResponse.json({
       available: true, provider, model, checkedAt: new Date().toISOString(),
+      diagnosticId: id,
       latencyMs: Date.now() - startedAt,
       responseReceived: true
     }, { headers });
   } catch (error) {
+    logFailure(id, stage, error, providerName, modelName);
     return NextResponse.json({
-      available: false, provider, model,
+      available: false,
+      provider: providerName,
+      model: modelName,
       reason: safeError(error),
-      checkedAt: new Date().toISOString(), latencyMs: Date.now() - startedAt
-    }, { headers });
+      diagnosticId: id,
+      stage,
+      checkedAt: new Date().toISOString(),
+      latencyMs: Date.now() - startedAt
+    }, { status: 500, headers });
   }
 }
 
- 
 export async function POST(request: Request) {
   let raw: unknown;
-  try { raw = await request.json(); }
-  catch { return NextResponse.json({ available: false, error: "Request body must be valid JSON." }, { status: 400, headers: corsHeaders() }); }
+  try {
+    raw = await request.json();
+  } catch {
+    return NextResponse.json({ available: false, error: "Request body must be valid JSON.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
+  }
   return handleModelProbe(request, raw);
 }
