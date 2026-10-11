@@ -13,7 +13,7 @@
     .brand { display:flex; align-items:center; gap:7px; font-size:14px; font-weight:750; letter-spacing:-.25px; white-space:nowrap; }
     .mark { display:grid; place-items:center; width:25px; height:25px; border-radius:7px; background:#252525; color:#fff; font-size:12px; font-weight:800; }
     .statusbar { display:flex; align-items:center; justify-content:flex-end; gap:4px; min-width:0; }
-    .status-tag { display:inline-flex; align-items:center; gap:5px; max-width:124px; min-width:0; border:1px solid var(--figma-color-border); border-radius:999px; padding:4px 6px; background:var(--figma-color-bg-secondary); color:var(--figma-color-text-secondary); font:600 9px/1.15 inherit; cursor:default; white-space:nowrap; }
+    .status-tag { display:inline-flex; align-items:center; gap:5px; max-width:124px; min-width:0; border:1px solid var(--figma-color-border); border-radius:999px; padding:4px 6px; background:var(--figma-color-bg-secondary); color:var(--figma-color-text-secondary); font-family:inherit; font-size:9px; font-weight:600; line-height:1.15; cursor:default; white-space:nowrap; }
     button.status-tag { cursor:pointer; }
     .status-tag:focus-visible, button:focus-visible, textarea:focus-visible, select:focus-visible { outline:2px solid var(--figma-color-bg-brand,#2563eb); outline-offset:2px; }
     .status-tag .tagtext { overflow:hidden; text-overflow:ellipsis; }
@@ -23,6 +23,7 @@
     .status-tag.bad { color:#c53f45; border-color:rgba(197,63,69,.3); background:rgba(197,63,69,.08); }
     .status-tag.bad .dot { background:#d14343; }
     .status-tag.warn .dot { background:#c18a24; }
+    .muted { color:var(--figma-color-text-secondary); }
     .chat { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; overflow:hidden; }
     .chatlog { display:flex; flex:1 1 auto; flex-direction:column; gap:12px; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px 2px 14px; scroll-behavior:smooth; }
     .message { display:flex; flex-direction:column; gap:4px; width:100%; }
@@ -186,7 +187,7 @@
       root.className = "suggestions";
       [
         ["Plan DMI VKYC", "Help me plan the DMI Finance VKYC entry point and end-to-end journey, including consent, loading, errors and recovery."],
-        ["Review selected screen", "Review the selected Figma screen. Tell me what metadata is available, what is still needed for a proper UX audit, and propose a review checklist."],
+        ["Review selection", "Review the selected Figma context. Tell me what metadata is available, what is still needed for a proper visual UX audit, and propose a review checklist."],
         ["Express Batch 3", "Help me structure the Express Computers Batch 3 wireframe work into a review-ready UX plan."]
       ].forEach((item) => {
         const button = document.createElement("button");
