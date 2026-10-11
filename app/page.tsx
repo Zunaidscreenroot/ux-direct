@@ -143,7 +143,7 @@ function ModelGatewayPanel() {
           <div><span>Paid model status</span><strong>{data?.gateway.paidModelsEnabled ? "Enabled with guardrails" : "Locked"}</strong></div>
         </div>
         {!budget?.pricingConfigured && <p className="gateway-inline-warning">Paid requests are blocked until input and output prices are entered in server environment settings. This prevents unpriced calls from being treated as free.</p>}
-        <p className="gateway-footnote">Cost figures are estimates based on configured prices. Free-tier and local calls show ₹0 API cost; provider quota limits still apply. Budget/usage records are currently best-effort runtime memory and may reset on serverless restarts.</p>
+        <p className="gateway-footnote">Cost figures are estimates based on configured prices. The current input/output rates apply to all paid models; only enable paid models whose current rates match these settings. Free-tier and local calls show ₹0 API cost; provider quota limits still apply. Budget/usage records are currently best-effort runtime memory and may reset on serverless restarts.</p>
       </section>
 
       <div className="gateway-section-heading"><div><span className="section-kicker">PROVIDER REGISTRY</span><h2>Connections &amp; API key placeholders</h2></div><span className="count">{keyReady} PROVIDER KEYS DETECTED</span></div>
