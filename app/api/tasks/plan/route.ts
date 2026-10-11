@@ -75,7 +75,7 @@ export async function POST(request: Request) {
   try {
     const result = await planUXTask({ ...taskInput, requestId, provider: selectedProvider });
     const durationMs = Date.now() - startedAt;
-    const usage = getBudgetSnapshot().records.find(record => record.requestId === requestId);
+    const usage = (await getBudgetSnapshot()).records.find(record => record.requestId === requestId);
     recordOperationalEvent({ source: "backend", event: "Task response returned", status: "success", summary: executionMode === "mock" ? "Mock plan returned. No model API or Figma edit was performed." : "Model gateway plan returned; no Figma edit was performed.", requestId, project: parsed.data.project, durationMs, mode: executionMode });
     return NextResponse.json({
       ...result, requestId, mode: executionMode,
