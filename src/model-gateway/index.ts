@@ -59,7 +59,8 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   const geminiBillingKind = env.GEMINI_BILLING_MODE === "paid" ? "paid" : "free-tier";
   if ((env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) && (geminiBillingKind !== "paid" || paidRoutingReady)) providers.push({
     name: "gemini", baseUrl: trimSlash(env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai"),
-    apiKey: env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY, apiKeyHeader: "x-goog-api-key",
+    // Google documents Bearer auth for its OpenAI-compatible endpoint.
+    apiKey: env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY,
     models: csv(env.GEMINI_MODELS || env.GOOGLE_GENERATIVE_AI_MODELS, "gemini-3.5-flash-lite,gemini-2.5-flash-lite"), kind: geminiBillingKind
   });
   const groqBillingKind = env.GROQ_BILLING_MODE === "paid" ? "paid" : "free-tier";
