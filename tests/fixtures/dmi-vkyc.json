@@ -1,0 +1,8 @@
+{
+  "id": "dmi-vkyc-baseline",
+  "project": "dmi-finance",
+  "title": "VKYC journey and credit report entry point",
+  "request": "Plan the VKYC entry point and journey, preserving product patterns and covering consent, verification outcomes, retries, errors, and recovery.",
+  "qualityChecks": ["purpose-specific consent", "OTP/identity states", "retry and lockout rules marked as assumptions if unknown", "service unavailable", "user cancellation", "clear next step", "credit report access only after valid verification", "accessibility and UX writing"],
+  "expectedHumanReview": true
+}
