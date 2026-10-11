@@ -1,6 +1,6 @@
 # UX Direct Figma plugin (MVP)
 
-This is the intended conversation cockpit inside Figma. Vercel remains the backend for planning and, as it is built out, task progress, rationale, latency, iterations, and audit history.
+The conversational cockpit belongs inside Figma. Vercel remains the backend for task planning and, as it is built out, progress, rationale, latency, iterations, and audit history.
 
 ## Current scope
 - Conversational prompt panel inside Figma.
@@ -11,12 +11,14 @@ This is the intended conversation cockpit inside Figma. Vercel remains the backe
 - Does not send full file contents.
 
 ## Import for local testing
-1. Download/clone the `ux-direct` repository.
-2. Compile the plugin TypeScript entry point to `figma-plugin/code.js` using the repo's plugin build instructions once the bundler script is added.
-3. In Figma Desktop, open **Plugins → Development → Import plugin from manifest…**.
-4. Select `figma-plugin/manifest.json`.
-5. Open a test design file, select a frame, and run **UX Direct** from **Plugins → Development**.
-6. Type a prompt and choose the matching project. Verify the plan appears in the plugin panel and that the design canvas remains unchanged.
+1. Download/clone this repository.
+2. In **Figma Desktop**, open **Plugins → Development → Import plugin from manifest…**.
+3. Select `figma-plugin/manifest.json`.
+4. Open a test design file, select a frame, and run **UX Direct** from **Plugins → Development**.
+5. Type a prompt and choose the matching project. Verify the plan appears in the plugin panel and the canvas remains unchanged.
 
-## Important test limitation
-The initial scaffold is not ready to import until `code.ts` is compiled to `code.js`. Also verify Figma's plugin manifest/network-access validation and the deployed endpoint's cross-origin request behavior before asking for user acceptance testing. Do not enable write operations or paid model APIs during this phase.
+## Current limitations
+- This is a mock-planning vertical slice, not model-powered UX reasoning yet.
+- The plugin currently reads selection metadata only; it does not inspect screenshots or full layer trees.
+- Validate Figma manifest/network permission behavior and backend CORS in the target Figma desktop/web client before acceptance testing.
+- Do not enable write operations or paid model APIs during this phase.
