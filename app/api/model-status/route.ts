@@ -285,22 +285,36 @@ export async function GET(request: Request) {
       const result = await discoverWorkingFreeModel();
       return NextResponse.json({ ...result, diagnosticId: id, note: "Models are fetched live from the provider API; no static model allowlist is used by this endpoint." }, { headers });
     }
-    // Discover current free models and return only the first model that passed a real response probe.
-    const result = await discoverWorkingFreeModel();
-    const models = result.models.map(modelId => ({
+    // Fetch the live catalog without probing every candidate. The plugin probes only
+    // the user's selected model, avoiding multiple inference requests on startup.
+    const result = await discoverModels("openrouter");
+    const preferredOrder = [
+      "nvidia/nemotron-3.5-lightning:free",
+      "dots-studio/dots-3-note-preview:free",
+      "apodex/apodex-1.1-mini:free"
+    ];
+    const rank = (modelId: string) => {
+      const index = preferredOrder.indexOf(modelId);
+      return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+    };
+    const liveModelIds = [...result.models].sort((a, b) => {
+      const rankDifference = rank(a) - rank(b);
+      return rankDifference !== 0 ? rankDifference : a.localeCompare(b);
+    }).slice(0, 80);
+    const models = liveModelIds.map(modelId => ({
       provider: "openrouter", id: modelId, label: modelId + " · Free",
       configured: result.configured, tier: "free-tier"
     }));
+    const selectedModel = models.find(model => model.id === preferredOrder[0])?.id ?? models[0]?.id ?? null;
     return NextResponse.json({
       models,
-      selectedModel: result.selectedModel ?? null,
-      probe: result.probe ?? { available: false },
+      selectedModel,
       provider: "openrouter",
       configured: result.configured,
-      reason: result.reason,
+      ...(!models.length ? { reason: ("reason" in result ? result.reason : undefined) ?? "No free OpenRouter models were returned by the live catalog." } : {}),
       checkedAt: result.checkedAt ?? new Date().toISOString(),
       diagnosticId: id,
-      note: "Models are fetched live from OpenRouter; only the first free model returning a real response is selected."
+      note: "Model options are fetched live from OpenRouter. The plugin verifies only the selected model before enabling chat."
     }, { headers });
   } catch (error) {
     console.error("[model-status] request failed", JSON.stringify({ diagnosticId: id, message: safeError(error) }));
