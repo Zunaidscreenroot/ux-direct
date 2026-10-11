@@ -115,7 +115,7 @@ async function probeModel(provider: ProviderId, model: string) {
       // Keep the HTTP status even when the upstream response is not JSON.
     }
     const quotaExhausted = response.status === 429 &&
-      /free-models-per-day|free model requests per day|add\\s*10\\s*credits/i.test(providerMessage ?? "");
+      /free-models-per-day|free model requests per day|add\s*10\s*credits/i.test(providerMessage ?? "");
     return {
       available: false, provider, model, status: response.status,
       ...(providerCode === undefined ? {} : { providerCode }),
