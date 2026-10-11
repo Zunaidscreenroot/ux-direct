@@ -136,7 +136,10 @@ test("OpenRouter only exposes explicitly free models until paid mode is enabled"
     NODE_ENV: "production",
     OPENROUTER_API_KEY: "test-only",
     OPENROUTER_MODELS: "vendor/paid-model",
-    ALLOW_PAID_MODELS: "true"
+    ALLOW_PAID_MODELS: "true",
+    MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M: "12",
+    MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: "48",
+    MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000"
   });
   assert.equal(paid.find(p => p.name === "openrouter")?.kind, "paid");
 });
