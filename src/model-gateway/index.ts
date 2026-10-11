@@ -211,7 +211,7 @@ export async function chatCompletion(
     const latencyMs = Date.now() - started;
     const tokenUsage = usageStore.tokenUsageValues(payload.usage);
     const estimatedCostInr = usageStore.estimateCostInr(tokenUsage.promptTokens, tokenUsage.completionTokens, provider, process.env, resolvedModel);
-    usageStore.recordModelUsage({
+    await usageStore.recordModelUsage({
       requestId, provider: provider.name, model: typeof payload.model === "string" ? payload.model : resolvedModel,
       tier: provider.kind ?? "paid", ...tokenUsage, estimatedCostInr, latencyMs, status: "success"
     });
