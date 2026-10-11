@@ -3,6 +3,7 @@ import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Preview-only diagnostic route: model discovery and probes call provider APIs directly.
 
 const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 type ProviderId = "gemini" | "openrouter";
