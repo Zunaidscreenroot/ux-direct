@@ -5,12 +5,13 @@ export async function planUXTask(input: {
   title: string;
   request: string;
   project: TaskProject;
+  requestId?: string;
   provider?: ModelProvider;
 }): Promise<{ task: UXTask; plan: Awaited<ReturnType<ModelProvider["plan"]>> }> {
   const provider = input.provider;
   if (!provider) throw new Error("No task planner configured. Use the mock provider until a provider is approved.");
   const now = new Date().toISOString();
-  const plan = await provider.plan({ title: input.title, request: input.request, project: input.project });
+  const plan = await provider.plan({ title: input.title, request: input.request, project: input.project, requestId: input.requestId });
   const task: UXTask = {
     id: randomUUID(),
     title: input.title.trim() || "Untitled UX task",

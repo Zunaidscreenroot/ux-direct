@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
+import { providersFromEnv } from "@/src/model-gateway";
 
 const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 function isAllowedOrigin(origin: string | null, request: Request): boolean {
@@ -25,11 +26,12 @@ export async function GET(request: Request) {
     if (!isAllowedFigmaFileKey(fileKey)) return NextResponse.json({ status: "blocked", error: "Approved Figma file key required." }, { status: 403, headers: corsHeaders(origin) });
   }
   const figmaOAuthConfigured = Boolean(process.env.FIGMA_CLIENT_ID && process.env.FIGMA_CLIENT_SECRET && process.env.FIGMA_REDIRECT_URI);
+  const activeProviders = providersFromEnv().filter(provider => provider.kind !== "mock");
   return NextResponse.json({
     service: "ux-direct-backend", status: "ok", checkedAt: new Date().toISOString(),
     deployment: { platform: "netlify", host: new URL(request.url).host },
-    mode: process.env.MODEL_PROVIDER || "mock",
-    modelProviderConfigured: Boolean(process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY),
+    mode: activeProviders.length ? activeProviders.map(provider => provider.name).join(", ") : "mock",
+    modelProviderConfigured: activeProviders.length > 0,
     figma: {
       oauthConfigured: figmaOAuthConfigured,
       status: figmaOAuthConfigured ? "configured_not_verified" : "not_configured",
