@@ -14,6 +14,14 @@ The gateway itself is application code and costs **$0 in gateway fees**. It call
 
 Free API access still needs a provider account/key in most cases. "Free tier" does not mean unlimited, guaranteed availability, private processing, or no data retention.
 
+## Token ledger and budget guard
+
+The Model Gateway dashboard is available from the main UX Direct navigation. `GET /api/model-gateway/dashboard` returns sanitized provider readiness, the model catalog, monthly budget snapshot, and per-request token ledger. It never returns key values. The chat endpoint records prompt/completion/total token counts when the provider reports usage, model/provider, request ID, latency, estimated INR cost, and blocked/failed outcomes. Prompt and response text are not written to the usage ledger.
+
+The initial ledger is best-effort in-process memory and can reset on serverless restarts. It is suitable for wiring and live operational visibility, not yet a durable billing ledger. Persistent storage and concurrency-safe budget reservations should be added before production paid traffic.
+
+Set `MODEL_GATEWAY_MONTHLY_BUDGET_INR=3000` for the default ₹3,000 monthly cap. Paid providers remain unavailable unless both per-million token prices are configured, the budget is non-zero, `ALLOW_PAID_MODELS=true`, and the provider key is present. Set prices from the provider's current pricing page; do not rely on guessed values. The budget guard estimates maximum request cost before dispatch and blocks requests that would exceed the remaining budget.
+
 ## Environment configuration
 
 Copy `.env.example` into a local environment file and leave all provider keys blank during development. Never commit a real key or use a `NEXT_PUBLIC_*` variable for a secret.
@@ -62,7 +70,7 @@ Set only providers that are available to your account. The gateway rejects model
 - `GET /api/model-gateway/models` — lists supported catalog entries and configured providers. Requires gateway access authentication.
 - `POST /api/model-gateway/chat` — accepts `{ "model": "...", "messages": [{ "role": "user", "content": "..." }] }`. Requires gateway access authentication.
 
-Use `Authorization: Bearer <MODEL_GATEWAY_ACCESS_KEY>` or `x-model-gateway-key`. Model aliases `uxd/classify`, `uxd/extract`, `uxd/summarize`, `uxd/reasoning`, `uxd/vision`, and `uxd/critique` select from configured providers using the built-in task policy; if no real provider is configured, they return the deterministic mock rather than silently calling a paid API. The gateway endpoints stay locked if no access key is configured, except when explicitly allowing unauthenticated local development outside production. Do not expose this as a public, unrestricted relay. Chat requests have a 30-request/minute in-memory limit per client IP; this is a best-effort single-runtime guard, not a distributed quota system.
+Use `Authorization: Bearer <MODEL_GATEWAY_ACCESS_KEY>` or `x-model-gateway-key`. The read-only dashboard endpoint `GET /api/model-gateway/dashboard` exposes sanitized status and token/budget records only; it does not expose secrets. Model aliases `uxd/classify`, `uxd/extract`, `uxd/summarize`, `uxd/reasoning`, `uxd/vision`, and `uxd/critique` select from configured providers using the built-in task policy; if no real provider is configured, they return the deterministic mock rather than silently calling a paid API. The gateway endpoints stay locked if no access key is configured, except when explicitly allowing unauthenticated local development outside production. Do not expose this as a public, unrestricted relay. Chat requests have a 30-request/minute in-memory limit per client IP; this is a best-effort single-runtime guard, not a distributed quota system.
 
 ## Routing policy
 
