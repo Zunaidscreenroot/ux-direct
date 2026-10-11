@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getOperationalEvents, recordOperationalEvent } from "@/src/observability/event-log";
+import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 
 const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 function isAllowedOrigin(origin: string | null, request: Request): boolean {
@@ -26,7 +27,8 @@ const eventSchema = z.object({
   mode: z.string().max(40).optional(),
   category: z.string().max(80).optional(),
   action: z.string().max(120).optional(),
-  testType: z.enum(["availability", "functional", "not-tested"]).optional()
+  testType: z.enum(["availability", "functional", "not-tested"]).optional(),
+  fileKey: z.string().max(200).optional()
 });
 export async function OPTIONS(request: Request) {
   return new Response(null, { status: 204, headers: corsHeaders(request.headers.get("origin")) });
@@ -54,6 +56,11 @@ export async function POST(request: Request) {
   }
   const parsed = eventSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid telemetry event" }, { status: 400, headers: corsHeaders(origin) });
-  const event = recordOperationalEvent(parsed.data);
+  if ((parsed.data.source === "figma-plugin" || parsed.data.fileKey) && !isAllowedFigmaFileKey(parsed.data.fileKey)) {
+    return NextResponse.json({ error: "Figma telemetry blocked: file key is not allowlisted." }, { status: 403, headers: corsHeaders(origin) });
+  }
+  const { fileKey, ...eventPayload } = parsed.data;
+  void fileKey;
+  const event = recordOperationalEvent(eventPayload);
   return NextResponse.json({ accepted: true, eventId: event.id }, { status: 202, headers: corsHeaders(origin) });
 }
