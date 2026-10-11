@@ -103,6 +103,42 @@ async function executeNativeApiHealthCheck() {
     assertUxDirectFileScope(name + " complete");
     return value;
   }
+  async function withActiveTestLabPage(label, callback) {
+    assertLab(label + " preflight");
+    var originalPage = figma.currentPage;
+    var originalPageId = originalPage.id;
+    var originalSelectionIds = Array.from(originalPage.selection).map(function (node) { return node.id; });
+    var testLabSelection = Array.from(testPage.selection);
+    try {
+      if (originalPageId !== testPage.id) {
+        await mutateFileAsync(label + " switch to Test Lab", function () {
+          return figma.setCurrentPageAsync(testPage);
+        });
+      }
+      await callback();
+    } finally {
+      // Restore the inactive lab page's own selection before leaving it.
+      // The user's original page and selection are never mutated by the probe.
+      if (figma.currentPage.id === testPage.id) {
+        mutateLab(label + " restore Test Lab selection", function () {
+          testPage.selection = testLabSelection;
+        });
+      }
+      if (figma.currentPage.id !== originalPageId) {
+        await mutateFileAsync(label + " restore original active page", function () {
+          return figma.setCurrentPageAsync(originalPage);
+        });
+      }
+      if (figma.currentPage.id !== originalPageId) {
+        throw new Error(label + ": failed to restore the original active page.");
+      }
+      var restoredSelectionIds = Array.from(originalPage.selection).map(function (node) { return node.id; });
+      if (restoredSelectionIds.length !== originalSelectionIds.length ||
+          restoredSelectionIds.some(function (id, index) { return id !== originalSelectionIds[index]; })) {
+        throw new Error(label + ": original page selection was not restored unchanged.");
+      }
+    }
+  }
   async function runTest(category, name, fn, needsLab) {
     var timeoutHandle = null;
     try {
