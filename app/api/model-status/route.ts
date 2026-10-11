@@ -70,7 +70,10 @@ async function discoverModels(provider: ProviderId) {
   const payload = await response.json() as { data?: Array<{ id?: string; name?: string; supportedGenerationMethods?: string[]; pricing?: { prompt?: string; completion?: string } }>; models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> };
   let models: string[];
   if (provider === "openrouter") {
-    models = (payload.data ?? [])\n      .filter(item => typeof item.id === "string" && item.id.endsWith(":free"))\n      .map(item => item.id)\n      .filter((id): id is string => Boolean(id));
+    models = (payload.data ?? [])
+      .filter(item => typeof item.id === "string" && item.id.endsWith(":free"))
+      .map(item => item.id)
+      .filter((id): id is string => Boolean(id));
   } else {
     models = (payload.models ?? [])
       .filter(item => (item.supportedGenerationMethods ?? []).includes("generateContent"))
