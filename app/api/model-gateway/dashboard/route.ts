@@ -34,7 +34,13 @@ export async function GET() {
     const key = modelKey(model.provider, model.id);
     if (!modelSettings[key]) modelSettings[key] = getDefaultModelPolicy(model.provider, model.id, model.usdInputPerMillion ?? 0, model.usdOutputPerMillion ?? 0, settings.usdToInrRate);
   }
-  const fullSettings = { ...settings, models: modelSettings };
+  const validModelKeys = new Set(catalog.map(model => modelKey(model.provider, model.id)));
+  const modules = Object.fromEntries(Object.entries(settings.modules).map(([id, policy]) => {
+    const stillListed = policy.selectedModelKey === "auto" || validModelKeys.has(policy.selectedModelKey);
+    const mode = policy.mode === "local" || policy.mode === "mock" ? "free" : policy.mode;
+    return [id, { ...policy, mode, selectedModelKey: stillListed ? policy.selectedModelKey : "auto" }];
+  })) as typeof settings.modules;
+  const fullSettings = { ...settings, modules, models: modelSettings };
   const keySlots = [
     { id: "openrouter", label: "OpenRouter", envName: "OPENROUTER_API_KEY", configured: Boolean(env.OPENROUTER_API_KEY), keyDetected: Boolean(env.OPENROUTER_API_KEY), tier: "unified-model-catalog", secretRequired: true },
   ];
