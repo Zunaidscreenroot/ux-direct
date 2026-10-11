@@ -9,7 +9,7 @@
   ],
   "networkAccess": {
     "allowedDomains": [
-      "https://ux-direct.vercel.app"
+      "https://uxdirect.netlify.app"
     ],
     "reasoning": "UX Direct sends the user's prompt and selected node metadata to its backend to create a task plan. It does not upload file contents or modify the design in this MVP."
   },
