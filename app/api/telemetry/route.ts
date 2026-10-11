@@ -20,7 +20,10 @@ const eventSchema = z.object({
   requestId: z.string().max(80).optional(),
   project: z.string().max(80).optional(),
   durationMs: z.number().nonnegative().max(600000).optional(),
-  mode: z.string().max(40).optional(),\n  category: z.string().max(80).optional(),\n  action: z.string().max(120).optional(),\n  testType: z.enum(["availability", "functional", "not-tested"]).optional()
+  mode: z.string().max(40).optional(),
+  category: z.string().max(80).optional(),
+  action: z.string().max(120).optional(),
+  testType: z.enum(["availability", "functional", "not-tested"]).optional()
 });
 export async function OPTIONS(request: Request) {
   return new Response(null, { status: 204, headers: corsHeaders(request.headers.get("origin")) });
