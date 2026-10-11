@@ -151,7 +151,14 @@ export async function GET(request: Request) {
     const providers = results.map((result, index) => result.status === "fulfilled"
       ? result.value
       : { provider: index === 0 ? "gemini" : "openrouter", configured: Boolean(providerConfig(index === 0 ? "gemini" : "openrouter")), models: [], reason: safeError(result.reason) });
-    return NextResponse.json({ providers, checkedAt: new Date().toISOString(), diagnosticId: id, note: "Live provider model catalogs; model discovery does not generate a completion or incur inference-token charges." }, { headers });
+    const models = providers.flatMap(entry => entry.models.map(modelId => ({
+      provider: entry.provider,
+      id: modelId,
+      label: entry.provider === "openrouter" ? `${modelId} · Free` : modelId,
+      configured: entry.configured,
+      tier: entry.provider === "openrouter" ? "free-tier" : "provider-managed"
+    })));
+    return NextResponse.json({ models, providers, checkedAt: new Date().toISOString(), diagnosticId: id, note: "Models are discovered live from provider APIs. OpenRouter is restricted to model IDs marked :free; Gemini model listing does not expose account-specific billing eligibility." }, { headers });
   } catch (error) {
     console.error("[model-status] request failed", JSON.stringify({ diagnosticId: id, message: safeError(error) }));
     const timedOut = error instanceof Error && (error.name === "AbortError" || /timed out/i.test(error.message));
