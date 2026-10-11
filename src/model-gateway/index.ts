@@ -220,3 +220,41 @@ export function routeTask(task: "classify" | "extract" | "summarize" | "ux-reaso
     catalog.find(m => m.configured && m.tier === "free-tier") ??
     catalog.find(m => m.provider === "mock") ?? catalog[0];
 }
+
+
+/**
+ * Retry/fail over only across explicitly configured local/free providers.
+ * Paid providers are never used as implicit fallbacks. Direct model requests
+ * remain single-provider; task aliases can use this policy.
+ */
+export async function chatCompletionWithFallback(
+  request: GatewayRequest,
+  options: { providers?: ProviderConfig[]; fetchImpl?: typeof fetch; timeoutMs?: number } = {}
+): Promise<GatewayResponse> {
+  const taskAliases: Record<string, "classify" | "extract" | "summarize" | "ux-reasoning" | "vision" | "critique"> = {
+    "uxd/classify": "classify", "uxd/extract": "extract", "uxd/summarize": "summarize",
+    "uxd/reasoning": "ux-reasoning", "uxd/vision": "vision", "uxd/critique": "critique"
+  };
+  const task = taskAliases[request.model];
+  if (!task) return chatCompletion(request, options);
+  const providers = options.providers ?? providersFromEnv();
+  const catalog = getModelCatalog(providers);
+  const first = routeTask(task, providers);
+  const candidates = [
+    first,
+    ...catalog.filter(entry => entry.configured && (entry.tier === "local" || entry.tier === "free-tier"))
+  ].filter((entry, index, list) => list.findIndex(other => other.id === entry.id && other.provider === entry.provider) === index);
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    try {
+      return await chatCompletion({ ...request, model: candidate.id }, options);
+    } catch (error) {
+      lastError = error;
+      // Never automatically retry a paid provider, even if a caller mislabels a model.
+      const provider = providers.find(p => p.name === candidate.provider);
+      if (provider?.kind !== "local" && provider?.kind !== "free-tier") throw error;
+    }
+  }
+  if (lastError instanceof Error) throw lastError;
+  throw new GatewayError("No configured local or free-tier model could complete this task.", 503);
+}
