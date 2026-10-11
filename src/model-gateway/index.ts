@@ -55,11 +55,12 @@ export function providersForFreeChat(providers = providersFromEnv(), selectedMod
   });
 }
 
-export function getFreeChatModelOptions(providers = providersFromEnv()): FreeChatModel[] {
+export function getFreeChatModelOptions(providers = providersFromEnv(), discoveredModelIds: string[] = []): FreeChatModel[] {
   const provider = providers.find(item => item.name === "openrouter" && Boolean(item.apiKey));
-  return (provider?.models ?? []).filter(id => id.endsWith(":free")).map(id => ({
-    provider: "openrouter", id, label: id, tier: "free-tier", configured: true
-  }));
+  if (!provider) return [];
+  return Array.from(new Set([...(provider.models ?? []), ...discoveredModelIds]))
+    .filter(id => id.endsWith(":free"))
+    .map(id => ({ provider: "openrouter", id, label: id, tier: "free-tier", configured: true }));
 }
 
 export function providersFromEnv(env: Record<string, string | undefined> = process.env): ProviderConfig[] {
@@ -68,10 +69,11 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   // Task routing prefers configured real providers and uses mock only as the last resort.
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
   const paidRoutingReady = env.ALLOW_PAID_MODELS === "true" && Number(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "3000") > 0;
-  const openRouterModels = csv(env.OPENROUTER_MODELS).filter(model => model.endsWith(":free") || paidRoutingReady);
+  // OpenRouter model IDs are discovered live by /api/model-status.
+  // The free-chat path admits only the explicitly selected :free model per request.
   if (env.OPENROUTER_API_KEY) providers.push({
     name: "openrouter", baseUrl: trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"),
-    apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: "free-tier"
+    apiKey: env.OPENROUTER_API_KEY, models: [], kind: "free-tier"
   });
   const groqBillingKind = env.GROQ_BILLING_MODE === "paid" ? "paid" : "free-tier";
   if (env.GROQ_API_KEY && (groqBillingKind !== "paid" || paidRoutingReady)) providers.push({
