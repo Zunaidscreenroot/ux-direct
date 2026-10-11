@@ -28,11 +28,16 @@ export type BudgetSnapshot = {
   pricingConfigured: boolean;
   month: string;
   records: UsageRecord[];
-  retention: "best-effort-runtime";
+  retention: "netlify-blobs" | "best-effort-runtime";
 };
 
-const records: UsageRecord[] = [];
+const runtimeRecords: UsageRecord[] = [];
 const MAX_RECORDS = 1000;
+type LedgerStore = {
+  get(key: string, options: { type: "json" }): Promise<unknown>;
+  setJSON(key: string, value: unknown): Promise<void>;
+};
+let storePromise: Promise<LedgerStore | null> | null = null;
 
 function positiveNumber(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -48,13 +53,50 @@ export function getBudgetConfig(env: Record<string, string | undefined> = proces
 function monthKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
-export function estimateCostInr(promptTokens: number, completionTokens: number, provider: ProviderConfig, env = process.env, model?: string) {
+async function getPersistentStore(): Promise<LedgerStore | null> {
+  // Netlify Blobs is used only in the deployed Netlify runtime. Local tests/dev
+  // remain dependency-free and use the runtime memory fallback.
+  if (process.env.NETLIFY !== "true" && !process.env.NETLIFY_BLOBS_CONTEXT) return null;
+  if (!storePromise) {
+    storePromise = (async () => {
+      try {
+        const { getStore } = await import("@netlify/blobs");
+        return getStore("ux-direct-model-gateway-usage") as unknown as LedgerStore;
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return storePromise;
+}
+async function readRecords(): Promise<{ records: UsageRecord[]; retention: BudgetSnapshot["retention"]; store: LedgerStore | null }> {
+  const store = await getPersistentStore();
+  if (store) {
+    try {
+      const value = await store.get("usage-records", { type: "json" });
+      const persisted = Array.isArray(value) ? value as UsageRecord[] : [];
+      runtimeRecords.splice(0, runtimeRecords.length, ...persisted.slice(0, MAX_RECORDS));
+      return { records: [...runtimeRecords], retention: "netlify-blobs", store };
+    } catch {
+      // Keep requests available during a temporary Blobs failure, but expose that
+      // the ledger is now only best-effort in memory for this runtime.
+    }
+  }
+  return { records: [...runtimeRecords], retention: "best-effort-runtime", store: null };
+}
+export function estimateCostInr(
+  promptTokens: number,
+  completionTokens: number,
+  provider: ProviderConfig,
+  env = process.env,
+  model?: string
+) {
   if (model?.endsWith(":free") || provider.kind === "local" || provider.kind === "free-tier" || provider.kind === "mock") return 0;
   const config = getBudgetConfig(env);
   return promptTokens * config.inputPriceInrPerMillion / 1_000_000 +
     completionTokens * config.outputPriceInrPerMillion / 1_000_000;
 }
-export function recordModelUsage(input: Omit<UsageRecord, "id" | "at"> & { id?: string; at?: string }) {
+export async function recordModelUsage(input: Omit<UsageRecord, "id" | "at"> & { id?: string; at?: string }) {
   const item: UsageRecord = {
     ...input,
     id: input.id ?? randomUUID(),
@@ -67,15 +109,22 @@ export function recordModelUsage(input: Omit<UsageRecord, "id" | "at"> & { id?: 
     requestId: input.requestId.slice(0, 100),
     provider: input.provider.slice(0, 60),
     model: input.model.slice(0, 160),
+    note: input.note?.slice(0, 240)
   };
-  records.unshift(item);
-  if (records.length > MAX_RECORDS) records.length = MAX_RECORDS;
-  // Log only metadata, never prompts, completions, or credentials.
+  const { records, store } = await readRecords();
+  const next = [item, ...records].slice(0, MAX_RECORDS);
+  runtimeRecords.splice(0, runtimeRecords.length, ...next);
+  if (store) {
+    try { await store.setJSON("usage-records", next); }
+    catch { /* The UI will report runtime-only retention if subsequent reads fail. */ }
+  }
+  // Structured logs never contain prompts, completions, or credentials.
   console.info("[model-gateway-usage]", JSON.stringify(item));
   return item;
 }
-export function getBudgetSnapshot(env = process.env, now = new Date()): BudgetSnapshot {
+export async function getBudgetSnapshot(env = process.env, now = new Date()): Promise<BudgetSnapshot> {
   const config = getBudgetConfig(env);
+  const { records, retention } = await readRecords();
   const month = monthKey(now);
   const monthly = records.filter(item => item.at.slice(0, 7) === month);
   const spent = monthly.reduce((total, item) => total + item.estimatedCostInr, 0);
@@ -90,11 +139,11 @@ export function getBudgetSnapshot(env = process.env, now = new Date()): BudgetSn
     pricingConfigured: config.inputPriceInrPerMillion > 0 && config.outputPriceInrPerMillion > 0,
     month,
     records: monthly.slice(0, 200),
-    retention: "best-effort-runtime"
+    retention
   };
 }
-export function assertBudgetAllows(promptChars: number, maxOutputTokens = 1024, env = process.env) {
-  const snapshot = getBudgetSnapshot(env);
+export async function assertBudgetAllows(promptChars: number, maxOutputTokens = 1024, env = process.env, model?: string) {
+  const snapshot = await getBudgetSnapshot(env);
   if (!snapshot.pricingConfigured) {
     throw Object.assign(new Error("Paid model requests are blocked until both input and output token prices are configured in INR per million tokens."), { status: 503 });
   }
@@ -105,7 +154,7 @@ export function assertBudgetAllows(promptChars: number, maxOutputTokens = 1024, 
   const reserve = estimatedPromptTokens * snapshot.inputPriceInrPerMillion / 1_000_000 +
     maxOutputTokens * snapshot.outputPriceInrPerMillion / 1_000_000;
   if (snapshot.spentThisMonthInr + reserve > snapshot.monthlyBudgetInr) {
-    throw Object.assign(new Error("Monthly budget guard blocked this request because its estimated maximum cost exceeds the remaining budget."), { status: 402 });
+    throw Object.assign(new Error(`Monthly budget guard blocked model "${model ?? "selected model"}" because its estimated maximum cost exceeds the remaining budget.`), { status: 402 });
   }
 }
 export function tokenUsageValues(usage?: TokenUsage) {
