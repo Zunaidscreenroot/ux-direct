@@ -59,8 +59,7 @@ async function discoverModels(provider: ProviderId) {
   const response = await timedFetch(config.modelsUrl, { headers: config.headers }, 12000);
   if (!response.ok) return { provider, configured: true, models: [], reason: `Provider model-list endpoint returned HTTP ${response.status}.` };
   const payload = await response.json() as { data?: Array<{ id?: string; name?: string; supportedGenerationMethods?: string[]; pricing?: { prompt?: string; completion?: string } }>; models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> };
-  let models: string[];
-  models = (payload.data ?? [])
+  const models: string[] = (payload.data ?? [])
     .filter(item => typeof item.id === "string" && item.id.endsWith(":free"))
     .map(item => item.id)
     .filter((id): id is string => Boolean(id));
