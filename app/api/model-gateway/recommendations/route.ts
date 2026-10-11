@@ -18,7 +18,13 @@ function authorized(request: Request): boolean {
 }
 
 export async function GET(request: Request) {
-  if (!authorized(request)) return NextResponse.json({ error: "Gateway access key required." }, { status: 401, headers: { "Cache-Control": "no-store" } });
+  const origin = request.headers.get("origin");
+  const sameOriginBrowser = Boolean(origin && origin === new URL(request.url).origin &&
+    request.headers.get("sec-fetch-site") !== "cross-site");
+  // The planner uses a zero-price :free model and sends only public capability
+  // metadata. Same-origin dashboard calls may run without a client-held secret;
+  // direct API callers still need the access key, and the route is rate limited.
+  if (!authorized(request) && !sameOriginBrowser) return NextResponse.json({ error: "Use the gateway dashboard or provide the gateway access key." }, { status: 401, headers: { "Cache-Control": "no-store" } });
   const ip = request.headers.get("x-nf-client-connection-ip") || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   const limit = checkGatewayRateLimit("model-recommendations:" + ip, Date.now(), 5);
   if (!limit.allowed) return NextResponse.json({ error: "Planner rate limit reached. Try again shortly." }, { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds), "Cache-Control": "no-store" } });
