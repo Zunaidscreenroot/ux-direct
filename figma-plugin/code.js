@@ -225,8 +225,8 @@ async function executeNativeApiHealthCheck() {
       "Available, not invoked because it would close the plugin.");
     availability("External navigation", "figma.openExternal", typeof figma.openExternal === "function",
       "Available, not invoked because it would open an external browser.");
-    add("Library", "Team Library access", "not-tested", "not-tested",
-      "Intentionally outside scope: no teamlibrary permission, shared-library lookup, or import is enabled.");
+    add("Library", "Team Library", "not-tested", "not-tested",
+      "Not tested intentionally: team-library APIs are out of scope; no teamlibrary permission, shared-library lookup, or import is enabled.");
     await postResult();
     return;
   }
@@ -597,8 +597,39 @@ async function executeNativeApiHealthCheck() {
       "Available but not invoked because it would open an external browser.");
     availability("Notifications", "figma.notify", typeof figma.notify === "function",
       "Available but not invoked to avoid interrupting the user.");
-    add("Library", "Team Library access", "not-tested", "not-tested",
-      "Intentionally outside scope. No teamlibrary permission or shared-library import/query is enabled.");
+    availability("Styles", "figma.getLocalPaintStylesAsync", typeof figma.getLocalPaintStylesAsync === "function",
+      "Availability only; local paint styles are not fetched during this check.");
+    availability("Styles", "figma.getLocalTextStylesAsync", typeof figma.getLocalTextStylesAsync === "function",
+      "Availability only; local text styles are not fetched during this check.");
+    availability("Styles", "figma.getLocalEffectStylesAsync", typeof figma.getLocalEffectStylesAsync === "function",
+      "Availability only; local effect styles are not fetched during this check.");
+    availability("Styles", "figma.getLocalGridStylesAsync", typeof figma.getLocalGridStylesAsync === "function",
+      "Availability only; local grid styles are not fetched during this check.");
+    availability("Components", "figma.getLocalComponentsAsync", typeof figma.getLocalComponentsAsync === "function",
+      "Availability only; the complete local component library is not enumerated.");
+    availability("Components", "figma.getLocalComponentSetsAsync", typeof figma.getLocalComponentSetsAsync === "function",
+      "Availability only; the complete local component-set library is not enumerated.");
+    availability("Styles", "figma.getStyleByIdAsync", typeof figma.getStyleByIdAsync === "function",
+      "Availability only; no style is loaded by ID.");
+    availability("Document loading", "figma.loadAllPagesAsync", typeof figma.loadAllPagesAsync === "function",
+      "Availability only; full-document page loading is intentionally not invoked.");
+    availability("Image API", "figma.createImage", typeof figma.createImage === "function",
+      "Availability only; creating an image resource is not necessary for this self-test.");
+    availability("Slice API", "figma.createSlice", typeof figma.createSlice === "function",
+      "Availability only; no additional visible canvas nodes are created.");
+    availability("Undo API", "figma.triggerUndo", typeof figma.triggerUndo === "function",
+      "Availability only; undo is never triggered because it could alter the user's edit history.");
+    availability("Plugin UI", "figma.ui.resize", typeof figma.ui.resize === "function",
+      "Availability only; the running plugin panel is not resized.");
+    availability("Plugin UI", "figma.ui.on", typeof figma.ui.on === "function",
+      "Availability only; the existing message wiring is left unchanged.");
+    availability("Plugin UI", "figma.ui.off", typeof figma.ui.off === "function",
+      "Availability only; no user message handlers are removed.");
+    availability("Variables", "figma.variables.getVariableCollectionByIdAsync",
+      !!figma.variables && typeof figma.variables.getVariableCollectionByIdAsync === "function",
+      "Availability only; collections are not looked up by an arbitrary ID.");
+    add("Library", "Team Library", "not-tested", "not-tested",
+      "Not tested intentionally: team-library APIs are out of scope; no teamlibrary permission, shared-library lookup, or import is enabled.");
   } catch (error) {
     add("Test runner", "Unexpected health-check failure", "functional", "error", error && error.message ? error.message : String(error));
   } finally {
