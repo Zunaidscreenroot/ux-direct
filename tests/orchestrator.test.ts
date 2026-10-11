@@ -32,5 +32,5 @@ test("paid model capabilities fail closed", async () => {
 
 test("external writes require explicit approval", async () => {
   const registry = createDefaultCapabilityRegistry();
-  await assert.rejects(registry.execute("figma.read", {}), /requires explicit human approval/);
+  await assert.rejects(registry.execute("figma.read", {}), /requires human approval/);
 });
