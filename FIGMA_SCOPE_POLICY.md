@@ -30,7 +30,11 @@ Figma's native Plugin API exposes the current file identity to this private deve
 
 ## Health-check behavior
 
-The native health check deliberately reports Team Library access as `NOT TESTED`. Do not add `"teamlibrary"` to `manifest.json` to silence an error: that would grant a wider library capability that is outside the approved scope.
+- Health checks remain read-only: no create, delete, page-switch, text/style, component, or variable-write operation is invoked.
+- Report safe API/property probes as `AVAILABLE`; this confirms that the runtime exposes the relevant method/property, not that a full mutating workflow was executed.
+- Run safe read-only calls where practical, including resolving the active page by ID and listing local variables/collections within this file.
+- Keep a single `NOT TESTED` summary for actual document-changing workflows and event delivery that requires a live user interaction.
+- Team Library access remains `NOT TESTED`. Do not add `"teamlibrary"` to `manifest.json` to silence an error: that would grant a wider library capability that is outside the approved scope.
 
 ## No full-document loading
 
