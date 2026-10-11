@@ -68,20 +68,10 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   // Task routing prefers configured real providers and uses mock only as the last resort.
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
   const paidRoutingReady = env.ALLOW_PAID_MODELS === "true" && Number(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "3000") > 0;
-  const openRouterModels = csv(
-    env.OPENROUTER_MODELS,
-    "nvidia/nemotron-3-ultra-550b-a55b:free,nvidia/nemotron-3.5-lightning:free,google/gemma-4-31b-it:free"
-  ).filter(model => model.endsWith(":free") || paidRoutingReady);
-  if (env.OPENROUTER_API_KEY && openRouterModels.length) providers.push({
+  const openRouterModels = csv(env.OPENROUTER_MODELS).filter(model => model.endsWith(":free") || paidRoutingReady);
+  if (env.OPENROUTER_API_KEY) providers.push({
     name: "openrouter", baseUrl: trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"),
-    apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: openRouterModels.some(model => !model.endsWith(":free")) ? "paid" : "free-tier"
-  });
-  const geminiBillingKind = env.GEMINI_BILLING_MODE === "paid" ? "paid" : "free-tier";
-  if ((env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) && (geminiBillingKind !== "paid" || paidRoutingReady)) providers.push({
-    name: "gemini", baseUrl: trimSlash(env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai"),
-    // Google documents Bearer auth for its OpenAI-compatible endpoint.
-    apiKey: env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY,
-    models: csv(env.GEMINI_MODELS || env.GOOGLE_GENERATIVE_AI_MODELS, "gemini-3.5-flash-lite,gemini-2.5-flash-lite"), kind: geminiBillingKind
+    apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: "free-tier"
   });
   const groqBillingKind = env.GROQ_BILLING_MODE === "paid" ? "paid" : "free-tier";
   if (env.GROQ_API_KEY && (groqBillingKind !== "paid" || paidRoutingReady)) providers.push({
@@ -354,80 +344,18 @@ export async function chatCompletionWithFallback(
   request: GatewayRequest,
   options: { providers?: ProviderConfig[]; fetchImpl?: typeof fetch; timeoutMs?: number } = {}
 ): Promise<GatewayResponse> {
-  try { return await chatCompletion(request, options); }
-  catch (primaryError) {
-    const moduleId = request.moduleId ?? TASK_MODULES[request.model] ?? "general";
-    const settings = await getGatewaySettings();
-    const policy = settings.modules[moduleId];
-    if (!policy?.enabled || !policy.allowFallback || policy.mode !== "free" || !policy.selectedModelKey.startsWith("gemini::")) throw primaryError;
-    const generalPolicy = settings.modules.general;
-    if (!generalPolicy?.enabled || generalPolicy.mode !== "free" || generalPolicy.selectedModelKey !== "auto") throw primaryError;
-    const primaryModel = policy.selectedModelKey.slice("gemini::".length);
-    const status = primaryError instanceof GatewayError ? primaryError.status : (typeof primaryError === "object" && primaryError !== null && "status" in primaryError && typeof primaryError.status === "number" ? primaryError.status : 502);
-    if (![408, 429, 500, 502, 503, 504].includes(status)) throw primaryError;
-    const providers = options.providers ?? providersFromEnv();
-    const gemini = providers.find(provider => provider.name === "gemini" && provider.kind === "free-tier");
-    if (!gemini || gemini.models.length < 2) throw primaryError;
-    let lastError: unknown = primaryError;
-    for (const model of gemini.models) {
-      if (model === primaryModel || model === request.model) continue;
-      try { return await chatCompletion({ ...request, model, providerId: "gemini", moduleId: undefined }, options); }
-      catch (error) { lastError = error; }
-    }
-    throw lastError instanceof Error ? lastError : primaryError;
-  }
+  return chatCompletion(request, options);
 }
 
-
-/**
- * Send the explicitly selected free model first, then retry only the curated free-tier
- * Gemini/OpenRouter options on retryable failures. No paid model IDs are eligible.
- */
 export async function chatCompletionWithFreeFallback(
   request: GatewayRequest,
   options: { providers?: ProviderConfig[]; fetchImpl?: typeof fetch; timeoutMs?: number } = {}
 ): Promise<GatewayResponse> {
-  const selected = FREE_CHAT_MODELS.find(model => model.provider === request.providerId && model.id === request.model);
-  if (!selected) throw new GatewayError("The selected model is not in the approved free-model list.", 400);
-
-  const providers = providersForFreeChat(options.providers ?? providersFromEnv());
-  const availableProvider = providers.find(provider => provider.name === selected.provider &&
-    provider.models.includes(selected.id) &&
-    (selected.provider === "gemini" ? provider.kind === "free-tier" && Boolean(provider.apiKey) : Boolean(provider.apiKey)));
-  if (!availableProvider) {
-    throw new GatewayError("This provider is not configured with a usable free-tier API key.", 503, selected.provider);
+  if (request.providerId !== "openrouter" || !request.model.endsWith(":free")) {
+    throw new GatewayError("Only an explicitly identified OpenRouter :free model is allowed.", 400);
   }
-
-  try {
-    return await chatCompletion({ ...request, model: selected.id, providerId: selected.provider, moduleId: undefined }, { ...options, providers });
-  } catch (primaryError) {
-    const statusOf = (error: unknown) => error instanceof GatewayError ? error.status :
-      typeof error === "object" && error !== null && "status" in error && typeof error.status === "number" ? error.status : 502;
-    const primaryStatus = statusOf(primaryError);
-    if (![401, 403, 404, 408, 429, 500, 502, 503, 504].includes(primaryStatus)) throw primaryError;
-
-    let lastError: unknown = primaryError;
-    const disabledProviders = new Set<string>();
-    if (primaryStatus === 401 || primaryStatus === 403) disabledProviders.add(selected.provider);
-
-    for (const candidate of FREE_CHAT_MODELS) {
-      if (candidate.provider === selected.provider && candidate.id === selected.id) continue;
-      if (disabledProviders.has(candidate.provider)) continue;
-      const provider = providers.find(item => item.name === candidate.provider &&
-        item.models.includes(candidate.id) &&
-        (candidate.provider === "gemini" ? item.kind === "free-tier" && Boolean(item.apiKey) : Boolean(item.apiKey)));
-      if (!provider) continue;
-      try {
-        return await chatCompletion({
-          ...request, model: candidate.id, providerId: candidate.provider, moduleId: undefined
-        }, { ...options, providers });
-      } catch (error) {
-        lastError = error;
-        const status = statusOf(error);
-        if (status === 401 || status === 403) disabledProviders.add(candidate.provider);
-        if (![401, 403, 404, 408, 429, 500, 502, 503, 504].includes(status)) break;
-      }
-    }
-    throw lastError instanceof Error ? lastError : primaryError;
-  }
+  const providers = providersForFreeChat(options.providers ?? providersFromEnv(), request.model);
+  const provider = providers.find(item => item.name === "openrouter" && Boolean(item.apiKey) && item.models.includes(request.model));
+  if (!provider) throw new GatewayError("OpenRouter API key is not configured for this Preview deployment.", 503, "openrouter");
+  return chatCompletion({ ...request, providerId: "openrouter", moduleId: undefined }, { ...options, providers });
 }
