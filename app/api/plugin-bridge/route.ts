@@ -221,7 +221,15 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Figma plugin is offline. Open the plugin and try again." }, { status: 409, headers });
       }
       if (current.latestCommand && ["pending", "claimed"].includes(current.latestCommand.status)) {
-        return NextResponse.json({ error: "A plugin action is already running. Wait for it to finish." }, { status: 409, headers });
+        const commandAgeMs = Date.now() - Date.parse(current.latestCommand.issuedAt);
+        if (Number.isFinite(commandAgeMs) && commandAgeMs < 180000) {
+          return NextResponse.json({ error: "A plugin action is already running. Wait for it to finish." }, { status: 409, headers });
+        }
+        current.latestCommand = {
+          ...current.latestCommand, status: "failed", completedAt: new Date().toISOString(),
+          failure: "Previous native API test stopped responding; stale command lock was cleared."
+        };
+        await writeJson(path, current);
       }
       const now = new Date();
       const command: BridgeCommand = {

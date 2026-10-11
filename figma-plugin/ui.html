@@ -173,6 +173,11 @@
   window.onmessage = (event) => {
     const message = event.data && event.data.pluginMessage;
     if (!message) return;
+    if (message.type === "native-health-progress") {
+      if (message.text) $("healthSummary").textContent = message.text;
+      if (message.text) status(message.text);
+      return;
+    }
     if (message.type === "scope-approved") {
       if (message.fileKey !== ALLOWED_FILE_KEY) {
         status("Plugin UI blocked: this file is not the allowlisted Figma document.");
