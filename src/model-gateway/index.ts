@@ -36,7 +36,7 @@ export class GatewayError extends Error {
     this.name = "GatewayError";
   }
 }
-const trimSlash = (value: string) => value.replace(/\\/+$/, "");
+const trimSlash = (value: string) => value.replace(/\/+$/, "");
 const csv = (value?: string, fallback = "") =>
   (value || fallback).split(",").map(s => s.trim()).filter(Boolean);
 
