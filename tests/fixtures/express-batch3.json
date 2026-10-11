@@ -1,0 +1,9 @@
+{
+  "id": "express-batch3-baseline",
+  "project": "express-computers",
+  "title": "Continue Batch 3 wireframes",
+  "request": "Use Batch 1 and Batch 2 as evidence, incorporate reviewer feedback, identify reusable patterns, and prepare review-ready Batch 3 screens.",
+  "sourceEvidenceRequired": ["batch-1-screens", "batch-2-screens", "review-feedback"],
+  "qualityChecks": ["pattern provenance", "requirements coverage", "component reuse", "responsive behavior", "empty/error/loading states", "review-ready rationale"],
+  "expectedHumanReview": true
+}
