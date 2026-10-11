@@ -48,8 +48,9 @@ function corsHeaders(request: Request): Record<string, string> {
     "Cache-Control": "no-store",
   };
 }
-function isDashboardRequest(request: Request): boolean {
-  return request.headers.get("origin") === new URL(request.url).origin;
+function isDashboardRequest(request: Request, requireExplicitOrigin = false): boolean {
+  const origin = request.headers.get("origin");
+  return origin === new URL(request.url).origin || (!requireExplicitOrigin && !origin);
 }
 function isPluginRequest(request: Request): boolean {
   const origin = request.headers.get("origin");
@@ -125,7 +126,7 @@ export async function POST(request: Request) {
 
   const mode = body.mode;
   const isDashboardCommand = mode === "command";
-  if (isDashboardCommand ? !isDashboardRequest(request) : !isPluginRequest(request)) {
+  if (isDashboardCommand ? !isDashboardRequest(request, true) : !isPluginRequest(request)) {
     return NextResponse.json({ error: isDashboardCommand ? "Dashboard origin required to issue a command." : "Figma plugin origin required." }, { status: 403, headers });
   }
   if (!storageReady()) return NextResponse.json({ error: "Private bridge storage is not configured for this deployment." }, { status: 503, headers });

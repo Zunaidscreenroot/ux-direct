@@ -174,3 +174,24 @@ footer span { margin: 0 6px; color: #9bb98b; }
 .retention-note { margin:0; padding:13px 18px; background:#fafbf9; border-top:1px solid var(--line); }
 @media (max-width:1000px) { .connection-grid { grid-template-columns:1fr; } }
 @media (max-width:560px) { .connection-toolbar { align-items:flex-start; flex-direction:column; } .event-row { grid-template-columns:8px minmax(0,1fr); } .event-row time { grid-column:2; } }
+
+.plugin-health-button { width:100%; margin-top:12px; background:#edf5e8; border-color:#dbe7d3; }
+.plugin-health-button:disabled { opacity:.55; cursor:not-allowed; }
+.plugin-help, .plugin-health-message { margin:10px 0 0 !important; font-size:11px !important; line-height:1.55 !important; }
+.plugin-health-message { padding:9px 10px; border-radius:8px; background:#f7f9f5; border:1px solid var(--line); color:var(--ink) !important; overflow-wrap:anywhere; }
+.plugin-health-report { margin-top:13px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+.health-counts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; padding:10px; background:#f7f9f5; }
+.health-counts span { font-size:9px; color:var(--muted); display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+.health-counts strong { font-size:17px; color:var(--ink); }
+.plugin-health-report details > summary { cursor:pointer; padding:11px 10px; font-size:11px; font-weight:700; border-top:1px solid var(--line); }
+.plugin-check-list { max-height:440px; overflow:auto; border-top:1px solid var(--line); }
+.plugin-check-row { display:grid; grid-template-columns:78px minmax(0,1fr); gap:8px; padding:10px; border-bottom:1px solid #edf0ec; align-items:start; }
+.plugin-check-badge { display:inline-block; font-size:8px; font-weight:800; padding:4px 5px; border-radius:4px; text-align:center; }
+.check-pass { background:#e5f5eb; color:#216b4c; }
+.check-fail { background:#fdecec; color:#a63737; }
+.check-untested { background:#fff3d9; color:#875b16; }
+.plugin-check-row div { min-width:0; }
+.plugin-check-row strong, .plugin-check-row span { display:block; }
+.plugin-check-row div strong { font-size:10px; overflow-wrap:anywhere; }
+.plugin-check-row div span { color:var(--muted); margin-top:3px; font-size:9px; }
+.plugin-check-row p { margin:5px 0 0; color:#68736f; font-size:10px; line-height:1.5; overflow-wrap:anywhere; }

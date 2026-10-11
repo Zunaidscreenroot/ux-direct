@@ -18,6 +18,14 @@ type PlanResult = {
   plan: { summary: string; assumptions: string[]; steps: Array<{ id: string; label: string; capabilityId: string }>; qualityChecks: string[]; requiresHumanReview: boolean };
   mode: string; cost: { currency: string; amount: number }; requestId?: string;
 };
+type PluginCheck = { category: string; name: string; level: "availability" | "functional" | "not-tested"; status: "success" | "error" | "not-tested"; reason: string };
+type PluginHealthReport = { passed: number; failed: number; notTested: number; checkedAt: string; checks: PluginCheck[] };
+type PluginSession = {
+  clientId: string; status: "online" | "offline"; connectedAt: string; lastHeartbeatAt: string;
+  disconnectedAt?: string; lastTestAt?: string; isOnline: boolean;
+  latestCommand?: { commandId: string; action: string; status: "pending" | "claimed" | "completed" | "failed"; issuedAt: string; completedAt?: string; failure?: string };
+  healthReport?: PluginHealthReport;
+};
 
 const API = "";
 const navItems = [
@@ -40,15 +48,19 @@ export default function Home() {
   const [health, setHealth] = useState<Health | null>(null);
   const [healthError, setHealthError] = useState("");
   const [events, setEvents] = useState<EventItem[]>([]);
+  const [bridgeSessions, setBridgeSessions] = useState<PluginSession[]>([]);
+  const [pluginHealthBusy, setPluginHealthBusy] = useState(false);
+  const [pluginHealthMessage, setPluginHealthMessage] = useState("");
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
   const [refreshingConnections, setRefreshingConnections] = useState(false);
 
   const refreshConnections = useCallback(async () => {
     setRefreshingConnections(true);
     try {
-      const [healthResponse, eventsResponse] = await Promise.all([
+      const [healthResponse, eventsResponse, bridgeResponse] = await Promise.all([
         fetch(API + "/api/health", { cache: "no-store" }),
-        fetch(API + "/api/telemetry?limit=30", { cache: "no-store" })
+        fetch(API + "/api/telemetry?limit=30", { cache: "no-store" }),
+        fetch(API + "/api/plugin-bridge?mode=sessions", { cache: "no-store" }).catch(() => null)
       ]);
       if (!healthResponse.ok) throw new Error("Health endpoint returned " + healthResponse.status);
       const nextHealth = await healthResponse.json() as Health;
@@ -57,6 +69,12 @@ export default function Home() {
       if (eventsResponse.ok) {
         const payload = await eventsResponse.json();
         setEvents(Array.isArray(payload.events) ? payload.events : []);
+      }
+      if (bridgeResponse && bridgeResponse.ok) {
+        const bridgePayload = await bridgeResponse.json();
+        setBridgeSessions(Array.isArray(bridgePayload.sessions) ? bridgePayload.sessions : []);
+      } else {
+        setBridgeSessions([]);
       }
       setLastRefresh(new Date().toISOString());
     } catch (err) {
@@ -79,6 +97,55 @@ export default function Home() {
         body: JSON.stringify({ source: "dashboard", event, status, summary, ...details })
       });
     } catch { /* The task response remains authoritative if telemetry is unavailable. */ }
+  }
+
+  async function runPluginHealthCheck() {
+    if (!activePluginSession || pluginHealthBusy) {
+      setPluginHealthMessage("Open UX Direct in Figma and keep the plugin panel open first.");
+      return;
+    }
+    setPluginHealthBusy(true);
+    setPluginHealthMessage("Sending a native API test request to the active Figma plugin…");
+    const clientId = activePluginSession.clientId;
+    try {
+      await logDashboardEvent("Plugin health check requested", "info", "User requested the native Figma API self-test from the Vercel dashboard.");
+      const response = await fetch("/api/plugin-bridge", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "command", clientId, action: "native-api-health-check" })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Could not send the command to Figma");
+      const commandId = String(payload.commandId);
+      setPluginHealthMessage("Command sent. Waiting for Figma to run the test and return its report…");
+      const deadline = Date.now() + 65000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        const stateResponse = await fetch("/api/plugin-bridge?mode=state&clientId=" + encodeURIComponent(clientId), { cache: "no-store" });
+        if (!stateResponse.ok) continue;
+        const statePayload = await stateResponse.json();
+        const session = statePayload.session as PluginSession;
+        if (session.latestCommand?.commandId !== commandId) continue;
+        if (session.latestCommand.status === "completed" && session.healthReport) {
+          const report = session.healthReport;
+          setPluginHealthMessage("Completed in Figma: " + report.passed + " passed, " + report.failed + " failed, " + report.notTested + " not tested.");
+          await logDashboardEvent("Plugin health check completed", report.failed ? "warning" : "success", "Figma returned its native Plugin API inventory.", { requestId: commandId });
+          setBridgeSessions((current) => current.map((item) => item.clientId === session.clientId ? session : item));
+          await refreshConnections();
+          return;
+        }
+        if (session.latestCommand.status === "failed") {
+          throw new Error(session.latestCommand.failure ?? "Plugin health check failed.");
+        }
+      }
+      setPluginHealthMessage("No result received yet. Keep the Figma plugin panel open and refresh plugin activity. The command may have expired.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Plugin health check failed.";
+      setPluginHealthMessage(message);
+      await logDashboardEvent("Plugin health check failed", "error", message);
+    } finally {
+      setPluginHealthBusy(false);
+      await refreshConnections();
+    }
   }
 
   async function submitTask(event: React.FormEvent<HTMLFormElement>) {
@@ -112,11 +179,15 @@ export default function Home() {
   }
 
   const backendHealthy = health?.status === "ok" && !healthError;
-  const lastHeartbeat = events.find((item) => item.source === "figma-plugin" && item.event === "Plugin heartbeat");
-  const heartbeatAgeMs = lastHeartbeat ? Date.now() - Date.parse(lastHeartbeat.at) : null;
-  const pluginOnline = heartbeatAgeMs !== null && heartbeatAgeMs >= 0 && heartbeatAgeMs < 65000;
-  const pluginStatusLabel = pluginOnline ? "Online" : lastHeartbeat ? "No recent heartbeat" : "Unknown";
-  const latestPluginTest = events.find((item) => item.source === "figma-plugin" && item.event === "Plugin API health check completed");
+  const orderedPluginSessions = [...bridgeSessions].sort((a, b) => Date.parse(b.lastHeartbeatAt) - Date.parse(a.lastHeartbeatAt));
+  const activePluginSession = orderedPluginSessions.find((session) => session.isOnline) ?? null;
+  const displayPluginSession = activePluginSession ?? orderedPluginSessions[0] ?? null;
+  const pluginOnline = Boolean(activePluginSession);
+  const pluginStatusLabel = pluginOnline ? "Online" : displayPluginSession ? "Offline" : "Not connected";
+  const latestPluginTest = displayPluginSession?.healthReport ?? null;
+  const latestPluginTestSummary = latestPluginTest
+    ? latestPluginTest.passed + " passed · " + latestPluginTest.failed + " failed · " + latestPluginTest.notTested + " not tested"
+    : "Not run yet";
   const breadcrumb = navItems.find((item) => item.id === activeTab)?.label ?? "Cockpit";
 
   return (
@@ -157,11 +228,30 @@ export default function Home() {
                 <h2>UX Direct backend</h2><p>Dashboard → Vercel API</p>
                 <dl><div><dt>Health endpoint</dt><dd>{backendHealthy ? "Responding" : "Not verified"}</dd></div><div><dt>Task planning</dt><dd>{health?.capabilities.taskPlanning ? "Available" : "Unknown"}</dd></div><div><dt>Last checked</dt><dd>{lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : "—"}</dd></div></dl>
               </article>
-              <article className="connection-card">
-                <div className="connection-card-top"><span className="service-icon">FG</span><span className="status-chip status-success">OAuth not required</span></div>
-                <h2>Figma plugin bridge</h2><p>Native Plugin API + backend reachability</p>
-                <dl><div><dt>Plugin activity</dt><dd>{pluginStatusLabel}</dd></div><div><dt>Last heartbeat</dt><dd>{lastHeartbeat ? new Date(lastHeartbeat.at).toLocaleTimeString() : "Not received"}</dd></div><div><dt>Plugin → backend</dt><dd>{backendHealthy ? "Backend healthy" : "Not verified"}</dd></div><div><dt>Latest API self-test</dt><dd>{latestPluginTest ? latestPluginTest.summary.slice(0, 90) : "Not run yet"}</dd></div></dl>
-                <p className="connection-note">No Figma OAuth or REST API is used. Run the native API self-test inside the open plugin; its result will appear in activity when telemetry reaches this backend instance.</p>
+              <article className="connection-card plugin-bridge-card">
+                <div className="connection-card-top"><span className="service-icon">FG</span><span className={"status-chip " + (pluginOnline ? "status-success" : "status-neutral")}>{pluginOnline ? "Online" : "Offline"}</span></div>
+                <h2>Figma plugin bridge</h2><p>Two-way control · Native Plugin API</p>
+                <dl><div><dt>Plugin activity</dt><dd>{pluginStatusLabel}</dd></div><div><dt>Last heartbeat</dt><dd>{displayPluginSession ? new Date(displayPluginSession.lastHeartbeatAt).toLocaleTimeString() : "Not received"}</dd></div><div><dt>Open session</dt><dd>{activePluginSession ? activePluginSession.clientId.slice(0, 8) : "None"}</dd></div><div><dt>Last health check</dt><dd>{latestPluginTest ? new Date(latestPluginTest.checkedAt).toLocaleTimeString() : "Not run yet"}</dd></div></dl>
+                <p className="connection-note">The dashboard sends a command to the open Figma plugin. The native test runs inside Figma, then its detailed report is saved back to this card. No Figma REST API or OAuth is used.</p>
+                <button className="secondary-button plugin-health-button" type="button" onClick={() => void runPluginHealthCheck()} disabled={!activePluginSession || pluginHealthBusy}>{pluginHealthBusy ? "Running in Figma…" : "Run Plugin Health Check ↗"}</button>
+                {!activePluginSession && <p className="plugin-help">Open the UX Direct plugin in Figma and keep its panel open to enable remote tests.</p>}
+                {pluginHealthMessage && <p className="plugin-health-message" role="status">{pluginHealthMessage}</p>}
+                {latestPluginTest && <div className="plugin-health-report">
+                  <div className="health-counts">
+                    <span><strong>{latestPluginTest.passed}</strong> PASS</span>
+                    <span><strong>{latestPluginTest.failed}</strong> FAIL</span>
+                    <span><strong>{latestPluginTest.notTested}</strong> NOT TESTED</span>
+                  </div>
+                  <details>
+                    <summary>View action inventory ({latestPluginTest.checks.length} checks)</summary>
+                    <div className="plugin-check-list">
+                      {latestPluginTest.checks.map((item, index) => <div className="plugin-check-row" key={item.category + item.name + index}>
+                        <span className={"plugin-check-badge " + (item.level === "not-tested" ? "check-untested" : item.status === "success" ? "check-pass" : "check-fail")}>{item.level === "not-tested" ? "NOT TESTED" : item.status === "success" ? (item.level === "availability" ? "AVAILABLE" : "PASS") : "FAIL"}</span>
+                        <div><strong>{item.name}</strong><span>{item.category} · {item.level}</span><p>{item.reason}</p></div>
+                      </div>)}
+                    </div>
+                  </details>
+                </div>}
                 <button className="secondary-button" type="button" onClick={() => void refreshConnections()} disabled={refreshingConnections}>{refreshingConnections ? "Refreshing…" : "Refresh plugin activity ↻"}</button>
               </article>
               <article className="connection-card">
