@@ -62,11 +62,11 @@ Set only providers that are available to your account. The gateway rejects model
 - `GET /api/model-gateway/models` — lists supported catalog entries and configured providers. Requires gateway access authentication.
 - `POST /api/model-gateway/chat` — accepts `{ "model": "...", "messages": [{ "role": "user", "content": "..." }] }`. Requires gateway access authentication.
 
-Use `Authorization: Bearer <MODEL_GATEWAY_ACCESS_KEY>` or `x-model-gateway-key`. Model aliases `uxd/classify`, `uxd/extract`, `uxd/summarize`, `uxd/reasoning`, `uxd/vision`, and `uxd/critique` select from configured providers using the built-in task policy; if no real provider is configured, they return the deterministic mock rather than silently calling a paid API. The gateway endpoints stay locked if no access key is configured, except when explicitly allowing unauthenticated local development outside production. Do not expose this as a public, unrestricted relay.
+Use `Authorization: Bearer <MODEL_GATEWAY_ACCESS_KEY>` or `x-model-gateway-key`. Model aliases `uxd/classify`, `uxd/extract`, `uxd/summarize`, `uxd/reasoning`, `uxd/vision`, and `uxd/critique` select from configured providers using the built-in task policy; if no real provider is configured, they return the deterministic mock rather than silently calling a paid API. The gateway endpoints stay locked if no access key is configured, except when explicitly allowing unauthenticated local development outside production. Do not expose this as a public, unrestricted relay. Chat requests have a 30-request/minute in-memory limit per client IP; this is a best-effort single-runtime guard, not a distributed quota system.
 
 ## Routing policy
 
-The `routeTask()` helper prefers local/free models for classification, extraction and summaries; stronger free-tier candidates for reasoning and critique; and falls back to deterministic mock when no real provider is configured. Model IDs and free quotas are not stable guarantees; check provider consoles before enabling. Task routing is currently a helper API, not yet connected to the UX Direct orchestrator.
+The `routeTask()` helper prefers local/free models for classification, extraction and summaries; stronger free-tier candidates for reasoning and critique; and falls back to deterministic mock when no real provider is configured. Model IDs and free quotas are not stable guarantees; check provider consoles before enabling. Task aliases can fail over between configured local/free providers; they never automatically fall back to paid providers. This fallback policy is available through the gateway endpoint, but the alias helper is not yet connected to the existing UX Direct orchestrator.
 
 ## Before enabling paid billing
 
