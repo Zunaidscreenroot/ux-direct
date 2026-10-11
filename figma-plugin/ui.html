@@ -270,6 +270,7 @@
         }
         backendHealthy = true;
         setConnection("ok", "Netlify Preview connected");
+        $("connectionStatus").title = "Verified Netlify Deploy Preview · " + actualHost + " · branch " + actualBranch;
         if (connectionDiagnosticRow) {
           connectionDiagnosticRow.remove();
           connectionDiagnosticRow = null;
