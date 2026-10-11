@@ -55,3 +55,22 @@ test("task planning endpoint handles malformed JSON without crashing", async () 
   assert.equal(response.status, 400);
   assert.equal(body.error, "Malformed JSON body");
 });
+
+
+test("plugin-originated task requests reject an unapproved file key", async () => {
+  const request = new Request("http://localhost/api/tasks/plan", {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "null" },
+    body: JSON.stringify({
+      title: "Wrong file task",
+      request: "Try to plan a change for another client file",
+      project: "general",
+      source: "figma-plugin",
+      fileKey: "not-the-approved-file",
+    }),
+  });
+  const response = await POST(request);
+  const body = await response.json();
+  assert.equal(response.status, 403);
+  assert.match(body.error, /file key/i);
+});
