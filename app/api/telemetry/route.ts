@@ -56,7 +56,8 @@ export async function POST(request: Request) {
   }
   const parsed = eventSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid telemetry event" }, { status: 400, headers: corsHeaders(origin) });
-  if ((parsed.data.source === "figma-plugin" || parsed.data.fileKey) && !isAllowedFigmaFileKey(parsed.data.fileKey)) {
+  const isFigmaPluginOrigin = origin !== null && ["null", "https://www.figma.com", "https://figma.com"].includes(origin);
+  if ((isFigmaPluginOrigin || parsed.data.source === "figma-plugin" || parsed.data.fileKey) && !isAllowedFigmaFileKey(parsed.data.fileKey)) {
     return NextResponse.json({ error: "Figma telemetry blocked: file key is not allowlisted." }, { status: 403, headers: corsHeaders(origin) });
   }
   const { fileKey, ...eventPayload } = parsed.data;
