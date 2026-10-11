@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { chatCompletionWithFallback, GatewayError, type ChatMessage } from "@/src/model-gateway";
+import { chatCompletionWithFallback, chatCompletionWithFreeFallback, providersForFreeChat, GatewayError, type ChatMessage } from "@/src/model-gateway";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { recordOperationalEvent } from "@/src/observability/event-log";
@@ -30,6 +30,8 @@ export async function OPTIONS(request: Request) {
 const requestSchema = z.object({
   fileKey: z.string().trim().min(1).max(200),
   project: z.enum(["general", "express-computers", "dmi-finance"]),
+  provider: z.enum(["gemini", "openrouter"]).optional(),
+  model: z.string().trim().min(1).max(180).optional(),
   messages: z.array(z.object({
     role: z.enum(["user", "assistant"]),
     content: z.string().trim().min(1).max(5000)
@@ -45,6 +47,8 @@ const requestSchema = z.object({
       height: z.number().finite().optional()
     })).max(12).optional()
   }).optional()
+}).refine(data => (data.provider === undefined) === (data.model === undefined), {
+  message: "Provider and model must be supplied together."
 });
 
 const PROJECT_LABELS: Record<z.infer<typeof requestSchema>["project"], string> = {
@@ -149,15 +153,25 @@ export async function POST(request: Request) {
   });
 
   try {
-    const result = await chatCompletionWithFallback({
-      requestId,
-      model: "uxd/reasoning",
-      moduleId: "reasoning",
-      messages,
-      temperature: 0.3,
-      max_tokens: 1400,
-      signal: request.signal
-    });
+    const result = data.provider && data.model
+      ? await chatCompletionWithFreeFallback({
+          requestId,
+          model: data.model,
+          providerId: data.provider,
+          messages,
+          temperature: 0.3,
+          max_tokens: 1400,
+          signal: request.signal
+        }, { providers: providersForFreeChat() })
+      : await chatCompletionWithFallback({
+          requestId,
+          model: "uxd/reasoning",
+          moduleId: "reasoning",
+          messages,
+          temperature: 0.3,
+          max_tokens: 1400,
+          signal: request.signal
+        });
     const latencyMs = Date.now() - startedAt;
     recordOperationalEvent({
       source: "backend", event: "Assistant chat completed", status: "success",
