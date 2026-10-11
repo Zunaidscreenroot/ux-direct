@@ -18,7 +18,7 @@ export function createDefaultCapabilityRegistry(): CapabilityRegistry {
     id: "figma.read",
     description: "Read an allowlisted Figma file after security checks",
     risk: "medium",
-    costClass: "external-write",
+    costClass: "external-read",
     requiresApproval: true,
     async run() { throw new Error("Figma adapter is not connected; no Figma action was performed."); },
   });
