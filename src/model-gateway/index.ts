@@ -1,9 +1,10 @@
 import { GATEWAY_MODULES, getGatewaySettings, getDefaultModelPolicy, modelKey } from "./control-store";
 import { getOpenRouterPaidChatModel, OPENROUTER_PAID_CHAT_MODELS } from "./openrouter-paid";
 /**
- * Zero-fee model gateway for UX Direct.
+ * Cost-guarded model gateway for UX Direct.
  * Requests go directly to provider APIs. No gateway SaaS, account, or usage fee.
- * Provider usage may still cost money; local inference uses your own compute.
+ * Provider inference may cost money; explicitly selected paid models pass the
+ * per-request, per-module, per-model and global budget checks before invocation.
  */
 export type ChatRole = "system" | "user" | "assistant";
 export type ChatMessage = { role: ChatRole; content: string };
