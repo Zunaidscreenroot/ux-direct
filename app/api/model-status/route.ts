@@ -154,13 +154,23 @@ export async function GET(request: Request) {
       const result = await discoverWorkingFreeModel();
       return NextResponse.json({ ...result, diagnosticId: id, note: "Models are fetched live from the provider API; no static model allowlist is used by this endpoint." }, { headers });
     }
-    // One lightweight catalog request per configured provider; no inference calls during discovery.
-    const results = await Promise.allSettled([discoverWorkingFreeModel()]);
-    const providers = results.map((result, index) => result.status === "fulfilled"
-      ? result.value
-      : { provider: "openrouter", configured: Boolean(providerConfig("openrouter")), models: [], reason: safeError(result.reason) });
-    const models = providers.flatMap(entry => entry.models.map(modelId => ({ provider: "openrouter", id: modelId, label: modelId + " · Free", configured: entry.configured, tier: "free-tier" })));
-    return NextResponse.json({ models, providers, checkedAt: new Date().toISOString(), diagnosticId: id, note: "Models are discovered live from provider APIs. OpenRouter is restricted to model IDs marked :free; Only OpenRouter model IDs marked :free are returned." }, { headers });
+    // Discover current free models and return only the first model that passed a real response probe.
+    const result = await discoverWorkingFreeModel();
+    const models = result.models.map(modelId => ({
+      provider: "openrouter", id: modelId, label: modelId + " · Free",
+      configured: result.configured, tier: "free-tier"
+    }));
+    return NextResponse.json({
+      models,
+      selectedModel: result.selectedModel ?? null,
+      probe: result.probe ?? { available: false },
+      provider: "openrouter",
+      configured: result.configured,
+      reason: result.reason,
+      checkedAt: result.checkedAt ?? new Date().toISOString(),
+      diagnosticId: id,
+      note: "Models are fetched live from OpenRouter; only the first free model returning a real response is selected."
+    }, { headers });
   } catch (error) {
     console.error("[model-status] request failed", JSON.stringify({ diagnosticId: id, message: safeError(error) }));
     const timedOut = error instanceof Error && (error.name === "AbortError" || /timed out/i.test(error.message));
