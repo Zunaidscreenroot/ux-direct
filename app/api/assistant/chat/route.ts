@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 
-function corsHeaders(origin: string | null): Record<string, string> {
+function corsHeaders(_origin: string | null): Record<string, string> {
   return {
     // Figma plugin iframes use an opaque "null" origin; use wildcard CORS.
     // Route handlers still validate request origin and the approved Figma file key.
