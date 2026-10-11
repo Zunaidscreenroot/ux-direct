@@ -19,13 +19,13 @@ test("native health-check source includes all six new functional Figma actions",
 
 test("SVG export uses the native SVG_STRING result without TextDecoder", () => {
   assert.ok(pluginSource.includes('node.exportAsync({ format: "SVG_STRING" })'));
-  assert.doesNotMatch(pluginSource, /new TextDecoder\\(/);
+  assert.equal(pluginSource.includes("new TextDecoder"), false);
 });
 
 test("component discovery uses supported node criteria rather than nonexistent global APIs", () => {
   assert.ok(pluginSource.includes('harness.findAllWithCriteria({ types: ["COMPONENT"] })'));
   assert.ok(pluginSource.includes('harness.findAllWithCriteria({ types: ["COMPONENT_SET"] })'));
-  assert.doesNotMatch(pluginSource, /figma\\.getLocalComponentsAsync|figma\\.getLocalComponentSetsAsync/);
+  assert.doesNotMatch(pluginSource, /figma[.]getLocalComponentsAsync|figma[.]getLocalComponentSetsAsync/);
 });
 
 test("native health check preserves strict file scope and intentionally skips Team Library", () => {
