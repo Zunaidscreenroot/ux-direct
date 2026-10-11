@@ -141,7 +141,7 @@ function providerForEntry(entry: ModelCatalogEntry, providers: ProviderConfig[])
 function modeAllows(mode: string, entry: ModelCatalogEntry, provider: ProviderConfig, mockFallback = false) {
   if (mode === "mock") return provider.kind === "mock";
   if (mode === "local") return provider.kind === "local";
-  if (mode === "free") return provider.kind === "free-tier" || provider.kind === undefined || entry.id.endsWith(":free") || mockFallback;
+  if (mode === "free") return provider.kind === "free-tier" || provider.kind === undefined || entry.id.endsWith(":free") || mockFallback || (provider.kind === "mock" && entry.id === "mock/ux-direct");
   if (mode === "paid") return provider.kind !== "local" && provider.kind !== "mock" && !entry.id.endsWith(":free");
   return false;
 }

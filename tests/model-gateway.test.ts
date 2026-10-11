@@ -182,7 +182,7 @@ test("an explicitly chosen model never silently fails over to another provider",
     }) as typeof fetch
   }), /Provider returned HTTP 429/);
   assert.equal(attempted.length, 1);
-  assert.match(attempted[0], /groq\\.example/);
+  assert.equal(attempted[0], "https://groq.example/v1/chat/completions");
 });
 
 
@@ -208,7 +208,7 @@ test("monthly budget blocks paid calls when pricing is missing or projected cost
     MODEL_GATEWAY_MONTHLY_BUDGET_INR: "1",
     MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M: "1000",
     MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: "1000"
-  }), /exceeds the remaining budget/);
+  }), /budget would be exceeded/);
 });
 
 test("usage ledger records token-level counts and computes monthly budget totals", async () => {
