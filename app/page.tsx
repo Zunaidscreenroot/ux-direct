@@ -82,7 +82,12 @@ function ModelGatewayPanel() {
       setBusy(false);
     }
   }, []);
-  useEffect(() => { void loadDashboard(); }, [loadDashboard]);
+  useEffect(() => {
+    void loadDashboard();
+    // One lightweight read-only dashboard refresh per minute; no Figma/model calls are triggered.
+    const timer = window.setInterval(() => void loadDashboard(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [loadDashboard]);
   async function runMockSmokeTest() {
     if (smokeBusy) return;
     setSmokeBusy(true);
