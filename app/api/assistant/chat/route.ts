@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { chatCompletionWithFallback, chatCompletionWithFreeFallback, providersForFreeChat, GatewayError, type ChatMessage } from "@/src/model-gateway";
+import { chatCompletionWithFallback, chatCompletionWithFreeFallback, chatCompletionWithOpenRouterPaid, providersForFreeChat, GatewayError, type ChatMessage } from "@/src/model-gateway";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { recordOperationalEvent } from "@/src/observability/event-log";
@@ -154,15 +154,25 @@ export async function POST(request: Request) {
 
   try {
     const result = data.provider && data.model
-      ? await chatCompletionWithFreeFallback({
-          requestId,
-          model: data.model,
-          providerId: data.provider,
-          messages,
-          temperature: 0.3,
-          max_tokens: 1400,
-          signal: request.signal
-        }, { providers: providersForFreeChat() })
+      ? data.model.endsWith(":free")
+        ? await chatCompletionWithFreeFallback({
+            requestId,
+            model: data.model,
+            providerId: data.provider,
+            messages,
+            temperature: 0.3,
+            max_tokens: 1400,
+            signal: request.signal
+          }, { providers: providersForFreeChat() })
+        : await chatCompletionWithOpenRouterPaid({
+            requestId,
+            model: data.model,
+            providerId: data.provider,
+            messages,
+            temperature: 0.3,
+            max_tokens: 1400,
+            signal: request.signal
+          })
       : await chatCompletionWithFallback({
           requestId,
           model: "uxd/reasoning",
