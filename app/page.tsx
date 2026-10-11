@@ -90,6 +90,7 @@ function ModelGatewayPanel(){
  const [plannerBusy,setPlannerBusy]=useState(false),[checkingModel,setCheckingModel]=useState("");
  const [smokeMessage,setSmokeMessage]=useState(""),[message,setMessage]=useState(""),[loadError,setLoadError]=useState(""),[plannerMessage,setPlannerMessage]=useState("");
  const [adminKey,setAdminKey]=useState(""),[accessKey,setAccessKey]=useState("");
+ const plannerAutoStarted=useRef(false);
  const [filter,setFilter]=useState("all"),[catalogQuery,setCatalogQuery]=useState(""),[catalogLimit,setCatalogLimit]=useState(40);
  const [plannerData,setPlannerData]=useState<GatewayRecommendations|null>(null);
  const [modelChecks,setModelChecks]=useState<Record<string,ModelCheckResult>>({});
@@ -132,18 +133,17 @@ function ModelGatewayPanel(){
   }catch(e){setSmokeMessage(e instanceof Error?e.message:"Smoke test failed.");}
   finally{setSmokeBusy(false);}
  }
- async function runPlanner(force=false){
-  if(!accessKey.trim()){setPlannerMessage("Enter MODEL_GATEWAY_ACCESS_KEY to run the free planner.");return;}
+ const runPlanner=useCallback(async(force=false)=>{
   setPlannerBusy(true);setPlannerMessage("");
   try{
-   const r=await fetch("/api/model-gateway/recommendations"+(force?"?refresh=true":""),{headers:{"x-model-gateway-key":accessKey.trim()},cache:"no-store"});
+   const r=await fetch("/api/model-gateway/recommendations"+(force?"?refresh=true":""),{cache:"no-store"});
    const p=await r.json();
    if(!r.ok)throw new Error(p.error||"Could not get AI model recommendations.");
    setPlannerData(p as GatewayRecommendations);
    setPlannerMessage((p.source==="free-ai-planner"?"Free AI planner: ":"Metadata fallback: ")+(p.modelUsed||"deterministic ranking")+" · "+new Date(p.generatedAt).toLocaleTimeString());
   }catch(e){setPlannerMessage(e instanceof Error?e.message:"Model planner unavailable.");}
   finally{setPlannerBusy(false);}
- }
+ },[]);
  const models=data?.models??[], openRouterModels=models.filter(m=>m.provider==="openrouter"), modules=data?.modules??[], settings=draft, records=data?.budget.records??[];
  const spent=data?.budget.spentThisMonthInr??0, globalCap=settings?.globalMonthlyBudgetInr??3000, remaining=Math.max(0,globalCap-spent), fx=settings?.usdToInrRate??97;
  const keyReady=(data?.providers??[]).filter(p=>p.keyDetected).length;
@@ -191,6 +191,12 @@ function ModelGatewayPanel(){
   (!catalogQuery.trim()||(m.id+" "+m.label+" "+m.tasks.join(" ")).toLowerCase().includes(catalogQuery.trim().toLowerCase()))
  );
  const usage=data?.openRouterUsage;
+ useEffect(()=>{
+  if(openRouterModels.length>0&&!plannerAutoStarted.current){
+   plannerAutoStarted.current=true;
+   void runPlanner(false);
+  }
+ },[openRouterModels.length,runPlanner]);
  return <div className="content gateway-content accountant-content">
   <div className="eyebrow"><span className="pulse"/> MODEL OPERATIONS · OPENROUTER MANAGER</div>
   <div className="gateway-title-row"><div><h1>Model gateway.<br/><em>Your capability manager.</em></h1><p className="intro">One OpenRouter catalog, capability-aware free/paid suggestions, live model tests and a consolidated daily cost plan for Express Computers Batch 3 and DMI Finance.</p></div>
@@ -201,7 +207,7 @@ function ModelGatewayPanel(){
 
   <section className="gateway-panel gateway-planner-panel">
    <div className="gateway-panel-heading"><div><span className="section-kicker">FREE BACKEND MODEL PLANNER</span><h2>Ask the gateway to recommend per capability</h2><p className="gateway-panel-subtitle">The planner uses one live, zero-price OpenRouter model and chooses only IDs from the catalog. Its results are cached for 10 minutes; if it is unavailable, metadata ranking keeps the controls usable.</p></div><span className="gateway-tier">FREE PLANNER</span></div>
-   <div className="gateway-planner-controls"><label className="gateway-control-field"><span>Gateway access key</span><input type="password" autoComplete="off" value={accessKey} onChange={e=>setAccessKey(e.target.value)} placeholder="Enter MODEL_GATEWAY_ACCESS_KEY" aria-label="Gateway API access key"/><small>Used only in this page's memory for planner and model-test requests; never saved in browser storage.</small></label><button className="submit-button" type="button" onClick={()=>void runPlanner(false)} disabled={plannerBusy||!openRouterModels.length}>{plannerBusy?"Analyzing catalog…":"Recommend models ↗"}</button><button className="secondary-button" type="button" onClick={()=>void runPlanner(true)} disabled={plannerBusy||!openRouterModels.length}>Re-run planner</button></div>
+   <div className="gateway-planner-controls"><label className="gateway-control-field"><span>Gateway access key · model tests</span><input type="password" autoComplete="off" value={accessKey} onChange={e=>setAccessKey(e.target.value)} placeholder="Enter MODEL_GATEWAY_ACCESS_KEY" aria-label="Gateway API access key"/><small>Planner suggestions run automatically with a free model. This key is needed only for on-demand inference tests; it stays in memory only.</small></label><button className="submit-button" type="button" onClick={()=>void runPlanner(false)} disabled={plannerBusy||!openRouterModels.length}>{plannerBusy?"Analyzing catalog…":"Recommend models ↗"}</button><button className="secondary-button" type="button" onClick={()=>void runPlanner(true)} disabled={plannerBusy||!openRouterModels.length}>Re-run planner</button></div>
    {plannerMessage&&<p className="gateway-smoke-message" role="status">{plannerMessage}</p>}
    {plannerData&&<p className="gateway-footnote">Planner source: {plannerData.source==="free-ai-planner"?"live OpenRouter free model "+(plannerData.modelUsed||""):"deterministic fallback"}. {plannerData.note}</p>}
    <p className="gateway-footnote">Project context sent to the free planner is limited to capability descriptions and model metadata. Do not send confidential client screens or personal/financial data to free models unless approved for your work.</p>
