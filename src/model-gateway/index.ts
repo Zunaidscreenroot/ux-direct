@@ -163,7 +163,17 @@ export async function chatCompletion(
   const requestId = request.requestId ?? crypto.randomUUID();
   const usageStore = await import("./usage-store");
   if (provider.kind === "paid") {
-    usageStore.assertBudgetAllows(request.messages.reduce((n, m) => n + m.content.length, 0), request.max_tokens ?? 1024);
+    try {
+      usageStore.assertBudgetAllows(request.messages.reduce((n, m) => n + m.content.length, 0), request.max_tokens ?? 1024);
+    } catch (error) {
+      usageStore.recordModelUsage({
+        requestId, provider: provider.name, model: resolvedModel, tier: "paid",
+        promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCostInr: 0,
+        latencyMs: Date.now() - started, status: "blocked",
+        note: error instanceof Error ? error.message : "Budget guard blocked the request."
+      });
+      throw error;
+    }
   }
   if (provider.kind === "mock" || provider.baseUrl.startsWith("mock://")) {
     const lastUser = [...request.messages].reverse().find(m => m.role === "user")?.content ?? "";
@@ -211,9 +221,15 @@ export async function chatCompletion(
       content, usage: payload.usage, provider: provider.name, latencyMs
     };
   } catch (error) {
-    if (error instanceof GatewayError) throw error;
-    if (controller.signal.aborted) throw new GatewayError("Model request timed out or was cancelled.", 504, provider.name);
-    throw new GatewayError(error instanceof Error ? error.message : "Unknown provider error.", 502, provider.name);
+    const failure = error instanceof GatewayError ? error :
+      controller.signal.aborted ? new GatewayError("Model request timed out or was cancelled.", 504, provider.name) :
+      new GatewayError(error instanceof Error ? error.message : "Unknown provider error.", 502, provider.name);
+    usageStore.recordModelUsage({
+      requestId, provider: provider.name, model: resolvedModel, tier: provider.kind ?? "paid",
+      promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCostInr: 0,
+      latencyMs: Date.now() - started, status: "error", note: failure.message
+    });
+    throw failure;
   } finally {
     clearTimeout(timeout);
     request.signal?.removeEventListener("abort", abort);
