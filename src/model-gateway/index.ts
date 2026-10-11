@@ -180,8 +180,8 @@ export async function chatCompletion(
       }), signal: controller.signal
     });
     if (!response.ok) {
-      const body = (await response.text()).slice(0, 600);
-      throw new GatewayError(`Provider returned HTTP ${response.status}: ${body || response.statusText}`, response.status === 429 ? 429 : 502, provider.name);
+      // Do not echo arbitrary upstream bodies; they may contain sensitive request details.
+      throw new GatewayError(`Provider returned HTTP ${response.status}.`, response.status === 429 ? 429 : 502, provider.name);
     }
     let payload: any;
     try { payload = await response.json(); } catch { throw new GatewayError("Provider returned invalid JSON.", 502, provider.name); }
