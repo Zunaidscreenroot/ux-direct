@@ -10,9 +10,10 @@
   "networkAccess": {
     "allowedDomains": [
       "https://uxdirect.netlify.app",
-      "https://deploy-preview-21--uxdirect.netlify.app"
+      "https://deploy-preview-21--uxdirect.netlify.app",
+      "https://6acbb8f26af9a70008310b29--uxdirect.netlify.app"
     ],
-    "reasoning": "Temporary Figma smoke-test build: sends prompt text and selected-node metadata to the UX Direct Netlify Deploy Preview backend. No API key is embedded in the plugin. Restore the production API URL and remove the preview domain before merging."
+    "reasoning": "Temporary Figma smoke testing uses the UX Direct Netlify Preview alias and one pinned, immutable deploy permalink so browser requests cannot resolve to an unallowlisted Netlify deployment host. No API key is embedded in the plugin. Remove the temporary permalink and restore the production API URL before merging."
   },
   "enablePrivatePluginApi": true,
   "documentAccess": "dynamic-page"
