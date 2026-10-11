@@ -10,7 +10,7 @@ export type TaskStatus =
   | "failed";
 
 export type CapabilityRisk = "low" | "medium" | "high";
-export type CapabilityCostClass = "free-local" | "paid-model" | "external-write";
+export type CapabilityCostClass = "free-local" | "paid-model" | "external-read" | "external-write";
 
 export type CapabilityDefinition = {
   id: string;
