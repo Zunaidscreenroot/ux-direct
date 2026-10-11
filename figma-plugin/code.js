@@ -798,15 +798,17 @@ async function executeNativeApiHealthCheck() {
     });
     await runTest("Slice API", "figma.createSlice", async function () {
       var sliceName = "__UXD API HEALTH SLICE";
-      var node = findNodeByName(harness, sliceName, "SLICE");
+      var node = findNodeByName(testPage, sliceName, "SLICE");
       if (!node) {
+        // createSlice is initially attached to currentPage; move it synchronously
+        // into the approved inactive Test Lab page before yielding to the editor.
         node = mutateFile("create isolated slice probe", function () { return figma.createSlice(); });
-        mutateLab("move slice into isolated Test Lab", function () { harness.appendChild(node); });
-        mutateLab("name isolated slice probe", function () { node.name = sliceName; });
+        mutateFile("move slice into isolated Test Lab page", function () { testPage.appendChild(node); });
+        mutateFile("name isolated slice probe", function () { node.name = sliceName; });
       }
-      mutateLab("size isolated slice probe", function () { node.resize(24, 24); });
-      if (node.type !== "SLICE" || node.parent !== harness || node.width !== 24 || node.height !== 24) {
-        throw new Error("createSlice did not produce a reusable slice inside the Test Lab.");
+      mutateFile("size isolated slice probe", function () { node.resize(24, 24); });
+      if (node.type !== "SLICE" || node.parent !== testPage || node.width !== 24 || node.height !== 24) {
+        throw new Error("createSlice did not produce a reusable slice inside the Test Lab page.");
       }
     });
     await runTest("Undo API", "figma.triggerUndo", async function () {
