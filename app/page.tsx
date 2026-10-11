@@ -21,6 +21,7 @@ type PlanResult = {
 };
 type PluginCheck = { category: string; name: string; level: "availability" | "functional" | "not-tested"; status: "success" | "error" | "not-tested"; reason: string };
 type PluginHealthReport = { passed: number; available?: number; failed: number; notTested: number; checkedAt: string; checks: PluginCheck[] };
+type PersistedHealthReport = { clientId: string; commandId?: string; savedAt: string; healthReport: PluginHealthReport };
 type PluginSession = {
   clientId: string; status: "online" | "offline"; connectedAt: string; lastHeartbeatAt: string;
   disconnectedAt?: string; lastTestAt?: string; isOnline: boolean;
@@ -50,6 +51,7 @@ export default function Home() {
   const [healthError, setHealthError] = useState("");
   const [events, setEvents] = useState<EventItem[]>([]);
   const [bridgeSessions, setBridgeSessions] = useState<PluginSession[]>([]);
+  const [latestSavedReport, setLatestSavedReport] = useState<PersistedHealthReport | null>(null);
   const [pluginHealthBusy, setPluginHealthBusy] = useState(false);
   const [pluginHealthMessage, setPluginHealthMessage] = useState("");
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
@@ -74,8 +76,10 @@ export default function Home() {
       if (bridgeResponse && bridgeResponse.ok) {
         const bridgePayload = await bridgeResponse.json();
         setBridgeSessions(Array.isArray(bridgePayload.sessions) ? bridgePayload.sessions : []);
+        setLatestSavedReport(bridgePayload.latestReport ?? null);
       } else {
         setBridgeSessions([]);
+        setLatestSavedReport(null);
       }
       setLastRefresh(new Date().toISOString());
     } catch (err) {
@@ -87,7 +91,7 @@ export default function Home() {
 
   useEffect(() => {
     void refreshConnections();
-    const timer = window.setInterval(() => void refreshConnections(), 15000);
+    const timer = window.setInterval(() => void refreshConnections(), 30000);
     return () => window.clearInterval(timer);
   }, [refreshConnections]);
 
@@ -118,13 +122,23 @@ export default function Home() {
       if (!response.ok) throw new Error(payload.error ?? "Could not send the command to Figma");
       const commandId = String(payload.commandId);
       setPluginHealthMessage("Command sent. Waiting for Figma to run the test and return its report…");
-      const deadline = Date.now() + 180000;
+      const deadline = Date.now() + 240000;
       while (Date.now() < deadline) {
-        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        // Poll one persisted state endpoint at a restrained cadence instead of rapidly probing the backend.
+        await new Promise((resolve) => window.setTimeout(resolve, 8000));
         const stateResponse = await fetch("/api/plugin-bridge?mode=state&clientId=" + encodeURIComponent(clientId), { cache: "no-store" });
         if (!stateResponse.ok) continue;
         const statePayload = await stateResponse.json();
         const session = statePayload.session as PluginSession;
+        const savedReport = statePayload.latestReport as PersistedHealthReport | null;
+        if (savedReport?.commandId === commandId && savedReport.healthReport) {
+          const report = savedReport.healthReport;
+          setLatestSavedReport(savedReport);
+          setPluginHealthMessage("Completed in Figma: " + report.passed + " passed, " + report.failed + " failed, " + (report.available ?? 0) + " available, " + report.notTested + " not tested.");
+          await logDashboardEvent("Plugin health check completed", report.failed ? "warning" : "success", "Figma returned its native Plugin API inventory.", { requestId: commandId });
+          await refreshConnections();
+          return;
+        }
         if (session.latestCommand?.commandId !== commandId) continue;
         if (session.latestCommand.status === "completed" && session.healthReport) {
           const report = session.healthReport;
@@ -185,7 +199,7 @@ export default function Home() {
   const displayPluginSession = activePluginSession ?? orderedPluginSessions[0] ?? null;
   const pluginOnline = Boolean(activePluginSession);
   const pluginStatusLabel = pluginOnline ? "Online" : displayPluginSession ? "Offline" : "Not connected";
-  const latestPluginTest = displayPluginSession?.healthReport ?? null;
+  const latestPluginTest = latestSavedReport?.healthReport ?? displayPluginSession?.healthReport ?? null;
   const latestPluginTestSummary = latestPluginTest
     ? latestPluginTest.passed + " passed · " + latestPluginTest.failed + " failed · " + (latestPluginTest.available ?? 0) + " available · " + latestPluginTest.notTested + " not tested"
     : "Not run yet";
