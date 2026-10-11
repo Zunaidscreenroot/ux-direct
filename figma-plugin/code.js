@@ -70,9 +70,11 @@ async function executeNativeApiHealthCheck() {
   }
   function assertLab(name) {
     assertUxDirectFileScope(name);
-    if (!testPage || !figma.currentPage || figma.currentPage.id !== testPage.id) {
-      throw new Error("Blocked " + name + ": the active page is not UXD API Test Lab.");
+    if (!testPage || testPage.removed) {
+      throw new Error("Blocked " + name + ": persistent UXD API Test Lab is missing.");
     }
+    // Tests are allowed to target the loaded, inactive test page. Do not navigate
+    // away from the page the user is working on.
     if (!figma.root.children.some(function (page) { return page.id === testPage.id; })) {
       throw new Error("Blocked " + name + ": test page is not inside the allowlisted document.");
     }
@@ -155,18 +157,17 @@ async function executeNativeApiHealthCheck() {
     return null;
   }
   function createNode(factory, name, parent) {
-    var searchRoot = parent || harness || testPage;
-    var node = name ? findNodeByName(searchRoot, name) : null;
+    var targetParent = parent || harness || testPage;
+    var node = name ? findNodeByName(targetParent, name) : null;
     var reused = !!node;
     if (!node) {
       node = mutateLab("create " + name, factory);
-
       if (name) mutateLab("name " + name, function () { node.name = name; });
     }
-    // Only attach newly-created nodes. Reused inputs may intentionally live inside a
-    // previously-created group, component, vector, boolean result, or variant set.
-    if (parent && !reused && node.parent !== parent) {
-      mutateLab("attach " + name, function () { parent.appendChild(node); });
+    // Constructors may initially attach a fresh node to the visible page. Reparent
+    // it synchronously to the persistent, inactive test page/container before yielding.
+    if (targetParent && !reused && node.parent !== targetParent) {
+      mutateLab("attach " + name, function () { targetParent.appendChild(node); });
     }
     return node;
   }
@@ -217,15 +218,12 @@ async function executeNativeApiHealthCheck() {
       mutateFile("name isolated test page", function () { testPage.name = UXD_API_TEST_LAB_PAGE; });
       newlyCreated = true;
     }
-    // Avoid a load/navigation round-trip when the persistent page is already active.
-    if (newlyCreated || figma.currentPage.id !== testPage.id) {
-      await mutateFileAsync("load isolated test page", function () { return testPage.loadAsync(); });
+    // Load the dedicated page directly; never change figma.currentPage.
+    await mutateFileAsync("load persistent test lab", function () { return testPage.loadAsync(); });
+    if (!figma.root.children.some(function (page) { return page.id === testPage.id; })) {
+      throw new Error("UXD API Test Lab is not attached to the approved document.");
     }
-    if (figma.currentPage.id !== testPage.id) {
-      await mutateFileAsync("navigate to isolated test page", function () { return figma.setCurrentPageAsync(testPage); });
-    }
-    if (figma.currentPage.id !== testPage.id) throw new Error("Figma did not activate UXD API Test Lab.");
-    return { uxdResultReason: newlyCreated ? "Created the dedicated test page once." : "Reused the existing dedicated test page without recreating it." };
+    return { uxdResultReason: newlyCreated ? "Created the dedicated test page once without navigating to it." : "Reused and loaded the existing dedicated test page without navigating to it." };
   }, false);
 
   if (!labReady || !testPage) {
@@ -364,16 +362,13 @@ async function executeNativeApiHealthCheck() {
       if (!bounds || typeof zoom !== "number" || zoom <= 0) throw new Error("Viewport bounds or zoom were invalid.");
     });
 
-    await runTest("Page navigation", "Load and reuse the persistent API Test Lab page", async function () {
+    await runTest("Page navigation", "Verify inactive Test Lab remains accessible", async function () {
       var pages = mutateFile("verify persistent test lab page", function () { return figma.root.children; });
       if (!pages.some(function (page) { return page.id === testPage.id && page.name === UXD_API_TEST_LAB_PAGE; })) {
         throw new Error("Persistent UXD API Test Lab page is missing from the approved file.");
       }
-      await mutateFileAsync("load persistent test lab", function () { return testPage.loadAsync(); });
-      if (figma.currentPage.id !== testPage.id) {
-        await mutateFileAsync("activate persistent test lab", function () { return figma.setCurrentPageAsync(testPage); });
-      }
-      if (figma.currentPage.id !== testPage.id) throw new Error("Persistent UXD API Test Lab could not be activated.");
+      if (!Array.isArray(testPage.children)) throw new Error("Persistent Test Lab page children are not available after loadAsync.");
+      return { uxdResultReason: "Verified the persistent page while leaving the user's active page unchanged." };
     }, false);
 
     await runTest("Shapes", "Create and resize frame", async function () {
@@ -571,13 +566,9 @@ async function executeNativeApiHealthCheck() {
       if (!bytes || !bytes.length) throw new Error("PNG export produced no bytes.");
     });
 
-    await runTest("Events", "Receive a selection-change event", async function () {
-      var node = rect("UXD selection event probe");
-      savedTestSelection = Array.from(testPage.selection);
-      var delivered = false;
-      var eventPromise = new Promise(function (resolve) {
-        figma.once("selectionchange", function () { delivered = true; resolve(true); });
-      });
+    add("Events", "Receive selection-change event from inactive page", "not-tested", "not-tested",
+      "Skipped to preserve the user's active page; selectionchange events are tied to the current page.");
+
       mutateLab("select event test node", function () { testPage.selection = [node]; });
       var received = await Promise.race([
         eventPromise,
@@ -626,46 +617,18 @@ async function executeNativeApiHealthCheck() {
   } catch (error) {
     add("Test runner", "Unexpected health-check failure", "functional", "error", error && error.message ? error.message : String(error));
   } finally {
-    cleanupProgress("Keeping UXD API Test Lab, nodes, components, variables, and storage for reuse; nothing is being deleted.");
+    // No test fixtures are deleted. Only restore the plugin's selection telemetry
+    // listener; the user's active page is never changed by the test suite.
     if (selectionHandlerPaused) {
       try {
         assertUxDirectFileScope("restore selection context listener");
         figma.on("selectionchange", sendSelection);
       } catch (error) {
-        cleanupErrors.push("Could not restore selection listener: " + (error.message || String(error)));
+        add("Test cleanup", "Restore selection context listener", "functional", "error",
+          error && error.message ? error.message : String(error));
       }
     }
-    cleanupErrors.forEach(function (reason, index) {
-      add("Test cleanup", "Listener restoration issue " + (index + 1), "functional", "error", reason);
-    });
-    if (originalPage && testPage && originalPage.id !== testPage.id) {
-      // Switch back without holding the health report hostage to a slow Figma navigation promise.
-      try {
-        assertUxDirectFileScope("restore original page after health check");
-        var restorePromise = mutateFileAsync("restore originally active page", function () {
-          return figma.setCurrentPageAsync(originalPage);
-        });
-        var restoreTimer = null;
-        Promise.race([
-          Promise.resolve(restorePromise).then(function () { return true; }),
-          new Promise(function (resolve) {
-            restoreTimer = setTimeout(function () { resolve(false); }, 5000);
-          })
-        ]).then(function (restored) {
-          if (restoreTimer !== null) clearTimeout(restoreTimer);
-          if (restored) {
-            try { sendSelection(); } catch (_) {}
-          } else {
-            figma.ui.postMessage({ type: "native-health-progress", text: "Page restoration is taking longer than expected; persistent fixtures were kept and results will still be reported." });
-          }
-        }).catch(function (error) {
-          figma.ui.postMessage({ type: "native-health-progress", text: "Could not restore the original page: " + (error && error.message ? error.message : String(error)) + ". Persistent fixtures were kept." });
-        });
-      } catch (error) {
-        cleanupErrors.push("Could not start original-page restoration: " + (error.message || String(error)));
-      }
-    }
-    cleanupProgress("Persistent fixtures retained; preparing final report…");
+    cleanupProgress("Persistent Test Lab retained; no cleanup or page navigation performed.");
   }
   await postResult();
 }
