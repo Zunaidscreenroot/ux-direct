@@ -307,10 +307,10 @@
                 const status = attempt && typeof attempt.status === "number" ? "HTTP " + attempt.status : "Request failed";
                 const reason = attempt && typeof attempt.reason === "string" ? attempt.reason : "No additional error details.";
                 return "• " + model + " — " + status + ": " + reason;
-              }).join("\\n")
+              }).join("\n")
             : "";
           const failure = payload.reason || "No free OpenRouter model passed the automatic response test.";
-          throw new Error(attemptDetails ? failure + "\\n\\nAttempt details:\\n" + attemptDetails : failure);
+          throw new Error(attemptDetails ? failure + "\n\nAttempt details:\n" + attemptDetails : failure);
         }
         currentModel = preferred;
         $("modelSelect").textContent = preferred.label;
