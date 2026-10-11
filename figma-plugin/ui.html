@@ -97,24 +97,34 @@
     return data;
   }
   async function syncPluginBridge() {
-    // Maintain the online session only. Health checks are intentionally local/manual
-    // from the plugin CTA; opening the plugin or receiving a dashboard command will
-    // never launch the native API test suite automatically.
+    // Heartbeat requests use the same Netlify production origin as the health check.
+    // Native API checks remain local/manual and never start automatically on open.
     try {
       await bridgeRequest({ mode: "heartbeat" });
+      $("connectionDot").className = "dot ok";
+      $("connectionText").textContent = "Netlify production connected · plugin bridge online";
+      return { ok: true, error: "" };
     } catch (error) {
-      console.warn("[UX Direct bridge]", error);
+      const detail = error && error.message ? error.message : "Unknown bridge error";
+      console.warn("[UX Direct Netlify bridge]", error);
+      $("connectionDot").className = "dot";
+      $("connectionText").textContent = "Netlify reachable · plugin bridge unavailable";
+      return { ok: false, error: detail };
     }
   }
   let heartbeatTimer = null;
   async function startPluginSession() {
     await sendTelemetry("Plugin opened", "success", "UX Direct plugin UI initialized in Figma.");
     const connection = await checkConnection();
+    const bridge = connection
+      ? await syncPluginBridge()
+      : { ok: false, error: "Netlify production health check failed." };
     $("runHealth").disabled = false;
-    $("healthSummary").textContent = connection
-      ? "Backend connected. Run the native API self-test when ready."
-      : "Connection check attempted. Native API tests can still be run below.";
-    await syncPluginBridge();
+    $("healthSummary").textContent = connection && bridge.ok
+      ? "Netlify production and persistent plugin bridge connected. Run the native API self-test when ready."
+      : connection
+        ? "Netlify health check passed, but plugin bridge is unavailable: " + bridge.error
+        : "Could not verify the Netlify production backend. Check the connection before proceeding.";
     heartbeatTimer = window.setInterval(() => {
       void sendTelemetry("Plugin heartbeat", "success", "Plugin UI is active and recently reached its event loop.");
       void syncPluginBridge();
@@ -141,16 +151,19 @@
       const fileKey = verifiedFileKey || currentSelection.fileKey;
       if (!fileKey || fileKey !== ALLOWED_FILE_KEY) throw new Error("Approved Figma file scope is not verified.");
       const response = await fetch(API + "/api/health?fileKey=" + encodeURIComponent(fileKey), { method: "GET" });
-      if (!response.ok) throw new Error("Backend returned " + response.status);
+      if (!response.ok) throw new Error("Netlify backend returned " + response.status);
       const data = await response.json();
+      if (!data || data.status !== "ok" || !data.deployment || data.deployment.platform !== "netlify") {
+        throw new Error("The endpoint did not identify itself as the Netlify backend.");
+      }
       $("connectionDot").className = "dot ok";
-      $("connectionText").textContent = "Connected to UX Direct · backend healthy";
-      await sendTelemetry("Backend connection check completed", "success", "Plugin reached the UX Direct health endpoint.");
+      $("connectionText").textContent = "Netlify production reachable · " + data.deployment.host;
+      await sendTelemetry("Netlify backend connection check completed", "success", "Plugin reached the Netlify production health endpoint.");
       return data;
     } catch (error) {
       $("connectionDot").className = "dot";
-      $("connectionText").textContent = "Not connected · backend unreachable";
-      await sendTelemetry("Backend connection check failed", "error", "Backend request failed: " + (error && error.message ? error.message : "Unknown connection error"));
+      $("connectionText").textContent = "Netlify production not verified";
+      await sendTelemetry("Netlify backend connection check failed", "error", "Netlify request failed: " + (error && error.message ? error.message : "Unknown connection error"));
       return null;
     }
   }
@@ -228,9 +241,12 @@
           checks: message.checks
         }
       }).then(() => {
-        if (message.commandId) status("Vercel-requested health check completed. Results synced to UX Direct.");
+        if (message.commandId) status("Dashboard-requested health check completed. Results synced to Netlify.");
         else status("Native API health check completed. Results synced to UX Direct.");
-      }).catch((error) => console.warn("[UX Direct health report sync]", error));
+      }).catch((error) => {
+        console.warn("[UX Direct Netlify health-report sync]", error);
+        status("Native API test finished, but its report could not be saved to Netlify: " + (error && error.message ? error.message : "Unknown bridge error"));
+      });
       return;
     }
     if (message.type !== "selection") return;
@@ -256,7 +272,7 @@
     void sendTelemetry("Plan CTA clicked", "info", "User clicked Plan with UX Direct.");
     const prompt = $("prompt").value.trim();
     if (prompt.length < 5) { status("Add a little more detail to your brief (at least 5 characters)."); return; }
-    $("submit").disabled = true; $("result").hidden = true; status("Sending task to UX Direct backend…");
+    $("submit").disabled = true; $("result").hidden = true; status("Sending task to Netlify production backend…");
     const startedAt = Date.now();
     await sendTelemetry("Task request started", "info", "A planning request was initiated from the Figma plugin.", { project: $("project").value });
     try {
@@ -273,7 +289,7 @@
       const data = await response.json();
       const durationMs = Date.now() - startedAt;
       if (!response.ok) {
-        await sendTelemetry("Task request failed", "error", "Backend rejected request: " + (data.error || "HTTP " + response.status), { requestId: data.requestId, project: $("project").value, durationMs });
+        await sendTelemetry("Task request failed", "error", "Netlify backend rejected request: " + (data.error || "HTTP " + response.status), { requestId: data.requestId, project: $("project").value, durationMs });
         throw new Error((data.error || "Backend returned " + response.status) + (data.requestId ? " · Request ID " + data.requestId : ""));
       }
       renderPlan(data);
@@ -281,7 +297,7 @@
       await sendTelemetry("Task response received", "success", "Planning response returned to the plugin UI.", { requestId: data.requestId, project: $("project").value, durationMs, mode: data.mode });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      status("Could not complete the request. " + message);
+      status("Netlify request could not be completed. " + message);
       await sendTelemetry("Task request failed", "error", "Request failed: " + message);
     } finally { $("submit").disabled = false; }
   });
