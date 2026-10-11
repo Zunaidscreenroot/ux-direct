@@ -58,11 +58,23 @@
 <script>
   const API = "https://ux-direct.vercel.app";
   const $ = (id) => document.getElementById(id);
+  const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
+  let verifiedFileKey = null;
+  let pluginSessionStarted = false;
+  let autoHealthCheckStarted = false;
   let currentSelection = { fileKey: null, pageName: "", selection: [] };
   const status = (message) => { $("status").textContent = message; };
+  $("runHealth").disabled = true;
+  $("submit").disabled = true;
   async function sendTelemetry(event, result, summary, details = {}) {
+    const fileKey = verifiedFileKey || currentSelection.fileKey;
+    if (!fileKey || fileKey !== ALLOWED_FILE_KEY) return false;
     try {
-      const response = await fetch(API + "/api/telemetry", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "figma-plugin", event, status: result, summary, ...details }) });
+      const response = await fetch(API + "/api/telemetry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "figma-plugin", fileKey, event, status: result, summary, ...details })
+      });
       if (!response.ok) throw new Error("Telemetry returned " + response.status);
       return true;
     } catch (error) { console.warn("[UX Direct telemetry]", event, error); return false; }
@@ -75,9 +87,12 @@
   const pluginSessionToken = makeId() + makeId();
   let lastBridgeCommandId = "";
   async function bridgeRequest(payload) {
+    const fileKey = verifiedFileKey || currentSelection.fileKey;
+    if (!fileKey || fileKey !== ALLOWED_FILE_KEY) throw new Error("Plugin bridge blocked: approved file scope is not verified.");
     const response = await fetch(API + "/api/plugin-bridge", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, clientId: pluginClientId, sessionToken: pluginSessionToken })
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, fileKey, clientId: pluginClientId, sessionToken: pluginSessionToken })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || "Bridge returned " + response.status);
@@ -91,6 +106,7 @@
         if (data.command.action === "native-api-health-check") {
           status("Running a native Figma API health check requested from Vercel…");
           void sendTelemetry("Vercel requested native API health check", "info", "Executing dashboard-issued plugin health check.", { requestId: data.command.commandId });
+          autoHealthCheckStarted = true;
           parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: data.command.commandId } }, "*");
         }
       }
@@ -110,12 +126,14 @@
   }
   window.addEventListener("pagehide", () => {
     if (heartbeatTimer) window.clearInterval(heartbeatTimer);
-    const body = JSON.stringify({ mode: "disconnect", clientId: pluginClientId, sessionToken: pluginSessionToken });
+    const fileKey = verifiedFileKey || currentSelection.fileKey;
+    if (!fileKey || fileKey !== ALLOWED_FILE_KEY) return;
+    const body = JSON.stringify({ mode: "disconnect", fileKey, clientId: pluginClientId, sessionToken: pluginSessionToken });
     try {
       if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/plugin-bridge", new Blob([body], { type: "application/json" }));
       else fetch(API + "/api/plugin-bridge", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
     } catch (_) {}
-    const telemetryBody = JSON.stringify({ source: "figma-plugin", event: "Plugin close attempted", status: "info", summary: "Plugin UI is unloading; close event delivery is best-effort." });
+    const telemetryBody = JSON.stringify({ source: "figma-plugin", fileKey, event: "Plugin close attempted", status: "info", summary: "Plugin UI is unloading; close event delivery is best-effort." });
     try {
       if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/telemetry", new Blob([telemetryBody], { type: "application/json" }));
       else fetch(API + "/api/telemetry", { method: "POST", headers: { "Content-Type": "application/json" }, body: telemetryBody, keepalive: true }).catch(() => {});
@@ -124,7 +142,9 @@
   async function checkConnection() {
     await sendTelemetry("Backend connection check started", "info", "Plugin is checking whether the UX Direct backend is reachable.");
     try {
-      const response = await fetch(API + "/api/health", { method: "GET" });
+      const fileKey = verifiedFileKey || currentSelection.fileKey;
+      if (!fileKey || fileKey !== ALLOWED_FILE_KEY) throw new Error("Approved Figma file scope is not verified.");
+      const response = await fetch(API + "/api/health?fileKey=" + encodeURIComponent(fileKey), { method: "GET" });
       if (!response.ok) throw new Error("Backend returned " + response.status);
       const data = await response.json();
       $("connectionDot").className = "dot ok";
@@ -153,6 +173,33 @@
   window.onmessage = (event) => {
     const message = event.data && event.data.pluginMessage;
     if (!message) return;
+    if (message.type === "scope-approved") {
+      if (message.fileKey !== ALLOWED_FILE_KEY) {
+        status("Plugin UI blocked: this file is not the allowlisted Figma document.");
+        return;
+      }
+      verifiedFileKey = message.fileKey;
+      currentSelection.fileKey = message.fileKey;
+      $("runHealth").disabled = false;
+      $("submit").disabled = false;
+      if (!pluginSessionStarted) {
+        pluginSessionStarted = true;
+        void (async () => {
+          await startPluginSession();
+          if (!autoHealthCheckStarted) {
+            autoHealthCheckStarted = true;
+            $("runHealth").disabled = true;
+            $("healthSummary").textContent = "Running scoped API execution tests in UXD API Test Lab…";
+            parent.postMessage({ pluginMessage: { type: "run-native-health-check" } }, "*");
+          }
+        })();
+      }
+      return;
+    }
+    if (message.type === "native-api-probe") {
+      parent.postMessage({ pluginMessage: { type: "native-api-probe-ack", probeId: message.probeId } }, "*");
+      return;
+    }
     if (message.type === "native-health-result") {
       const passed = message.passed || 0, available = message.available || 0, failed = message.failed || 0, notTested = message.notTested || 0;
       $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + available + " available · " + notTested + " not tested · " + new Date(message.checkedAt).toLocaleTimeString();
@@ -218,7 +265,9 @@
         body: JSON.stringify({
           title: prompt.split(/[.!?\n]/)[0].slice(0, 160) || "UX task",
           request: prompt + (currentSelection.selection.length ? "\n\nSelected Figma context (metadata only): " + JSON.stringify({ pageName: currentSelection.pageName, selection: currentSelection.selection }) : "\n\nNo Figma layers were selected."),
-          project: $("project").value
+          project: $("project").value,
+          source: "figma-plugin",
+          fileKey: verifiedFileKey || currentSelection.fileKey
         })
       });
       const data = await response.json();
@@ -252,7 +301,7 @@
     (data.plan && data.plan.qualityChecks || []).forEach((check) => { const li = document.createElement("li"); li.textContent = check; checks.appendChild(li); });
     root.appendChild(checks);
   }
-  void startPluginSession();
+  // Plugin session startup and automatic API tests wait for the native runtime's exact file-key approval.
 </script>
 </body>
 </html>
