@@ -48,8 +48,8 @@ export function getBudgetConfig(env: Record<string, string | undefined> = proces
 function monthKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
-export function estimateCostInr(promptTokens: number, completionTokens: number, provider: ProviderConfig, env = process.env) {
-  if (provider.kind === "local" || provider.kind === "free-tier" || provider.kind === "mock") return 0;
+export function estimateCostInr(promptTokens: number, completionTokens: number, provider: ProviderConfig, env = process.env, model?: string) {
+  if (model?.endsWith(":free") || provider.kind === "local" || provider.kind === "free-tier" || provider.kind === "mock") return 0;
   const config = getBudgetConfig(env);
   return promptTokens * config.inputPriceInrPerMillion / 1_000_000 +
     completionTokens * config.outputPriceInrPerMillion / 1_000_000;
