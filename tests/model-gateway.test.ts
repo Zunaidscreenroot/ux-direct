@@ -100,7 +100,13 @@ test("paid provider keys do not enable paid routing without explicit opt-in", as
   const { providersFromEnv } = await import("../src/model-gateway");
   const locked = providersFromEnv({ NODE_ENV: "production", OPENAI_API_KEY: "test-only" });
   assert.equal(locked.some(p => p.name === "openai"), false);
-  const enabled = providersFromEnv({ NODE_ENV: "production", OPENAI_API_KEY: "test-only", ALLOW_PAID_MODELS: "true" });
+  const missingPrices = providersFromEnv({ NODE_ENV: "production", OPENAI_API_KEY: "test-only", ALLOW_PAID_MODELS: "true" });
+  assert.equal(missingPrices.some(p => p.name === "openai"), false);
+  const enabled = providersFromEnv({
+    NODE_ENV: "production", OPENAI_API_KEY: "test-only", ALLOW_PAID_MODELS: "true",
+    MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M: "12", MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: "48",
+    MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000"
+  });
   assert.equal(enabled.some(p => p.name === "openai" && p.models.includes("gpt-4o-mini")), true);
 });
 
@@ -190,4 +196,32 @@ test("rate limiter blocks bursts and resets after the window", async () => {
   assert.equal(blocked.allowed, false);
   assert.equal(blocked.remaining, 0);
   assert.equal(checkGatewayRateLimit(key, 61_001).allowed, true);
+});
+
+
+test("monthly budget blocks paid calls when pricing is missing or projected cost exceeds cap", async () => {
+  const { assertBudgetAllows } = await import("../src/model-gateway/usage-store");
+  assert.throws(() => assertBudgetAllows(100, 100, {
+    MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000",
+    MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M: "0",
+    MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: "0"
+  }), /prices are configured/);
+  assert.throws(() => assertBudgetAllows(100_000, 100_000, {
+    MODEL_GATEWAY_MONTHLY_BUDGET_INR: "1",
+    MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M: "1000",
+    MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: "1000"
+  }), /exceeds the remaining budget/);
+});
+
+test("usage ledger records token-level counts and computes monthly budget totals", async () => {
+  const { recordModelUsage, getBudgetSnapshot } = await import("../src/model-gateway/usage-store");
+  recordModelUsage({
+    id: "usage-test-1", at: new Date().toISOString(), requestId: "req-test",
+    provider: "groq", model: "openai/gpt-oss-20b", tier: "free-tier",
+    promptTokens: 12, completionTokens: 8, totalTokens: 20, estimatedCostInr: 0,
+    latencyMs: 145, status: "success"
+  });
+  const snapshot = getBudgetSnapshot();
+  assert.ok(snapshot.records.some(record => record.requestId === "req-test" && record.totalTokens === 20));
+  assert.equal(snapshot.currency, "INR");
 });
