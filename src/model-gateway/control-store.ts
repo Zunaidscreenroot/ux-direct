@@ -49,6 +49,8 @@ export function defaultGatewaySettings(): GatewaySettings {
     [modelKey("deepseek", "deepseek-flash")]: pricePolicy(.30, 1.20),
     [modelKey("deepseek", "deepseek-v4-pro")]: pricePolicy(1.32, 3.96),
     [modelKey("openrouter", "apodex/apodex-1.1-mini:free")]: pricePolicy(),
+    // Conservative paid-model estimate is 5x the published base price so the preflight budget reserve is not optimistic.
+    [modelKey("openrouter", "openai/gpt-oss-20b")]: pricePolicy(.10, .50),
     [modelKey("ollama", "qwen2.5:7b")]: pricePolicy(),
     [modelKey("ollama", "gemma4:31b")]: pricePolicy(),
     [modelKey("cerebras", "gpt-oss-120b")]: pricePolicy(),
