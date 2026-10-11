@@ -339,11 +339,11 @@
       const model = currentModel;
       setModelStatus("warn", "Checking model…", "Sending a small test prompt and waiting for a real model response.");
       try {
-        const response = await fetch(API + "/api/model-status", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fileKey: verifiedFileKey, provider: model.provider, model: model.id })
-        });
+        const probeUrl = new URL(API + "/api/model-status");
+        probeUrl.searchParams.set("fileKey", verifiedFileKey);
+        probeUrl.searchParams.set("provider", model.provider);
+        probeUrl.searchParams.set("model", model.id);
+        const response = await fetch(probeUrl.toString(), { method: "GET", cache: "no-store" });
         const payload = await response.json().catch(() => ({}));
         if (version !== modelProbeVersion) return;
         if (!response.ok) throw new Error(payload.error || "Model check returned HTTP " + response.status + ".");
@@ -359,12 +359,24 @@
           modelAvailable = false;
           const reason = payload.reason || payload.error || "The provider did not return a usable response.";
           setModelStatus("bad", "Not available", model.label + ": " + reason);
+          const message = model.label + " is not available in this Preview.\n\n" + reason + "\n\nSelect another model to retry. Chat stays disabled until a real model response is confirmed.";
+          if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
+          else {
+            const bubble = modelProbeRow.querySelector(".bubble");
+            if (bubble) bubble.textContent = message;
+          }
         }
       } catch (error) {
         if (version !== modelProbeVersion) return;
         modelAvailable = false;
         const detail = error && error.message ? error.message : String(error || "Unknown model check failure.");
         setModelStatus("bad", "Model check failed", detail);
+        const message = "I couldn’t verify " + model.label + " from the Preview.\n\n" + detail + "\n\nSelect another model to retry. Chat stays disabled until a real model response is confirmed.";
+        if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
+        else {
+          const bubble = modelProbeRow.querySelector(".bubble");
+          if (bubble) bubble.textContent = message;
+        }
         console.warn("[UX Direct model probe]", detail);
       }
       updateSendAvailability();
