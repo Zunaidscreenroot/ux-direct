@@ -242,7 +242,9 @@ export async function chatCompletionWithFallback(
   const first = routeTask(task, providers);
   const candidates = [
     first,
-    ...catalog.filter(entry => entry.configured && (entry.tier === "local" || entry.tier === "free-tier"))
+    ...catalog.filter(entry => entry.configured &&
+      (entry.tier === "local" || entry.tier === "free-tier") &&
+      (task !== "vision" || entry.provider === "gemini" || entry.id === "gemma4:31b"))
   ].filter((entry, index, list) => list.findIndex(other => other.id === entry.id && other.provider === entry.provider) === index);
   let lastError: unknown;
   for (const candidate of candidates) {
