@@ -235,7 +235,8 @@ test("usage ledger records token-level counts and computes monthly budget totals
 });
 
 
-test("direct provider billing tier is explicit and paid providers stay unavailable until paid routing is enabled", () => {
+test("direct provider billing tier is explicit and paid providers stay unavailable until paid routing is enabled", async () => {
+  const { providersFromEnv, getModelCatalog } = await import("../src/model-gateway");
   const base = { GEMINI_API_KEY: "test-key", GEMINI_MODELS: "gemini-3.1-flash-lite", MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000" };
   const paidLocked = providersFromEnv({ ...base, GEMINI_BILLING_MODE: "paid", ALLOW_PAID_MODELS: "false" });
   assert.equal(paidLocked.some(provider => provider.name === "gemini"), false);
