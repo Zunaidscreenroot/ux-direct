@@ -131,26 +131,25 @@ test("UX task aliases resolve to configured providers and safely fall back to mo
 });
 
 
-test("OpenRouter only exposes explicitly free models until paid mode is enabled", async () => {
+test("OpenRouter waits for live discovery and never enables paid routing", async () => {
   const { providersFromEnv } = await import("../src/model-gateway");
   const locked = providersFromEnv({
     NODE_ENV: "production",
-    OPENROUTER_API_KEY: "test-only",
-    OPENROUTER_MODELS: "vendor/free-model:free,vendor/paid-model"
+    OPENROUTER_API_KEY: "test-only"
   });
   const router = locked.find(p => p.name === "openrouter");
-  assert.deepEqual(router?.models, ["vendor/free-model:free"]);
+  assert.deepEqual(router?.models, []);
   assert.equal(router?.kind, "free-tier");
-  const paid = providersFromEnv({
+  const paidFlags = providersFromEnv({
     NODE_ENV: "production",
     OPENROUTER_API_KEY: "test-only",
-    OPENROUTER_MODELS: "vendor/paid-model",
     ALLOW_PAID_MODELS: "true",
     MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M: "12",
     MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: "48",
     MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000"
   });
-  assert.equal(paid.find(p => p.name === "openrouter")?.kind, "paid");
+  assert.deepEqual(paidFlags.find(p => p.name === "openrouter")?.models, []);
+  assert.equal(paidFlags.find(p => p.name === "openrouter")?.kind, "free-tier");
 });
 
 test("custom endpoints are disabled unless local or paid mode is explicitly enabled", async () => {
