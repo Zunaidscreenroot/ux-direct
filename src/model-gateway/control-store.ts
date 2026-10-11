@@ -42,14 +42,8 @@ function pricePolicy(inputUsd = 0, outputUsd = 0, fx = 97): ModelPolicy {
 }
 export function defaultGatewaySettings(): GatewaySettings {
   const modules: Record<string, ModulePolicy> = {};
-  for (const m of GATEWAY_MODULES) modules[m.id] = { enabled: true, mode: "free", selectedModelKey: m.id === "reasoning" && (process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY) ? modelKey("gemini", "gemini-3.5-flash-lite") : "auto", monthlyBudgetInr: m.suggestedBudgetShare, maxRequestCostInr: 10, allowFallback: m.id === "reasoning" };
+  for (const m of GATEWAY_MODULES) modules[m.id] = { enabled: true, mode: "free", selectedModelKey: "auto", monthlyBudgetInr: m.suggestedBudgetShare, maxRequestCostInr: 10, allowFallback: false };
   const models: Record<string, ModelPolicy> = {
-    [modelKey("gemini", "gemini-3.8-flash")]: pricePolicy(.75, 3.75),
-    [modelKey("gemini", "gemini-3.5-flash")]: pricePolicy(1.5, 9),
-    [modelKey("gemini", "gemini-3-flash-preview")]: pricePolicy(.5, 3),
-    [modelKey("gemini", "gemini-3.1-flash-lite")]: pricePolicy(.25, 1.5),
-    [modelKey("gemini", "gemini-2.5-flash")]: pricePolicy(.3, 2.5),
-    [modelKey("gemini", "gemini-2.5-flash-lite")]: pricePolicy(.1, .4),
     [modelKey("groq", "openai/gpt-oss-120b")]: pricePolicy(.15, .6),
     [modelKey("groq", "openai/gpt-oss-20b")]: pricePolicy(.075, .3),
     [modelKey("deepseek", "deepseek-flash")]: pricePolicy(.30, 1.20),
