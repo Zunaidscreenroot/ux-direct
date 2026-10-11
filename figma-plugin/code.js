@@ -1,18 +1,22 @@
+// STRICT SCOPE: reject every file except the exact allowlisted key before reading document pages.
 // STRICT SCOPE: this plugin is disabled until the exact approved Figma file key is configured.
 var UXD_ALLOWED_FILE_NAME = "Zunaid_Workspace";
 var UXD_ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
 function getUxDirectScopeDecision() {
-  var fileName = "";
+  // Fail closed using file identity only. Do not read figma.root, currentPage,
+  // selection, or other document/page nodes before the exact key is approved.
   var fileKey = "";
-  try { fileName = figma.root && typeof figma.root.name === "string" ? figma.root.name.trim() : ""; } catch (_) {}
   try { fileKey = typeof figma.fileKey === "string" ? figma.fileKey : ""; } catch (_) {}
   if (!UXD_ALLOWED_FILE_KEY) {
-    return { allowed: false, reason: "The exact approved Figma file URL/key has not been configured yet." };
+    return { allowed: false, reason: "The approved Figma file key is not configured." };
   }
-  if (!fileKey) return { allowed: false, reason: "Figma did not expose the private file key; access is denied by default." };
-  if (fileKey !== UXD_ALLOWED_FILE_KEY) return { allowed: false, reason: "This is not the allowlisted Figma file." };
-  if (fileName.toLowerCase() !== UXD_ALLOWED_FILE_NAME.toLowerCase()) return { allowed: false, reason: "The file name does not match Zunaid_Workspace (case-insensitive check)." };
-  return { allowed: true, reason: "Approved file identity verified." };
+  if (!fileKey) {
+    return { allowed: false, reason: "Figma did not expose the file key; access is denied by default." };
+  }
+  if (fileKey !== UXD_ALLOWED_FILE_KEY) {
+    return { allowed: false, reason: "This is not the allowlisted Figma file." };
+  }
+  return { allowed: true, reason: "Approved file key verified." };
 }
 function startScopedPlugin() {
   // Create the UI only after the file allowlist succeeds, before any UI messages.

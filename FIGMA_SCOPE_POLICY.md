@@ -31,3 +31,9 @@ Figma's native Plugin API exposes the current file identity to this private deve
 ## Health-check behavior
 
 The native health check deliberately reports Team Library access as `NOT TESTED`. Do not add `"teamlibrary"` to `manifest.json` to silence an error: that would grant a wider library capability that is outside the approved scope.
+
+## No full-document loading
+
+- The manifest must set `"documentAccess": "dynamic-page"`. Without it, Figma may load all pages when the plugin runs and show “Loading n pages for plugin…”.
+- Before the key is approved, startup may read only `figma.fileKey`; it must not access `figma.root`, `figma.currentPage`, selection, page lists, or any node tree.
+- If the key does not match, the plugin closes immediately before creating UI or accessing pages.
