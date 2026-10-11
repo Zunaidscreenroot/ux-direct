@@ -3,317 +3,538 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>UX Direct</title>
+  <title>UX Direct · Conversational Cockpit</title>
   <style>
     :root { color-scheme: light dark; font: 12px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 16px; color: var(--figma-color-text, #202124); background: var(--figma-color-bg, #fff); }
-    header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:16px; }
-    .brand { display:flex; gap:9px; align-items:center; font-size:15px; font-weight:700; }
-    .mark { display:grid; place-items:center; width:28px; height:28px; border-radius:9px; background:#242424; color:#fff; font-weight:800; }
-    .pill { border:1px solid var(--figma-color-border); border-radius:999px; padding:5px 8px; color:var(--figma-color-text-secondary); font-size:10px; white-space:nowrap; }
-    .connection { display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px solid var(--figma-color-border); border-radius:9px; margin-bottom:12px; font-size:11px; }
-    .dot { width:7px; height:7px; border-radius:50%; background:#d6a23e; }
-    .dot.ok { background:#26966b; }
-    h1 { font-size:20px; line-height:1.2; margin:8px 0; letter-spacing:-.5px; }
-    .sub { color:var(--figma-color-text-secondary); line-height:1.5; margin:0 0 16px; }
-    label { display:block; font-weight:600; margin:14px 0 7px; }
-    select, textarea, button { font:inherit; }
-    select, textarea { width:100%; border:1px solid var(--figma-color-border); border-radius:9px; padding:10px; background:var(--figma-color-bg); color:var(--figma-color-text); }
-    textarea { min-height:130px; resize:vertical; line-height:1.45; }
-    button { cursor:pointer; border:0; border-radius:9px; padding:11px 13px; font-weight:650; }
-    .primary { width:100%; background:var(--figma-color-bg-brand, #2563eb); color:var(--figma-color-text-onbrand, white); margin-top:10px; }
-    .secondary { background:var(--figma-color-bg-secondary); color:var(--figma-color-text); border:1px solid var(--figma-color-border); }
-    .selection { padding:10px; border:1px solid var(--figma-color-border); border-radius:10px; margin-top:8px; }
-    .muted { color:var(--figma-color-text-secondary); }
-    .node { display:flex; gap:8px; margin-top:7px; align-items:flex-start; }
-    .node strong { overflow-wrap:anywhere; }
-    .status { margin-top:12px; border-radius:9px; padding:10px; background:var(--figma-color-bg-secondary); line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .result { margin-top:12px; border-top:1px solid var(--figma-color-border); padding-top:12px; }
-    .step { padding:9px 0; border-bottom:1px solid var(--figma-color-border); }
-    .step small { display:block; margin-top:4px; color:var(--figma-color-text-secondary); }
-    footer { color:var(--figma-color-text-tertiary); font-size:10px; margin-top:15px; line-height:1.45; }
+    [hidden] { display: none !important; }
+    body { height: 100vh; min-height: 0; margin: 0; padding: 10px 12px 0; display:flex; flex-direction:column; overflow:hidden; color:var(--figma-color-text,#202124); background:var(--figma-color-bg,#fff); }
+    header { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:30px; margin-bottom:7px; }
+    .brand { display:flex; align-items:center; gap:7px; font-size:14px; font-weight:750; letter-spacing:-.25px; white-space:nowrap; }
+    .mark { display:grid; place-items:center; width:25px; height:25px; border-radius:7px; background:#252525; color:#fff; font-size:12px; font-weight:800; }
+    .statusbar { display:flex; align-items:center; justify-content:flex-end; gap:4px; min-width:0; }
+    .status-tag { display:inline-flex; align-items:center; gap:5px; max-width:124px; min-width:0; border:1px solid var(--figma-color-border); border-radius:999px; padding:4px 6px; background:var(--figma-color-bg-secondary); color:var(--figma-color-text-secondary); font:600 9px/1.15 inherit; cursor:default; white-space:nowrap; }
+    button.status-tag { cursor:pointer; }
+    .status-tag:focus-visible, button:focus-visible, textarea:focus-visible, select:focus-visible { outline:2px solid var(--figma-color-bg-brand,#2563eb); outline-offset:2px; }
+    .status-tag .tagtext { overflow:hidden; text-overflow:ellipsis; }
+    .dot { flex:0 0 auto; width:6px; height:6px; border-radius:50%; background:#b8a16a; }
+    .status-tag.ok { color:#22845d; border-color:rgba(34,132,93,.28); background:rgba(34,132,93,.08); }
+    .status-tag.ok .dot { background:#26966b; }
+    .status-tag.bad { color:#c53f45; border-color:rgba(197,63,69,.3); background:rgba(197,63,69,.08); }
+    .status-tag.bad .dot { background:#d14343; }
+    .status-tag.warn .dot { background:#c18a24; }
+    .chat { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; overflow:hidden; }
+    .chatlog { display:flex; flex:1 1 auto; flex-direction:column; gap:12px; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px 2px 14px; scroll-behavior:smooth; }
+    .message { display:flex; flex-direction:column; gap:4px; width:100%; }
+    .message.user { align-items:flex-end; }
+    .message.assistant { align-items:flex-start; }
+    .message-label { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary)); font-size:10px; padding:0 3px; }
+    .bubble { max-width:94%; border-radius:12px; padding:9px 11px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .assistant .bubble { background:var(--figma-color-bg-secondary,#f3f4f6); border:1px solid var(--figma-color-border, #e6e6e6); border-top-left-radius:4px; }
+    .user .bubble { color:var(--figma-color-text-onbrand,#fff); background:var(--figma-color-bg-brand,#2563eb); border-top-right-radius:4px; }
+    .message-meta { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary)); font-size:9px; padding:0 3px; }
+    .suggestions { display:flex; flex-wrap:wrap; gap:5px; margin:0 1px 4px; }
+    .suggestion { border:1px solid var(--figma-color-border); border-radius:999px; padding:6px 8px; background:transparent; color:var(--figma-color-text); font-size:10px; line-height:1.2; font-weight:550; cursor:pointer; }
+    .suggestion:hover { background:var(--figma-color-bg-secondary); }
+    .typing { display:flex; align-items:center; gap:5px; color:var(--figma-color-text-secondary); font-size:10px; padding:7px 10px; }
+    .typing-dot { width:4px; height:4px; border-radius:50%; background:currentColor; animation:pulse 1s infinite alternate; }
+    .typing-dot:nth-child(2) { animation-delay:.2s; }
+    .typing-dot:nth-child(3) { animation-delay:.4s; }
+    @keyframes pulse { from { opacity:.25; } to { opacity:1; } }
+    .composer { flex:0 0 auto; border-top:1px solid var(--figma-color-border); padding:8px 0 10px; background:var(--figma-color-bg); }
+    .composer-context { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:22px; margin-bottom:6px; color:var(--figma-color-text-secondary); font-size:10px; }
+    #contextText { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .project-select { width:auto; max-width:118px; border:1px solid var(--figma-color-border); border-radius:7px; padding:4px 6px; background:var(--figma-color-bg); color:var(--figma-color-text); font-size:10px; }
+    .input-shell { display:flex; align-items:flex-end; gap:7px; padding:6px; border:1px solid var(--figma-color-border); border-radius:12px; background:var(--figma-color-bg); }
+    textarea { display:block; flex:1 1 auto; width:100%; min-width:0; min-height:54px; max-height:132px; resize:vertical; border:0; outline:0; padding:6px 4px; background:transparent; color:var(--figma-color-text); font:inherit; line-height:1.5; }
+    textarea:focus-visible { outline:none; }
+    textarea::placeholder { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary)); }
+    .send { display:grid; place-items:center; flex:0 0 34px; width:34px; height:34px; padding:0; border-radius:9px; background:var(--figma-color-bg-brand,#2563eb); color:var(--figma-color-text-onbrand,#fff); font-size:17px; font-weight:700; }
+    .send:disabled { cursor:not-allowed; opacity:.4; }
+    .activity { min-height:14px; padding:4px 3px 0; color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary)); font-size:9px; line-height:1.35; }
+    .health-panel { position:fixed; z-index:20; top:47px; left:10px; right:10px; max-height:calc(100vh - 58px); overflow:hidden; display:flex; flex-direction:column; border:1px solid var(--figma-color-border); border-radius:12px; background:var(--figma-color-bg); box-shadow:0 8px 32px rgba(0,0,0,.18); }
+    .health-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:11px 12px 8px; border-bottom:1px solid var(--figma-color-border); }
+    .health-head strong { font-size:12px; }
+    .close-health { width:26px; height:26px; padding:0; border-radius:7px; background:var(--figma-color-bg-secondary); color:var(--figma-color-text); }
+    .health-summary { margin:0; padding:9px 12px; color:var(--figma-color-text-secondary); font-size:10px; line-height:1.45; }
+    .health-results { overflow-y:auto; min-height:60px; padding:0 12px 10px; }
+    .health-row { display:grid; grid-template-columns:72px minmax(0,1fr); gap:7px; align-items:start; padding:7px 0; border-top:1px solid var(--figma-color-border); line-height:1.4; }
+    .health-badge { font-size:9px; font-weight:750; letter-spacing:.15px; }
+    .health-badge.pass { color:#26966b; }
+    .health-badge.fail { color:#d14343; }
+    .health-badge.na { color:#b07b24; }
+    .health-name { font-weight:650; overflow-wrap:anywhere; }
+    .health-reason { margin-top:3px; color:var(--figma-color-text-secondary); font-size:10px; overflow-wrap:anywhere; }
+    @media (max-width:340px) {
+      body { padding-left:8px; padding-right:8px; }
+      .brand { font-size:12px; }
+      .status-tag { padding:4px 5px; max-width:104px; font-size:8px; }
+      .mark { width:22px; height:22px; }
+    }
   </style>
 </head>
 <body>
-  <header><div class="brand"><span class="mark">ux</span> UX Direct</div><span class="pill">FIGMA COCKPIT · MVP</span></header>
-  <div class="connection" aria-live="polite"><span id="connectionDot" class="dot"></span><strong id="connectionText">Checking backend connection…</strong></div>
-  <h1>What should we improve?</h1>
-  <p class="sub">Describe the product problem in natural language. UX Direct prepares a structured plan. Its native API self-test runs only inside the approved file's dedicated UXD API Test Lab page.</p>
-  <label for="project">Project</label>
-  <select id="project"><option value="general">General UX</option><option value="express-computers">Express Computers</option><option value="dmi-finance">DMI Finance</option></select>
-  <label for="prompt">Your brief</label>
-  <textarea id="prompt" maxlength="8000" placeholder="Example: Analyse the selected DMI screen and plan a VKYC entry point. Reuse approved patterns and cover consent, loading, error and retry states."></textarea>
-  <section class="selection" aria-live="polite" style="margin-top:10px">
-    <strong>Native Plugin API health</strong>
-    <p id="healthSummary" class="muted" style="margin:7px 0">Not tested yet. Run a check to verify available plugin APIs.</p>
-    <button id="runHealth" class="secondary" type="button">Run native API self-test</button>
-    <div id="healthResults" style="margin-top:8px"></div>
+  <header>
+    <div class="brand"><span class="mark">ux</span><span>UX Direct</span></div>
+    <div class="statusbar" aria-label="System status">
+      <div id="connectionStatus" class="status-tag warn" aria-live="polite"><span id="connectionDot" class="dot"></span><span id="connectionText" class="tagtext">Connecting</span></div>
+      <button id="healthStatus" class="status-tag warn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="healthPanel" title="View Plugin API health-check details"><span id="healthDot" class="dot"></span><span id="healthStatusText" class="tagtext">Health pending</span></button>
+    </div>
+  </header>
+
+  <main class="chat">
+    <div id="chatLog" class="chatlog" role="log" aria-live="polite" aria-relevant="additions text"></div>
+    <div class="composer">
+      <div class="composer-context">
+        <span id="contextText">Reading Figma selection…</span>
+        <select id="project" class="project-select" aria-label="Current project">
+          <option value="general">General UX</option>
+          <option value="dmi-finance">DMI Finance</option>
+          <option value="express-computers">Express Computers</option>
+        </select>
+      </div>
+      <form id="chatForm">
+        <div class="input-shell">
+          <textarea id="prompt" maxlength="5000" rows="2" aria-label="Message UX Direct" placeholder="Ask UX Direct to plan, critique, design or refine…" required></textarea>
+          <button id="send" class="send" type="submit" aria-label="Send message" title="Send message" disabled>↑</button>
+        </div>
+      </form>
+      <div id="activity" class="activity" role="status">Connecting to your UX Director…</div>
+    </div>
+  </main>
+
+  <section id="healthPanel" class="health-panel" aria-label="Plugin API health-check details" hidden>
+    <div class="health-head"><strong>Plugin health checks</strong><button id="closeHealth" class="close-health" type="button" aria-label="Close health details">×</button></div>
+    <p id="healthSummary" class="health-summary">The health suite runs automatically after the backend connection is verified.</p>
+    <div id="healthResults" class="health-results"><div class="muted">Waiting for the first report…</div></div>
   </section>
-  <div class="selection" aria-live="polite"><strong>Selected Figma context</strong><div id="selection" class="muted" style="margin-top:6px">Reading current selection…</div><button id="refresh" class="secondary" style="margin-top:9px">Refresh selection</button></div>
-  <button id="submit" class="primary">Plan with UX Direct ↗</button>
-  <div id="status" class="status" role="status">Ready. No Figma changes will be made.</div>
-  <div id="result" class="result" hidden></div>
-  <footer>Planning sends prompt text and selected-node metadata only. UXD API Test Lab and its test fixtures are created once and reused. Test nodes, components, variables, and the storage probe are intentionally preserved between runs; no per-run cleanup is performed. No Figma REST API or OAuth access is used.</footer>
-<script>
-  const API = "https://uxdirect.netlify.app";
-  const $ = (id) => document.getElementById(id);
-  const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
-  let verifiedFileKey = null;
-  let pluginSessionStarted = false;
-  let currentSelection = { fileKey: null, pageName: "", selection: [] };
-  const status = (message) => { $("status").textContent = message; };
-  $("runHealth").disabled = true;
-  $("submit").disabled = true;
-  async function sendTelemetry(event, result, summary, details = {}) {
-    const fileKey = verifiedFileKey || currentSelection.fileKey;
-    if (!fileKey || fileKey !== ALLOWED_FILE_KEY) return false;
-    try {
-      const response = await fetch(API + "/api/telemetry", {
+
+  <script>
+    const API = "https://uxdirect.netlify.app";
+    const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
+    const $ = (id) => document.getElementById(id);
+    let verifiedFileKey = null;
+    let pluginSessionStarted = false;
+    let backendHealthy = false;
+    let bridgeReady = false;
+    let autoHealthStarted = false;
+    let healthCheckRunning = false;
+    let healthTimeout = null;
+    let heartbeatTimer = null;
+    let isSending = false;
+    let currentSelection = { fileKey: null, pageName: "", selection: [] };
+    const chatHistory = [];
+    const handledBridgeCommands = new Set();
+
+    function makeId() {
+      if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+      return "uxd-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    }
+    const pluginClientId = makeId();
+    const pluginSessionToken = makeId() + makeId();
+
+    function setActivity(message) { $("activity").textContent = message || ""; }
+    function setConnection(state, label) {
+      $("connectionStatus").className = "status-tag " + state;
+      $("connectionDot").className = "dot";
+      $("connectionText").textContent = label;
+      $("connectionStatus").title = state === "ok" ? "UX Direct backend is reachable" : label;
+    }
+    function setHealth(state, label) {
+      $("healthStatus").className = "status-tag " + state;
+      $("healthDot").className = "dot";
+      $("healthStatusText").textContent = label;
+      $("healthStatus").title = state === "ok" ? "All executed health checks passed. Click for details." : "Click to inspect Plugin API health-check details.";
+    }
+    function toggleHealthPanel(open) {
+      const show = typeof open === "boolean" ? open : $("healthPanel").hidden;
+      $("healthPanel").hidden = !show;
+      $("healthStatus").setAttribute("aria-expanded", String(show));
+    }
+    function appendMessage(role, content, meta) {
+      const row = document.createElement("article");
+      row.className = "message " + role;
+      const label = document.createElement("div");
+      label.className = "message-label";
+      label.textContent = role === "user" ? "You" : "UX Direct";
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = String(content || "");
+      row.append(label, bubble);
+      if (meta) {
+        const details = document.createElement("div");
+        details.className = "message-meta";
+        details.textContent = meta;
+        row.appendChild(details);
+      }
+      $("chatLog").appendChild(row);
+      $("chatLog").scrollTop = $("chatLog").scrollHeight;
+      return row;
+    }
+    function showTyping() {
+      const row = document.createElement("div");
+      row.id = "typing";
+      row.className = "typing";
+      row.setAttribute("aria-label", "UX Direct is thinking");
+      row.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span><span style="margin-left:3px">Thinking through this…</span>';
+      $("chatLog").appendChild(row);
+      $("chatLog").scrollTop = $("chatLog").scrollHeight;
+    }
+    function hideTyping() { const typing = $("typing"); if (typing) typing.remove(); }
+    function showSuggestions() {
+      const root = document.createElement("div");
+      root.className = "suggestions";
+      [
+        ["Plan DMI VKYC", "Help me plan the DMI Finance VKYC entry point and end-to-end journey, including consent, loading, errors and recovery."],
+        ["Review selected screen", "Review the selected Figma screen. Tell me what metadata is available, what is still needed for a proper UX audit, and propose a review checklist."],
+        ["Express Batch 3", "Help me structure the Express Computers Batch 3 wireframe work into a review-ready UX plan."]
+      ].forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "suggestion";
+        button.textContent = item[0];
+        button.addEventListener("click", () => sendChatMessage(item[1]));
+        root.appendChild(button);
+      });
+      $("chatLog").appendChild(root);
+    }
+    appendMessage("assistant", "Hi, I’m UX Direct — your conversational UX Director.\n\nTell me what you’re working on. We can reason through the problem, plan the journey, critique UX decisions, define edge states and prepare review-ready work. I’ll keep the conversation in context and be clear about what has—and hasn’t—actually been executed.");
+    showSuggestions();
+
+    async function sendTelemetry(eventName, result, summary, details) {
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return false;
+      try {
+        const response = await fetch(API + "/api/telemetry", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(Object.assign({
+            source: "figma-plugin", fileKey: verifiedFileKey,
+            event: eventName, status: result, summary
+          }, details || {}))
+        });
+        return response.ok;
+      } catch (error) {
+        console.warn("[UX Direct telemetry]", eventName, error);
+        return false;
+      }
+    }
+
+    async function bridgeRequest(payload) {
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) {
+        throw new Error("Approved Figma file scope is not verified.");
+      }
+      const response = await fetch(API + "/api/plugin-bridge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: "figma-plugin", fileKey, event, status: result, summary, ...details })
+        body: JSON.stringify(Object.assign({}, payload, {
+          fileKey: verifiedFileKey, clientId: pluginClientId, sessionToken: pluginSessionToken
+        }))
       });
-      if (!response.ok) throw new Error("Telemetry returned " + response.status);
-      return true;
-    } catch (error) { console.warn("[UX Direct telemetry]", event, error); return false; }
-  }
-  function makeId() {
-    if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
-    return "uxd-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-  }
-  const pluginClientId = makeId();
-  const pluginSessionToken = makeId() + makeId();
-  const handledBridgeCommands = new Set();
-  async function bridgeRequest(payload) {
-    const fileKey = verifiedFileKey || currentSelection.fileKey;
-    if (!fileKey || fileKey !== ALLOWED_FILE_KEY) throw new Error("Plugin bridge blocked: approved file scope is not verified.");
-    const response = await fetch(API + "/api/plugin-bridge", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, fileKey, clientId: pluginClientId, sessionToken: pluginSessionToken })
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || "Bridge returned " + response.status);
-    return data;
-  }
-  async function syncPluginBridge() {
-    // Heartbeat requests use the same Netlify production origin as the health check.
-    // Native API checks remain local/manual and never start automatically on open.
-    try {
-      const heartbeat = await bridgeRequest({ mode: "heartbeat" });
-      const command = heartbeat && heartbeat.command;
-      if (command && command.action === "native-api-health-check" && command.commandId && !handledBridgeCommands.has(command.commandId)) {
-        handledBridgeCommands.add(command.commandId);
-        status("Dashboard requested a native API health check. Running inside Figma…");
-        parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: command.commandId } }, "*");
-      }
-      $("connectionDot").className = "dot ok";
-      $("connectionText").textContent = "Netlify production connected · plugin bridge online";
-      return { ok: true, error: "" };
-    } catch (error) {
-      const detail = error && error.message ? error.message : "Unknown bridge error";
-      console.warn("[UX Direct Netlify bridge]", error);
-      $("connectionDot").className = "dot";
-      $("connectionText").textContent = "Netlify reachable · plugin bridge unavailable";
-      return { ok: false, error: detail };
-    }
-  }
-  let heartbeatTimer = null;
-  async function startPluginSession() {
-    await sendTelemetry("Plugin opened", "success", "UX Direct plugin UI initialized in Figma.");
-    const connection = await checkConnection();
-    const bridge = connection
-      ? await syncPluginBridge()
-      : { ok: false, error: "Netlify production health check failed." };
-    $("runHealth").disabled = false;
-    $("healthSummary").textContent = connection && bridge.ok
-      ? "Netlify production and persistent plugin bridge connected. Run the native API self-test when ready."
-      : connection
-        ? "Netlify health check passed, but plugin bridge is unavailable: " + bridge.error
-        : "Could not verify the Netlify production backend. Check the connection before proceeding.";
-    // Bridge heartbeat is sufficient for liveness; do not emit a separate telemetry POST each interval.
-    heartbeatTimer = window.setInterval(() => {
-      void syncPluginBridge();
-    }, 30000);
-  }
-  window.addEventListener("pagehide", () => {
-    if (heartbeatTimer) window.clearInterval(heartbeatTimer);
-    const fileKey = verifiedFileKey || currentSelection.fileKey;
-    if (!fileKey || fileKey !== ALLOWED_FILE_KEY) return;
-    const body = JSON.stringify({ mode: "disconnect", fileKey, clientId: pluginClientId, sessionToken: pluginSessionToken });
-    try {
-      if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/plugin-bridge", new Blob([body], { type: "application/json" }));
-      else fetch(API + "/api/plugin-bridge", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
-    } catch (_) {}
-    const telemetryBody = JSON.stringify({ source: "figma-plugin", fileKey, event: "Plugin close attempted", status: "info", summary: "Plugin UI is unloading; close event delivery is best-effort." });
-    try {
-      if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/telemetry", new Blob([telemetryBody], { type: "application/json" }));
-      else fetch(API + "/api/telemetry", { method: "POST", headers: { "Content-Type": "application/json" }, body: telemetryBody, keepalive: true }).catch(() => {});
-    } catch (_) {}
-  });
-  async function checkConnection() {
-    await sendTelemetry("Backend connection check started", "info", "Plugin is checking whether the UX Direct backend is reachable.");
-    try {
-      const fileKey = verifiedFileKey || currentSelection.fileKey;
-      if (!fileKey || fileKey !== ALLOWED_FILE_KEY) throw new Error("Approved Figma file scope is not verified.");
-      const response = await fetch(API + "/api/health?fileKey=" + encodeURIComponent(fileKey), { method: "GET" });
-      if (!response.ok) throw new Error("Netlify backend returned " + response.status);
-      const data = await response.json();
-      if (!data || data.status !== "ok" || !data.deployment || data.deployment.platform !== "netlify") {
-        throw new Error("The endpoint did not identify itself as the Netlify backend.");
-      }
-      $("connectionDot").className = "dot ok";
-      $("connectionText").textContent = "Netlify production reachable · " + data.deployment.host;
-      await sendTelemetry("Netlify backend connection check completed", "success", "Plugin reached the Netlify production health endpoint.");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Plugin bridge returned " + response.status);
       return data;
-    } catch (error) {
-      $("connectionDot").className = "dot";
-      $("connectionText").textContent = "Netlify production not verified";
-      await sendTelemetry("Netlify backend connection check failed", "error", "Netlify request failed: " + (error && error.message ? error.message : "Unknown connection error"));
-      return null;
     }
-  }
-  parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
-  $("refresh").addEventListener("click", () => {
-    void sendTelemetry("Selection refresh clicked", "info", "User requested a fresh selected-layer snapshot.");
-    parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
-  });
-  $("runHealth").addEventListener("click", async () => {
-    $("runHealth").disabled = true;
-    $("healthSummary").textContent = "Running native Plugin API checks…";
-    $("healthResults").replaceChildren();
-    await sendTelemetry("Plugin API health check started", "info", "User started native Figma Plugin API self-test.");
-    parent.postMessage({ pluginMessage: { type: "run-native-health-check" } }, "*");
-  });
-  window.onmessage = (event) => {
-    const message = event.data && event.data.pluginMessage;
-    if (!message) return;
-    if (message.type === "native-health-progress") {
-      if (message.text) $("healthSummary").textContent = message.text;
-      if (message.text) status(message.text);
-      return;
-    }
-    if (message.type === "scope-approved") {
-      if (message.fileKey !== ALLOWED_FILE_KEY) {
-        status("Plugin UI blocked: this file is not the allowlisted Figma document.");
-        return;
+
+    async function checkConnection() {
+      try {
+        if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) throw new Error("Approved Figma file scope is not verified.");
+        const response = await fetch(API + "/api/health?fileKey=" + encodeURIComponent(verifiedFileKey), { method: "GET", cache: "no-store" });
+        if (!response.ok) throw new Error("Backend returned HTTP " + response.status);
+        const data = await response.json();
+        if (!data || data.status !== "ok" || !data.deployment || data.deployment.platform !== "netlify") {
+          throw new Error("The endpoint did not verify itself as the UX Direct backend.");
+        }
+        backendHealthy = true;
+        setConnection("ok", "Connected");
+        $("send").disabled = isSending;
+        return data;
+      } catch (error) {
+        backendHealthy = false;
+        setConnection("bad", "Offline");
+        $("send").disabled = true;
+        setActivity("UX Direct backend is unavailable. The plugin will retry automatically.");
+        console.warn("[UX Direct backend health]", error);
+        return null;
       }
-      verifiedFileKey = message.fileKey;
-      currentSelection.fileKey = message.fileKey;
-      $("submit").disabled = false;
-      if (!pluginSessionStarted) {
-        pluginSessionStarted = true;
-        void startPluginSession();
+    }
+
+    function queueAutoHealthCheck() {
+      if (autoHealthStarted || !backendHealthy || !bridgeReady || verifiedFileKey !== ALLOWED_FILE_KEY) return;
+      autoHealthStarted = true;
+      healthCheckRunning = true;
+      setHealth("warn", "Checking health…");
+      $("healthSummary").textContent = "Running the native Plugin API suite in the dedicated UXD API Test Lab page. The active design page and selected frames are not used as test fixtures.";
+      $("healthResults").replaceChildren();
+      setActivity("Connected. Running automatic Plugin API checks…");
+      window.setTimeout(() => {
+        if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
+        parent.postMessage({ pluginMessage: { type: "run-native-health-check" } }, "*");
+        healthTimeout = window.setTimeout(() => {
+          if (!healthCheckRunning) return;
+          healthCheckRunning = false;
+          setHealth("bad", "Health check failed");
+          $("healthSummary").textContent = "The health suite did not return a complete report within 90 seconds.";
+          $("healthResults").replaceChildren();
+          appendHealthRow("FAIL", "Health suite response", "No complete report was returned within 90 seconds.", "fail");
+          setActivity("Automatic health check timed out. Restart the plugin to try again.");
+        }, 90000);
+      }, 1600);
+    }
+
+    async function syncPluginBridge() {
+      try {
+        const heartbeat = await bridgeRequest({ mode: "heartbeat" });
+        bridgeReady = true;
+        if (!backendHealthy) await checkConnection();
+        const command = heartbeat && heartbeat.command;
+        if (command && command.action === "native-api-health-check" && command.commandId && !handledBridgeCommands.has(command.commandId)) {
+          handledBridgeCommands.add(command.commandId);
+          if (!healthCheckRunning) {
+            healthCheckRunning = true;
+            setHealth("warn", "Checking health…");
+            parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: command.commandId } }, "*");
+          }
+        }
+        if (backendHealthy) queueAutoHealthCheck();
+        return { ok: true };
+      } catch (error) {
+        bridgeReady = false;
+        console.warn("[UX Direct plugin bridge]", error);
+        if (!backendHealthy) setConnection("bad", "Offline");
+        return { ok: false, error: error && error.message ? error.message : "Unknown bridge error" };
       }
-      return;
     }
-    if (message.type === "native-api-probe") {
-      parent.postMessage({ pluginMessage: { type: "native-api-probe-ack", probeId: message.probeId } }, "*");
-      return;
+
+    async function startPluginSession() {
+      void sendTelemetry("Plugin opened", "success", "UX Direct conversational cockpit initialized in the approved Figma file.");
+      const connection = await checkConnection();
+      if (connection) {
+        const bridge = await syncPluginBridge();
+        if (!bridge.ok) {
+          setActivity("Backend is connected; the plugin bridge is reconnecting. Health checks will start once it is ready.");
+          setHealth("warn", "Health queued");
+        } else {
+          setActivity("Connected. Running health checks automatically, then you can start chatting.");
+          queueAutoHealthCheck();
+        }
+      } else {
+        setHealth("bad", "Health check blocked");
+      }
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      heartbeatTimer = window.setInterval(async () => {
+        if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
+        if (!backendHealthy) {
+          const health = await checkConnection();
+          if (health) await syncPluginBridge();
+        } else {
+          await syncPluginBridge();
+        }
+      }, 90000);
     }
-    if (message.type === "native-health-result") {
-      const passed = message.passed || 0, available = message.available || 0, failed = message.failed || 0, notTested = message.notTested || 0;
-      $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + available + " available · " + notTested + " not tested · " + new Date(message.checkedAt).toLocaleTimeString();
-      const list = document.createElement("div");
-      message.checks.forEach((item) => {
-        const row = document.createElement("div");
-        row.style.cssText = "display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-top:1px solid var(--figma-color-border)";
-        const labelText = item.level === "not-tested" ? (/team library/i.test(item.name) ? "NOT TESTED INTENTIONALLY" : "NOT TESTED") : item.status === "success" ? (item.level === "availability" ? "AVAILABLE" : "PASS") : "FAIL";
-        const badge = document.createElement("strong"); badge.textContent = labelText;
-        badge.style.color = item.level === "not-tested" ? "#a07827" : item.status === "success" ? "#26966b" : "#d14343";
-        badge.style.minWidth = "78px";
-        const label = document.createElement("span"); label.textContent = "[" + item.category + " · " + item.level + "] " + item.name + " — " + item.reason;
-        row.append(badge, label); list.appendChild(row);
+
+    window.addEventListener("pagehide", () => {
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      if (healthTimeout) window.clearTimeout(healthTimeout);
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
+      const body = JSON.stringify({
+        mode: "disconnect", fileKey: verifiedFileKey,
+        clientId: pluginClientId, sessionToken: pluginSessionToken
       });
-      $("healthResults").replaceChildren(list);
-      $("runHealth").disabled = false;
-      void sendTelemetry("Plugin API health check completed", failed ? "warning" : "success", "Native Plugin API self-test: " + passed + " passed, " + failed + " failed, " + available + " available, " + notTested + " not tested.");
+      try {
+        if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/plugin-bridge", new Blob([body], { type: "application/json" }));
+      } catch (_) {}
+    });
+
+    function appendHealthRow(label, name, reason, level) {
+      const row = document.createElement("div");
+      row.className = "health-row";
+      const badge = document.createElement("div");
+      badge.className = "health-badge " + level;
+      badge.textContent = label;
+      const detail = document.createElement("div");
+      const title = document.createElement("div");
+      title.className = "health-name";
+      title.textContent = name;
+      const why = document.createElement("div");
+      why.className = "health-reason";
+      why.textContent = reason || "No additional details provided.";
+      detail.append(title, why);
+      row.append(badge, detail);
+      $("healthResults").appendChild(row);
+    }
+
+    function renderHealthReport(message) {
+      if (healthTimeout) window.clearTimeout(healthTimeout);
+      healthCheckRunning = false;
+      const checks = Array.isArray(message.checks) ? message.checks : [];
+      const passed = Number(message.passed || 0);
+      const available = Number(message.available || 0);
+      const failed = Number(message.failed || 0);
+      const notTested = Number(message.notTested || 0);
+      const checkedAt = message.checkedAt ? new Date(message.checkedAt).toLocaleTimeString() : "just now";
+      const label = failed > 0 ? "Health check failed" : "Health check passed";
+      setHealth(failed > 0 ? "bad" : "ok", label);
+      $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + available + " available · " + notTested + " not tested · " + checkedAt + ". Team Library access remains intentionally not tested.";
+      $("healthResults").replaceChildren();
+      if (!checks.length) appendHealthRow("FAIL", "Health report", "The plugin returned no individual check results.", "fail");
+      checks.forEach((item) => {
+        const isNotTested = item.status === "not-tested" || item.level === "not-tested";
+        const ok = item.status === "success";
+        const labelText = isNotTested
+          ? (/team library/i.test(item.name || "") ? "NOT TESTED INTENTIONALLY" : "NOT TESTED")
+          : ok ? (item.level === "availability" ? "AVAILABLE" : "PASS") : "FAIL";
+        appendHealthRow(labelText, "[" + (item.category || "General") + " · " + (item.level || "functional") + "] " + (item.name || "Unnamed check"), item.reason || "", isNotTested ? "na" : ok ? "pass" : "fail");
+      });
+      void sendTelemetry("Plugin API health check completed", failed > 0 ? "warning" : "success",
+        "Native Plugin API self-test: " + passed + " passed, " + failed + " failed, " + available + " available, " + notTested + " not tested.");
       void bridgeRequest({
         mode: "result",
         commandId: message.commandId || undefined,
-        healthReport: {
-          passed, available, failed, notTested, checkedAt: message.checkedAt,
-          checks: message.checks
-        }
+        healthReport: { passed, available, failed, notTested, checkedAt: message.checkedAt, checks }
       }).then(() => {
-        if (message.commandId) status("Dashboard-requested health check completed. Results synced to Netlify.");
-        else status("Native API health check completed. Results synced to UX Direct.");
+        setActivity(failed > 0 ? "Health check finished with failures. Click the red tag to inspect them." : "Health check passed. Ask me what you want to work on.");
       }).catch((error) => {
-        console.warn("[UX Direct Netlify health-report sync]", error);
-        status("Native API test finished, but its report could not be saved to Netlify: " + (error && error.message ? error.message : "Unknown bridge error"));
+        console.warn("[UX Direct health report sync]", error);
+        setActivity("Health result is available here, but syncing it to the backend failed.");
       });
-      return;
     }
-    if (message.type !== "selection") return;
-    currentSelection = message;
-    void sendTelemetry("Selection changed", "info", "Figma selection changed; " + message.selection.length + " top-level node(s) selected.");
-    const target = $("selection"); target.replaceChildren();
-    if (!message.selection.length) {
-      target.textContent = "No layers selected. Select one or more frames/layers in Figma."; target.className = "muted"; return;
+
+    function updateSelectionContext(message) {
+      currentSelection = message;
+      const count = Array.isArray(message.selection) ? message.selection.length : 0;
+      $("contextText").textContent = count
+        ? (message.pageName || "Current page") + " · " + count + " selected"
+        : (message.pageName || "Current page") + " · No selection";
+      $("contextText").title = count
+        ? "Selected frame/layer metadata will be shared with the assistant; screenshots are not sent by this chat."
+        : "Select frames or layers in Figma to provide node metadata as context.";
     }
-    target.className = "";
-    const meta = document.createElement("div"); meta.className = "muted";
-    meta.textContent = "Page: " + message.pageName + " · " + message.selection.length + " selected"; target.appendChild(meta);
-    message.selection.slice(0, 8).forEach((node) => {
-      const row = document.createElement("div"); row.className = "node";
-      const icon = document.createElement("span"); icon.textContent = node.type === "FRAME" ? "▣" : "◇";
-      const title = document.createElement("strong"); title.textContent = node.name;
-      const detail = document.createElement("span"); detail.className = "muted"; detail.textContent = " · " + node.type + " · " + node.id;
-      row.append(icon, title, detail); target.appendChild(row);
-    });
-    if (message.selection.length > 8) { const more = document.createElement("div"); more.className = "muted"; more.textContent = "+" + (message.selection.length - 8) + " more"; target.appendChild(more); }
-  };
-  $("submit").addEventListener("click", async () => {
-    void sendTelemetry("Plan CTA clicked", "info", "User clicked Plan with UX Direct.");
-    const prompt = $("prompt").value.trim();
-    if (prompt.length < 5) { status("Add a little more detail to your brief (at least 5 characters)."); return; }
-    $("submit").disabled = true; $("result").hidden = true; status("Sending task to Netlify production backend…");
-    const startedAt = Date.now();
-    await sendTelemetry("Task request started", "info", "A planning request was initiated from the Figma plugin.", { project: $("project").value });
-    try {
-      const response = await fetch(API + "/api/tasks/plan", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: prompt.split(/[.!?\n]/)[0].slice(0, 160) || "UX task",
-          request: prompt + (currentSelection.selection.length ? "\n\nSelected Figma context (metadata only): " + JSON.stringify({ pageName: currentSelection.pageName, selection: currentSelection.selection }) : "\n\nNo Figma layers were selected."),
-          project: $("project").value,
-          source: "figma-plugin",
-          fileKey: verifiedFileKey || currentSelection.fileKey
-        })
-      });
-      const data = await response.json();
-      const durationMs = Date.now() - startedAt;
-      if (!response.ok) {
-        await sendTelemetry("Task request failed", "error", "Netlify backend rejected request: " + (data.error || "HTTP " + response.status), { requestId: data.requestId, project: $("project").value, durationMs });
-        throw new Error((data.error || "Backend returned " + response.status) + (data.requestId ? " · Request ID " + data.requestId : ""));
+
+    async function sendChatMessage(overrideText) {
+      if (isSending) return;
+      const prompt = (typeof overrideText === "string" ? overrideText : $("prompt").value).trim();
+      if (prompt.length < 1) return;
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) {
+        appendMessage("assistant", "I can’t start a conversation until this Figma document passes the approved-file check.");
+        return;
       }
-      renderPlan(data);
-      status("Response received · " + (data.mode || "unknown") + " mode · ₹" + (data.cost && data.cost.amount != null ? data.cost.amount : "?") + " API cost · Request " + (data.requestId || "recorded") + ". No Figma changes made.");
-      await sendTelemetry("Task response received", "success", "Planning response returned to the plugin UI.", { requestId: data.requestId, project: $("project").value, durationMs, mode: data.mode });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      status("Netlify request could not be completed. " + message);
-      await sendTelemetry("Task request failed", "error", "Request failed: " + message);
-    } finally { $("submit").disabled = false; }
-  });
-  function renderPlan(data) {
-    const root = $("result"); root.replaceChildren(); root.hidden = false;
-    const heading = document.createElement("h2"); heading.textContent = "Plan & rationale"; heading.style.fontSize = "15px"; root.appendChild(heading);
-    const summary = document.createElement("p"); summary.textContent = data.plan && data.plan.summary || "Plan generated."; root.appendChild(summary);
-    (data.plan && data.plan.steps || []).forEach((step, index) => {
-      const item = document.createElement("div"); item.className = "step";
-      const title = document.createElement("strong"); title.textContent = String(index + 1).padStart(2, "0") + " · " + step.label;
-      const detail = document.createElement("small"); detail.textContent = step.capabilityId || "Planned capability";
-      item.append(title, detail); root.appendChild(item);
+      if (!backendHealthy) {
+        appendMessage("assistant", "The UX Direct backend is offline right now. I’ll reconnect automatically—please send your message again once the top status returns to Connected.");
+        return;
+      }
+
+      chatHistory.push({ role: "user", content: prompt });
+      appendMessage("user", prompt);
+      $("prompt").value = "";
+      $("send").disabled = true;
+      $("prompt").disabled = true;
+      isSending = true;
+      showTyping();
+      setActivity("Thinking…");
+      void sendTelemetry("Assistant chat sent", "info", "A conversational request was sent. Prompt text is not logged by telemetry.", { project: $("project").value });
+
+      const selectedNodes = Array.isArray(currentSelection.selection) ? currentSelection.selection.slice(0, 12).map((node) => ({
+        name: String(node.name || "").slice(0, 160),
+        type: String(node.type || "").slice(0, 60),
+        id: String(node.id || "").slice(0, 200),
+        ...(Number.isFinite(node.width) ? { width: node.width } : {}),
+        ...(Number.isFinite(node.height) ? { height: node.height } : {})
+      })) : [];
+      try {
+        const response = await fetch(API + "/api/assistant/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileKey: verifiedFileKey,
+            project: $("project").value,
+            messages: chatHistory.slice(-12),
+            selection: {
+              pageName: String(currentSelection.pageName || "").slice(0, 160),
+              totalCount: Array.isArray(currentSelection.selection) ? currentSelection.selection.length : 0,
+              items: selectedNodes
+            }
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
+        if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
+        chatHistory.push({ role: "assistant", content: data.content });
+        appendMessage("assistant", data.content, (data.provider || "AI") + " · " + (data.model || "model") + " · " + Math.max(0, Math.round(Number(data.latencyMs || 0))) + " ms");
+        setActivity("Response received. Continue the conversation or give me the next task.");
+        void sendTelemetry("Assistant chat received", "success", "A conversational model response was returned.", { requestId: data.requestId, provider: data.provider, model: data.model });
+      } catch (error) {
+        const message = error && error.message ? error.message : "Unknown chat error";
+        appendMessage("assistant", "I couldn’t complete that response: " + message + "\n\nYour message is still in this session’s conversation context. You can retry or continue with a smaller request.");
+        setActivity("Response failed. Your Figma document was not changed by this chat request.");
+        void sendTelemetry("Assistant chat failed", "error", "Conversational request failed: " + message.slice(0, 200));
+      } finally {
+        hideTyping();
+        isSending = false;
+        $("prompt").disabled = false;
+        $("send").disabled = !backendHealthy;
+        $("prompt").focus();
+      }
+    }
+
+    $("chatForm").addEventListener("submit", (event) => {
+      event.preventDefault();
+      void sendChatMessage();
     });
-    const rationale = document.createElement("p"); rationale.textContent = "Why this plan: the current mock planner creates a deterministic task breakdown. Model-based reasoning and Figma edits are not enabled yet."; root.appendChild(rationale);
-    const checksTitle = document.createElement("strong"); checksTitle.textContent = "Quality checks"; root.appendChild(checksTitle);
-    const checks = document.createElement("ul");
-    (data.plan && data.plan.qualityChecks || []).forEach((check) => { const li = document.createElement("li"); li.textContent = check; checks.appendChild(li); });
-    root.appendChild(checks);
-  }
-  // Plugin session startup and automatic API tests wait for the native runtime's exact file-key approval.
-</script>
+    $("prompt").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        void sendChatMessage();
+      }
+    });
+    $("healthStatus").addEventListener("click", () => toggleHealthPanel());
+    $("closeHealth").addEventListener("click", () => toggleHealthPanel(false));
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") toggleHealthPanel(false);
+    });
+
+    parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
+    window.onmessage = (event) => {
+      const message = event.data && event.data.pluginMessage;
+      if (!message) return;
+
+      if (message.type === "scope-approved") {
+        if (message.fileKey !== ALLOWED_FILE_KEY) {
+          setConnection("bad", "File blocked");
+          setHealth("bad", "Health blocked");
+          setActivity("UX Direct is restricted to the approved Figma document.");
+          appendMessage("assistant", "This file is not allowlisted for UX Direct. No backend connection, health suite or task request will run.");
+          return;
+        }
+        verifiedFileKey = message.fileKey;
+        currentSelection.fileKey = message.fileKey;
+        if (!pluginSessionStarted) {
+          pluginSessionStarted = true;
+          void startPluginSession();
+        }
+        return;
+      }
+
+      if (message.type === "native-api-probe") {
+        parent.postMessage({ pluginMessage: { type: "native-api-probe-ack", probeId: message.probeId } }, "*");
+        return;
+      }
+
+      if (message.type === "native-health-progress") {
+        healthCheckRunning = true;
+        setHealth("warn", "Checking health…");
+        if (message.text) $("healthSummary").textContent = message.text;
+        return;
+      }
+
+      if (message.type === "native-health-result") {
+        renderHealthReport(message);
+        return;
+      }
+
+      if (message.type !== "selection") return;
+      if (message.fileKey !== ALLOWED_FILE_KEY) return;
+      updateSelectionContext(message);
+    };
+  </script>
 </body>
 </html>
