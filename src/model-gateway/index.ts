@@ -210,7 +210,7 @@ export async function chatCompletion(
     if (typeof content !== "string") throw new GatewayError("Provider response did not contain choices[0].message.content.", 502, provider.name);
     const latencyMs = Date.now() - started;
     const tokenUsage = usageStore.tokenUsageValues(payload.usage);
-    const estimatedCostInr = usageStore.estimateCostInr(tokenUsage.promptTokens, tokenUsage.completionTokens, provider);
+    const estimatedCostInr = usageStore.estimateCostInr(tokenUsage.promptTokens, tokenUsage.completionTokens, provider, process.env, resolvedModel);
     usageStore.recordModelUsage({
       requestId, provider: provider.name, model: typeof payload.model === "string" ? payload.model : resolvedModel,
       tier: provider.kind ?? "paid", ...tokenUsage, estimatedCostInr, latencyMs, status: "success"
