@@ -38,9 +38,14 @@ test("gateway admin secret is entered transiently, not stored in web storage", (
   assert.equal(page.includes("sessionStorage.setItem(\"adminKey\""), false);
 });
 
-test("OpenRouter example uses live free-model discovery and keeps paid calls disabled", () => {
+test("OpenRouter keeps broad paid-provider routing locked while exposing a budget-capped allowlisted paid model", () => {
   const env = read(".env.example");
+  const gateway = read("src/model-gateway/index.ts");
+  const allowlist = read("src/model-gateway/openrouter-paid.ts");
   assert.ok(env.includes("OPENROUTER_API_KEY="));
   assert.ok(env.includes("ALLOW_PAID_MODELS=false"));
   assert.ok(env.includes("MODEL_GATEWAY_ADMIN_KEY="));
+  assert.ok(allowlist.includes('id: "openai/gpt-oss-20b"'));
+  assert.ok(gateway.includes("chatCompletionWithOpenRouterPaid"));
+  assert.ok(gateway.includes("assertBudgetAllows"));
 });
