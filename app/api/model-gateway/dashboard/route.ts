@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const env = process.env;
   const providers = providersFromEnv();
-  const budget = getBudgetSnapshot();
+  const budget = await getBudgetSnapshot();
   const configuredProviders = new Set(providers.map(provider => provider.name));
   const keySlots = [
     { id: "ollama", label: "Ollama local", envName: "OLLAMA_BASE_URL", configured: configuredProviders.has("ollama"), keyDetected: false, tier: "local", secretRequired: false },
