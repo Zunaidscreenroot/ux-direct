@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { buildHealthSmokeChecks, inspectHealthReport, type SmokeCheckResult } from "@/src/quality/health-report";
 
 type Health = {
   service: string; status: string; checkedAt: string; mode: string;
@@ -27,6 +28,14 @@ type PluginSession = {
   disconnectedAt?: string; lastTestAt?: string; isOnline: boolean;
   latestCommand?: { commandId: string; action: string; status: "pending" | "claimed" | "completed" | "failed"; issuedAt: string; completedAt?: string; failure?: string };
   healthReport?: PluginHealthReport;
+};
+type ConnectionsSnapshot = {
+  health: Health;
+  events: EventItem[] | null;
+  bridgeSessions: PluginSession[];
+  latestSavedReport: PersistedHealthReport | null;
+  bridgeReachable: boolean;
+  refreshedAt: string;
 };
 
 const API = "";
@@ -56,38 +65,61 @@ export default function Home() {
   const [pluginHealthMessage, setPluginHealthMessage] = useState("");
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
   const [refreshingConnections, setRefreshingConnections] = useState(false);
+  const [smokeChecks, setSmokeChecks] = useState<SmokeCheckResult[] | null>(null);
+  const [smokeCheckedAt, setSmokeCheckedAt] = useState<string | null>(null);
+  const [smokeBusy, setSmokeBusy] = useState(false);
+
+  const readConnectionsSnapshot = useCallback(async (): Promise<ConnectionsSnapshot> => {
+    const [healthResponse, eventsResponse, bridgeResponse] = await Promise.all([
+      fetch(API + "/api/health", { cache: "no-store" }),
+      fetch(API + "/api/telemetry?limit=30", { cache: "no-store" }),
+      fetch(API + "/api/plugin-bridge?mode=sessions", { cache: "no-store" }).catch(() => null),
+    ]);
+    if (!healthResponse.ok) throw new Error("Health endpoint returned " + healthResponse.status);
+    const nextHealth = await healthResponse.json() as Health;
+    let nextEvents: EventItem[] | null = null;
+    if (eventsResponse.ok) {
+      const payload = await eventsResponse.json();
+      nextEvents = Array.isArray(payload.events) ? payload.events as EventItem[] : [];
+    }
+
+    let nextSessions: PluginSession[] = [];
+    let nextSavedReport: PersistedHealthReport | null = null;
+    if (bridgeResponse?.ok) {
+      const bridgePayload = await bridgeResponse.json();
+      nextSessions = Array.isArray(bridgePayload.sessions) ? bridgePayload.sessions as PluginSession[] : [];
+      nextSavedReport = bridgePayload.latestReport ?? null;
+    }
+    return {
+      health: nextHealth,
+      events: nextEvents,
+      bridgeSessions: nextSessions,
+      latestSavedReport: nextSavedReport,
+      bridgeReachable: Boolean(bridgeResponse?.ok),
+      refreshedAt: new Date().toISOString(),
+    };
+  }, []);
+
+  const applyConnectionsSnapshot = useCallback((snapshot: ConnectionsSnapshot) => {
+    setHealth(snapshot.health);
+    setHealthError("");
+    if (snapshot.events) setEvents(snapshot.events);
+    setBridgeSessions(snapshot.bridgeSessions);
+    setLatestSavedReport(snapshot.latestSavedReport);
+    setLastRefresh(snapshot.refreshedAt);
+  }, []);
 
   const refreshConnections = useCallback(async () => {
     setRefreshingConnections(true);
     try {
-      const [healthResponse, eventsResponse, bridgeResponse] = await Promise.all([
-        fetch(API + "/api/health", { cache: "no-store" }),
-        fetch(API + "/api/telemetry?limit=30", { cache: "no-store" }),
-        fetch(API + "/api/plugin-bridge?mode=sessions", { cache: "no-store" }).catch(() => null)
-      ]);
-      if (!healthResponse.ok) throw new Error("Health endpoint returned " + healthResponse.status);
-      const nextHealth = await healthResponse.json() as Health;
-      setHealth(nextHealth);
-      setHealthError("");
-      if (eventsResponse.ok) {
-        const payload = await eventsResponse.json();
-        setEvents(Array.isArray(payload.events) ? payload.events : []);
-      }
-      if (bridgeResponse && bridgeResponse.ok) {
-        const bridgePayload = await bridgeResponse.json();
-        setBridgeSessions(Array.isArray(bridgePayload.sessions) ? bridgePayload.sessions : []);
-        setLatestSavedReport(bridgePayload.latestReport ?? null);
-      } else {
-        setBridgeSessions([]);
-        setLatestSavedReport(null);
-      }
-      setLastRefresh(new Date().toISOString());
+      const snapshot = await readConnectionsSnapshot();
+      applyConnectionsSnapshot(snapshot);
     } catch (err) {
       setHealthError(err instanceof Error ? err.message : "Backend health check failed");
     } finally {
       setRefreshingConnections(false);
     }
-  }, []);
+  }, [applyConnectionsSnapshot, readConnectionsSnapshot]);
 
   useEffect(() => {
     void refreshConnections();
@@ -163,6 +195,39 @@ export default function Home() {
     }
   }
 
+  async function runHealthSmokeTest() {
+    setSmokeBusy(true);
+    setSmokeChecks(null);
+    try {
+      // One bounded snapshot (health + log + bridge) is reused for every assertion.
+      // Smoke checks never trigger Figma actions or issue per-check telemetry.
+      const snapshot = await readConnectionsSnapshot();
+      applyConnectionsSnapshot(snapshot);
+      const orderedSessions = [...snapshot.bridgeSessions].sort((a, b) => Date.parse(b.lastHeartbeatAt) - Date.parse(a.lastHeartbeatAt));
+      const onlineSession = orderedSessions.find((session) => session.isOnline) ?? null;
+      const report = snapshot.latestSavedReport?.healthReport
+        ?? onlineSession?.healthReport
+        ?? orderedSessions[0]?.healthReport
+        ?? null;
+      setSmokeChecks(buildHealthSmokeChecks({
+        backendHealthy: snapshot.health.status === "ok" && snapshot.health.deployment?.platform === "netlify",
+        bridgeReachable: snapshot.bridgeReachable,
+        pluginOnline: Boolean(onlineSession),
+        report,
+      }));
+      setSmokeCheckedAt(snapshot.refreshedAt);
+    } catch (err) {
+      setSmokeChecks([{
+        name: "Snapshot retrieval",
+        status: "fail",
+        message: err instanceof Error ? err.message : "Could not retrieve the health snapshot.",
+      }]);
+      setSmokeCheckedAt(new Date().toISOString());
+    } finally {
+      setSmokeBusy(false);
+    }
+  }
+
   async function submitTask(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!task.trim() || loading) return;
@@ -203,6 +268,10 @@ export default function Home() {
   const latestPluginTestSummary = latestPluginTest
     ? latestPluginTest.passed + " passed · " + latestPluginTest.failed + " failed · " + (latestPluginTest.available ?? 0) + " available · " + latestPluginTest.notTested + " not tested"
     : "Not run yet";
+  const latestPluginAudit = latestPluginTest ? inspectHealthReport(latestPluginTest) : null;
+  const smokePassed = smokeChecks?.filter((item) => item.status === "pass").length ?? 0;
+  const smokeFailed = smokeChecks?.filter((item) => item.status === "fail").length ?? 0;
+  const smokeBlocked = smokeChecks?.filter((item) => item.status === "blocked").length ?? 0;
   const breadcrumb = navItems.find((item) => item.id === activeTab)?.label ?? "Cockpit";
 
   return (
@@ -234,8 +303,30 @@ export default function Home() {
             <p className="intro">Separate backend availability from the plugin’s recent heartbeat. Review plugin events, request failures, and the latest native API self-test.</p>
             <div className="connection-toolbar">
               <span className="last-checked">Last checked: {lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : "Not checked yet"}</span>
-              <button className="submit-button" type="button" onClick={() => void refreshConnections()}>Run health check ↻</button>
+              <button className="submit-button" type="button" onClick={() => void refreshConnections()} disabled={refreshingConnections}>{refreshingConnections ? "Refreshing…" : "Refresh health data ↻"}</button>
             </div>
+            <section className="smoke-test-panel" aria-labelledby="smoke-test-heading">
+              <div className="smoke-test-heading">
+                <div>
+                  <span className="section-kicker">LOW-REQUEST VALIDATION</span>
+                  <h2 id="smoke-test-heading">Health smoke tests</h2>
+                  <p>Checks one saved snapshot across backend, bridge, persisted report, totals and Figma-action coverage. It does not trigger Figma mutations or send one request per check.</p>
+                </div>
+                <button className="secondary-button" type="button" onClick={() => void runHealthSmokeTest()} disabled={smokeBusy}>
+                  {smokeBusy ? "Checking…" : "Run smoke tests ↻"}
+                </button>
+              </div>
+              {smokeChecks && <div className="smoke-test-results" aria-live="polite">
+                <div className="smoke-test-summary">
+                  <strong>{smokePassed} passed</strong><span>{smokeFailed} failed</span><span>{smokeBlocked} blocked</span>
+                  <time>{smokeCheckedAt ? new Date(smokeCheckedAt).toLocaleTimeString() : ""}</time>
+                </div>
+                {smokeChecks.map((item) => <div className="smoke-check-row" key={item.name}>
+                  <span className={"smoke-check-badge smoke-" + item.status}>{item.status.toUpperCase()}</span>
+                  <div><strong>{item.name}</strong><p>{item.message}</p></div>
+                </div>)}
+              </div>}
+            </section>
             {healthError && <p className="inline-note" role="alert">Health check failed: {healthError}</p>}
             <div className="connection-grid">
               <article className="connection-card">
@@ -253,11 +344,26 @@ export default function Home() {
                 {pluginHealthMessage && <p className="plugin-health-message" role="status">{pluginHealthMessage}</p>}
                 {latestPluginTest && <div className="plugin-health-report">
                   <div className="health-counts">
+                    <span><strong>{latestPluginTest.checks.length}</strong> TOTAL</span>
                     <span><strong>{latestPluginTest.passed}</strong> PASS</span>
                     <span><strong>{latestPluginTest.failed}</strong> FAIL</span>
                     <span><strong>{latestPluginTest.available ?? 0}</strong> AVAILABLE</span>
                     <span><strong>{latestPluginTest.notTested}</strong> NOT TESTED</span>
                   </div>
+                  <p className="health-count-legend">PASS = functional checks executed successfully. AVAILABLE = API presence only; the action was not invoked. TOTAL counts every report row.</p>
+                  {latestPluginAudit && latestPluginAudit.failedChecks.length > 0 && <details className="failed-checks" open>
+                    <summary>Failed checks ({latestPluginAudit.failedChecks.length})</summary>
+                    <div className="plugin-check-list">
+                      {latestPluginAudit.failedChecks.map((item, index) => <div className="plugin-check-row" key={item.category + item.name + index}>
+                        <span className="plugin-check-badge check-fail">FAIL</span>
+                        <div><strong>{item.name}</strong><span>{item.category} · {item.level}</span><p>{item.reason}</p></div>
+                      </div>)}
+                    </div>
+                  </details>}
+                  {latestPluginAudit && latestPluginAudit.issues.filter((issue) => !issue.startsWith(latestPluginAudit.failedChecks.length + " check(s) failed:")).length > 0 && <div className="health-report-warnings">
+                    <strong>Report integrity / coverage warnings</strong>
+                    {latestPluginAudit.issues.filter((issue) => !issue.startsWith(latestPluginAudit.failedChecks.length + " check(s) failed:")).map((issue) => <p key={issue}>{issue}</p>)}
+                  </div>}
                   <details>
                     <summary>View action inventory ({latestPluginTest.checks.length} checks)</summary>
                     <div className="plugin-check-list">
