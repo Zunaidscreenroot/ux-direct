@@ -200,11 +200,13 @@ test("rate limiter blocks bursts and resets after the window", async () => {
 test("monthly budget blocks paid calls when pricing is missing or projected cost exceeds cap", async () => {
   const { assertBudgetAllows } = await import("../src/model-gateway/usage-store");
   await assert.rejects(() => assertBudgetAllows(100, 100, {
+    NODE_ENV: "test",
     MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000",
     MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M: "0",
     MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: "0"
   }), /prices are configured/);
   await assert.rejects(() => assertBudgetAllows(100_000, 100_000, {
+    NODE_ENV: "test",
     MODEL_GATEWAY_MONTHLY_BUDGET_INR: "1",
     MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M: "1000",
     MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: "1000"
