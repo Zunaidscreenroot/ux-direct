@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { chatCompletionWithFallback, GatewayError, type ChatMessage } from "@/src/model-gateway";
+import { chatCompletionWithFallback, GatewayError, providersFromEnv, type ChatMessage, type ProviderConfig } from "@/src/model-gateway";
+import { findOpenRouterModel, isFreeOpenRouterModel } from "@/src/model-gateway/openrouter-catalog";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 import { GATEWAY_MODULES } from "@/src/model-gateway/control-store";
 
@@ -73,6 +74,33 @@ export async function POST(request: Request) {
   if (value.max_tokens !== undefined && (!Number.isInteger(value.max_tokens) || Number(value.max_tokens) < 1 || Number(value.max_tokens) > 16384)) {
     return NextResponse.json({ error: "max_tokens must be an integer between 1 and 16384." }, { status: 400 });
   }
+  let requestProviders: ProviderConfig[] | undefined;
+  let effectiveProviderId = typeof value.providerId === "string" ? value.providerId : undefined;
+  if (process.env.OPENROUTER_API_KEY && (effectiveProviderId === "openrouter" || (!effectiveProviderId && value.model.includes("/")))) {
+    try {
+      const liveModel = await findOpenRouterModel(value.model);
+      if (liveModel) {
+        const existing = providersFromEnv().find(provider => provider.name === "openrouter");
+        requestProviders = providersFromEnv().filter(provider => provider.name !== "openrouter");
+        requestProviders.push({
+          name: "openrouter",
+          baseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, ""),
+          apiKey: process.env.OPENROUTER_API_KEY,
+          models: [value.model],
+          kind: isFreeOpenRouterModel(liveModel) ? "free-tier" : "paid",
+          ...(existing?.headers ? { headers: existing.headers } : {})
+        });
+        effectiveProviderId = "openrouter";
+      } else if (effectiveProviderId === "openrouter") {
+        return NextResponse.json({ error: "Selected model is no longer listed by OpenRouter." }, { status: 404, headers: { "Cache-Control": "no-store" } });
+      }
+    } catch (error) {
+      if (effectiveProviderId === "openrouter") {
+        return NextResponse.json({ error: error instanceof Error ? error.message : "Could not verify the live OpenRouter model." }, { status: 502, headers: { "Cache-Control": "no-store" } });
+      }
+    }
+  }
+
   const requestId = randomUUID();
   try {
     const result = await chatCompletionWithFallback({
@@ -80,11 +108,11 @@ export async function POST(request: Request) {
       model: value.model,
       messages,
       ...(typeof value.moduleId === "string" ? { moduleId: value.moduleId } : {}),
-      ...(typeof value.providerId === "string" ? { providerId: value.providerId } : {}),
+      ...(effectiveProviderId ? { providerId: effectiveProviderId } : {}),
       ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
       ...(typeof value.max_tokens === "number" ? { max_tokens: value.max_tokens } : {}),
       signal: request.signal
-    });
+    }, { providers: requestProviders });
     // Operational telemetry only: never log prompt text, response content, or credentials.
     console.info("[model-gateway]", JSON.stringify({
       event: "completion", provider: result.provider, model: result.model,

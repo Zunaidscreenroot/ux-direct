@@ -44,3 +44,23 @@ test("free-first OpenRouter example is pinned to an exact model and never silent
   assert.ok(env.includes("ALLOW_PAID_MODELS=false"));
   assert.ok(env.includes("MODEL_GATEWAY_ADMIN_KEY="));
 });
+
+
+test("OpenRouter catalog and capability recommendations are dynamic, protected, and cost-aware", () => {
+  const catalog = read("src/model-gateway/openrouter-catalog.ts");
+  const modelsRoute = read("app/api/model-gateway/models/route.ts");
+  const plannerRoute = read("app/api/model-gateway/recommendations/route.ts");
+  const checkRoute = read("app/api/model-gateway/check/route.ts");
+  const page = read("app/page.tsx");
+  assert.ok(catalog.includes('"/models?limit=1000"'));
+  assert.ok(catalog.includes('"/key"'));
+  assert.ok(catalog.includes('"/activity"'));
+  assert.ok(catalog.includes("getCapabilityRecommendations"));
+  assert.ok(modelsRoute.includes("getLiveGatewayModels"));
+  assert.ok(plannerRoute.includes("checkGatewayRateLimit"));
+  assert.ok(checkRoute.includes('response.status === 429'));
+  assert.ok(page.includes("gateway-tier-toggle"));
+  assert.ok(page.includes("PROJECTED API COST / DAY"));
+  assert.ok(page.includes("runPlanner(false)"));
+  assert.ok(page.includes("Test selected model"));
+});

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { getModelCatalog, providersFromEnv } from "@/src/model-gateway";
+import { getLiveGatewayModels } from "@/src/model-gateway/openrouter-catalog";
 import { GATEWAY_MODULES, getGatewaySettings, getDefaultModelPolicy, modelKey, saveGatewaySettings } from "@/src/model-gateway/control-store";
 
 export const runtime = "nodejs";
@@ -42,7 +43,17 @@ export async function PUT(request: Request) {
   const input = body as Record<string, unknown>;
   const rawModules = input.modules && typeof input.modules === "object" ? input.modules as Record<string, unknown> : {};
   const rawModels = input.models && typeof input.models === "object" ? input.models as Record<string, unknown> : {};
-  const catalog = getModelCatalog(providersFromEnv());
+  const providers = providersFromEnv();
+  let catalog = getModelCatalog(providers);
+  if (process.env.OPENROUTER_API_KEY) {
+    try {
+      const live = await getLiveGatewayModels();
+      catalog = [...catalog.filter(model => model.provider !== "openrouter"), ...live.models];
+    } catch {
+      // Existing settings can still be read during a temporary catalog outage, but
+      // a newly-added model must exist in the last available catalog to be saved.
+    }
+  }
   const allowed = new Set(catalog.map(m => modelKey(m.provider, m.id)));
   for (const def of GATEWAY_MODULES) {
     const rawModule = rawModules[def.id];
@@ -61,7 +72,9 @@ export async function PUT(request: Request) {
   }
   if (Object.keys(rawModels).length > catalog.length + 10) return jsonError("Too many model budget entries.", 413);
   for (const [key, rawModel] of Object.entries(rawModels)) {
-    if (!allowed.has(key) || !rawModel || typeof rawModel !== "object" || Array.isArray(rawModel)) return jsonError("Unknown model budget entry: " + key, 400);
+    if (!rawModel || typeof rawModel !== "object" || Array.isArray(rawModel)) return jsonError("Invalid model budget entry: " + key, 400);
+    // Ignore legacy model-budget rows from previously connected providers; only live OpenRouter IDs are retained below.
+    if (!allowed.has(key)) continue;
     const model = rawModel as Record<string, unknown>;
     for (const field of ["monthlyBudgetInr", "maxRequestCostInr", "inputPriceInrPerMillion", "outputPriceInrPerMillion"]) {
       const n = Number(model[field]);

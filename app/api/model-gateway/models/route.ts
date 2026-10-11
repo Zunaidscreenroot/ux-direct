@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getModelCatalog, providersFromEnv } from "@/src/model-gateway";
+import { modelKey } from "@/src/model-gateway/control-store";
+import { getLiveGatewayModels } from "@/src/model-gateway/openrouter-catalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,13 +29,27 @@ export async function GET(request: Request) {
     }, { status: process.env.MODEL_GATEWAY_ACCESS_KEY ? 401 : 503, headers: { "Cache-Control": "no-store" } });
   }
   const providers = providersFromEnv();
+  const staticCatalog = getModelCatalog(providers);
+  let liveModels = staticCatalog.filter(model => model.provider === "mock");
+  let catalog = { status: "not-configured", modelCount: 0, checkedAt: null as string | null };
+  if (process.env.OPENROUTER_API_KEY) {
+    try {
+      const live = await getLiveGatewayModels();
+      liveModels = [...liveModels, ...live.models];
+      catalog = { status: "live", modelCount: live.models.length, checkedAt: live.checkedAt };
+    } catch {
+      liveModels = [...liveModels, ...staticCatalog.filter(model => model.provider === "openrouter")];
+      catalog = { status: "error", modelCount: liveModels.filter(model => model.provider === "openrouter").length, checkedAt: null };
+    }
+  }
   return NextResponse.json({
     gateway: { name: "UX Direct Model Gateway", version: 1, gatewayFee: 0, mode: providers.some(p => p.kind !== "mock") ? "provider-configured" : "mock-only" },
     providers: providers.map(({ name, kind, models, baseUrl }) => ({
       name, kind, models, endpoint: baseUrl.startsWith("mock://") ? "built-in" : baseUrl,
       configured: kind === "mock" || Boolean(baseUrl)
     })),
-    models: getModelCatalog(providers),
+    models: liveModels.map(model => ({ ...model, selectionKey: modelKey(model.provider, model.id) })),
+    catalog,
     checkedAt: new Date().toISOString()
   }, { headers: { "Cache-Control": "no-store" } });
 }

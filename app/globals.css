@@ -374,3 +374,22 @@ footer span { margin: 0 6px; color: #9bb98b; }
 @media(max-width:650px){.accountant-summary-grid{grid-template-columns:1fr 1fr;gap:8px}.accountant-summary-grid .gateway-stat-card{padding:13px}.accountant-summary-grid .gateway-stat-card strong{font-size:20px}.accountant-global-controls{grid-template-columns:1fr}.gateway-module-card{padding:15px}.gateway-policy-budget-row{grid-template-columns:1fr 1fr;gap:8px}.model-catalog-toolbar{align-items:stretch;flex-direction:column}.model-catalog-toolbar .gateway-control-field{min-width:0}.gateway-savebar{align-items:stretch;flex-direction:column}.gateway-savebar .submit-button{width:100%}.gateway-section-heading{align-items:flex-start!important;flex-direction:column}}
 
 .gateway-admin-key{display:flex;flex-direction:column;gap:6px;min-width:220px;max-width:280px;color:var(--muted);font-size:10px;font-weight:700}.gateway-admin-key input{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:#fff;color:var(--ink);font-size:12px}.gateway-admin-key small{font-size:9px;font-weight:400;line-height:1.4}@media(max-width:650px){.gateway-admin-key{min-width:0;max-width:none;width:100%}}
+
+/* Live OpenRouter capability manager */
+.gateway-planner-panel,.gateway-provider-usage-panel{padding:18px;margin:18px 0}
+.gateway-panel-subtitle{margin:7px 0 0;color:var(--muted);font-size:12px;line-height:1.6;max-width:780px}
+.gateway-planner-controls{display:grid;grid-template-columns:minmax(240px,1fr) auto auto;gap:12px;align-items:end;margin:18px 0 8px}
+.gateway-tier-toggle{display:flex;gap:6px;padding:4px;background:#f1f4ef;border:1px solid var(--line);border-radius:10px}
+.gateway-tier-toggle button{flex:1;min-width:0;appearance:none;border:1px solid transparent;border-radius:7px;background:transparent;padding:9px 14px;color:var(--muted);font-size:12px;font-weight:800;cursor:pointer}
+.gateway-tier-toggle button.mode-active{background:#fff;border-color:#d8e2d3;color:var(--deep-green);box-shadow:0 1px 3px rgba(20,40,25,.06)}
+.gateway-model-detail{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:9px;background:#fafbf9}
+.gateway-model-detail>div{min-width:0}
+.gateway-model-detail strong{font-size:12px;overflow-wrap:anywhere}
+.gateway-model-detail p{margin:5px 0 0;color:var(--muted);font-size:10px;line-height:1.55;overflow-wrap:anywhere}
+.gateway-model-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.gateway-model-actions>span{font-size:9px;color:var(--muted);line-height:1.45}
+.gateway-planning-inputs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.catalog-more{display:flex;justify-content:center;padding:16px}
+.gateway-provider-usage-panel .gateway-panel-heading{margin-bottom:8px}
+@media(max-width:780px){.gateway-planner-controls{grid-template-columns:1fr}.gateway-planner-controls .submit-button,.gateway-planner-controls .secondary-button{width:100%}}
+@media(max-width:650px){.gateway-planning-inputs{grid-template-columns:1fr 1fr}.gateway-model-detail{flex-direction:column}.gateway-model-actions{align-items:flex-start;flex-direction:column}.gateway-tier-toggle button{padding:9px 7px}}
