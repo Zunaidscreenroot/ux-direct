@@ -15,7 +15,8 @@
 ## Safe API smoke test
 - The first self-test creates or reuses `UXD API Test Lab` in the approved file and switches to it.
 - Real operations are exercised there: page create/switch/remove; shapes; text/font; grouping/flattening/boolean operations; component/instance/variant; temporary variables; client storage; export; selection event delivery; UI bridge round-trip.
-- Temporary nodes, temporary pages, variable collections and storage keys are cleaned up. The lab page remains and the original active page is restored.
+- The lab page has a persistent, named fixture frame containing sample shapes, text, a component and a vector so a designer or future agent has stable test assets to inspect.
+- Temporary nodes, temporary pages, variable collections and storage keys are cleaned up after each run. The lab page and fixture frame remain; the original active page is restored.
 - Only disruptive actions remain `AVAILABLE`: close plugin, open external browser and interrupting notifications. Team Library remains `NOT TESTED`.
 
 ## Future AI executor
