@@ -168,7 +168,7 @@ export async function chatCompletion(
     } catch (error) {
       await usageStore.recordModelUsage({
         requestId, provider: provider.name, model: resolvedModel, tier: "paid",
-        promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCostInr: 0,
+        promptTokens: 0, completionTokens: 0, totalTokens: 0, usageReported: false, estimatedCostInr: 0,
         latencyMs: Date.now() - started, status: "blocked",
         note: error instanceof Error ? error.message : "Budget guard blocked the request."
       });
@@ -227,7 +227,7 @@ export async function chatCompletion(
     const failure = error instanceof GatewayError ? error :
       controller.signal.aborted ? new GatewayError("Model request timed out or was cancelled.", 504, provider.name) :
       new GatewayError(error instanceof Error ? error.message : "Unknown provider error.", 502, provider.name);
-    usageStore.recordModelUsage({
+    await usageStore.recordModelUsage({
       requestId, provider: provider.name, model: resolvedModel, tier: provider.kind ?? "paid",
       promptTokens: 0, completionTokens: 0, totalTokens: 0, usageReported: false,
       estimatedCostInr: usageStore.estimateCostInr(Math.ceil(request.messages.reduce((n, m) => n + m.content.length, 0) / 4), request.max_tokens ?? 1024, provider, process.env, resolvedModel),
