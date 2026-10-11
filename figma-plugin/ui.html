@@ -322,7 +322,7 @@
         });
         if (groups.gemini.children.length) select.appendChild(groups.gemini);
         if (groups.openrouter.children.length) select.appendChild(groups.openrouter);
-        const preferred = modelOptions.find(model => model.provider === "gemini" && model.id === "gemini-3.5-flash-lite") ||
+        const preferred = modelOptions.find(model => model.provider === "openrouter" && model.configured) ||
           modelOptions.find(model => model.configured) || modelOptions[0];
         if (!preferred) throw new Error("No approved free models were returned by the backend.");
         select.value = modelSelectValue(preferred);
