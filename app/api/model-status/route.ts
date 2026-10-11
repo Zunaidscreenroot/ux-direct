@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
+import { GatewayError, chatCompletionWithOpenRouterPaid } from "@/src/model-gateway";
 import { getOpenRouterPaidChatModel, OPENROUTER_PAID_CHAT_MODELS } from "@/src/model-gateway/openrouter-paid";
 
 export const runtime = "nodejs";
@@ -213,6 +214,56 @@ async function probeModel(provider: ProviderId, model: string) {
   };
 }
 
+/**
+ * Paid probes must use the shared gateway so the request is budget-checked and
+ * recorded. Free probes remain a direct, single-model connectivity check.
+ */
+async function runSelectedModelProbe(provider: ProviderId, model: string) {
+  if (!getOpenRouterPaidChatModel(model)) return probeModel(provider, model);
+  const startedAt = Date.now();
+  try {
+    const result = await chatCompletionWithOpenRouterPaid({
+      requestId: diagnosticId(),
+      model,
+      providerId: "openrouter",
+      messages: [
+        { role: "system", content: "This is a connectivity check. Output only the requested short confirmation text." },
+        { role: "user", content: "Reply with exactly: UXD_PAID_MODEL_CHECK_OK" }
+      ],
+      temperature: 0,
+      max_tokens: 128
+    }, { timeoutMs: 18000 });
+    const responseReceived = typeof result.content === "string" && result.content.trim().length > 0;
+    return {
+      available: responseReceived,
+      provider: "openrouter",
+      model,
+      status: 200,
+      responseReceived,
+      finishReason: responseReceived ? "response-received" : "empty-response",
+      ...(typeof result.usage?.completion_tokens === "number" ? { completionTokens: result.usage.completion_tokens } : {}),
+      latencyMs: result.latencyMs,
+      checkedAt: new Date().toISOString()
+    };
+  } catch (error) {
+    const status = error instanceof GatewayError
+      ? error.status
+      : (typeof error === "object" && error !== null && "status" in error &&
+        typeof error.status === "number" && error.status >= 400 && error.status <= 599
+        ? error.status : 502);
+    const message = error instanceof Error ? error.message : "Paid OpenRouter probe failed.";
+    return {
+      available: false,
+      provider: "openrouter",
+      model,
+      status,
+      reason: sanitizeProviderMessage(message) ?? "Paid OpenRouter probe failed.",
+      latencyMs: Date.now() - startedAt,
+      checkedAt: new Date().toISOString()
+    };
+  }
+}
+
 async function discoverWorkingFreeModel() {
   const catalog = await discoverModels("openrouter");
   if (!catalog.configured || catalog.models.length === 0) {
@@ -318,7 +369,7 @@ export async function GET(request: Request) {
       }
       // Probe only the explicitly selected model. Paid probes are restricted to the
       // server-side allowlist and use a 128-token response cap.
-      const result = await probeModel(provider, model);
+      const result = await runSelectedModelProbe(provider, model);
       return NextResponse.json({ ...result, diagnosticId: id }, { headers });
     }
     if (provider) {
@@ -390,7 +441,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ available: false, error: "Origin or Figma file key not allowed.", diagnosticId: diagnosticId() }, { status: 403, headers: corsHeaders() });
   }
   try {
-    return NextResponse.json({ ...(await probeModel(parsed.provider, parsed.model)), diagnosticId: diagnosticId() }, { headers: corsHeaders() });
+    return NextResponse.json({ ...(await runSelectedModelProbe(parsed.provider, parsed.model)), diagnosticId: diagnosticId() }, { headers: corsHeaders() });
   } catch (error) {
     return NextResponse.json({ available: false, provider: parsed.provider, model: parsed.model, reason: safeError(error), diagnosticId: diagnosticId() }, { status: 502, headers: corsHeaders() });
   }
