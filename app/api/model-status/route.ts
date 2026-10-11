@@ -147,7 +147,7 @@ async function discoverWorkingFreeModel() {
         ...("reason" in result && typeof result.reason === "string" ? { reason: result.reason } : {}),
         ...("latencyMs" in result && typeof result.latencyMs === "number" ? { latencyMs: result.latencyMs } : {})
       });
-      if (result.available && result.responseReceived) {
+      if (result.available && "responseReceived" in result && result.responseReceived) {
         return {
           provider: "openrouter",
           configured: true,
