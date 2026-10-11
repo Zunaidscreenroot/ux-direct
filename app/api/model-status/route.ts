@@ -67,10 +67,10 @@ async function discoverModels(provider: ProviderId) {
   if (!config) return { provider, configured: false, models: [], reason: `${provider} API key is missing in this deployment context.` };
   const response = await timedFetch(config.modelsUrl, { headers: config.headers }, 12000);
   if (!response.ok) return { provider, configured: true, models: [], reason: `Provider model-list endpoint returned HTTP ${response.status}.` };
-  const payload = await response.json() as { data?: Array<{ id?: string; name?: string; supportedGenerationMethods?: string[] }>; models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> };
+  const payload = await response.json() as { data?: Array<{ id?: string; name?: string; supportedGenerationMethods?: string[]; pricing?: { prompt?: string; completion?: string } }>; models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> };
   let models: string[];
   if (provider === "openrouter") {
-    models = (payload.data ?? []).map(item => item.id).filter((id): id is string => Boolean(id));
+    models = (payload.data ?? [])\n      .filter(item => typeof item.id === "string" && item.id.endsWith(":free"))\n      .map(item => item.id)\n      .filter((id): id is string => Boolean(id));
   } else {
     models = (payload.models ?? [])
       .filter(item => (item.supportedGenerationMethods ?? []).includes("generateContent"))
@@ -85,7 +85,7 @@ async function probeModel(provider: ProviderId, model: string) {
   const startedAt = Date.now();
   const response = await timedFetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...config.headers },
+    headers: { "Content-Type": "application/json", ...(provider === "gemini" ? { Authorization: `Bearer ${config.apiKey}` } : config.headers) },
     body: JSON.stringify({
       model,
       messages: [{ role: "user", content: "Reply with exactly: UXD_MODEL_CHECK_OK" }],
