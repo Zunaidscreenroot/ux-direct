@@ -224,6 +224,15 @@
       return data;
     }
 
+    function isExpectedPreviewHost(expectedHost, actualHost) {
+      if (actualHost === expectedHost) return true;
+      // Netlify may serve the same deploy through its unique <deploy-id> permalink.
+      // Accept that only when it is the same exact Netlify site as the expected preview alias.
+      const expectedAlias = /^deploy-preview-\\d+--([a-z0-9-]+)\\.netlify\\.app$/i.exec(expectedHost);
+      const actualPermalink = /^[0-9a-f]{24}--([a-z0-9-]+)\\.netlify\\.app$/i.exec(actualHost || "");
+      return Boolean(expectedAlias && actualPermalink && expectedAlias[1].toLowerCase() === actualPermalink[1].toLowerCase());
+    }
+
     function connectionDiagnostic(error) {
       const detail = error && error.message ? error.message : String(error || "Unknown network error");
       if (/failed to fetch|networkerror|load failed|fetch failed/i.test(detail)) {
@@ -249,11 +258,15 @@
         try { data = await response.json(); }
         catch { throw new Error("Preview health endpoint returned invalid JSON."); }
         const expectedPreviewHost = new URL(API).host;
-        if (!data || data.status !== "ok" || !data.deployment ||
-            data.deployment.platform !== "netlify" || data.deployment.host !== expectedPreviewHost) {
-          const actualHost = data && data.deployment && data.deployment.host ? data.deployment.host : "missing";
-          const actualPlatform = data && data.deployment && data.deployment.platform ? data.deployment.platform : "missing";
-          throw new Error("Expected Netlify Preview host " + expectedPreviewHost + " but received platform=" + actualPlatform + ", host=" + actualHost + ", status=" + (data && data.status ? data.status : "missing") + ".");
+        const deployment = data && data.deployment ? data.deployment : {};
+        const actualHost = deployment.host || "missing";
+        const actualPlatform = deployment.platform || "missing";
+        const actualContext = deployment.context || "missing";
+        const actualBranch = deployment.branch || "missing";
+        const hostMatches = isExpectedPreviewHost(expectedPreviewHost, actualHost);
+        if (!data || data.status !== "ok" || actualPlatform !== "netlify" || !hostMatches ||
+            actualContext !== "deploy-preview" || actualBranch !== "feat/conversational-cockpit") {
+          throw new Error("Expected UX Direct Netlify Deploy Preview for branch feat/conversational-cockpit; received platform=" + actualPlatform + ", host=" + actualHost + ", context=" + actualContext + ", branch=" + actualBranch + ", status=" + (data && data.status ? data.status : "missing") + ".");
         }
         backendHealthy = true;
         setConnection("ok", "Netlify Preview connected");
