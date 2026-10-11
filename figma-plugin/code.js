@@ -375,7 +375,13 @@ async function executeNativeApiHealthCheck() {
       mutateLab("resize test rectangle", function () { node.resize(80, 60); });
       mutateLab("set rectangle fill", function () { node.fills = [{ type: "SOLID", color: { r: 0.18, g: 0.38, b: 0.9 } }]; });
       mutateLab("set rectangle opacity", function () { node.opacity = 0.6; });
-      if (node.opacity !== 0.6 || node.fills.length !== 1) throw new Error("Rectangle style update did not persist.");
+      var readBackFills = node.fills === figma.mixed ? null : node.fills;
+      if (Math.abs(node.opacity - 0.6) > 0.001) {
+        throw new Error("Rectangle opacity mismatch: expected 0.6, got " + node.opacity + ".");
+      }
+      if (!readBackFills || readBackFills.length !== 1) {
+        throw new Error("Rectangle fill mismatch: expected 1 fill, got " + (readBackFills ? readBackFills.length : "mixed") + ".");
+      }
     });
     await runTest("Shapes", "Create ellipse", async function () {
       var node = ellipse("UXD API test ellipse");
@@ -417,9 +423,20 @@ async function executeNativeApiHealthCheck() {
       if (node.characters !== "UX Direct API test") throw new Error("Text write did not persist.");
     });
 
-    // The previous native run stopped at this grouping operation. Inventory the API without invoking a potentially blocking document mutation.
-    availability("Layout and styling", "figma.group", typeof figma.group === "function",
-      "Availability only; grouping is not invoked by health checks to keep the persistent Test Lab run responsive.");
+    await runTest("Layout and styling", "Group two persistent test nodes", async function () {
+      var groupName = "__UXD GROUP RESULT";
+      var existingGroup = findNodeByName(harness, groupName, "GROUP");
+      if (existingGroup) {
+        if (existingGroup.children.length !== 2) throw new Error("Persistent group fixture no longer contains two children.");
+        return { uxdResultReason: "Reused the group created on the first run; did not create another group." };
+      }
+      var a = rect("UXD group item A"), b = ellipse("UXD group item B");
+      mutateLab("position group item A", function () { a.x = 5; a.y = 5; });
+      mutateLab("position group item B", function () { b.x = 35; b.y = 25; });
+      var group = mutateLab("group test nodes", function () { return figma.group([a, b], harness); });
+      mutateLab("name persistent test group", function () { group.name = groupName; });
+      if (group.type !== "GROUP" || group.children.length !== 2) throw new Error("Group did not contain both nodes.");
+    });
     await runTest("Layout and styling", "Reuse persistent flattened vector", async function () {
       var vectorName = "__UXD FLATTEN RESULT";
       var existingVector = findNodeByName(harness, vectorName, "VECTOR");
@@ -521,7 +538,10 @@ async function executeNativeApiHealthCheck() {
         variable.setValueForMode(collection.defaultModeId, { r: 0.2, g: 0.4, b: 0.6 });
       });
       var loaded = await mutateLabAsync("read persistent health variable", function () { return figma.variables.getVariableByIdAsync(variable.id); });
-      if (!loaded || loaded.valuesByMode[collection.defaultModeId].r !== 0.2) throw new Error("Persistent variable value did not read back.");
+      var colorValue = loaded && loaded.valuesByMode && loaded.valuesByMode[collection.defaultModeId];
+      if (!colorValue || Math.abs(colorValue.r - 0.2) > 0.001) {
+        throw new Error("Persistent variable read-back mismatch: expected red channel 0.2, got " + (colorValue ? colorValue.r : "missing") + ".");
+      }
       return { uxdResultReason: "Reused a named variable collection and variable; nothing was deleted." };
     });
     await runTest("Variables", "Read local variables and collections", async function () {
