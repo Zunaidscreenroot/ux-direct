@@ -81,8 +81,6 @@ type GatewayDashboardPayload = {
  checkedAt:string;
 };
 function inr(value:number){return new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:value<10?4:2}).format(value);}
-function modeCompatible(mode:GatewayMode,m:GatewayModel){if(mode==="free")return m.tier==="free-tier"||m.id.endsWith(":free");if(mode==="local")return m.tier==="local";if(mode==="mock")return m.tier==="mock";return m.tier!=="local"&&m.tier!=="mock"&&!m.id.endsWith(":free");}
-function exampleModelCost(policy:ModelPolicy){return (100000*policy.inputPriceInrPerMillion+20000*policy.outputPriceInrPerMillion)/1_000_000;}
 function ModelGatewayPanel(){
  const [data,setData]=useState<GatewayDashboardPayload|null>(null);
  const [draft,setDraft]=useState<GatewaySettings|null>(null);
