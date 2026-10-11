@@ -122,6 +122,7 @@
     let modelAvailable = false;
     let modelOptions = [];
     let modelProbeVersion = 0;
+    let openRouterFreeQuotaExhausted = false;
     let currentSelection = { fileKey: null, pageName: "", selection: [] };
     const chatHistory = [];
     const handledBridgeCommands = new Set();
@@ -332,6 +333,12 @@
       currentModel = modelOptions.find(model => model.id === selectedId) || modelOptions[0] || null;
       modelAvailable = false;
       updateSendAvailability();
+      if (openRouterFreeQuotaExhausted) {
+        $("modelSelect").disabled = true;
+        setModelStatus("bad", "Free quota exhausted", "OpenRouter blocked free-model inference for this account. Add credits or wait for the quota to reset, then reload the plugin.");
+        updateSendAvailability();
+        return;
+      }
       if (!currentModel) {
         $("modelSelect").disabled = true;
         setModelStatus("warn", "Choose a model", "No free model is available to probe.");
@@ -354,6 +361,23 @@
         const payload = await response.json().catch(() => ({}));
         if (version !== modelProbeVersion) return;
         if (!response.ok) throw new Error(payload.error || "Model check returned HTTP " + response.status + ".");
+        if (payload.quotaExhausted === true ||
+            (payload.status === 429 && /free-models-per-day|free model requests per day/i.test(String(payload.reason || "")))) {
+          openRouterFreeQuotaExhausted = true;
+          modelAvailable = false;
+          const detail = payload.reason || "OpenRouter has exhausted this account's daily free-model request quota.";
+          setModelStatus("bad", "Free quota exhausted", "HTTP 429: " + detail);
+          const message = "OpenRouter has blocked free-model inference because the account-level daily quota is exhausted.\n\n" +
+            detail + "\n\nI stopped further probes so switching models will not waste additional requests. A saved card or future autopay does not count as a completed credit top-up until OpenRouter confirms the credits. Add credits in OpenRouter or wait for the quota to reset, then reload this plugin and retry one model. Paid-model fallback remains disabled.";
+          if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
+          else {
+            const bubble = modelProbeRow.querySelector(".bubble");
+            if (bubble) bubble.textContent = message;
+          }
+          $("modelSelect").disabled = true;
+          updateSendAvailability();
+          return;
+        }
         if (payload.available === true && payload.responseReceived === true) {
           modelAvailable = true;
           const providerLabel = "OpenRouter connected";
