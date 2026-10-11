@@ -156,7 +156,7 @@ async function probeModel(provider: ProviderId, model: string) {
   let reason: string | undefined;
   if (!responseReceived) {
     if (choiceError) {
-      reason = \`OpenRouter returned an error in the HTTP 200 response: \${choiceError}\`;
+      reason = "OpenRouter returned an error in the HTTP 200 response: " + choiceError;
     } else if (finishReason === "length" || nativeFinishReason === "length") {
       reason = "The model hit the 128-token probe limit before returning final text.";
     } else if (finishReason === "error" || nativeFinishReason === "error") {
