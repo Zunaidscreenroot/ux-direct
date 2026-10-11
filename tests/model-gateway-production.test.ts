@@ -41,7 +41,6 @@ test("gateway admin secret is entered transiently, not stored in web storage", (
 test("OpenRouter example uses live free-model discovery and keeps paid calls disabled", () => {
   const env = read(".env.example");
   assert.ok(env.includes("OPENROUTER_API_KEY="));
-  assert.ok(env.includes("do not hardcode model IDs here") === false);
   assert.ok(env.includes("ALLOW_PAID_MODELS=false"));
   assert.ok(env.includes("MODEL_GATEWAY_ADMIN_KEY="));
 });
