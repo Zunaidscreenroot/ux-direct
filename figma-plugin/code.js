@@ -10,10 +10,11 @@ function sendSelection() {
     pageName: figma.currentPage.name, selection: getSelectionSummary() });
 }
 figma.on("selectionchange", sendSelection);
-function runNativeApiHealthCheck() {
+function runNativeApiHealthCheck(commandId) {
   var checks = [];
   function add(category, name, level, ok, reason) {
-    checks.push({ category: category, name: name, level: level, status: ok ? "success" : "error",
+    var status = level === "not-tested" ? "not-tested" : (ok ? "success" : "error");
+    checks.push({ category: category, name: name, level: level, status: status,
       reason: reason || (ok ? "Verified" : "Check failed") });
   }
   function api(category, name, value) {
@@ -78,14 +79,14 @@ function runNativeApiHealthCheck() {
   ].forEach(function (item) { add(item[0], item[1], "not-tested", false, item[2]); });
   var passed = checks.filter(function (x) { return x.status === "success"; }).length;
   var failed = checks.filter(function (x) { return x.status === "error"; }).length;
-  var notTested = checks.filter(function (x) { return x.level === "not-tested"; }).length;
+  var notTested = checks.filter(function (x) { return x.status === "not-tested"; }).length;
   figma.ui.postMessage({ type: "native-health-result", checks: checks, passed: passed, failed: failed,
-    notTested: notTested, checkedAt: new Date().toISOString() });
+    notTested: notTested, commandId: commandId || null, checkedAt: new Date().toISOString() });
 }
 figma.ui.onmessage = function (message) {
   if (!message) return;
   if (message.type === "get-selection") sendSelection();
-  if (message.type === "run-native-health-check") runNativeApiHealthCheck();
+  if (message.type === "run-native-health-check") runNativeApiHealthCheck(message.commandId);
   if (message.type === "close") figma.closePlugin();
 };
 sendSelection();

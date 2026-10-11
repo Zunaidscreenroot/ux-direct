@@ -67,20 +67,58 @@
       return true;
     } catch (error) { console.warn("[UX Direct telemetry]", event, error); return false; }
   }
+  function makeId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+    return "uxd-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  }
+  const pluginClientId = makeId();
+  const pluginSessionToken = makeId() + makeId();
+  let lastBridgeCommandId = "";
+  async function bridgeRequest(payload) {
+    const response = await fetch(API + "/api/plugin-bridge", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, clientId: pluginClientId, sessionToken: pluginSessionToken })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Bridge returned " + response.status);
+    return data;
+  }
+  async function syncPluginBridge() {
+    try {
+      const data = await bridgeRequest({ mode: "heartbeat" });
+      if (data.command && data.command.commandId && data.command.commandId !== lastBridgeCommandId) {
+        lastBridgeCommandId = data.command.commandId;
+        if (data.command.action === "native-api-health-check") {
+          status("Running a native Figma API health check requested from Vercel…");
+          void sendTelemetry("Vercel requested native API health check", "info", "Executing dashboard-issued plugin health check.", { requestId: data.command.commandId });
+          parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: data.command.commandId } }, "*");
+        }
+      }
+    } catch (error) {
+      console.warn("[UX Direct bridge]", error);
+    }
+  }
   let heartbeatTimer = null;
   async function startPluginSession() {
     await sendTelemetry("Plugin opened", "success", "UX Direct plugin UI initialized in Figma.");
     await checkConnection();
+    await syncPluginBridge();
     heartbeatTimer = window.setInterval(() => {
       void sendTelemetry("Plugin heartbeat", "success", "Plugin UI is active and recently reached its event loop.");
+      void syncPluginBridge();
     }, 20000);
   }
   window.addEventListener("pagehide", () => {
     if (heartbeatTimer) window.clearInterval(heartbeatTimer);
-    const body = JSON.stringify({ source: "figma-plugin", event: "Plugin close attempted", status: "info", summary: "Plugin UI is unloading; close event delivery is best-effort." });
+    const body = JSON.stringify({ mode: "disconnect", clientId: pluginClientId, sessionToken: pluginSessionToken });
     try {
-      if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/telemetry", new Blob([body], { type: "application/json" }));
-      else fetch(API + "/api/telemetry", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+      if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/plugin-bridge", new Blob([body], { type: "application/json" }));
+      else fetch(API + "/api/plugin-bridge", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+    } catch (_) {}
+    const telemetryBody = JSON.stringify({ source: "figma-plugin", event: "Plugin close attempted", status: "info", summary: "Plugin UI is unloading; close event delivery is best-effort." });
+    try {
+      if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/telemetry", new Blob([telemetryBody], { type: "application/json" }));
+      else fetch(API + "/api/telemetry", { method: "POST", headers: { "Content-Type": "application/json" }, body: telemetryBody, keepalive: true }).catch(() => {});
     } catch (_) {}
   });
   async function checkConnection() {
@@ -122,8 +160,10 @@
       message.checks.forEach((item) => {
         const row = document.createElement("div");
         row.style.cssText = "display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-top:1px solid var(--figma-color-border)";
-        const badge = document.createElement("strong"); badge.textContent = item.status === "success" ? "PASS" : "FAIL";
-        badge.style.color = item.status === "success" ? "#26966b" : "#d14343";
+        const labelText = item.level === "not-tested" ? "NOT TESTED" : item.status === "success" ? (item.level === "availability" ? "AVAILABLE" : "PASS") : "FAIL";
+        const badge = document.createElement("strong"); badge.textContent = labelText;
+        badge.style.color = item.level === "not-tested" ? "#a07827" : item.status === "success" ? "#26966b" : "#d14343";
+        badge.style.minWidth = "78px";
         const label = document.createElement("span"); label.textContent = "[" + item.category + " · " + item.level + "] " + item.name + " — " + item.reason;
         row.append(badge, label); list.appendChild(row);
       });
@@ -133,6 +173,17 @@
       message.checks.forEach((item) => {
         void sendTelemetry("Plugin API check: " + item.name, item.level === "not-tested" ? "warning" : item.status, item.name + ": " + item.reason, { category: item.category, action: item.name, testType: item.level });
       });
+      void bridgeRequest({
+        mode: "result",
+        commandId: message.commandId || undefined,
+        healthReport: {
+          passed, failed, notTested, checkedAt: message.checkedAt,
+          checks: message.checks
+        }
+      }).then(() => {
+        if (message.commandId) status("Vercel-requested health check completed. Results synced to UX Direct.");
+        else status("Native API health check completed. Results synced to UX Direct.");
+      }).catch((error) => console.warn("[UX Direct health report sync]", error));
       return;
     }
     if (message.type !== "selection") return;
