@@ -74,7 +74,7 @@ Use `Authorization: Bearer <MODEL_GATEWAY_ACCESS_KEY>` or `x-model-gateway-key`.
 
 ## Routing policy
 
-The `routeTask()` helper prefers local/free models for classification, extraction and summaries; stronger free-tier candidates for reasoning and critique; and falls back to deterministic mock when no real provider is configured. Model IDs and free quotas are not stable guarantees; check provider consoles before enabling. Task aliases can fail over between configured local/free providers; they never automatically fall back to paid providers. This fallback policy is available through the gateway endpoint, but the alias helper is not yet connected to the existing UX Direct orchestrator.
+The `routeTask()` helper prefers local/free models for classification, extraction and summaries; stronger free-tier candidates for reasoning and critique; and falls back to deterministic mock when no real provider is configured. Model IDs and free quotas are not stable guarantees; check provider consoles before enabling. Task aliases can fail over between configured local/free providers; they never automatically fall back to paid providers. The task-planning endpoint uses the gateway when a local/free provider is configured, otherwise it safely stays in mock mode. Paid task planning requires both the paid-mode switch and an explicit exact `MODEL_GATEWAY_TASK_MODEL` selection.
 
 ## Before enabling paid billing
 
