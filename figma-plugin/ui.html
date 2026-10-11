@@ -371,14 +371,17 @@
       const checks = Array.isArray(message.checks) ? message.checks : [];
       const passed = Number(message.passed || 0);
       const available = Number(message.available || 0);
-      const failed = Number(message.failed || 0);
+      const reportedFailures = Number(message.failed || 0);
+      const failed = Math.max(reportedFailures, checks.filter((item) => item && item.status === "error" && item.level !== "availability").length);
       const notTested = Number(message.notTested || 0);
       const checkedAt = message.checkedAt ? new Date(message.checkedAt).toLocaleTimeString() : "just now";
-      const label = failed > 0 ? "Health check failed" : "Health check passed";
-      setHealth(failed > 0 ? "bad" : "ok", label);
+      const suiteInvalid = checks.length === 0;
+      const healthFailed = failed > 0 || suiteInvalid;
+      const label = healthFailed ? "Health check failed" : "Health check passed";
+      setHealth(healthFailed ? "bad" : "ok", label);
       $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + available + " available · " + notTested + " not tested · " + checkedAt + ". Team Library access remains intentionally not tested.";
       $("healthResults").replaceChildren();
-      if (!checks.length) appendHealthRow("FAIL", "Health report", "The plugin returned no individual check results.", "fail");
+      if (suiteInvalid) appendHealthRow("FAIL", "Health report", "The plugin returned no individual check results; the suite cannot be considered passed.", "fail");
       checks.forEach((item) => {
         const isNotTested = item.status === "not-tested" || item.level === "not-tested";
         const ok = item.status === "success";
@@ -394,7 +397,7 @@
         commandId: message.commandId || undefined,
         healthReport: { passed, available, failed, notTested, checkedAt: message.checkedAt, checks }
       }).then(() => {
-        setActivity(failed > 0 ? "Health check finished with failures. Click the red tag to inspect them." : "Health check passed. Ask me what you want to work on.");
+        setActivity(healthFailed ? "Health check finished with failures or an incomplete report. Click the red tag to inspect it." : "Health check passed. Ask me what you want to work on.");
       }).catch((error) => {
         console.warn("[UX Direct health report sync]", error);
         setActivity("Health result is available here, but syncing it to the backend failed.");
