@@ -57,7 +57,7 @@ type GatewaySettings = { version:1; globalMonthlyBudgetInr:number; usdToInrRate:
 type GatewayModule = { id:string; label:string; description:string; alias:string; tasks:string[]; suggestedBudgetShare:number };
 type GatewayModel = { id:string; provider:string; label:string; tier:string; tasks:string[]; configured:boolean; notes:string; selectionKey:string; usdInputPerMillion?:number; usdOutputPerMillion?:number; pricingSource?:string; pricingReviewedAt?:string };
 type GatewayDashboardPayload = {
- gateway:{name:string;status:string;paidModelsEnabled:boolean;monthlyBudgetInr:number;pricingConfigured:boolean;gatewayFeeInr:number};
+ gateway:{name:string;status:string;paidModelsEnabled:boolean;pricingConfigured:boolean;gatewayFeeInr:number;accountBalanceSource?:string};
  providers:Array<{id:string;label:string;envName:string;configured:boolean;keyDetected:boolean;tier:string;secretRequired:boolean}>;
  models:GatewayModel[]; modules:GatewayModule[]; settings:GatewaySettings;
  budget:{currency:string;monthlyBudgetInr:number;spentThisMonthInr:number;remainingInr:number;percentUsed:number;inputPriceInrPerMillion:number;outputPriceInrPerMillion:number;pricingConfigured:boolean;month:string;
@@ -65,12 +65,24 @@ type GatewayDashboardPayload = {
  retention:string;spentByModuleInr:Record<string,number>;spentByModelInr:Record<string,number>;paidCallsThisMonth:number};
  checkedAt:string;
 };
+type OpenRouterAccountPayload = {
+ ok:boolean; checkedAt:string;
+ credentials:{apiKeyConfigured:boolean;managementKeyConfigured:boolean};
+ credits:null|{totalPurchasedUsd:number;totalUsedUsd:number;availableUsd:number};
+ key:null|{limitUsd:number|null;limitRemainingUsd:number|null;usageUsd:number;usageDailyUsd:number;usageWeeklyUsd:number;usageMonthlyUsd:number;isFreeTier:boolean|null;isManagementKey:boolean|null;freeModelDailyRequests:null|{used:number;limit:number;remaining:number}};
+ activity:null|{daysReturned:number;activeDays:number;totalUsageUsd:number;totalRequests:number;promptTokens:number;completionTokens:number;reasoningTokens:number;averageDailySpendUsd:number;daily:Array<{date:string;usageUsd:number;requests:number}>;models:Array<{model:string;provider:string|null;usageUsd:number;requests:number;promptTokens:number;completionTokens:number}>};
+ errors:Record<string,string>;
+};
 function inr(value:number){return new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:value<10?4:2}).format(value);}
+function usd(value:number|null|undefined){return value===null||value===undefined?"—":new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:2}).format(value);}
 function modeCompatible(mode:GatewayMode,m:GatewayModel){if(mode==="free")return m.tier==="free-tier"||m.id.endsWith(":free");if(mode==="local")return m.tier==="local";if(mode==="mock")return m.tier==="mock";return m.tier!=="local"&&m.tier!=="mock"&&!m.id.endsWith(":free");}
 function exampleModelCost(policy:ModelPolicy){return (100000*policy.inputPriceInrPerMillion+20000*policy.outputPriceInrPerMillion)/1_000_000;}
 function ModelGatewayPanel(){
  const [data,setData]=useState<GatewayDashboardPayload|null>(null);
  const [draft,setDraft]=useState<GatewaySettings|null>(null);
+ const [accountData,setAccountData]=useState<OpenRouterAccountPayload|null>(null);
+ const [plannedDailySpend,setPlannedDailySpend]=useState("0.25");
+ const [accountBusy,setAccountBusy]=useState(false),[accountError,setAccountError]=useState("");
  const [busy,setBusy]=useState(false),[saving,setSaving]=useState(false),[smokeBusy,setSmokeBusy]=useState(false);
  const [smokeMessage,setSmokeMessage]=useState(""),[message,setMessage]=useState(""),[loadError,setLoadError]=useState("");
  const [adminKey,setAdminKey]=useState("");
@@ -81,7 +93,13 @@ function ModelGatewayPanel(){
   try{const r=await fetch("/api/model-gateway/dashboard",{cache:"no-store"});const p=await r.json();if(!r.ok)throw new Error(p.error||"Could not load gateway dashboard.");setData(p as GatewayDashboardPayload);if(!dirty.current)setDraft((p as GatewayDashboardPayload).settings);setLoadError("");}
   catch(e){setLoadError(e instanceof Error?e.message:"Gateway dashboard unavailable.");}finally{setBusy(false);}
  },[]);
- useEffect(()=>{void load();const timer=window.setInterval(()=>void load(),60000);return()=>window.clearInterval(timer);},[load]);
+ const loadAccount=useCallback(async()=>{
+  setAccountBusy(true);setAccountError("");
+  try{const r=await fetch("/api/model-gateway/openrouter-account",{cache:"no-store"});const p=await r.json();if(!r.ok)throw new Error(p.error||"Could not load OpenRouter account data.");setAccountData(p as OpenRouterAccountPayload);}
+  catch(e){setAccountError(e instanceof Error?e.message:"OpenRouter account data unavailable.");}
+  finally{setAccountBusy(false);}
+ },[]);
+ useEffect(()=>{void load();void loadAccount();const timer=window.setInterval(()=>void load(),60000);return()=>window.clearInterval(timer);},[load,loadAccount]);
  function mutate(fn:(s:GatewaySettings)=>GatewaySettings){dirty.current=true;setMessage("Unsaved changes");setDraft(s=>s?fn(s):s);}
  function updateModule(id:string,patch:Partial<ModulePolicy>){mutate(s=>({...s,modules:{...s.modules,[id]:{...s.modules[id],...patch}}}));}
  function updateModel(key:string,patch:Partial<ModelPolicy>){mutate(s=>({...s,models:{...s.models,[key]:{...s.models[key],...patch}}}));}
@@ -96,59 +114,69 @@ function ModelGatewayPanel(){
   catch(e){setSmokeMessage(e instanceof Error?e.message:"Smoke test failed.");}finally{setSmokeBusy(false);}
  }
  const models=data?.models??[], modules=data?.modules??[], settings=draft, records=data?.budget.records??[];
- const spent=data?.budget.spentThisMonthInr??0, globalCap=settings?.globalMonthlyBudgetInr??3000, remaining=Math.max(0,globalCap-spent), fx=settings?.usdToInrRate??97;
+ const fx=settings?.usdToInrRate??97;
  const keyReady=(data?.providers??[]).filter(p=>p.keyDetected).length;
+ const availableUsd=accountData?.credits?.availableUsd;
+ const plannedDailyUsd=Math.max(0,Number(plannedDailySpend)||0);
+ const plannedRunwayDays=availableUsd===undefined?null:plannedDailyUsd>0?Math.max(0,availableUsd)/plannedDailyUsd:null;
+ const observedRunwayDays=availableUsd===undefined?null:(accountData?.activity?.averageDailySpendUsd??0)>0?Math.max(0,availableUsd)/(accountData?.activity?.averageDailySpendUsd??1):null;
  function policyFor(m:GatewayModel):ModelPolicy{return settings?.models[m.selectionKey]??{monthlyBudgetInr:500,maxRequestCostInr:50,inputPriceInrPerMillion:(m.usdInputPerMillion??0)*fx,outputPriceInrPerMillion:(m.usdOutputPerMillion??0)*fx};}
  function recommendation(module:GatewayModule,mode:GatewayMode){const choices=models.filter(m=>modeCompatible(mode,m)&&(mode!=="paid"||(policyFor(m).inputPriceInrPerMillion>0&&policyFor(m).outputPriceInrPerMillion>0)));const fit=(m:GatewayModel)=>m.tasks.some(t=>module.tasks.some(w=>t.toLowerCase().includes(w.toLowerCase())||w.toLowerCase().includes(t.toLowerCase())))?1:0;choices.sort((a,b)=>fit(b)-fit(a)||Number(b.configured)-Number(a.configured)||(mode==="paid"?exampleModelCost(policyFor(a))-exampleModelCost(policyFor(b)):0)||a.label.localeCompare(b.label));return choices[0]??null;}
  const modeOptions=(mode:GatewayMode)=>models.filter(m=>modeCompatible(mode,m)).sort((a,b)=>Number(b.configured)-Number(a.configured)||a.label.localeCompare(b.label));
  function applySuggestion(module:GatewayModule,mode:GatewayMode){const m=recommendation(module,mode);if(!m)return;updateModule(module.id,{mode,selectedModelKey:m.selectionKey});setMessage("Selected "+m.label+" for "+module.label+". Save to apply.");}
   return <div className="content gateway-content accountant-content">
-  <div className="eyebrow"><span className="pulse"/> MODEL OPERATIONS · ACCOUNTANT</div>
-  <div className="gateway-title-row"><div><h1>Model gateway.<br/><em>Every rupee accounted for.</em></h1><p className="intro">UX Direct tries the two approved free Nemotron models first. Only if both are unavailable, it selects one approved paid model by task expertise. Set global, module and model budgets to keep every paid request guarded.</p></div>
+  <div className="eyebrow"><span className="pulse"/> MODEL OPERATIONS · OPENROUTER</div>
+  <div className="gateway-title-row"><div><h1>Model gateway.<br/><em>Spend from available credits.</em></h1><p className="intro">UX Direct tries the two approved free Nemotron models first, then routes to one approved paid model when needed. OpenRouter is the provider gateway; its account balance and key limits determine available paid usage. UX Direct shows usage and estimates without imposing monthly spending caps.</p></div>
    <div className="gateway-header-actions"><button className="secondary-button" type="button" onClick={()=>void smoke()} disabled={smokeBusy}>{smokeBusy?"Testing…":"Run free smoke test ↗"}</button><button className="submit-button" type="button" onClick={()=>void load()} disabled={busy}>{busy?"Refreshing…":"Refresh ↻"}</button></div></div>
   {loadError&&<p className="inline-note" role="alert">{loadError}</p>}{smokeMessage&&<p className="gateway-smoke-message" role="status">{smokeMessage}</p>}
-  <div className="gateway-mode-banner"><span className="gateway-status-dot gateway-dot-live"/><div><strong>Free-first routing · paid fallback by expertise</strong><p>Try Nemotron 3.5 Lightning and Nemotron 3 Ultra first. If neither returns a usable response, route once to GPT-6 Luna for general UX, DeepSeek V4.1 Flash for strategy/critique, or DeepSeek V4 Flash for coding and implementation. All paid calls keep the configured budget checks.</p></div><span className="gateway-fee">₹0 gateway fee</span></div>
-  <section className="gateway-panel accountant-global-panel">
-   <div className="gateway-panel-heading"><div><span className="section-kicker">GLOBAL FINANCIAL GUARDRAILS</span><h2>One account · separate envelopes</h2></div><span className={"status-chip "+(remaining<=0?"status-error":globalCap>0&&spent/globalCap>=.8?"status-warning":"status-success")}>{globalCap>0?Math.round(spent/globalCap*100):100}% used</span></div>
-   <div className="accountant-summary-grid">
-    <article className="gateway-stat-card"><span>MONTH-TO-DATE SPEND</span><strong>{inr(spent)}</strong><small>{data?.budget.month??"Current month"} · estimated</small></article>
-    <article className="gateway-stat-card"><span>GLOBAL MONTHLY CAP</span><strong>{inr(globalCap)}</strong><small>Paid-call guardrail</small></article>
-    <article className="gateway-stat-card"><span>AVAILABLE BALANCE</span><strong>{inr(remaining)}</strong><small>Gateway fee ₹0</small></article>
-    <article className="gateway-stat-card"><span>REQUEST ACCOUNTING</span><strong>{records.length} calls</strong><small>{records.reduce((s,r)=>s+r.totalTokens,0).toLocaleString("en-IN")} tokens · {data?.budget.paidCallsThisMonth??0} paid-mode calls</small></article>
-   </div>
-   <div className="budget-track"><div className={"budget-fill "+(globalCap>0&&spent/globalCap>=.8?"budget-fill-warning":"")} style={{width:Math.min(100,globalCap>0?spent/globalCap*100:100)+"%"}}/></div>
-   <div className="accountant-global-controls">
-    <label className="gateway-control-field"><span>Global monthly budget (₹)</span><input type="number" min="0" step="100" value={globalCap} onChange={e=>mutate(s=>({...s,globalMonthlyBudgetInr:Math.max(0,Number(e.target.value)||0)}))}/></label>
-    <label className="gateway-control-field"><span>USD → INR rate</span><input type="number" min="1" max="250" step=".5" value={fx} onChange={e=>mutate(s=>({...s,usdToInrRate:Math.max(1,Math.min(250,Number(e.target.value)||97))}))}/><small>Used to convert published USD rate suggestions; editable.</small></label>
-    <p className="gateway-footnote">Paid inference is only considered after both approved free models fail. The task router selects one paid model by expertise; the provider key, live catalogue, positive prices and gateway budgets must all pass.</p>
-   </div>
-   <p className="gateway-footnote">{data?.budget.retention==="netlify-blobs"?"Branch-scoped Netlify Blobs persistence is active.":"Runtime fallback may reset on serverless restarts."} Blob storage is not transactional: simultaneous paid requests can race a cap. Treat budgets as best-effort until transactional reservations are implemented.</p>
-  </section>
-  <div className="gateway-section-heading"><div><span className="section-kicker">01 · MODULE CONTROL</span><h2>One model policy per agent</h2><p>Switch modules on/off. Choose a mode and exact model, then define monthly and per-request caps.</p></div><span className="count">{modules.filter(m=>settings?.modules[m.id]?.enabled).length} / {modules.length} ON</span></div>
+  <div className="gateway-mode-banner"><span className="gateway-status-dot gateway-dot-live"/><div><strong>OpenRouter provider gateway · free-first with one paid fallback</strong><p>Try Nemotron 3.5 Lightning and Nemotron 3 Ultra first. If neither returns a usable response, route once to GPT-6 Luna for general UX, DeepSeek V4.1 Flash for strategy/critique, or DeepSeek V4 Flash for coding and implementation. OpenRouter enforces account credits, key limits and provider rate limits; UX Direct retains model allowlists, request rate limits and usage telemetry.</p></div><span className="gateway-fee">₹0 gateway fee</span></div>
+  <section className="gateway-panel openrouter-account-panel">
+  <div className="gateway-panel-heading"><div><span className="section-kicker">LIVE OPENROUTER ACCOUNT</span><h2>Credits, usage & runway</h2><p>Provider-reported USD balance and account activity. This data is fetched from OpenRouter; it does not trigger model inference.</p></div><button className="secondary-button" type="button" onClick={()=>void loadAccount()} disabled={accountBusy}>{accountBusy?"Refreshing…":"Refresh account ↻"}</button></div>
+  {accountError&&<p className="inline-note" role="alert">{accountError}</p>}
+  {accountData?.errors?.credits&&<p className="inline-note" role="status">{accountData.errors.credits}</p>}
+  {accountData?.errors?.activity&&<p className="inline-note" role="status">{accountData.errors.activity}</p>}
+  {accountData?.errors?.key&&<p className="inline-note" role="status">{accountData.errors.key}</p>}
+  <div className="accountant-summary-grid">
+   <article className="gateway-stat-card"><span>AVAILABLE ACCOUNT CREDITS</span><strong>{usd(accountData?.credits?.availableUsd)}</strong><small>{accountData?.credits?("Purchased "+usd(accountData.credits.totalPurchasedUsd)+" · lifetime usage "+usd(accountData.credits.totalUsedUsd)):"Needs OPENROUTER_MANAGEMENT_KEY"}</small></article>
+   <article className="gateway-stat-card"><span>USAGE · LAST 30 DAYS</span><strong>{usd(accountData?.activity?.totalUsageUsd)}</strong><small>{(accountData?.activity?.totalRequests??0).toLocaleString("en-US")} requests · {(accountData?.activity?.daysReturned??0)} UTC dates reported</small></article>
+   <article className="gateway-stat-card"><span>AVERAGE DAILY SPEND</span><strong>{usd(accountData?.activity?.averageDailySpendUsd)}</strong><small>Last 30 completed UTC days · includes zero-spend days</small></article>
+   <article className="gateway-stat-card"><span>API KEY · THIS MONTH</span><strong>{usd(accountData?.key?.usageMonthlyUsd)}</strong><small>{accountData?.key?.limitRemainingUsd===null?"No separate per-key cap reported":accountData?.key?.limitRemainingUsd!==undefined?"Key limit remaining "+usd(accountData.key.limitRemainingUsd):"Key info unavailable"} · daily {usd(accountData?.key?.usageDailyUsd)}</small></article>
+  </div>
+  <div className="gateway-account-planner">
+   <div><span className="section-kicker">CREDIT RUNWAY PLANNER</span><h3>Plan your daily spend</h3><p>Change the target below to estimate how many days the current provider balance could last. These are projections, not spending locks.</p></div>
+   <label className="gateway-control-field"><span>Planned spend per day (USD)</span><input type="number" min="0" step="0.05" value={plannedDailySpend} onChange={e=>setPlannedDailySpend(e.target.value)} /></label>
+   <article className="gateway-stat-card"><span>ESTIMATED RUNWAY AT PLAN</span><strong>{plannedRunwayDays===null?"—":plannedRunwayDays.toFixed(1)+" days"}</strong><small>{usd(plannedDailyUsd*30)} projected for 30 days</small></article>
+   <article className="gateway-stat-card"><span>RUNWAY AT RECENT PACE</span><strong>{observedRunwayDays===null?"—":observedRunwayDays.toFixed(1)+" days"}</strong><small>{usd(accountData?.activity?.averageDailySpendUsd)} average per day from activity</small></article>
+  </div>
+  <div className="gateway-section-heading"><div><span className="section-kicker">RECENT SPEND BREAKDOWN</span><h3>Daily activity · last 30 completed UTC days</h3><p>OpenRouter activity is grouped by date and model. Model names below reflect the provider's report, not local estimates.</p></div></div>
+  {!accountData?.activity?<div className="gateway-empty-state"><strong>Activity not available yet</strong><p>Add OPENROUTER_MANAGEMENT_KEY to the server environment for credits and 30-day analytics. OPENROUTER_API_KEY alone can report key-level usage.</p></div>:<>
+   <div className="token-ledger-table-wrap"><table className="gateway-table token-table"><thead><tr><th>UTC DATE</th><th>REQUESTS</th><th>REPORTED USAGE</th></tr></thead><tbody>{accountData.activity.daily.slice(0,10).map(day=><tr key={day.date}><td><strong>{day.date}</strong></td><td>{day.requests.toLocaleString("en-US")}</td><td>{usd(day.usageUsd)}</td></tr>)}</tbody></table></div>
+   <div className="token-ledger-table-wrap"><table className="gateway-table token-table"><thead><tr><th>MODEL</th><th>PROVIDER</th><th>REQUESTS</th><th>INPUT TOKENS</th><th>OUTPUT TOKENS</th><th>USAGE</th></tr></thead><tbody>{accountData.activity.models.slice(0,8).map(model=><tr key={model.model+"-"+model.provider}><td><strong>{model.model}</strong></td><td>{model.provider??"—"}</td><td>{model.requests.toLocaleString("en-US")}</td><td>{model.promptTokens.toLocaleString("en-US")}</td><td>{model.completionTokens.toLocaleString("en-US")}</td><td>{usd(model.usageUsd)}</td></tr>)}</tbody></table></div>
+  </>}
+  <p className="gateway-footnote">Key-level totals can differ from account-level analytics when multiple keys are in use or when Bring Your Own Key (BYOK) applies. OpenRouter account-credit data may be cached by the provider. Last checked: {accountData?.checkedAt?new Date(accountData.checkedAt).toLocaleString():"not checked"}.</p>
+ </section>
+ <div className="gateway-section-heading"><div><span className="section-kicker">01 · MODULE CONTROL</span><h2>One model policy per agent</h2><p>Switch modules on/off and choose an exact model. Actual paid usage is billed to OpenRouter; these switches control feature availability, not spend caps.</p></div><span className="count">{modules.filter(m=>settings?.modules[m.id]?.enabled).length} / {modules.length} ON</span></div>
   <div className="gateway-module-grid">{modules.map(module=>{const p=settings?.modules[module.id];if(!p)return null;const chosen=models.find(m=>m.selectionKey===p.selectedModelKey);const rec=recommendation(module,p.mode==="mock"?"mock":"free");const used=data?.budget.spentByModuleInr?.[module.id]??0;return <article className={"gateway-module-card "+(!p.enabled?"module-disabled":"")} key={module.id}>
    <div className="gateway-module-head"><div><span className="section-kicker">{module.id.toUpperCase()}</span><h3>{module.label}</h3></div><label className="gateway-switch"><input type="checkbox" checked={p.enabled} onChange={e=>updateModule(module.id,{enabled:e.target.checked})}/><span>{p.enabled?"ON":"OFF"}</span></label></div>
    <p className="gateway-module-description">{module.description}</p>
-   <div className="gateway-module-usage"><span>Spent {inr(used)}</span><strong>{inr(Math.max(0,p.monthlyBudgetInr-used))} remaining</strong></div><div className="budget-track"><div className={"budget-fill "+(p.monthlyBudgetInr>0&&used/p.monthlyBudgetInr>=.8?"budget-fill-warning":"")} style={{width:Math.min(100,p.monthlyBudgetInr?used/p.monthlyBudgetInr*100:100)+"%"}}/></div>
+   <div className="gateway-module-usage"><span>Estimated spend this month</span><strong>{inr(used)}</strong></div>
    <label className="gateway-control-field"><span>Mode</span><select value={p.mode==="mock"?"mock":"free"} onChange={e=>{const mode=e.target.value as GatewayMode;const keep=p.selectedModelKey==="auto"||models.some(m=>m.selectionKey===p.selectedModelKey&&modeCompatible(mode,m));updateModule(module.id,{mode,...(!keep?{selectedModelKey:"auto"}:{})});}}><option value="free">Free-first · automatic paid fallback</option><option value="mock">Mock only · no AI</option></select></label>
    <label className="gateway-control-field"><span>Exact model <i>{p.selectedModelKey==="auto"?"Auto within mode":"Strict allowlist"}</i></span><select disabled={!p.enabled} value={p.selectedModelKey} onChange={e=>updateModule(module.id,{selectedModelKey:e.target.value})}><option value="auto">Auto recommendation · selected mode only</option>{modeOptions(p.mode).map(m=><option key={m.selectionKey} value={m.selectionKey}>{m.label}{m.configured?" · connected":" · not connected"}</option>)}</select></label>
    {chosen&&<p className="gateway-selected-note"><span className={"status-dot-inline "+(chosen.configured?"green":"amber")}/>{chosen.configured?"Configured":"Not connected; request will be blocked"} · {chosen.notes}</p>}
-   <div className="gateway-policy-budget-row"><label className="gateway-control-field"><span>Module budget / month (₹)</span><input type="number" min="0" step="50" value={p.monthlyBudgetInr} onChange={e=>updateModule(module.id,{monthlyBudgetInr:Math.max(0,Number(e.target.value)||0)})}/></label><label className="gateway-control-field"><span>Max cost / request (₹)</span><input type="number" min="0" step="1" value={p.maxRequestCostInr} onChange={e=>updateModule(module.id,{maxRequestCostInr:Math.max(0,Number(e.target.value)||0)})}/></label></div>
    <div className="gateway-recommendation"><div><strong>Current-mode suggestion</strong><p>{rec?rec.label+" — task fit and connection status guide this choice." : "No catalog option for this mode yet."}</p></div>{rec&&<button className="text-button" type="button" onClick={()=>applySuggestion(module,p.mode)}>Use suggestion ↗</button>}</div>
    <div className="gateway-recommendation paid-recommendation"><div><strong>Paid fallback · automatic expertise match</strong><p>General UX and writing → GPT-6 Luna · strategy and critique → DeepSeek V4.1 Flash · coding and implementation → DeepSeek V4 Flash. The chosen paid model is attempted only after both approved free models fail.</p></div></div>
   </article>;})}</div>
-  <div className="gateway-section-heading"><div><span className="section-kicker">02 · MODEL ACCOUNTANT</span><h2>Price and limit every model</h2><p>Rates are INR per 1 million tokens. Example assumes 100k input + 20k output tokens. No live health/pricing calls are made.</p></div><span className="count">{models.length} MODEL OPTIONS</span></div>
+  <div className="gateway-section-heading"><div><span className="section-kicker">02 · MODEL PRICING</span><h2>Estimate token costs</h2><p>Rates are INR per 1 million tokens. Example assumes 100k input + 20k output tokens. Rates are for planning and usage estimates only; OpenRouter enforces provider-side credit limits.</p></div><span className="count">{models.length} MODEL OPTIONS</span></div>
   <section className="gateway-panel model-accountant-panel"><div className="model-catalog-toolbar"><label className="gateway-control-field"><span>Filter models</span><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All</option><option value="connected">Connected only</option><option value="free">Free-tier candidates</option><option value="paid">Billable models</option><option value="local">Local models</option></select></label><span className="gateway-footnote">Published rates are editable suggestions, not a live quote.</span></div>
-   <div className="model-accountant-table-wrap"><table className="gateway-table model-pricing-table"><thead><tr><th>MODEL / TASKS</th><th>TIER / STATUS</th><th>INPUT ₹ / 1M</th><th>OUTPUT ₹ / 1M</th><th>MONTHLY CAP</th><th>MAX / REQUEST</th><th>EXAMPLE COST</th><th>PRICE SOURCE</th></tr></thead><tbody>
+   <div className="model-accountant-table-wrap"><table className="gateway-table model-pricing-table"><thead><tr><th>MODEL / TASKS</th><th>TIER / STATUS</th><th>INPUT ₹ / 1M</th><th>OUTPUT ₹ / 1M</th><th>EXAMPLE COST</th><th>PRICE SOURCE</th></tr></thead><tbody>
     {models.filter(m=>filter==="all"||(filter==="connected"&&m.configured)||(filter==="free"&&(m.tier==="free-tier"||m.id.endsWith(":free")))||(filter==="paid"&&modeCompatible("paid",m))||(filter==="local"&&m.tier==="local")).map(m=>{const p=policyFor(m);return <tr key={m.selectionKey}><td><strong>{m.label}</strong><small>{m.tasks.join(" · ")}</small><small>{m.notes}</small></td><td><span className={"gateway-tier tier-"+m.tier}>{m.tier}</span><small>{m.configured?"Configured":"Not connected"}</small></td>
      <td><input className="model-price-input" aria-label={m.label+" input price"} type="number" min="0" step=".01" value={p.inputPriceInrPerMillion} onChange={e=>updateModel(m.selectionKey,{inputPriceInrPerMillion:Math.max(0,Number(e.target.value)||0)})}/></td>
      <td><input className="model-price-input" aria-label={m.label+" output price"} type="number" min="0" step=".01" value={p.outputPriceInrPerMillion} onChange={e=>updateModel(m.selectionKey,{outputPriceInrPerMillion:Math.max(0,Number(e.target.value)||0)})}/></td>
-     <td><input className="model-price-input" aria-label={m.label+" monthly cap"} type="number" min="0" step="50" value={p.monthlyBudgetInr} onChange={e=>updateModel(m.selectionKey,{monthlyBudgetInr:Math.max(0,Number(e.target.value)||0)})}/><small>Spent {inr(data?.budget.spentByModelInr?.[m.selectionKey]??0)}</small></td>
-     <td><input className="model-price-input" aria-label={m.label+" per-request cap"} type="number" min="0" step="1" value={p.maxRequestCostInr} onChange={e=>updateModel(m.selectionKey,{maxRequestCostInr:Math.max(0,Number(e.target.value)||0)})}/></td>
      <td><strong>{inr(exampleModelCost(p))}</strong>{m.usdInputPerMillion!==undefined&&<small>${m.usdInputPerMillion.toFixed(3)} / ${(m.usdOutputPerMillion??0).toFixed(3)} USD per 1M</small>}</td>
      <td>{m.pricingSource?<><a href={m.pricingSource} target="_blank" rel="noreferrer">Official pricing ↗</a><small>Checked {m.pricingReviewedAt??"date unavailable"}</small><button className="text-button apply-price" type="button" onClick={()=>updateModel(m.selectionKey,{inputPriceInrPerMillion:Number(((m.usdInputPerMillion??0)*fx).toFixed(4)),outputPriceInrPerMillion:Number(((m.usdOutputPerMillion??0)*fx).toFixed(4))})}>Apply USD→INR suggestion</button></>:<small>Enter published provider prices before paid mode.</small>}</td>
     </tr>;})}
    </tbody></table></div>
-   <p className="gateway-footnote">A free-mode request is only costed at ₹0 when the provider account/request uses its actual free tier; quota policies still apply. Paid mode applies configured rates even to providers that also offer free quotas. Estimates exclude taxes, caching and search/tool charges unless those are included in entered prices.</p>
+   <p className="gateway-footnote">Free model variants can still be rate-limited by OpenRouter. Paid requests use account credits and any configured per-key limit. Local estimates exclude taxes, caching and search/tool charges unless included in the provider's reported usage.</p>
   </section>
   <div className="gateway-section-heading"><div><span className="section-kicker">03 · PROVIDER REGISTRY</span><h2>API key placeholders</h2></div><span className="count">{keyReady} KEYS DETECTED</span></div>
   <div className="gateway-provider-grid">{(data?.providers??[]).map(p=><article className="gateway-provider-card" key={p.id}><div className="gateway-provider-top"><span className="gateway-provider-mark">{p.label.split(" ").map(w=>w[0]).join("").slice(0,2)}</span><span className={"status-chip "+(p.configured?"status-success":"status-neutral")}>{p.configured?"Configured · unverified":p.keyDetected?"Key detected · setup incomplete":p.tier==="local"?"Endpoint not configured":"Key not added"}</span></div><h3>{p.label}</h3><p>{p.tier==="paid"?"Paid provider · opt-in required":p.tier==="local"?"Local inference · no API token charge":"Free-tier candidate · verify account and quotas"}</p><label className="gateway-key-label" htmlFor={"key-slot-"+p.id}>{p.envName}</label><div className="gateway-key-placeholder"><input id={"key-slot-"+p.id} type="password" placeholder={p.secretRequired?"API key placeholder · final step":"Local endpoint placeholder"} disabled readOnly aria-label={p.envName+" placeholder; edit disabled"}/><span>{p.keyDetected?"KEY DETECTED":p.configured?"CONNECTED":"PLACEHOLDER"}</span></div><small className="gateway-provider-note">No keys are collected or stored in the dashboard. Add credentials later through server-side environment variables.</small></article>)}</div>
@@ -158,7 +186,7 @@ function ModelGatewayPanel(){
   </section>
   <div className="gateway-savebar"><div><strong>{dirty.current?"Unsaved configuration":message||"Settings saved"}</strong><p>Applies to this Netlify environment/branch only. Provider API keys stay server-side. Saving requires the server-side MODEL_GATEWAY_ADMIN_KEY.</p></div><label className="gateway-admin-key"><span>Gateway settings admin key</span><input type="password" autoComplete="off" value={adminKey} onChange={e=>setAdminKey(e.target.value)} placeholder="Enter admin key to save" aria-label="Gateway settings admin key" /><small>Kept in memory only; never saved in browser storage.</small></label><button className="submit-button" type="button" onClick={()=>void save()} disabled={!draft||saving||!dirty.current}>{saving?"Saving…":"Save gateway settings ↗"}</button></div>
   {message&&<p className="gateway-smoke-message" role="status">{message}</p>}
-  <p className="gateway-footer-note">Last refreshed {data?.checkedAt?new Date(data.checkedAt).toLocaleTimeString():"not checked"}. Dashboard refresh is one read-only GET per minute; it never calls providers or Figma.</p>
+  <p className="gateway-footer-note">Dashboard refresh is one read-only GET per minute; the OpenRouter account snapshot refreshes on demand and does not call model inference or Figma.</p>
   <footer>UX DIRECT <span>·</span> TECHNICAL ACCOUNTANT / MODEL GATEWAY</footer>
  </div>;
 }
