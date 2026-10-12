@@ -89,7 +89,7 @@ const APPROVED_OPENROUTER_MODEL_IDS = new Set([
  "deepseek/deepseek-v4.1-flash"
 ]);
 function selectionCompatible(mode:GatewayMode,m:GatewayModel){
- if(mode==="free"&&m.provider==="openrouter")return APPROVED_OPENROUTER_MODEL_IDS.has(m.id);
+ if(mode==="free"&&m.provider==="openrouter")return APPROVED_OPENROUTER_MODEL_IDS.has(m.id)&&(m.tier==="free-tier"||m.id.endsWith(":free"));
  return modeCompatible(mode,m);
 }
 function exampleModelCost(policy:ModelPolicy){return (100000*policy.inputPriceInrPerMillion+20000*policy.outputPriceInrPerMillion)/1_000_000;}
