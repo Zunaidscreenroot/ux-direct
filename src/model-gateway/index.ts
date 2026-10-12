@@ -1,5 +1,11 @@
-import { GATEWAY_MODULES, getGatewaySettings, getDefaultModelPolicy, modelKey } from "./control-store";
-import { getOpenRouterPaidChatModel, OPENROUTER_PAID_CHAT_MODELS } from "./openrouter-paid";
+import { GATEWAY_MODULES, defaultGatewaySettings, getGatewaySettings, getDefaultModelPolicy, modelKey } from "./control-store";
+import {
+  getOpenRouterFreeChatModel,
+  getOpenRouterPaidChatModel,
+  OPENROUTER_FREE_CHAT_MODELS,
+  OPENROUTER_PAID_CHAT_MODELS,
+  selectOpenRouterPaidChatModel
+} from "./openrouter-paid";
 /**
  * Cost-guarded model gateway for UX Direct.
  * Requests go directly to provider APIs. No gateway SaaS, account, or usage fee.
@@ -20,6 +26,8 @@ export type GatewayRequest = {
   providerId?: string;
   /** Set only by the server-side allowlisted OpenRouter paid-model helper. */
   openRouterPaidSelection?: boolean;
+  /** Internal flag for a fixed allowlisted free OpenRouter attempt. */
+  openRouterFreeSelection?: boolean;
 };
 export type TokenUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 type ProviderChatPayload = { id?: unknown; model?: unknown; choices?: Array<{ message?: { content?: unknown } }>; usage?: TokenUsage };
@@ -30,6 +38,10 @@ export type GatewayResponse = {
   usage?: TokenUsage;
   provider: string;
   latencyMs: number;
+  tier?: "free-tier" | "paid";
+  routingStrategy?: "free-first";
+  attemptedModels?: string[];
+  fallbackReason?: string;
 };
 export type ProviderConfig = {
   name: string;
@@ -53,19 +65,21 @@ const csv = (value?: string, fallback = "") =>
 export type FreeChatModel = { provider: "openrouter"; id: string; label: string; tier: "free-tier"; configured: boolean };
 
 export function providersForFreeChat(providers = providersFromEnv(), selectedModel?: string): ProviderConfig[] {
+  const selected = selectedModel && getOpenRouterFreeChatModel(selectedModel) ? [selectedModel] : [];
   return providers.map(provider => {
     if (provider.name !== "openrouter" || !provider.apiKey) return provider;
-    const selected = selectedModel && selectedModel.endsWith(":free") ? [selectedModel] : [];
-    return { ...provider, kind: "free-tier", models: Array.from(new Set([...provider.models.filter(model => model.endsWith(":free")), ...selected])) };
+    // Never admit a :free model outside the two-model UX Direct allowlist.
+    return { ...provider, kind: "free-tier", models: selected };
   });
 }
 
 export function getFreeChatModelOptions(providers = providersFromEnv(), discoveredModelIds: string[] = []): FreeChatModel[] {
   const provider = providers.find(item => item.name === "openrouter" && Boolean(item.apiKey));
   if (!provider) return [];
-  return Array.from(new Set([...(provider.models ?? []), ...discoveredModelIds]))
-    .filter(id => id.endsWith(":free"))
-    .map(id => ({ provider: "openrouter", id, label: id, tier: "free-tier", configured: true }));
+  const discovered = discoveredModelIds.length ? new Set(discoveredModelIds) : null;
+  return OPENROUTER_FREE_CHAT_MODELS
+    .filter(model => !discovered || discovered.has(model.id))
+    .map(model => ({ provider: "openrouter", id: model.id, label: model.label, tier: "free-tier", configured: true }));
 }
 
 /** Restrict paid inference through OpenRouter to a tiny server-side allowlist. */
@@ -261,10 +275,20 @@ export async function chatCompletion(
     Boolean(getOpenRouterPaidChatModel(request.model)) &&
     !request.model.endsWith(":free") &&
     request.moduleId === undefined;
+  const explicitlySelectedOpenRouterFree = request.openRouterFreeSelection === true &&
+    request.providerId === "openrouter" &&
+    Boolean(getOpenRouterFreeChatModel(request.model)) &&
+    request.model.endsWith(":free") &&
+    request.moduleId === undefined;
   if (request.openRouterPaidSelection && !explicitlySelectedOpenRouterPaid) {
     throw new GatewayError("Paid OpenRouter selection must come from the server-side allowlisted helper.", 403);
   }
-  const settings=await getGatewaySettings();
+  if (request.openRouterFreeSelection && !explicitlySelectedOpenRouterFree) {
+    throw new GatewayError("Free OpenRouter selection must come from the server-side free-model allowlist.", 403);
+  }
+  // A free attempt is independent of Netlify Blobs availability. Paid attempts
+  // still require stored settings and the persistent budget ledger.
+  const settings = explicitlySelectedOpenRouterFree ? defaultGatewaySettings() : await getGatewaySettings();
   const moduleId=request.moduleId??TASK_MODULES[request.model]??"general";
   const policy=settings.modules[moduleId]??settings.modules.general;
   if(!policy.enabled)throw new GatewayError("Module "+moduleId+" is switched off in Model Gateway settings.",403);
@@ -302,6 +326,8 @@ export async function chatCompletion(
   const started=Date.now();
   const requestId=request.requestId??crypto.randomUUID();
   const usageStore=await import("./usage-store");
+  const recordUsage = (item: Parameters<typeof usageStore.recordModelUsage>[0]) =>
+    usageStore.recordModelUsage(item, { persist: !explicitlySelectedOpenRouterFree });
   if(billable){
     try{
       await usageStore.assertBudgetAllows(promptChars,request.max_tokens??1024,process.env,model,{
@@ -309,14 +335,14 @@ export async function chatCompletion(
         outputPriceInrPerMillion:modelPolicy.outputPriceInrPerMillion,maxRequestCostInr:Math.min(policy.maxRequestCostInr,modelPolicy.maxRequestCostInr),gatewaySettings:settings
       });
     }catch(error){
-      await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model,tier:"paid",promptTokens:0,completionTokens:0,totalTokens:0,usageReported:false,estimatedCostInr:0,latencyMs:Date.now()-started,status:"blocked",note:error instanceof Error?error.message:"Budget guard blocked request."});
+      await recordUsage({requestId,moduleId,provider:provider.name,model,tier:"paid",promptTokens:0,completionTokens:0,totalTokens:0,usageReported:false,estimatedCostInr:0,latencyMs:Date.now()-started,status:"blocked",note:error instanceof Error?error.message:"Budget guard blocked request."});
       throw error;
     }
   }
   if(provider.kind==="mock"||provider.baseUrl.startsWith("mock://")){
     const lastUser=[...request.messages].reverse().find(m=>m.role==="user")?.content??"";
     const usage={prompt_tokens:0,completion_tokens:0,total_tokens:0};
-    await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model,tier:"mock",promptTokens:0,completionTokens:0,totalTokens:0,usageReported:true,estimatedCostInr:0,latencyMs:Date.now()-started,status:"success"});
+    await recordUsage({requestId,moduleId,provider:provider.name,model,tier:"mock",promptTokens:0,completionTokens:0,totalTokens:0,usageReported:true,estimatedCostInr:0,latencyMs:Date.now()-started,status:"success"});
     return {id:requestId,model,content:`[UX Direct mock — no model API called] Received ${lastUser.length} characters. Configure a connected provider for inference.`,provider:provider.name,latencyMs:Date.now()-started,usage};
   }
   const fetchImpl=options.fetchImpl??fetch;
@@ -335,11 +361,11 @@ export async function chatCompletion(
     const estimatedCostInr=tokenUsage.usageReported
       ?usageStore.estimateCostInr(tokenUsage.promptTokens,tokenUsage.completionTokens,provider,process.env,model,rates)
       :usageStore.estimateCostInr(Math.ceil(promptChars/4),request.max_tokens??1024,provider,process.env,model,rates);
-    await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model,tier:billable?"paid":(model.endsWith(":free")||policy.mode==="free"||provider.kind==="free-tier"?"free-tier":provider.kind??"paid"),...tokenUsage,estimatedCostInr,latencyMs,status:"success",note:tokenUsage.usageReported?undefined:"Provider did not return token usage; actual counts unavailable and estimated cost is conservative."});
+    await recordUsage({requestId,moduleId,provider:provider.name,model,tier:billable?"paid":(model.endsWith(":free")||policy.mode==="free"||provider.kind==="free-tier"?"free-tier":provider.kind??"paid"),...tokenUsage,estimatedCostInr,latencyMs,status:"success",note:tokenUsage.usageReported?undefined:"Provider did not return token usage; actual counts unavailable and estimated cost is conservative."});
     return {id:typeof payload.id==="string"?payload.id:undefined,model:typeof payload.model==="string"?payload.model:model,content,usage:payload.usage,provider:provider.name,latencyMs};
   }catch(error){
     const failure=error instanceof GatewayError?error:controller.signal.aborted?new GatewayError("Model request timed out or was cancelled.",504,provider.name):new GatewayError(error instanceof Error?error.message:"Unknown provider error.",502,provider.name);
-    await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model,tier:billable?"paid":(model.endsWith(":free")||policy.mode==="free"||provider.kind==="free-tier"?"free-tier":provider.kind??"paid"),promptTokens:0,completionTokens:0,totalTokens:0,usageReported:false,estimatedCostInr:billable?usageStore.estimateCostInr(Math.ceil(promptChars/4),request.max_tokens??1024,provider,process.env,model,rates):0,latencyMs:Date.now()-started,status:"error",note:failure.message+" Usage unavailable; paid cost is a conservative estimate."});
+    await recordUsage({requestId,moduleId,provider:provider.name,model,tier:billable?"paid":(model.endsWith(":free")||policy.mode==="free"||provider.kind==="free-tier"?"free-tier":provider.kind??"paid"),promptTokens:0,completionTokens:0,totalTokens:0,usageReported:false,estimatedCostInr:billable?usageStore.estimateCostInr(Math.ceil(promptChars/4),request.max_tokens??1024,provider,process.env,model,rates):0,latencyMs:Date.now()-started,status:"error",note:failure.message+" Usage unavailable; paid cost is a conservative estimate."});
     throw failure;
   }finally{clearTimeout(timeout);request.signal?.removeEventListener("abort",abort);}
 }
@@ -382,13 +408,97 @@ export async function chatCompletionWithFreeFallback(
   request: GatewayRequest,
   options: { providers?: ProviderConfig[]; fetchImpl?: typeof fetch; timeoutMs?: number } = {}
 ): Promise<GatewayResponse> {
-  if (request.providerId !== "openrouter" || !request.model.endsWith(":free")) {
-    throw new GatewayError("Only an explicitly identified OpenRouter :free model is allowed.", 400);
+  if (request.providerId !== "openrouter" || !getOpenRouterFreeChatModel(request.model)) {
+    throw new GatewayError("Only one of the two approved OpenRouter free models is allowed.", 400, "openrouter");
   }
   const providers = providersForFreeChat(options.providers ?? providersFromEnv(), request.model);
   const provider = providers.find(item => item.name === "openrouter" && Boolean(item.apiKey) && item.models.includes(request.model));
   if (!provider) throw new GatewayError("OpenRouter API key is not configured for this Preview deployment.", 503, "openrouter");
-  return chatCompletion({ ...request, providerId: "openrouter", moduleId: undefined }, { ...options, providers });
+  return chatCompletion({
+    ...request,
+    providerId: "openrouter",
+    moduleId: undefined,
+    openRouterFreeSelection: true
+  }, { ...options, providers });
+}
+
+/**
+ * Cockpit/task planning strategy: exhaust the two approved free models first,
+ * then select one paid model by task expertise. A request never fans out to
+ * multiple paid models, and every paid call uses the budget-checked gateway.
+ */
+export async function chatCompletionFreeFirstThenPaid(
+  request: GatewayRequest,
+  options: { providers?: ProviderConfig[]; fetchImpl?: typeof fetch; timeoutMs?: number } = {}
+): Promise<GatewayResponse> {
+  const providers = options.providers ?? providersFromEnv();
+  const openrouter = providers.find(provider => provider.name === "openrouter" && Boolean(provider.apiKey));
+  if (!openrouter) {
+    throw new GatewayError("OpenRouter API key is not configured; neither approved free nor paid models can be called.", 503, "openrouter");
+  }
+
+  const lastUserMessage = [...request.messages].reverse().find(message => message.role === "user")?.content ?? "";
+  const reasoningFirst = /\b(strategy|strategic|complex reasoning|deep reasoning|critique|audit|heuristic|information architecture|\bia\b|user journey|journey map|flow design|trade[- ]off|research synthesis|accessibility review|product direction|decision framework|root cause)\b/i.test(lastUserMessage);
+  const preferred = getOpenRouterFreeChatModel(request.model)?.id;
+  const freeOrder = preferred
+    ? [preferred, ...OPENROUTER_FREE_CHAT_MODELS.map(model => model.id).filter(id => id !== preferred)]
+    : (reasoningFirst
+        ? ["nvidia/nemotron-3-ultra-550b-a55b:free", "nvidia/nemotron-3.5-lightning:free"]
+        : ["nvidia/nemotron-3.5-lightning:free", "nvidia/nemotron-3-ultra-550b-a55b:free"]);
+  const failedFreeModels: string[] = [];
+  const timeoutMs = options.timeoutMs ?? 10_000;
+
+  for (const model of freeOrder) {
+    try {
+      const result = await chatCompletionWithFreeFallback({
+        ...request,
+        model,
+        providerId: "openrouter",
+        moduleId: undefined,
+        openRouterPaidSelection: undefined
+      }, { ...options, providers: providersForFreeChat(providers, model), timeoutMs });
+      if (!result.content.trim()) throw new GatewayError("Free model returned empty text.", 502, "openrouter");
+      return {
+        ...result,
+        tier: "free-tier",
+        routingStrategy: "free-first",
+        attemptedModels: [...failedFreeModels, model]
+      };
+    } catch (error) {
+      if (request.signal?.aborted) throw new GatewayError("Model routing was cancelled by the client.", 499, "openrouter");
+      failedFreeModels.push(model);
+      // A 429 is a provider throttling signal. Trying a second free ID immediately
+      // can consume another request without improving the outcome; continue to paid.
+      if (error instanceof GatewayError && error.status === 429) break;
+    }
+  }
+
+  const paidModel = selectOpenRouterPaidChatModel(request.messages);
+  try {
+    const result = await chatCompletionWithOpenRouterPaid({
+      ...request,
+      model: paidModel.id,
+      providerId: "openrouter",
+      moduleId: undefined,
+      openRouterFreeSelection: undefined,
+      openRouterPaidSelection: true
+    }, { ...options, providers, timeoutMs: Math.max(timeoutMs, 18_000) });
+    return {
+      ...result,
+      tier: "paid",
+      routingStrategy: "free-first",
+      attemptedModels: [...failedFreeModels, paidModel.id],
+      fallbackReason: "Approved free models were unavailable: " + failedFreeModels.join(", ")
+    };
+  } catch (error) {
+    const status = error instanceof GatewayError ? error.status : 502;
+    const detail = error instanceof Error ? error.message : "Unknown paid fallback error.";
+    throw new GatewayError(
+      "Free-first routing exhausted the approved free pool (" + failedFreeModels.join(", ") + "). Paid fallback " + paidModel.id + " failed: " + detail,
+      status,
+      "openrouter"
+    );
+  }
 }
 
 /**
