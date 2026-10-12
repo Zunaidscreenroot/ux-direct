@@ -166,6 +166,7 @@ test("free vision models are shown with their screenshot capability and only nee
   assert.ok(route.includes("supportsImages: model.supportsImages"));
   assert.ok(gateway.includes("selectOpenRouterPaidVisionModel"));
   assert.ok(gateway.includes("freeVisionModels.filter(model => model.supportsImages)"));
+  assert.ok(read("app/api/assistant/chat/route.ts").includes("forcePaidVision: true"));
   assert.ok(ui.includes("up to two approved free vision models first"));
   assert.ok(ui.includes("a paid fallback may consume account credits"));
 });
