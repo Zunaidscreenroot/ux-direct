@@ -83,7 +83,8 @@ function cleanSettings(input: unknown): GatewaySettings {
     const mode = c.mode;
     modules[m.id] = {
       enabled: typeof c.enabled === "boolean" ? c.enabled : true,
-      mode: mode === "free" || mode === "paid" || mode === "local" || mode === "mock" ? mode : base.mode,
+      // UX Direct routing is fixed to free-first with automatic expertise-based paid fallback; mock is opt-in only.
+      mode: mode === "mock" ? "mock" : "free",
       selectedModelKey: typeof c.selectedModelKey === "string" && c.selectedModelKey.length <= 220 ? c.selectedModelKey : base.selectedModelKey,
       monthlyBudgetInr: amount(c.monthlyBudgetInr, base.monthlyBudgetInr),
       maxRequestCostInr: amount(c.maxRequestCostInr, base.maxRequestCostInr),
