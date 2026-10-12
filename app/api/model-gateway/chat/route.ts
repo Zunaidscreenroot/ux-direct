@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { chatCompletionFreeFirstThenPaid, getOpenRouterFreeChatModel, getOpenRouterPaidChatModel, GatewayError, type ChatMessage } from "@/src/model-gateway";
+import { chatCompletionFreeFirstThenPaid, GatewayError, type ChatMessage } from "@/src/model-gateway";
+import { getOpenRouterFreeChatModel, getOpenRouterPaidChatModel } from "@/src/model-gateway/openrouter-paid";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 import { GATEWAY_MODULES } from "@/src/model-gateway/control-store";
 
