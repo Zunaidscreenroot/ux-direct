@@ -254,3 +254,62 @@ test("visual request retries the same paid model with portable parameters after 
     }
   ]);
 });
+
+
+test("free OpenRouter chat normalizes multipart assistant text content", async () => {
+  const result = await chatCompletionWithFreeFallback({
+    model: LIGHTNING,
+    providerId: "openrouter",
+    messages: [{ role: "user", content: "Audit this screen." }],
+    max_tokens: 64
+  }, {
+    providers,
+    timeoutMs: 2000,
+    fetchImpl: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { model: string };
+      return new Response(JSON.stringify({
+        id: "openrouter-multipart-test",
+        model: body.model,
+        choices: [{
+          message: {
+            content: [
+              { type: "text", text: "Hierarchy is clear." },
+              { type: "text", text: "Improve the primary action contrast." }
+            ]
+          },
+          finish_reason: "stop"
+        }],
+        usage: { prompt_tokens: 20, completion_tokens: 12, total_tokens: 32 }
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch
+  });
+
+  assert.equal(result.content, "Hierarchy is clear.\\nImprove the primary action contrast.");
+});
+
+test("provider response without user-facing text returns a safe diagnostic, not hidden reasoning", async () => {
+  await assert.rejects(() => chatCompletionWithFreeFallback({
+    model: LIGHTNING,
+    providerId: "openrouter",
+    messages: [{ role: "user", content: "Audit this screen." }],
+    max_tokens: 64
+  }, {
+    providers,
+    timeoutMs: 2000,
+    fetchImpl: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { model: string };
+      return new Response(JSON.stringify({
+        id: "openrouter-empty-text-test",
+        model: body.model,
+        choices: [{ message: { reasoning: "private hidden reasoning" }, finish_reason: "length" }]
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch
+  }), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /no user-facing text/i);
+    assert.match(error.message, /finish_reason=length/i);
+    assert.match(error.message, /message_fields=reasoning/i);
+    assert.equal(error.message.includes("private hidden reasoning"), false);
+    return true;
+  });
+});
