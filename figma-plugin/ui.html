@@ -23,6 +23,8 @@
     .status-tag.bad .dot { background:#d14343; }
     .status-tag.warn .dot { background:#c18a24; }
     .modelbar { display:flex; align-items:center; gap:6px; min-width:0; flex:0 0 auto; margin:0 0 5px; }
+    .model-test { flex:0 0 auto; border:1px solid var(--figma-color-border); border-radius:7px; padding:5px 7px; background:var(--figma-color-bg-secondary); color:var(--figma-color-text); font:inherit; font-size:9px; font-weight:650; white-space:nowrap; }
+    .model-test:disabled { opacity:.45; cursor:not-allowed; }
     .selection-panel { display:flex; align-items:center; gap:10px; flex:0 0 auto; min-height:60px; margin:0 0 5px; padding:7px 8px; border:1px solid var(--figma-color-border); border-radius:10px; background:var(--figma-color-bg-secondary); overflow:hidden; }
     .selection-copy { display:flex; flex:1 1 auto; flex-direction:column; gap:3px; min-width:0; }
     .selection-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:750; }
@@ -30,8 +32,8 @@
     .selection-preview-status.ready { color:#22845d; }
     .selection-preview-status.error { color:#c53f45; }
     #selectionPreview { flex:0 0 auto; width:132px; height:76px; object-fit:contain; border:1px solid var(--figma-color-border); border-radius:6px; background:var(--figma-color-bg); }
-    .model-select { flex:1 1 auto; width:0; min-width:0; max-width:58%; padding:5px 7px; border:1px solid var(--figma-color-border); border-radius:8px; background:var(--figma-color-bg); color:var(--figma-color-text); font:inherit; font-size:10px; }
-    #modelStatus { flex:0 0 auto; max-width:40%; }
+    .model-select { flex:1 1 auto; width:0; min-width:0; max-width:none; padding:5px 7px; border:1px solid var(--figma-color-border); border-radius:8px; background:var(--figma-color-bg); color:var(--figma-color-text); font:inherit; font-size:10px; }
+    #modelStatus { flex:0 1 auto; max-width:34%; }
     .muted { color:var(--figma-color-text-secondary); }
     .chat { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; overflow:hidden; }
     .chatlog { display:flex; flex:1 1 auto; flex-direction:column; gap:12px; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px 2px 14px; scroll-behavior:smooth; }
@@ -87,9 +89,10 @@
     <select id="modelSelect" class="model-select" aria-label="OpenRouter model selection" title="Choose an available OpenRouter model" disabled>
       <option value="">Loading OpenRouter models…</option>
     </select>
-    <div id="modelStatus" class="status-tag warn" aria-live="polite" title="A selected model is checked with a live test request before chat is enabled.">
+    <div id="modelStatus" class="status-tag warn" aria-live="polite" title="Shows catalogue status and the latest connection-test result.">
       <span id="modelDot" class="dot"></span><span id="modelStatusText" class="tagtext">Model pending</span>
     </div>
+    <button id="testPaidModel" class="model-test" type="button" hidden disabled title="Run one explicit, budget-checked paid inference test. A small provider charge may apply.">Test</button>
   </div>
 
   <section class="selection-panel" aria-label="Current Figma selection" aria-live="polite">
@@ -175,6 +178,10 @@
     }
         function updateSendAvailability() {
       $("send").disabled = isSending || !backendHealthy || !modelAvailable || !currentModel;
+      const testButton = $("testPaidModel");
+      const canTestPaid = Boolean(currentModel && currentModel.tier === "paid" && currentModel.available === true && backendHealthy && verifiedFileKey === ALLOWED_FILE_KEY);
+      testButton.hidden = !canTestPaid;
+      testButton.disabled = !canTestPaid || isSending;
     }
     function toggleHealthPanel(open) {
       const show = typeof open === "boolean" ? open : $("healthPanel").hidden;
@@ -480,6 +487,91 @@
       $("modelSelect").disabled = !backendHealthy || modelOptions.length === 0 || isSending;
       updateSendAvailability();
     }
+
+    async function testPaidModelConnection() {
+      if (isSending || !backendHealthy || !verifiedFileKey || !currentModel ||
+          currentModel.tier !== "paid" || currentModel.available !== true) return;
+      const model = currentModel;
+      const approved = window.confirm(
+        "Test " + model.label + " with one minimal paid inference request?\n\n" +
+        "This test uses the shared gateway and its budget checks. If the request reaches the provider, a small API charge may apply. " +
+        "If gateway settings cannot be read, the request will stop before model inference. No Figma changes will be made.\n\nContinue?"
+      );
+      if (!approved) return;
+
+      const testedModelId = model.id;
+      isSending = true;
+      $("modelSelect").disabled = true;
+      $("prompt").disabled = true;
+      $("testPaidModel").disabled = true;
+      setModelStatus("warn", "Testing paid model…", "Running one explicitly requested, budget-checked connection test. A small provider charge may apply.");
+      try {
+        const response = await fetch(API + "/api/model-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ provider: model.provider, model: model.id, fileKey: verifiedFileKey })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (currentModel?.id !== testedModelId) return;
+        if (!response.ok) {
+          throw new Error(payload.reason || payload.error || ("Paid model test returned HTTP " + response.status + "."));
+        }
+        if (payload.available === true && payload.responseReceived === true) {
+          model.inferenceVerifiedAt = payload.checkedAt || new Date().toISOString();
+          model.inferenceLatencyMs = Number(payload.latencyMs || 0);
+          modelAvailable = true;
+          setModelStatus("ok", "Paid model connected", model.label + " returned a real response in " + model.inferenceLatencyMs + " ms. The explicit test may incur a small provider charge.");
+          if (modelProbeRow) { modelProbeRow.remove(); modelProbeRow = null; }
+        } else {
+          const reason = payload.reason || payload.error || "The model did not return usable response text.";
+          const gatewayBlocked = /gateway settings|Netlify Blobs|budget|blocked request/i.test(reason);
+          setModelStatus(gatewayBlocked ? "warn" : "bad",
+            gatewayBlocked ? "Gateway blocked test" : "Paid test failed",
+            gatewayBlocked
+              ? "The paid model itself was not confirmed: the gateway stopped the test before a successful inference. " + reason
+              : model.label + " did not return a usable test response. " + reason);
+          const message = gatewayBlocked
+            ? "I couldn’t confirm " + model.label + " because the gateway blocked the test before a successful model response.\n\n" + reason + "\n\nThis is a gateway/settings or budget failure, not proof that the provider model is down. No Figma changes were made."
+            : model.label + " did not pass the paid connection test.\n\n" + reason + "\n\nNo Figma changes were made.";
+          if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
+          else {
+            const bubble = modelProbeRow.querySelector(".bubble");
+            if (bubble) bubble.textContent = message;
+          }
+        }
+      } catch (error) {
+        if (currentModel?.id !== testedModelId) return;
+        const detail = error && error.message ? error.message : String(error || "Unknown paid model connection error.");
+        const gatewayBlocked = /gateway settings|Netlify Blobs|budget|blocked request/i.test(detail);
+        setModelStatus(gatewayBlocked ? "warn" : "bad",
+          gatewayBlocked ? "Gateway blocked test" : "Paid test failed",
+          gatewayBlocked
+            ? "The gateway did not complete a paid inference test: " + detail
+            : "Paid connection test could not complete: " + detail);
+        if (/failed to fetch|networkerror|load failed/i.test(detail)) {
+          setConnection("warn", "Preview request interrupted");
+        }
+        const message = gatewayBlocked
+          ? "I couldn’t confirm " + model.label + " because the gateway did not complete its preflight checks.\n\n" + detail + "\n\nThe provider model’s runtime availability remains unverified; this error does not prove the model is down."
+          : "I couldn’t confirm " + model.label + " from the Preview.\n\n" + detail + "\n\nNo Figma changes were made.";
+        if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
+        else {
+          const bubble = modelProbeRow.querySelector(".bubble");
+          if (bubble) bubble.textContent = message;
+        }
+        console.warn("[UX Direct paid connection test]", detail);
+      } finally {
+        isSending = false;
+        $("prompt").disabled = false;
+        $("modelSelect").disabled = !backendHealthy || modelOptions.length === 0;
+        updateSendAvailability();
+      }
+    }
+
+    $("testPaidModel").addEventListener("click", () => {
+      void testPaidModelConnection();
+    });
 
     $("modelSelect").addEventListener("change", () => {
       if (isSending) return;
