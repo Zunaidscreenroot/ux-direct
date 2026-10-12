@@ -132,11 +132,21 @@ test("visual edit requests have bounded deterministic output and an explicit vis
   const route = read("app/api/assistant/chat/route.ts");
   const gateway = read("src/model-gateway/index.ts");
   const ui = read("figma-plugin/ui.html");
-  assert.ok(route.includes('temperature: data.intent === "design-operation" ? 0.1 : 0.3'));
-  assert.ok(route.includes('max_tokens: data.intent === "design-operation" ? 900 : 1400'));
+  assert.ok(route.includes('temperature: data.selection?.previewDataUrl || data.intent === "design-operation" ? 0.1 : 0.3'));
+  assert.ok(route.includes('max_tokens: data.selection?.previewDataUrl ? 1200 : data.intent === "design-operation" ? 900 : 1400'));
   assert.ok(route.includes('reasoning: { effort: "minimal" as const, max_tokens: 160 }'));
   assert.match(gateway, /provider:\s*\{\s*sort:\s*"throughput"\s*\}/);
   assert.ok(gateway.includes("Math.max(timeoutMs, 45_000)"));
   assert.ok(gateway.includes("does not support screenshot input"));
+  assert.ok(gateway.includes("function normalizeChatText(value: unknown): string | undefined"));
+  assert.ok(gateway.includes("no user-facing text (finish_reason="));
   assert.ok(ui.includes('const routeNote = data.fallbackReason ? data.fallbackReason + " " : ""'));
+});
+
+
+test("screenshot requests use bounded reasoning even when the user asks for a conversational audit", () => {
+  const route = read("app/api/assistant/chat/route.ts");
+  assert.ok(route.includes('data.selection?.previewDataUrl || data.intent === "design-operation"'));
+  assert.ok(route.includes('data.selection?.previewDataUrl ? 1200 : data.intent === "design-operation" ? 900 : 1400'));
+  assert.ok(route.includes('data.selection?.previewDataUrl || data.intent === "design-operation"\n        ? { reasoning: { effort: "minimal" as const, max_tokens: 160 } }'));
 });
