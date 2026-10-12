@@ -64,7 +64,7 @@ test("paid expertise selector uses GPT-6 Luna for general UX conversation", () =
   assert.equal(model.id, "openai/gpt-6-luna");
 });
 
-test("selected paid OpenRouter chat is budget checked and sends one model request", async () => {
+test("selected paid OpenRouter chat sends one approved model request without an app budget cap", async () => {
   const chosenModel = "deepseek/deepseek-v4.1-flash";
   const attempts: Array<{ url: string; model: string; max_tokens: number; reasoning?: { effort?: string } }> = [];
   const result = await chatCompletionWithOpenRouterPaid({
