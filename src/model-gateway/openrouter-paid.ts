@@ -117,7 +117,7 @@ export function selectOpenRouterPaidVisionModel(): OpenRouterPaidChatModel {
     .sort((left, right) =>
       (left.listedInputUsdPerMillion * 0.25 + left.listedOutputUsdPerMillion) -
       (right.listedInputUsdPerMillion * 0.25 + right.listedOutputUsdPerMillion)
-    )[0];
+    )[0]!;
 }
 
 /** Choose a low-cost paid expertise match from the latest user message; no classifier call is needed. */
