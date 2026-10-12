@@ -384,8 +384,61 @@ export async function chatCompletion(
           ] }
         : message);
     }
-    const response=await fetchImpl(`${trimSlash(provider.baseUrl)}/chat/completions`,{method:"POST",headers,body:JSON.stringify({model,messages:providerMessages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{}),...(request.reasoning?{reasoning:request.reasoning}:{}),...(request.imageDataUrl && provider.name === "openrouter" ? {provider:{sort:"throughput"}}:{})}),signal:controller.signal});
-    if(!response.ok)throw new GatewayError(`Provider returned HTTP ${response.status}.`,response.status===429?429:response.status>=500?502:response.status,provider.name);
+    const endpoint = `${trimSlash(provider.baseUrl)}/chat/completions`;
+    const requestBody = {
+      model,
+      messages: providerMessages,
+      ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+      ...(request.max_tokens !== undefined ? { max_tokens: request.max_tokens } : {}),
+      ...(request.reasoning ? { reasoning: request.reasoning } : {}),
+      ...(request.imageDataUrl && provider.name === "openrouter" ? { provider: { sort: "throughput" } } : {})
+    };
+    let response = await fetchImpl(endpoint, {
+      method: "POST", headers, body: JSON.stringify(requestBody), signal: controller.signal
+    });
+
+    // Some OpenRouter provider endpoints reject optional tuning fields on multimodal
+    // requests. A 400 is a rejected request, so retry the same model once with only
+    // the portable chat-completions fields. Do not switch to a second paid model.
+    let compatibilityError = "";
+    if (response.status === 400 && request.imageDataUrl && provider.name === "openrouter") {
+      try {
+        const firstPayload = await response.clone().json() as { error?: { message?: unknown }; message?: unknown };
+        const detail = firstPayload.error?.message ?? firstPayload.message;
+        compatibilityError = typeof detail === "string" ? detail.slice(0, 240) : "";
+      } catch { /* Keep a generic reason if the provider body is not JSON. */ }
+
+      const safeRetryBody = {
+        model,
+        messages: providerMessages,
+        ...(request.max_tokens !== undefined ? { max_tokens: request.max_tokens } : {})
+      };
+      console.warn("[model-gateway]", JSON.stringify({
+        event: "visual-request-compatibility-retry",
+        provider: provider.name,
+        model,
+        removedOptionalParameters: ["temperature", "reasoning", "provider.sort"],
+        providerError: compatibilityError.replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]").slice(0, 240)
+      }));
+      response = await fetchImpl(endpoint, {
+        method: "POST", headers, body: JSON.stringify(safeRetryBody), signal: controller.signal
+      });
+    }
+
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const errorPayload = await response.clone().json() as { error?: { message?: unknown }; message?: unknown };
+        const message = errorPayload.error?.message ?? errorPayload.message;
+        if (typeof message === "string") detail = message;
+      } catch {
+        try { detail = (await response.clone().text()).slice(0, 240); } catch { /* No response text available. */ }
+      }
+      detail = detail.replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]").replace(/Bearer\\s+[^\\s]+/gi, "Bearer [redacted]").slice(0, 240);
+      const firstReason = compatibilityError ? " Initial visual request was also rejected: " + compatibilityError.replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]").slice(0, 160) + "." : "";
+      const status = response.status === 429 ? 429 : response.status >= 500 ? 502 : response.status;
+      throw new GatewayError(`Provider returned HTTP ${response.status}${detail ? ": " + detail : "."}${firstReason}`, status, provider.name);
+    }
     let payload:ProviderChatPayload;
     try {
       payload = await response.json() as ProviderChatPayload;
