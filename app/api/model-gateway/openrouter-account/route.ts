@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 
 export const runtime = "nodejs";
@@ -7,6 +8,12 @@ export const dynamic = "force-dynamic";
 type JsonObject = Record<string, unknown>;
 type OpenRouterResponse = { data?: unknown };
 
+function matchesSecret(supplied: string | null, expected: string): boolean {
+  if (!supplied) return false;
+  const left = Buffer.from(supplied);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
 function objectValue(value: unknown): JsonObject | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : null;
 }
@@ -58,6 +65,18 @@ export async function GET(request: Request) {
       status: 403, headers: { "Cache-Control": "no-store" }
     });
   }
+  const expectedAdminKey = process.env.MODEL_GATEWAY_ADMIN_KEY;
+  if (!expectedAdminKey) {
+    return NextResponse.json({ ok: false, error: "OpenRouter account telemetry is locked until MODEL_GATEWAY_ADMIN_KEY is configured on the server." }, {
+      status: 503, headers: { "Cache-Control": "no-store" }
+    });
+  }
+  if (!matchesSecret(request.headers.get("x-model-gateway-admin-key"), expectedAdminKey)) {
+    return NextResponse.json({ ok: false, error: "Invalid gateway settings admin key." }, {
+      status: 401, headers: { "Cache-Control": "no-store" }
+    });
+  }
+
   const ip = request.headers.get("x-nf-client-connection-ip") ||
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   const limit = checkGatewayRateLimit("openrouter-account:" + ip, Date.now(), 6);
