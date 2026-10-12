@@ -4,7 +4,8 @@ import {
   getOpenRouterPaidChatModel,
   OPENROUTER_FREE_CHAT_MODELS,
   OPENROUTER_PAID_CHAT_MODELS,
-  selectOpenRouterPaidChatModel
+  selectOpenRouterPaidChatModel,
+  selectOpenRouterPaidVisionModel
 } from "./openrouter-paid";
 /**
  * OpenRouter-backed model gateway for UX Direct.
@@ -105,7 +106,7 @@ export function providersForFreeChat(providers = providersFromEnv(), selectedMod
   const selected = selectedModel && getOpenRouterFreeChatModel(selectedModel) ? [selectedModel] : [];
   return providers.map(provider => {
     if (provider.name !== "openrouter" || !provider.apiKey) return provider;
-    // Never admit a :free model outside the two-model UX Direct allowlist.
+    // Never admit a :free model outside the explicit UX Direct allowlist.
     return { ...provider, kind: "free-tier", models: selected };
   });
 }
@@ -234,9 +235,8 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
   const unique = [...known, ...extras].filter((m, i, a) => a.findIndex(o => o.id === m.id && o.provider === m.provider) === i);
   const approvedOpenRouter = (model: ModelCatalogEntry) =>
     model.provider === "openrouter" && Boolean(getOpenRouterFreeChatModel(model.id) || getOpenRouterPaidChatModel(model.id));
-  // The visible Model Gateway catalog is deliberately reduced to the approved five
-  // OpenRouter models plus the explicit no-inference mock. Legacy provider/model
-  // registrations are not eligible for this product's cockpit routing.
+  // The visible Model Gateway catalog is deliberately reduced to the explicitly
+  // approved free and paid OpenRouter models plus the no-inference mock.
   return unique.filter(model => (model.provider === "mock" && model.id === "mock/ux-direct") || approvedOpenRouter(model));
 }
 export function resolveProvider(model: string, providers: ProviderConfig[]): ProviderConfig {
@@ -323,7 +323,10 @@ export async function chatCompletion(
        !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(request.imageDataUrl))) {
     throw new GatewayError("Visual input must be a bounded JPEG data URL.",400,"openrouter");
   }
-  if (request.imageDataUrl && !getOpenRouterPaidChatModel(request.model)?.supportsImages) {
+  if (request.imageDataUrl && !(
+    getOpenRouterPaidChatModel(request.model)?.supportsImages ||
+    getOpenRouterFreeChatModel(request.model)?.supportsImages
+  )) {
     throw new GatewayError("The selected OpenRouter model does not support screenshot input.",400,"openrouter");
   }
   // Image tokens vary by provider; reserve a conservative input estimate for the
@@ -552,7 +555,7 @@ export async function chatCompletionWithFreeFallback(
   options: { providers?: ProviderConfig[]; fetchImpl?: typeof fetch; timeoutMs?: number } = {}
 ): Promise<GatewayResponse> {
   if (request.providerId !== "openrouter" || !getOpenRouterFreeChatModel(request.model)) {
-    throw new GatewayError("Only one of the two approved OpenRouter free models is allowed.", 400, "openrouter");
+    throw new GatewayError("Only an explicitly approved OpenRouter free model is allowed.", 400, "openrouter");
   }
   const providers = providersForFreeChat(options.providers ?? providersFromEnv(), request.model);
   const provider = providers.find(item => item.name === "openrouter" && Boolean(item.apiKey) && item.models.includes(request.model));
@@ -610,14 +613,11 @@ export async function chatCompletionFreeFirstThenPaid(
     };
   }
 
-  // A screenshot cannot be analyzed by either approved free Nemotron model.
-  // Route visual work to exactly one approved image-capable paid model, and
-  // make any capability-based model substitution visible to the caller.
-  if (request.imageDataUrl) {
-    const visionModel = selectedPaid?.supportsImages
-      ? selectedPaid
-      : OPENROUTER_PAID_CHAT_MODELS.find(model => model.supportsImages);
-    if (!visionModel) throw new GatewayError("No approved vision-capable paid model is configured.",503,"openrouter");
+  // Explicit paid selections stay direct. If the selected paid model is text-only,
+  // substitute the cheapest approved vision-capable paid model rather than call a
+  // different paid model and the selected paid model in the same request.
+  if (request.imageDataUrl && selectedPaid) {
+    const visionModel = selectedPaid.supportsImages ? selectedPaid : selectOpenRouterPaidVisionModel();
     const result = await chatCompletionWithOpenRouterPaid({
       ...request,
       model: visionModel.id,
@@ -626,23 +626,83 @@ export async function chatCompletionFreeFirstThenPaid(
       openRouterFreeSelection: undefined,
       openRouterPaidSelection: true
     }, { ...options, providers, timeoutMs: Math.max(timeoutMs, 45_000) });
-    const changedForVision = Boolean(selectedPaid && selectedPaid.id !== visionModel.id);
+    const changedForVision = selectedPaid.id !== visionModel.id;
     return {
       ...result,
       tier: "paid",
       routingStrategy: "vision-direct",
       attemptedModels: [visionModel.id],
       fallbackReason: changedForVision
-        ? "The selected model (" + selectedPaid!.label + ") does not support screenshot input. This request used " + visionModel.label + " instead so the selected screen could be analyzed. The request went to one paid model only."
-        : "Visual review requires image input; the two approved free Nemotron models are text-only. This request went to one approved vision-capable paid model only."
+        ? "The selected model (" + selectedPaid.label + ") does not support screenshot input. This request used " + visionModel.label + ", the lowest-listed-cost approved vision model, instead. One paid model was called."
+        : "The explicitly selected paid vision model was called directly. One paid model was called."
+    };
+  }
+
+  // When a free model is selected, try at most two approved free vision models
+  // before one inexpensive paid vision fallback. This is deliberately bounded so
+  // a single screenshot cannot fan out across the whole model catalogue.
+  if (request.imageDataUrl) {
+    const preferredFreeVision = getOpenRouterFreeChatModel(request.model);
+    const freeVisionModels = OPENROUTER_FREE_CHAT_MODELS.filter(model => model.supportsImages);
+    const visionOrder = preferredFreeVision?.supportsImages
+      ? [preferredFreeVision, ...freeVisionModels.filter(model => model.id !== preferredFreeVision.id)]
+      : freeVisionModels;
+    const failedFreeVisionModels: string[] = [];
+
+    for (const freeModel of visionOrder.slice(0, 2)) {
+      try {
+        const result = await chatCompletionWithFreeFallback({
+          ...request,
+          model: freeModel.id,
+          providerId: "openrouter",
+          moduleId: undefined,
+          openRouterPaidSelection: undefined
+        }, {
+          ...options,
+          providers: providersForFreeChat(providers, freeModel.id),
+          // A bounded free attempt leaves room for one paid fallback inside
+          // Netlify's synchronous function timeout.
+          timeoutMs: Math.min(timeoutMs, 7_000)
+        });
+        return {
+          ...result,
+          tier: "free-tier",
+          routingStrategy: "free-first",
+          attemptedModels: [...failedFreeVisionModels, freeModel.id],
+          fallbackReason: failedFreeVisionModels.length
+            ? "A previous approved free vision model failed (" + failedFreeVisionModels.join(", ") + "); screenshot analysis succeeded with " + freeModel.label + ". No paid inference was used."
+            : "Screenshot analysis succeeded with an approved free vision model. No paid inference was used."
+        };
+      } catch (error) {
+        if (request.signal?.aborted) throw new GatewayError("Visual model routing was cancelled by the client.", 499, "openrouter");
+        failedFreeVisionModels.push(freeModel.id);
+      }
+    }
+
+    const visionModel = selectOpenRouterPaidVisionModel();
+    const result = await chatCompletionWithOpenRouterPaid({
+      ...request,
+      model: visionModel.id,
+      providerId: "openrouter",
+      moduleId: undefined,
+      openRouterFreeSelection: undefined,
+      openRouterPaidSelection: true
+    }, { ...options, providers, timeoutMs: Math.max(timeoutMs, 38_000) });
+    return {
+      ...result,
+      tier: "paid",
+      routingStrategy: "vision-direct",
+      attemptedModels: [...failedFreeVisionModels, visionModel.id],
+      fallbackReason: "Approved free vision models were unavailable (" + failedFreeVisionModels.join(", ") + "). The screenshot used one low-cost paid vision fallback: " + visionModel.label + "."
     };
   }
   const preferred = getOpenRouterFreeChatModel(request.model)?.id;
-  const freeOrder = preferred
-    ? [preferred, ...OPENROUTER_FREE_CHAT_MODELS.map(model => model.id).filter(id => id !== preferred)]
-    : (reasoningFirst
-        ? ["nvidia/nemotron-3-ultra-550b-a55b:free", "nvidia/nemotron-3.5-lightning:free"]
-        : ["nvidia/nemotron-3.5-lightning:free", "nvidia/nemotron-3-ultra-550b-a55b:free"]);
+  const defaultFreeOrder = reasoningFirst
+    ? ["nvidia/nemotron-3-ultra-550b-a55b:free", "nvidia/nemotron-3.5-lightning:free", "qwen/qwen3.8-27b:free", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"]
+    : ["nvidia/nemotron-3.5-lightning:free", "nvidia/nemotron-3-ultra-550b-a55b:free", "qwen/qwen3.8-27b:free", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"];
+  const freeOrder = (preferred
+    ? [preferred, ...defaultFreeOrder.filter(id => id !== preferred)]
+    : defaultFreeOrder).slice(0, 2);
   const failedFreeModels: string[] = [];
 
   for (const model of freeOrder) {
