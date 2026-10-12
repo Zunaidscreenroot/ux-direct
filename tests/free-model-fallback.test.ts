@@ -159,10 +159,12 @@ test("visual requests skip text-only free models and attach the selected-frame i
     fetchImpl: (async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as {
         model: string;
+        provider?: { sort?: string };
         messages: Array<{ role: string; content: string | Array<{ type: string; image_url?: { url: string }; text?: string }> }>;
       };
       attempts.push(body.model);
       assert.equal(body.model, "deepseek/deepseek-v4.1-flash");
+      assert.deepEqual(body.provider, { sort: "throughput" });
       const userMessage = body.messages.find(message => message.role === "user");
       assert.ok(userMessage);
       assert.ok(Array.isArray(userMessage.content));
