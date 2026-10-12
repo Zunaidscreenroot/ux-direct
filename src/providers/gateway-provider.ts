@@ -17,6 +17,7 @@ export const gatewayProvider: ModelProvider = {
     const result = await chatCompletionFreeFirstThenPaid({
       model,
       providerId: "openrouter",
+      budgetModuleId: "reasoning",
       requestId: requestId ?? crypto.randomUUID(),
       temperature: 0.2,
       max_tokens: 1800,
