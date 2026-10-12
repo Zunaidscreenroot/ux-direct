@@ -8,7 +8,8 @@ import {
 import {
   OPENROUTER_PAID_CHAT_MODELS,
   getOpenRouterPaidChatModel,
-  selectOpenRouterPaidChatModel
+  selectOpenRouterPaidChatModel,
+  selectOpenRouterPaidVisionModel
 } from "../src/model-gateway/openrouter-paid";
 
 const providers: ProviderConfig[] = [{
@@ -19,12 +20,14 @@ const providers: ProviderConfig[] = [{
   kind: "free-tier"
 }];
 
-test("paid OpenRouter helper allows only the three user-approved paid models", () => {
+test("paid OpenRouter helper allows only the five user-approved paid models", () => {
   const ids = OPENROUTER_PAID_CHAT_MODELS.map(model => model.id);
   assert.deepEqual(ids, [
-    "deepseek/deepseek-v4.1-flash",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
     "openai/gpt-6-luna",
-    "deepseek/deepseek-v4-flash-0731"
+    "deepseek/deepseek-v4-flash-0731",
+    "deepseek/deepseek-v4.1-flash"
   ]);
   for (const id of ids) {
     const selected = providersForOpenRouterPaidChat(id, providers);
@@ -34,7 +37,7 @@ test("paid OpenRouter helper allows only the three user-approved paid models", (
     assert.equal(getOpenRouterPaidChatModel(id)?.id, id);
   }
   assert.throws(
-    () => providersForOpenRouterPaidChat("openai/gpt-oss-20b", providers),
+    () => providersForOpenRouterPaidChat("openai/gpt-6-sol", providers),
     /approved low-cost allowlist/
   );
   assert.throws(
@@ -43,25 +46,45 @@ test("paid OpenRouter helper allows only the three user-approved paid models", (
   );
 });
 
-test("paid expertise selector chooses the coding model for implementation tasks", () => {
+test("paid expertise selector keeps complex plugin architecture on DeepSeek", () => {
   const model = selectOpenRouterPaidChatModel([
-    { role: "user", content: "Debug this TypeScript API route and inspect the Next.js build error." }
+    { role: "user", content: "Implement the Figma plugin architecture across multiple files and improve the agent workflow." }
   ]);
   assert.equal(model.id, "deepseek/deepseek-v4-flash-0731");
 });
 
-test("paid expertise selector chooses strategy model for UX research and critique", () => {
+test("paid expertise selector routes routine coding to the lowest-cost coding model", () => {
+  const model = selectOpenRouterPaidChatModel([
+    { role: "user", content: "Debug this TypeScript API route and inspect the Next.js build error." }
+  ]);
+  assert.equal(model.id, "openai/gpt-oss-20b");
+});
+
+test("paid expertise selector routes normal UX audits to low-cost reasoning", () => {
   const model = selectOpenRouterPaidChatModel([
     { role: "user", content: "Audit the user journey and critique the information architecture." }
+  ]);
+  assert.equal(model.id, "openai/gpt-oss-120b");
+});
+
+test("paid expertise selector reserves DeepSeek V4.1 Flash for advanced reasoning", () => {
+  const model = selectOpenRouterPaidChatModel([
+    { role: "user", content: "Please do a deep reasoning analysis of this complex trade-off." }
   ]);
   assert.equal(model.id, "deepseek/deepseek-v4.1-flash");
 });
 
-test("paid expertise selector uses GPT-6 Luna for general UX conversation", () => {
+test("paid expertise selector uses GPT-6 Luna for client-facing communication", () => {
   const model = selectOpenRouterPaidChatModel([
-    { role: "user", content: "Help me rewrite this short stakeholder update." }
+    { role: "user", content: "Polish this short stakeholder update for a client." }
   ]);
   assert.equal(model.id, "openai/gpt-6-luna");
+});
+
+test("automatic vision fallback picks the lowest-listed-cost image-capable paid model", () => {
+  const model = selectOpenRouterPaidVisionModel();
+  assert.equal(model.id, "openai/gpt-6-luna");
+  assert.equal(model.supportsImages, true);
 });
 
 test("selected paid OpenRouter chat sends one approved model request without an app budget cap", async () => {
