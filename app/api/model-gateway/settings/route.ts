@@ -69,7 +69,10 @@ export async function PUT(request: Request) {
     }
   }
   const current = await getGatewaySettings();
-  const models: Record<string, unknown> = { ...current.models };
+  // Persist only model policies allowed by the current five-model catalog plus mock.
+  const models: Record<string, unknown> = Object.fromEntries(
+    Object.entries(current.models).filter(([key]) => allowed.has(key))
+  );
   for (const m of catalog) {
     const key = modelKey(m.provider, m.id);
     const proposed = rawModels[key];
