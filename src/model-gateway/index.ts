@@ -81,7 +81,7 @@ export function getFreeChatModelOptions(providers = providersFromEnv(), discover
   const discovered = discoveredModelIds.length ? new Set(discoveredModelIds) : null;
   return OPENROUTER_FREE_CHAT_MODELS
     .filter(model => !discovered || discovered.has(model.id))
-    .map(model => ({ provider: "openrouter", id: model.id, label: model.label, tier: "free-tier", configured: true }));
+    .map(model => ({ provider: "openrouter" as const, id: model.id, label: model.label, tier: "free-tier" as const, configured: true }));
 }
 
 /** Restrict paid inference through OpenRouter to a tiny server-side allowlist. */
