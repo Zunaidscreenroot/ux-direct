@@ -54,7 +54,26 @@ test("OpenRouter cockpit uses only the two approved free and three expertise-rou
   assert.ok(allowlist.includes('id: "deepseek/deepseek-v4-flash-0731"'));
   assert.equal(allowlist.includes('id: "openai/gpt-oss-20b"'), false);
   assert.ok(gateway.includes("chatCompletionFreeFirstThenPaid"));
-  assert.ok(gateway.includes("assertBudgetAllows"));
+  assert.equal(gateway.includes("assertBudgetAllows(promptChars"), false);
   assert.ok(chatRoute.includes("chatCompletionFreeFirstThenPaid"));
   assert.ok(catalogRoute.includes("getModelCatalog"));
+});
+
+test("OpenRouter account reporting is server-side and removed from application-side budget gates", () => {
+  const env = read(".env.example");
+  const gateway = read("src/model-gateway/index.ts");
+  const route = read("app/api/model-gateway/openrouter-account/route.ts");
+  const page = read("app/page.tsx");
+  assert.ok(env.includes("OPENROUTER_MANAGEMENT_KEY="));
+  assert.ok(route.includes('getOpenRouterJson("credits", managementKey)'));
+  assert.ok(route.includes('getOpenRouterJson("activity", managementKey)'));
+  assert.ok(route.includes('getOpenRouterJson("key", apiKey)'));
+  assert.ok(route.includes("MODEL_GATEWAY_ADMIN_KEY"));
+  assert.ok(route.includes("timingSafeEqual"));
+  assert.equal(route.includes("OPENROUTER_MANAGEMENT_KEY"), true);
+  assert.ok(page.includes("CREDIT RUNWAY PLANNER"));
+  assert.ok(page.includes("AVAILABLE ACCOUNT CREDITS"));
+  assert.ok(page.includes('"x-model-gateway-admin-key":adminKey'));
+  assert.equal(/Global monthly budget|Module budget \/ month|Max cost \/ request|MONTHLY CAP|MAX \/ REQUEST/.test(page), false);
+  assert.equal(gateway.includes("assertBudgetAllows(promptChars"), false);
 });
