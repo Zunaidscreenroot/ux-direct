@@ -852,9 +852,19 @@
         ...(Number.isFinite(node.height) ? { height: node.height } : {}),
         ...(node.tree ? { tree: node.tree } : {})
       })) : [];
-      // Treat visual inspection as read-only unless the prompt actually asks for a change.
-      const designIntent = /\b(add|create|insert|change|update|edit|modify|rename|replace|set|remove|delete|redesign|apply|adjust|fix|implement|build|improv(?:e|ement|ements)|restyle|recolor|move|resize|polish|polished|optimize|optimise|clean\s+up)\b/i.test(prompt) ||
-        /\bmake\b.*\b(better|clearer|more|less|consistent|accessible|modern|polished)\b/i.test(prompt);
+      // Explicit no-edit language must win over action words mentioned in a sentence like
+      // "Do not modify Figma". Otherwise a planning request can be misrouted to JSON edit mode.
+      function requestsFigmaEdit(text) {
+        const readOnlyPatterns = [
+          /\b(?:do not|don't|dont|never)\s+(?:make|apply|perform|execute|commit|write|change|edit|modify|update|alter|touch|mutate)\b/i,
+          /\b(?:no|without)\s+(?:any\s+)?(?:figma\s+)?(?:changes?|edits?|writes?|mutations?)\b/i,
+          /\b(?:read[- ]only|planning only|plan only|proposal only)\b/i
+        ];
+        if (readOnlyPatterns.some((pattern) => pattern.test(text))) return false;
+        return /\b(add|create|insert|change|update|edit|modify|rename|replace|set|remove|delete|redesign|apply|adjust|fix|implement|build|improv(?:e|ement|ements)|restyle|recolor|move|resize|polish|polished|optimize|optimise|clean\s+up)\b/i.test(text) ||
+          /\bmake\b.*\b(better|clearer|more|less|consistent|accessible|modern|polished)\b/i.test(text);
+      }
+      const designIntent = requestsFigmaEdit(prompt);
       try {
         const response = await fetch(API + "/api/assistant/chat", {
           method: "POST",
