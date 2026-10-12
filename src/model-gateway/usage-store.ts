@@ -45,6 +45,16 @@ type LedgerStore = {
 };
 let storePromise: Promise<LedgerStore | null> | null = null;
 
+function withStoreTimeout<T>(operation: Promise<T>, label: string, timeoutMs = 1500): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    operation,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(label + " timed out after " + timeoutMs + "ms.")), timeoutMs);
+    })
+  ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
+}
+
 function positiveNumber(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
@@ -81,10 +91,11 @@ async function getPersistentStore(): Promise<LedgerStore | null> {
   return storePromise;
 }
 async function readRecords(): Promise<{ records: UsageRecord[]; retention: BudgetSnapshot["retention"]; store: LedgerStore | null }> {
-  const store = await getPersistentStore();
+  let store: LedgerStore | null = null;
+  try { store = await withStoreTimeout(getPersistentStore(), "Netlify Blobs store initialization"); } catch { /* bounded best-effort store initialization */ }
   if (store) {
     try {
-      const value = await store.get(scopedLedgerKey(), { type: "json" });
+      const value = await withStoreTimeout(store.get(scopedLedgerKey(), { type: "json" }), "Netlify Blobs usage-ledger read");
       const persisted = Array.isArray(value) ? value as UsageRecord[] : [];
       runtimeRecords.splice(0, runtimeRecords.length, ...persisted.slice(0, MAX_RECORDS));
       return { records: [...runtimeRecords], retention: "netlify-blobs", store };
@@ -129,7 +140,7 @@ export async function recordModelUsage(input: Omit<UsageRecord, "id" | "at"> & {
   const next = [item, ...records].slice(0, MAX_RECORDS);
   runtimeRecords.splice(0, runtimeRecords.length, ...next);
   if (store) {
-    try { await store.setJSON(scopedLedgerKey(), next); }
+    try { await withStoreTimeout(store.setJSON(scopedLedgerKey(), next), "Netlify Blobs usage-ledger write"); }
     catch { /* The UI will report runtime-only retention if subsequent reads fail. */ }
   }
   // Structured logs never contain prompts, completions, or credentials.
@@ -180,7 +191,13 @@ export async function assertBudgetAllows(
   const estimatedPromptTokens = Math.ceil(promptChars / 4);
   const reserve = estimatedPromptTokens * inputRate / 1_000_000 + maxOutputTokens * outputRate / 1_000_000;
   if (opts.maxRequestCostInr !== undefined && reserve > opts.maxRequestCostInr) throw Object.assign(new Error("Projected request exceeds this module/model per-request cap."), { status: 402 });
-  const { records } = await readRecords();
+  const { records, retention } = await readRecords();
+  if ((env.NETLIFY === "true" || Boolean(env.NETLIFY_BLOBS_CONTEXT)) && retention !== "netlify-blobs") {
+    throw Object.assign(
+      new Error("Paid model request blocked: the persistent Netlify usage ledger is unavailable or timed out; no inference was sent."),
+      { status: 503 }
+    );
+  }
   const month = monthKey();
   const monthly = records.filter(item => item.at.slice(0, 7) === month && item.tier === "paid");
   const globalSpent = monthly.reduce((sum, item) => sum + item.estimatedCostInr, 0);
