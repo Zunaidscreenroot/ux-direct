@@ -91,8 +91,10 @@ test("provider environment config enables free-tier options only when a key exis
     GROQ_MODELS: "openai/gpt-oss-20b"
   });
   assert.equal(configured.some(p => p.name === "groq"), true);
-  assert.equal(getModelCatalog(configured).find(m => m.id === "openai/gpt-oss-20b")?.configured, true);
-  assert.equal(routeTask("classify", configured).provider, "groq");
+  assert.equal(getModelCatalog(configured).some(m => m.id === "openai/gpt-oss-20b"), false);
+  assert.equal(getModelCatalog(configured).some(m => m.provider === "groq"), false);
+  // The catalog deliberately exposes only the approved five OpenRouter models plus mock.
+  assert.equal(routeTask("classify", configured).provider, "mock");
 });
 
 test("rejects oversized message payloads before provider invocation", async () => {
