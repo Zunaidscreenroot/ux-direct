@@ -23,6 +23,10 @@ function localSettingsWritesAllowed(request: Request): boolean {
     process.env.MODEL_GATEWAY_ALLOW_UNAUTHENTICATED_LOCAL === "true" &&
     ["localhost", "127.0.0.1", "::1"].includes(hostname);
 }
+function safeEndpointHost(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  try { return new URL(value).host.slice(0, 160); } catch { return undefined; }
+}
 function blobsContextDiagnostics() {
   const raw = process.env.NETLIFY_BLOBS_CONTEXT;
   if (!raw) return { present: false, validBase64Json: false };
@@ -35,6 +39,10 @@ function blobsContextDiagnostics() {
       validBase64Json: true,
       hasApiURL: typeof parsed.apiURL === "string" && parsed.apiURL.length > 0,
       hasEdgeURL: typeof parsed.edgeURL === "string" && parsed.edgeURL.length > 0,
+      apiHost: safeEndpointHost(parsed.apiURL),
+      edgeHost: safeEndpointHost(parsed.edgeURL),
+      uncachedEdgeHost: safeEndpointHost(parsed.uncachedEdgeURL),
+      primaryRegion: typeof parsed.primaryRegion === "string" ? parsed.primaryRegion.slice(0, 40) : undefined,
       hasToken: typeof parsed.token === "string" && parsed.token.length > 0,
       hasSiteID: typeof parsed.siteID === "string" && parsed.siteID.length > 0,
       hasDeployID: typeof parsed.deployID === "string" && parsed.deployID.length > 0
