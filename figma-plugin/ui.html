@@ -644,6 +644,7 @@
 
     function bytesToDataUrl(bytes, mimeType) {
       const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+      if (!input.length) throw new Error("Figma returned an empty preview image.");
       let binary = "";
       for (let offset = 0; offset < input.length; offset += 0x8000) {
         binary += String.fromCharCode.apply(null, input.subarray(offset, Math.min(input.length, offset + 0x8000)));
@@ -691,7 +692,7 @@
       }
       try {
         const dataUrl = bytesToDataUrl(message.bytes, message.mimeType);
-        if (!/^data:image\/jpeg;base64,/.test(dataUrl) || dataUrl.length > 2800000) {
+        if (!/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(dataUrl) || dataUrl.length > 2800000) {
           throw new Error("The selected-frame preview exceeds the safe image limit.");
         }
         currentSelection.previewDataUrl = dataUrl;
