@@ -21,13 +21,7 @@ export async function GET() {
   }
   const fullSettings = { ...settings, models: modelSettings };
   const keySlots = [
-    { id: "ollama", label: "Ollama local", envName: "OLLAMA_BASE_URL", configured: configuredProviders.has("ollama"), keyDetected: false, tier: "local", secretRequired: false },
-    { id: "gemini", label: "Google Gemini", envName: "GEMINI_API_KEY", configured: configuredProviders.has("gemini"), keyDetected: Boolean(env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY), tier: env.GEMINI_BILLING_MODE === "paid" ? "paid" : "free-tier", secretRequired: true },
-    { id: "groq", label: "Groq", envName: "GROQ_API_KEY", configured: configuredProviders.has("groq"), keyDetected: Boolean(env.GROQ_API_KEY), tier: env.GROQ_BILLING_MODE === "paid" ? "paid" : "free-tier", secretRequired: true },
-    { id: "cerebras", label: "Cerebras", envName: "CEREBRAS_API_KEY", configured: configuredProviders.has("cerebras"), keyDetected: Boolean(env.CEREBRAS_API_KEY), tier: env.CEREBRAS_BILLING_MODE === "paid" ? "paid" : "free-tier", secretRequired: true },
-    { id: "openrouter", label: "OpenRouter", envName: "OPENROUTER_API_KEY", configured: configuredProviders.has("openrouter"), keyDetected: Boolean(env.OPENROUTER_API_KEY), tier: "free-tier", secretRequired: true },
-    { id: "openai", label: "OpenAI (paid)", envName: "OPENAI_API_KEY", configured: configuredProviders.has("openai"), keyDetected: Boolean(env.OPENAI_API_KEY), tier: "paid", secretRequired: true },
-    { id: "deepseek", label: "DeepSeek (paid)", envName: "DEEPSEEK_API_KEY", configured: configuredProviders.has("deepseek"), keyDetected: Boolean(env.DEEPSEEK_API_KEY), tier: "paid", secretRequired: true },
+    { id: "openrouter", label: "OpenRouter", envName: "OPENROUTER_API_KEY", configured: configuredProviders.has("openrouter"), keyDetected: Boolean(env.OPENROUTER_API_KEY), tier: "free-tier", secretRequired: true }
   ];
   return NextResponse.json({
     gateway: {
