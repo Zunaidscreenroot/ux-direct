@@ -242,7 +242,15 @@ async function sendSelection() {
   }
 }
 var selectionChangeListenerRegistered = false;
-figma.on("selectionchange", sendSelection);
+var selectionChangeTimer = null;
+function scheduleSelectionUpdate() {
+  if (selectionChangeTimer !== null) clearTimeout(selectionChangeTimer);
+  selectionChangeTimer = setTimeout(function () {
+    selectionChangeTimer = null;
+    sendSelection();
+  }, 120);
+}
+figma.on("selectionchange", scheduleSelectionUpdate);
 selectionChangeListenerRegistered = true;
 async function executeNativeApiHealthCheck() {
   var checks = [];
@@ -501,7 +509,11 @@ async function executeNativeApiHealthCheck() {
   // Avoid sending temporary test-page selections to backend telemetry during the suite.
   try {
     assertLab("pause selection context listener");
-    figma.off("selectionchange", sendSelection);
+    figma.off("selectionchange", scheduleSelectionUpdate);
+    if (selectionChangeTimer !== null) {
+      clearTimeout(selectionChangeTimer);
+      selectionChangeTimer = null;
+    }
     selectionHandlerPaused = true;
   } catch (error) {
     add("Events", "Pause selection context messaging", "functional", "error", error && error.message ? error.message : String(error));
@@ -1043,7 +1055,7 @@ async function executeNativeApiHealthCheck() {
     if (selectionHandlerPaused) {
       try {
         assertUxDirectFileScope("restore selection context listener");
-        figma.on("selectionchange", sendSelection);
+        figma.on("selectionchange", scheduleSelectionUpdate);
       } catch (error) {
         add("Test cleanup", "Restore selection context listener", "functional", "error",
           error && error.message ? error.message : String(error));
