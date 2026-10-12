@@ -228,7 +228,7 @@ test("visual request retries the same paid model with portable parameters after 
       return new Response(JSON.stringify({
         id: "openrouter-visual-compat-retry",
         model: body.model,
-        choices: [{ message: { content: "{\\"operations\\":[]}" } }],
+        choices: [{ message: { content: "compatibility retry succeeded" } }],
         usage: { prompt_tokens: 40, completion_tokens: 4, total_tokens: 44 }
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }) as typeof fetch
