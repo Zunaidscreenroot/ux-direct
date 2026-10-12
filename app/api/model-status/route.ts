@@ -425,7 +425,7 @@ export async function GET(request: Request) {
       return {
         provider: "openrouter",
         id: model.id,
-        label: model.label + " · not verified",
+        label: model.label,
         configured: result.configured,
         tier: "paid",
         available: false,
