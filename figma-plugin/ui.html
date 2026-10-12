@@ -829,9 +829,12 @@
             modelAvailable = true;
             setModelStatus("ok", "Paid fallback used", data.model + " returned this response. " + (data.fallbackReason || "Paid inference passed the gateway budget checks."));
           } else if (actual) {
-            currentModel = actual;
+            // Report the model that answered without overwriting the user's
+            // selected free preference or paid-fallback preference for later turns.
             modelAvailable = true;
-            setModelStatus("ok", "Free model connected", actual.label + " returned the chat response.");
+            const usedFallback = !currentModel || actual.id !== currentModel.id;
+            setModelStatus("ok", usedFallback ? "Free-first response" : "Free model connected",
+              actual.label + " returned the response. The dropdown preference remains " + (currentModel ? currentModel.label : actual.label) + ".");
           }
         }
         appendMessage("assistant", data.content);
