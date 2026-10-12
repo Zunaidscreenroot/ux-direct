@@ -184,3 +184,73 @@ test("visual requests skip text-only free models and attach the selected-frame i
   assert.deepEqual(attempts, ["deepseek/deepseek-v4.1-flash"]);
   assert.match(result.fallbackReason ?? "", /does not support screenshot input/i);
 });
+
+
+test("visual request retries the same paid model with portable parameters after provider HTTP 400", async () => {
+  const calls: Array<{ model: string; hasTemperature: boolean; hasReasoning: boolean; hasProviderRouting: boolean; hasImage: boolean }> = [];
+  const imageDataUrl = "data:image/jpeg;base64,AAAA";
+  const result = await chatCompletionFreeFirstThenPaid({
+    model: LIGHTNING,
+    providerId: "openrouter",
+    preferredPaidModelId: "deepseek/deepseek-v4.1-flash",
+    imageDataUrl,
+    temperature: 0.1,
+    reasoning: { effort: "minimal", max_tokens: 160 },
+    messages: [{ role: "user", content: "Make this selected screen better." }],
+    max_tokens: 900
+  }, {
+    providers,
+    timeoutMs: 2000,
+    fetchImpl: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        model: string;
+        temperature?: number;
+        reasoning?: { effort?: string; max_tokens?: number };
+        provider?: { sort?: string };
+        max_tokens?: number;
+        messages: Array<{ role: string; content: string | Array<{ type: string; image_url?: { url: string }; text?: string }> }>;
+      };
+      const userMessage = body.messages.find(message => message.role === "user");
+      const hasImage = Boolean(Array.isArray(userMessage?.content) &&
+        userMessage.content.some(part => typeof part === "object" && part.type === "image_url" && part.image_url?.url === imageDataUrl));
+      calls.push({
+        model: body.model,
+        hasTemperature: body.temperature !== undefined,
+        hasReasoning: body.reasoning !== undefined,
+        hasProviderRouting: body.provider !== undefined,
+        hasImage
+      });
+      if (calls.length === 1) {
+        return new Response(JSON.stringify({
+          error: { message: "Selected endpoint does not accept the reasoning field." }
+        }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        id: "openrouter-visual-compat-retry",
+        model: body.model,
+        choices: [{ message: { content: "{\\"operations\\":[]}" } }],
+        usage: { prompt_tokens: 40, completion_tokens: 4, total_tokens: 44 }
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch
+  });
+
+  assert.equal(result.model, "deepseek/deepseek-v4.1-flash");
+  assert.equal(result.tier, "paid");
+  assert.equal(result.routingStrategy, "vision-direct");
+  assert.deepEqual(calls, [
+    {
+      model: "deepseek/deepseek-v4.1-flash",
+      hasTemperature: true,
+      hasReasoning: true,
+      hasProviderRouting: true,
+      hasImage: true
+    },
+    {
+      model: "deepseek/deepseek-v4.1-flash",
+      hasTemperature: false,
+      hasReasoning: false,
+      hasProviderRouting: false,
+      hasImage: true
+    }
+  ]);
+});
