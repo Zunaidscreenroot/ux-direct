@@ -74,6 +74,52 @@ function scopedLedgerKey(env = process.env) {
 function monthKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
+function safeUsageStoreError(error: unknown): string {
+  const message = error instanceof Error ? error.name + ": " + error.message : "Unknown store error";
+  return message.replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]").replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]").slice(0, 240);
+}
+function tracedUsageBlobsFetch(): typeof fetch {
+  return async (input, init) => {
+    let url: URL | undefined;
+    try {
+      const raw = input instanceof Request ? input.url : input instanceof URL ? input.href : String(input);
+      url = new URL(raw);
+    } catch {
+      // Fetch still gets the original input; omit only safe diagnostics.
+    }
+    const startedAt = Date.now();
+    const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+    const routeKind = url?.pathname.includes("/region:") ? "edge-region-route" :
+      url?.pathname.startsWith("/api/v1/blobs/") ? "api-route" : "edge-route";
+    console.info("[model-gateway-usage-store]", JSON.stringify({
+      event: "blob-fetch-started", endpointHost: url?.host, method, routeKind
+    }));
+    const sourceSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const timeoutSignal = AbortSignal.timeout(9_000);
+    const signal = sourceSignal ? AbortSignal.any([sourceSignal, timeoutSignal]) : timeoutSignal;
+    try {
+      const response = await fetch(input, { ...init, signal });
+      console.info("[model-gateway-usage-store]", JSON.stringify({
+        event: "blob-fetch-completed",
+        endpointHost: url?.host,
+        method,
+        status: response.status,
+        durationMs: Date.now() - startedAt
+      }));
+      return response;
+    } catch (error) {
+      console.error("[model-gateway-usage-store]", JSON.stringify({
+        event: "blob-fetch-rejected",
+        endpointHost: url?.host,
+        method,
+        durationMs: Date.now() - startedAt,
+        timedOut: timeoutSignal.aborted,
+        error: safeUsageStoreError(error)
+      }));
+      throw error;
+    }
+  };
+}
 async function getPersistentStore(): Promise<LedgerStore | null> {
   // Netlify Blobs is used only in the deployed Netlify runtime. Local tests/dev
   // remain dependency-free and use the runtime memory fallback.
@@ -82,7 +128,13 @@ async function getPersistentStore(): Promise<LedgerStore | null> {
     storePromise = (async () => {
       try {
         const { getStore } = await import("@netlify/blobs");
-        return getStore("ux-direct-model-gateway-usage") as unknown as LedgerStore;
+        // Keep the persistent budget ledger in the same explicitly configured
+        // site-wide region as gateway settings. Never fall back to memory for paid calls.
+        return getStore({
+          name: "ux-direct-model-gateway-usage",
+          region: "us-east-2",
+          fetch: tracedUsageBlobsFetch()
+        }) as unknown as LedgerStore;
       } catch {
         return null;
       }
