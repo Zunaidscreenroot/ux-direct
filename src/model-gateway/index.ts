@@ -483,9 +483,8 @@ export async function chatCompletionFreeFirstThenPaid(
     } catch (error) {
       if (request.signal?.aborted) throw new GatewayError("Model routing was cancelled by the client.", 499, "openrouter");
       failedFreeModels.push(model);
-      // A 429 is a provider throttling signal. Trying a second free ID immediately
-      // can consume another request without improving the outcome; continue to paid.
-      if (error instanceof GatewayError && error.status === 429) break;
+      // Try both approved free IDs even when the first is rate-limited. The pool
+      // is intentionally capped at two attempts before one paid expertise fallback.
     }
   }
 
