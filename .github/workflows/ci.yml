@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, fix/model-probe-preview-routing]
   pull_request:
-    branches: [main]
+    branches: [main, fix/model-probe-preview-routing]
 
 permissions:
   contents: read
