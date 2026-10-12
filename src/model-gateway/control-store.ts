@@ -118,7 +118,12 @@ export async function getGatewaySettings(): Promise<GatewaySettings> {
         runtimeSettings.set(key, settings);
         return settings;
       }
-    } catch { /* runtime fallback */ }
+    } catch (error) {
+      if (process.env.NETLIFY === "true" || process.env.NETLIFY_BLOBS_CONTEXT) {
+        throw new Error("Could not read gateway settings from Netlify Blobs: " + (error instanceof Error ? error.message : "unknown store error"));
+      }
+      /* Local development can fall back to runtime defaults. */
+    }
   }
   return cleanSettings(runtimeSettings.get(key) ?? defaultGatewaySettings());
 }
