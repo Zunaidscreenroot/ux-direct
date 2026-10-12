@@ -23,6 +23,8 @@ export type GatewayRequest = {
   signal?: AbortSignal;
   reasoning?: { effort?: "minimal" | "low" | "medium" | "high"; max_tokens?: number };
   moduleId?: string;
+  /** Server-derived budget envelope; never a model override. */
+  budgetModuleId?: string;
   providerId?: string;
   /** Set only by the server-side allowlisted OpenRouter paid-model helper. */
   openRouterPaidSelection?: boolean;
@@ -303,7 +305,7 @@ export async function chatCompletion(
   // A free attempt is independent of Netlify Blobs availability. Paid attempts
   // still require stored settings and the persistent budget ledger.
   const settings = explicitlySelectedOpenRouterFree ? defaultGatewaySettings() : await getGatewaySettings();
-  const moduleId=request.moduleId??TASK_MODULES[request.model]??"general";
+  const moduleId=request.moduleId??request.budgetModuleId??TASK_MODULES[request.model]??"general";
   const policy=settings.modules[moduleId]??settings.modules.general;
   if(!policy.enabled)throw new GatewayError("Module "+moduleId+" is switched off in Model Gateway settings.",403);
   const catalog=getModelCatalog(providers);
