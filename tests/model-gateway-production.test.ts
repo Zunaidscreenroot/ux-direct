@@ -97,6 +97,7 @@ test("gateway exact-model selector exposes all nine approved OpenRouter models",
     "deepseek/deepseek-v4.1-flash"
   ]) assert.ok(page.includes("\"" + id + "\""));
   assert.ok(page.includes("models.filter(m=>selectionCompatible(mode,m))"));
+  assert.ok(page.includes('(m.tier==="free-tier"||m.id.endsWith(":free"))'));
   assert.ok(page.includes('APPROVED_OPENROUTER_MODEL_IDS.has(m.id)'));
 });
 
@@ -165,7 +166,7 @@ test("free vision models are shown with their screenshot capability and only nee
   const ui = read("figma-plugin/ui.html");
   assert.ok(route.includes("supportsImages: model.supportsImages"));
   assert.ok(gateway.includes("selectOpenRouterPaidVisionModel"));
-  assert.ok(gateway.includes("freeVisionModels.filter(model => model.supportsImages)"));
+  assert.ok(gateway.includes("OPENROUTER_FREE_CHAT_MODELS.filter(model => model.supportsImages)"));
   assert.ok(read("app/api/assistant/chat/route.ts").includes("forcePaidVision: true"));
   assert.ok(ui.includes("up to two approved free vision models first"));
   assert.ok(ui.includes("a paid fallback may consume account credits"));
