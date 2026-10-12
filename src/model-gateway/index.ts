@@ -400,7 +400,18 @@ export async function chatCompletion(
     }
     const response=await fetchImpl(`${trimSlash(provider.baseUrl)}/chat/completions`,{method:"POST",headers,body:JSON.stringify({model,messages:providerMessages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{}),...(request.reasoning?{reasoning:request.reasoning}:{})}),signal:controller.signal});
     if(!response.ok)throw new GatewayError(`Provider returned HTTP ${response.status}.`,response.status===429?429:response.status>=500?502:response.status,provider.name);
-    let payload:ProviderChatPayload;try{payload=await response.json() as ProviderChatPayload;}catch{throw new GatewayError("Provider returned invalid JSON.",502,provider.name);}
+    let payload:ProviderChatPayload;
+    try {
+      payload = await response.json() as ProviderChatPayload;
+    } catch (error) {
+      // If headers arrived but the response body stalled until the request's
+      // AbortController fired, json() rejects too. Preserve timeout semantics
+      // instead of misreporting it as malformed JSON.
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+        throw new GatewayError("Provider response timed out while reading the response body.", 504, provider.name);
+      }
+      throw new GatewayError("Provider returned invalid JSON.", 502, provider.name);
+    }
     const content=payload.choices?.[0]?.message?.content;
     if(typeof content!=="string")throw new GatewayError("Provider response did not contain choices[0].message.content.",502,provider.name);
     const latencyMs=Date.now()-started;const tokenUsage=usageStore.tokenUsageValues(payload.usage);
