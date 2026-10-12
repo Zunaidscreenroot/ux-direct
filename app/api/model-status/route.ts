@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { GatewayError, chatCompletionWithOpenRouterPaid } from "@/src/model-gateway";
-import { getOpenRouterPaidChatModel, OPENROUTER_PAID_CHAT_MODELS } from "@/src/model-gateway/openrouter-paid";
+import {
+  getOpenRouterFreeChatModel,
+  getOpenRouterPaidChatModel,
+  OPENROUTER_FREE_CHAT_MODELS,
+  OPENROUTER_PAID_CHAT_MODELS
+} from "@/src/model-gateway/openrouter-paid";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,24 +66,28 @@ async function discoverModels(provider: ProviderId) {
   const response = await timedFetch(config.modelsUrl, { headers: config.headers }, 12000);
   if (!response.ok) return { provider, configured: true, models: [], reason: `Provider model-list endpoint returned HTTP ${response.status}.` };
   const payload = await response.json() as { data?: Array<{ id?: string; name?: string; supportedGenerationMethods?: string[]; pricing?: { prompt?: string; completion?: string } }>; models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> };
-  const models: string[] = (payload.data ?? [])
-    .filter(item => typeof item.id === "string" && item.id.endsWith(":free"))
-    .map(item => item.id)
-    .filter((id): id is string => Boolean(id));
+  const liveIds = new Set((payload.data ?? []).map(item => item.id).filter((id): id is string => typeof id === "string"));
+  // This product uses only the two user-approved free models, never the wider live catalog.
+  const models = OPENROUTER_FREE_CHAT_MODELS.filter(model => liveIds.has(model.id)).map(model => model.id);
   const paidModels = OPENROUTER_PAID_CHAT_MODELS.flatMap(model => {
     const live = (payload.data ?? []).find(item => item.id === model.id);
-    const liveInputPrice = Number(live?.pricing?.prompt);
-    const liveOutputPrice = Number(live?.pricing?.completion);
-    // Never list the paid model unless OpenRouter's live catalog confirms both prices.
-    if (!live || !(liveInputPrice > 0) || !(liveOutputPrice > 0)) return [];
+    const liveInputPerToken = Number(live?.pricing?.prompt);
+    const liveOutputPerToken = Number(live?.pricing?.completion);
+    const liveInputPrice = liveInputPerToken * 1_000_000;
+    const liveOutputPrice = liveOutputPerToken * 1_000_000;
+    // Never list paid inference unless the live catalog confirms the exact ID,
+    // and our conservative budget reserve covers its published token rates.
+    if (!live || !(liveInputPrice > 0) || !(liveOutputPrice > 0) ||
+        liveInputPrice > model.budgetInputUsdPerMillion ||
+        liveOutputPrice > model.budgetOutputUsdPerMillion) return [];
     return [{
       provider: "openrouter",
       id: model.id,
-      label: model.label + " · $" + model.listedInputUsdPerMillion.toFixed(2) + " in / $" + model.listedOutputUsdPerMillion.toFixed(2) + " out per 1M",
+      label: model.label + " · $" + liveInputPrice.toFixed(3) + " in / $" + liveOutputPrice.toFixed(3) + " out per 1M",
       configured: true,
       tier: "paid",
-      listedInputUsdPerMillion: model.listedInputUsdPerMillion,
-      listedOutputUsdPerMillion: model.listedOutputUsdPerMillion,
+      listedInputUsdPerMillion: liveInputPrice,
+      listedOutputUsdPerMillion: liveOutputPrice,
       budgetInputUsdPerMillion: model.budgetInputUsdPerMillion,
       budgetOutputUsdPerMillion: model.budgetOutputUsdPerMillion,
       pricingSource: model.pricingSource
@@ -101,7 +110,8 @@ async function probeModel(provider: ProviderId, model: string) {
   const config = providerConfig(provider);
   if (!config) return { available: false, provider, model, reason: `${provider} API key is missing in this deployment context.` };
   const paidModel = getOpenRouterPaidChatModel(model);
-  if (!model.endsWith(":free") && !paidModel) {
+  const freeModel = getOpenRouterFreeChatModel(model);
+  if ((!model.endsWith(":free") && !paidModel) || (model.endsWith(":free") && !freeModel)) {
     return { available: false, provider, model, status: 400, reason: "Only free IDs or explicitly allowlisted low-cost paid OpenRouter models can be probed." };
   }
   const isPaidModel = Boolean(paidModel);
@@ -396,14 +406,14 @@ export async function GET(request: Request) {
       const rankDifference = rank(a) - rank(b);
       return rankDifference !== 0 ? rankDifference : a.localeCompare(b);
     }).slice(0, 80);
-    const freeModels = liveModelIds.map(modelId => ({
-      provider: "openrouter", id: modelId, label: modelId + " · Free",
-      configured: result.configured, tier: "free-tier"
+    const freeModels = OPENROUTER_FREE_CHAT_MODELS.map(model => ({
+      provider: "openrouter", id: model.id, label: model.label,
+      configured: result.configured, tier: "free-tier",
+      listedInLiveCatalog: liveModelIds.includes(model.id)
     }));
     const paidModels = "paidModels" in result && Array.isArray(result.paidModels) ? result.paidModels : [];
-    // Prefer the explicitly allowlisted paid model while the user is in paid-model testing mode.
-    const models = [...paidModels, ...freeModels];
-    const selectedModel = paidModels[0]?.id ?? freeModels.find(model => model.id === preferredOrder[0])?.id ?? freeModels[0]?.id ?? null;
+    const models = [...freeModels, ...paidModels];
+    const selectedModel = freeModels[0]?.id ?? paidModels[0]?.id ?? null;
     return NextResponse.json({
       models,
       selectedModel,
