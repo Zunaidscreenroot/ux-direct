@@ -174,6 +174,7 @@ export async function POST(request: Request) {
       model: data.model && data.model.endsWith(":free") ? data.model : "nvidia/nemotron-3.5-lightning:free",
       ...(preferredPaid ? { preferredPaidModelId: preferredPaid.id } : {}),
       ...(data.selection?.previewDataUrl ? { imageDataUrl: data.selection.previewDataUrl } : {}),
+      ...(data.selection?.previewDataUrl && data.intent === "design-operation" ? { forcePaidVision: true } : {}),
       providerId: "openrouter",
       budgetModuleId: "general",
       messages,
