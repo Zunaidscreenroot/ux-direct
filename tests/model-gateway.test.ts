@@ -236,15 +236,26 @@ test("usage ledger records token-level counts and computes monthly budget totals
 });
 
 
-test("direct provider billing tier is explicit and paid providers stay unavailable until paid routing is enabled", async () => {
+test("Model Gateway catalog stays restricted to the approved five OpenRouter models plus mock", async () => {
   const { providersFromEnv, getModelCatalog } = await import("../src/model-gateway");
-  const base = { GEMINI_API_KEY: "test-key", GEMINI_MODELS: "gemini-3.1-flash-lite", MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000" };
-  const paidLocked = providersFromEnv({ ...base, GEMINI_BILLING_MODE: "paid", ALLOW_PAID_MODELS: "false" });
-  assert.equal(paidLocked.some(provider => provider.name === "gemini"), false);
-  const paidEnabled = providersFromEnv({ ...base, GEMINI_BILLING_MODE: "paid", ALLOW_PAID_MODELS: "true" });
-  const paidProvider = paidEnabled.find(provider => provider.name === "gemini");
-  assert.equal(paidProvider?.kind, "paid");
-  assert.equal(getModelCatalog(paidEnabled).find(model => model.provider === "gemini" && model.id === "gemini-3.1-flash-lite")?.tier, "paid");
-  const free = providersFromEnv({ ...base, GEMINI_BILLING_MODE: "free-tier", ALLOW_PAID_MODELS: "false" });
-  assert.equal(free.find(provider => provider.name === "gemini")?.kind, "free-tier");
+  const providers = providersFromEnv({
+    NODE_ENV: "production",
+    OPENROUTER_API_KEY: "test-openrouter-key",
+    OPENAI_API_KEY: "test-openai-key",
+    DEEPSEEK_API_KEY: "test-deepseek-key",
+    GROQ_API_KEY: "test-groq-key",
+    ALLOW_PAID_MODELS: "true",
+    MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000"
+  });
+  const catalog = getModelCatalog(providers);
+  const allowedIds = [
+    "nvidia/nemotron-3.5-lightning:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "deepseek/deepseek-v4.1-flash",
+    "openai/gpt-6-luna",
+    "deepseek/deepseek-v4-flash-0731"
+  ].sort();
+  assert.deepEqual(catalog.filter(model => model.provider === "openrouter").map(model => model.id).sort(), allowedIds);
+  assert.equal(catalog.some(model => model.provider !== "openrouter" && model.provider !== "mock"), false);
+  assert.equal(catalog.some(model => model.id === "openai/gpt-4o-mini" || model.id === "deepseek-v4-pro" || model.id === "openai/gpt-oss-20b"), false);
 });
