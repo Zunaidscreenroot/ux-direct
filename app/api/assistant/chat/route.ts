@@ -177,13 +177,13 @@ export async function POST(request: Request) {
       providerId: "openrouter",
       budgetModuleId: "general",
       messages,
-      // Structured edit plans benefit from lower-variance, shorter output;
-      // ordinary UX conversation keeps the larger response allowance.
-      temperature: data.intent === "design-operation" ? 0.1 : 0.3,
-      max_tokens: data.intent === "design-operation" ? 900 : 1400,
-      // Keep visual edit-plan reasoning bounded so the response body can finish
-      // inside the synchronous function window without unnecessary hidden tokens.
-      ...(data.intent === "design-operation" ? { reasoning: { effort: "minimal" as const, max_tokens: 160 } } : {}),
+      // Keep all screenshot-based requests bounded, including conversational
+      // audits that do not ask for direct Figma edits.
+      temperature: data.selection?.previewDataUrl || data.intent === "design-operation" ? 0.1 : 0.3,
+      max_tokens: data.selection?.previewDataUrl ? 1200 : data.intent === "design-operation" ? 900 : 1400,
+      ...(data.selection?.previewDataUrl || data.intent === "design-operation"
+        ? { reasoning: { effort: "minimal" as const, max_tokens: 160 } }
+        : {}),
       signal: request.signal
     }, { timeoutMs: 10_000 });
     const latencyMs = Date.now() - startedAt;
