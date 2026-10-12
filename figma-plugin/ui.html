@@ -314,7 +314,7 @@
 
     async function loadModelOptions() {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
-      setModelStatus("warn", "Loading approved models…", "Free models are tried first for text. Approved paid models are available as a preferred fallback; OpenRouter credit and key limits govern billed usage. Image review requires vision-capable input.");
+      setModelStatus("warn", "Loading approved models…", "Approved free text and vision models are tried first. Automatic routing uses at most two free attempts before one paid fallback; OpenRouter credit and key limits govern billed usage.");
       const selector = $("modelSelect");
       selector.disabled = true;
       try {
@@ -326,9 +326,13 @@
         const approvedIds = new Set([
           "nvidia/nemotron-3.5-lightning:free",
           "nvidia/nemotron-3-ultra-550b-a55b:free",
+          "qwen/qwen3.8-27b:free",
+          "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+          "openai/gpt-oss-20b",
+          "openai/gpt-oss-120b",
           "openai/gpt-6-luna",
-          "deepseek/deepseek-v4.1-flash",
-          "deepseek/deepseek-v4-flash-0731"
+          "deepseek/deepseek-v4-flash-0731",
+          "deepseek/deepseek-v4.1-flash"
         ]);
         const tierRank = model => model.tier === "free-tier" ? 0 : model.tier === "paid" ? 1 : 2;
         modelOptions = payload.models
@@ -410,7 +414,7 @@
         // The server only calls it after an explicit message, using budget checks.
         modelAvailable = true;
         $("modelSelect").disabled = !backendHealthy || isSending;
-        setModelStatus("warn", "Paid model armed", model.label + " is your preferred paid fallback after both approved free models fail. No paid probe is sent on selection; OpenRouter credit and configured key limits apply to billed inference. Visual scans use a vision-capable model.");
+        setModelStatus("warn", "Paid model armed", model.label + " is your preferred paid model. No paid probe is sent on selection; OpenRouter credit and configured key limits apply to billed inference. Visual scans use this model if it accepts images, otherwise UX Direct substitutes the lowest-listed-cost approved paid vision model.");
         updateSendAvailability();
         return;
       }
@@ -453,11 +457,11 @@
           }
         } else if (model.tier === "free-tier") {
           // A failed single-model probe does not end the session. The chat API will
-          // attempt both approved free models before one paid expertise fallback.
+          // attempt at most two approved free models before one paid expertise fallback.
           modelAvailable = true;
           const reason = payload.reason || payload.error || "The selected free model did not return a usable response.";
           setModelStatus("warn", "Free fallback ready", model.label + ": " + reason + " Chat will retry the approved free pool before considering paid inference.");
-          const message = model.label + " did not pass its probe.\n\n" + reason + "\n\nAutomatic routing remains available: on your next message, the server will try both approved free Nemotron models, then choose exactly one paid model based on the task if neither free model works.";
+          const message = model.label + " did not pass its probe.\n\n" + reason + "\n\nAutomatic routing remains available: on your next message, the server will try at most two approved free models, then choose exactly one paid model based on the task if neither free model works.";
           if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
           else {
             const bubble = modelProbeRow.querySelector(".bubble");
@@ -822,15 +826,16 @@
         return;
       }
       if (!currentModel || !modelAvailable) {
-        appendMessage("assistant", "Choose an OpenRouter model and wait until its status says Connected or Paid model armed. Paid fallback is attempted only after the two approved free models fail; OpenRouter credit and key limits govern billed usage.");
+        appendMessage("assistant", "Choose an OpenRouter model and wait until its status says Connected or Paid model armed. Automatic paid fallback follows at most two approved free attempts; OpenRouter credit and key limits govern billed usage.");
         return;
       }
-      const selectedModelCanSeeImages = currentModel.tier === "paid" && currentModel.supportsImages === true;
-      if (visualIntent && !selectedModelCanSeeImages) {
+      if (visualIntent) {
         const detail = currentModel.tier === "paid"
-          ? "The selected paid model cannot accept images, so UX Direct will route this visual request to the approved DeepSeek V4.1 Flash vision model instead."
-          : "The approved free Nemotron models are text-only, so UX Direct will route this visual request to the approved DeepSeek V4.1 Flash vision model.";
-        const consent = window.confirm("Visual scan uses one paid vision-model request.\n\n" + detail + "\n\nThe selected frame screenshot and prompt will be sent to OpenRouter. OpenRouter credit and configured key limits apply to the billed inference, and no Figma edits happen without a separate confirmation. Continue?");
+          ? (currentModel.supportsImages === true
+            ? "The explicitly selected paid vision model will be called directly."
+            : "The selected paid model cannot accept images, so UX Direct will substitute the lowest-listed-cost approved paid vision model.")
+          : "UX Direct will try up to two approved free vision models first, then may make one low-cost paid vision request if both free attempts fail.";
+        const consent = window.confirm("Visual review sends the selected frame screenshot and prompt to OpenRouter.\n\n" + detail + "\n\nOpenRouter free-model terms and rate limits apply; a paid fallback may consume account credits. No Figma edits happen without a separate confirmation. Continue?");
         if (!consent) return;
       }
 
