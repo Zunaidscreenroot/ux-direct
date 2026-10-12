@@ -25,6 +25,15 @@ function localSettingsWritesAllowed(request: Request): boolean {
 }
 export async function GET() {
   const diagnosticId = randomUUID();
+  const runtimeDiagnostics = {
+    context: (process.env.CONTEXT || "unknown").slice(0, 40),
+    branch: (process.env.NETLIFY_BRANCH || process.env.BRANCH || "unknown").slice(0, 80),
+    isNetlifyRuntime: process.env.NETLIFY === "true",
+    hasNetlifySiteId: Boolean(process.env.NETLIFY_SITE_ID),
+    hasNetlifyDeployId: Boolean(process.env.NETLIFY_DEPLOY_ID),
+    hasNetlifyBlobsContext: Boolean(process.env.NETLIFY_BLOBS_CONTEXT),
+    hasNetlifyApiTokenEnv: Boolean(process.env.NETLIFY_API_TOKEN)
+  };
   try {
     const settings = await getGatewaySettings();
     return NextResponse.json({ settings, modules: GATEWAY_MODULES, diagnosticId }, {
@@ -51,7 +60,8 @@ export async function GET() {
       ok: false,
       error: "Gateway settings could not be loaded. Paid inference remains blocked until stored budget settings and the persistent usage ledger can be verified.",
       reason: safeMessage,
-      diagnosticId
+      diagnosticId,
+      diagnostics: runtimeDiagnostics
     }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
 }
