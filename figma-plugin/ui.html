@@ -350,7 +350,7 @@
           (model.tier === "paid" ? paidGroup : freeGroup).appendChild(option);
         });
         selector.append(freeGroup, paidGroup);
-        const preferred = modelOptions.find(model => model.id === payload.selectedModel && !selector.querySelector('option[value="' + CSS.escape(model.id) + '"]')?.disabled)
+        const preferred = modelOptions.find(model => model.id === payload.selectedModel && model.available !== false)
           || modelOptions.find(model => model.tier === "free-tier");
         selector.value = preferred.id;
         await checkSelectedModel();
