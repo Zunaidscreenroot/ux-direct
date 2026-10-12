@@ -115,7 +115,13 @@ export async function getGatewaySettings(): Promise<GatewaySettings> {
   const cachedAt = runtimeSettingsAt.get(key) ?? 0;
   if (cached && Date.now() - cachedAt < SETTINGS_CACHE_TTL_MS) return cleanSettings(cached);
 
-  const store = await withStoreTimeout(getStore(), "Netlify Blobs store initialization");
+  let store: BlobStore | null;
+  try {
+    store = await withStoreTimeout(getStore(), "Netlify Blobs store initialization");
+  } catch (error) {
+    if (cached && Date.now() - cachedAt < 60_000) return cleanSettings(cached);
+    throw new Error("Could not initialize Netlify Blobs for gateway settings: " + (error instanceof Error ? error.message : "unknown store error"));
+  }
   if (store) {
     try {
       const value = await withStoreTimeout(store.get(key, { type: "json" }), "Netlify Blobs settings read");
@@ -124,9 +130,9 @@ export async function getGatewaySettings(): Promise<GatewaySettings> {
       runtimeSettingsAt.set(key, Date.now());
       return settings;
     } catch (error) {
-      // A bounded stale-settings fallback avoids outages after at least one verified
-      // settings read. It is not used on a cold instance with no known-good snapshot.
-      if (cached) return cleanSettings(cached);
+      // Use only a previously verified snapshot and only for a short stale window.
+      // A cold instance never substitutes defaults for an unreadable deployed store.
+      if (cached && Date.now() - cachedAt < 60_000) return cleanSettings(cached);
       if (process.env.NETLIFY === "true" || process.env.NETLIFY_BLOBS_CONTEXT) {
         throw new Error("Could not read gateway settings from Netlify Blobs: " + (error instanceof Error ? error.message : "unknown store error"));
       }
