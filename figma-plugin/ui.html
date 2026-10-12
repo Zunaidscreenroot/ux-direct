@@ -22,7 +22,14 @@
     .status-tag.bad { color:#c53f45; border-color:rgba(197,63,69,.3); background:rgba(197,63,69,.08); }
     .status-tag.bad .dot { background:#d14343; }
     .status-tag.warn .dot { background:#c18a24; }
-    .modelbar { display:flex; align-items:center; gap:6px; min-width:0; flex:0 0 auto; margin:0 0 3px; }
+    .modelbar { display:flex; align-items:center; gap:6px; min-width:0; flex:0 0 auto; margin:0 0 5px; }
+    .selection-panel { display:flex; align-items:center; gap:10px; flex:0 0 auto; min-height:60px; margin:0 0 5px; padding:7px 8px; border:1px solid var(--figma-color-border); border-radius:10px; background:var(--figma-color-bg-secondary); overflow:hidden; }
+    .selection-copy { display:flex; flex:1 1 auto; flex-direction:column; gap:3px; min-width:0; }
+    .selection-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:750; }
+    .selection-details, .selection-preview-status { color:var(--figma-color-text-secondary); font-size:9px; line-height:1.35; overflow-wrap:anywhere; }
+    .selection-preview-status.ready { color:#22845d; }
+    .selection-preview-status.error { color:#c53f45; }
+    #selectionPreview { flex:0 0 auto; width:132px; height:76px; object-fit:contain; border:1px solid var(--figma-color-border); border-radius:6px; background:var(--figma-color-bg); }
     .model-select { flex:1 1 auto; width:0; min-width:0; max-width:58%; padding:5px 7px; border:1px solid var(--figma-color-border); border-radius:8px; background:var(--figma-color-bg); color:var(--figma-color-text); font:inherit; font-size:10px; }
     #modelStatus { flex:0 0 auto; max-width:40%; }
     .muted { color:var(--figma-color-text-secondary); }
@@ -85,6 +92,15 @@
     </div>
   </div>
 
+  <section class="selection-panel" aria-label="Current Figma selection" aria-live="polite">
+    <div class="selection-copy">
+      <strong id="selectionName" class="selection-name">No frame selected</strong>
+      <span id="selectionDetails" class="selection-details">Select a frame or layer in Figma.</span>
+      <span id="selectionPreviewStatus" class="selection-preview-status">Waiting for Figma selection…</span>
+    </div>
+    <img id="selectionPreview" alt="Visual preview of the selected Figma frame" hidden />
+  </section>
+
   <main class="chat">
     <div id="chatLog" class="chatlog" role="log" aria-live="polite" aria-relevant="additions text"></div>
     <div class="composer">
@@ -123,7 +139,7 @@
     let modelOptions = [];
     let modelProbeVersion = 0;
     let openRouterFreeQuotaExhausted = false;
-    let currentSelection = { fileKey: null, pageName: "", selection: [] };
+    let currentSelection = { fileKey: null, pageName: "", selection: [], revision: 0, previewDataUrl: null, previewNodeId: null };
     const chatHistory = [];
     const handledBridgeCommands = new Set();
 
@@ -291,7 +307,7 @@
 
     async function loadModelOptions() {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
-      setModelStatus("warn", "Loading free models…", "Two approved free Nemotron models are tried first; paid fallback is automatic and expertise-based.");
+      setModelStatus("warn", "Loading approved models…", "Free models are tried first for text. Approved paid models remain budget-guarded; image review requires vision-capable input.");
       const selector = $("modelSelect");
       selector.disabled = true;
       try {
@@ -300,28 +316,42 @@
         if (!response.ok || !Array.isArray(payload.models)) {
           throw new Error(payload.error || "Model list endpoint returned HTTP " + response.status + ".");
         }
-        const approvedFreeIds = new Set([
+        const approvedIds = new Set([
           "nvidia/nemotron-3.5-lightning:free",
-          "nvidia/nemotron-3-ultra-550b-a55b:free"
+          "nvidia/nemotron-3-ultra-550b-a55b:free",
+          "openai/gpt-6-luna",
+          "deepseek/deepseek-v4.1-flash",
+          "deepseek/deepseek-v4-flash-0731"
         ]);
-        // The dropdown only selects a preferred free model. Paid models are never
-        // manually selected or probed here; server routing calls paid inference only after free failure.
-        modelOptions = payload.models.filter(model =>
-          model && model.provider === "openrouter" &&
-          typeof model.id === "string" && approvedFreeIds.has(model.id) &&
-          typeof model.label === "string" && model.tier === "free-tier"
-        );
-        if (!modelOptions.length) {
-          throw new Error(payload.reason || "OpenRouter did not return either of the two approved free Nemotron models.");
+        const tierRank = model => model.tier === "free-tier" ? 0 : model.tier === "paid" ? 1 : 2;
+        modelOptions = payload.models
+          .filter(model => model && model.provider === "openrouter" &&
+            typeof model.id === "string" && approvedIds.has(model.id) &&
+            typeof model.label === "string" &&
+            (model.tier === "free-tier" || model.tier === "paid"))
+          .sort((a, b) => tierRank(a) - tierRank(b) || a.label.localeCompare(b.label));
+        if (!modelOptions.some(model => model.tier === "free-tier")) {
+          throw new Error(payload.reason || "The approved free-model entries are missing from the model catalogue.");
         }
         selector.replaceChildren();
+        const freeGroup = document.createElement("optgroup");
+        freeGroup.label = "Free · tried first";
+        const paidGroup = document.createElement("optgroup");
+        paidGroup.label = "Paid · explicit preference / fallback";
         modelOptions.forEach(model => {
           const option = document.createElement("option");
           option.value = model.id;
           option.textContent = model.label;
-          selector.appendChild(option);
+          if (model.tier === "paid" && model.available !== true) {
+            option.disabled = true;
+            option.textContent += " · not verified";
+            option.title = model.reason || "The live model catalogue/pricing did not verify this option. Paid calls remain blocked.";
+          }
+          (model.tier === "paid" ? paidGroup : freeGroup).appendChild(option);
         });
-        const preferred = modelOptions.find(model => model.id === payload.selectedModel) || modelOptions[0];
+        selector.append(freeGroup, paidGroup);
+        const preferred = modelOptions.find(model => model.id === payload.selectedModel && !selector.querySelector('option[value="' + CSS.escape(model.id) + '"]')?.disabled)
+          || modelOptions.find(model => model.tier === "free-tier");
         selector.value = preferred.id;
         await checkSelectedModel();
       } catch (error) {
@@ -357,11 +387,25 @@
       }
 
       const model = currentModel;
-      $("modelSelect").disabled = true;
       const isPaidModel = currentModel.tier === "paid";
-      setModelStatus("warn", isPaidModel ? "Checking paid model…" : "Checking free model…", isPaidModel
-        ? "Sending one small, budget-capped test prompt to OpenRouter paid inference."
-        : "Sending one small test prompt to the selected free model.");
+      if (isPaidModel) {
+        if (model.available !== true) {
+          modelAvailable = false;
+          $("modelSelect").disabled = false;
+          setModelStatus("bad", "Paid model unverified", model.reason || "The exact model and positive live pricing were not verified; no inference will be called.");
+          updateSendAvailability();
+          return;
+        }
+        // Selecting a paid model is not a probe and must not spend money.
+        // The server only calls it after an explicit message, using budget checks.
+        modelAvailable = true;
+        $("modelSelect").disabled = !backendHealthy || isSending;
+        setModelStatus("warn", "Paid model armed", model.label + " is ready for a user-requested turn. No paid API call has been made yet; budget checks run before inference.");
+        updateSendAvailability();
+        return;
+      }
+      $("modelSelect").disabled = true;
+      setModelStatus("warn", "Checking free model…", "Sending one small test prompt to the selected free model.");
       try {
         const probeUrl = new URL(API + "/api/model-status");
         probeUrl.searchParams.set("fileKey", verifiedFileKey);
@@ -592,15 +636,87 @@
       });
     }
 
+    function setSelectionPreviewStatus(message, state) {
+      const status = $("selectionPreviewStatus");
+      status.textContent = message;
+      status.className = "selection-preview-status" + (state ? " " + state : "");
+    }
+
+    function bytesToDataUrl(bytes, mimeType) {
+      const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+      let binary = "";
+      for (let offset = 0; offset < input.length; offset += 0x8000) {
+        binary += String.fromCharCode.apply(null, input.subarray(offset, Math.min(input.length, offset + 0x8000)));
+      }
+      return "data:" + (mimeType || "image/jpeg") + ";base64," + btoa(binary);
+    }
+
     function updateSelectionContext(message) {
-      // Selection is chat context only; intentionally render no project/context panel.
-      currentSelection = message;
+      const revision = Number.isInteger(message.revision) ? message.revision : (currentSelection.revision + 1);
+      const selection = Array.isArray(message.selection) ? message.selection : [];
+      currentSelection = Object.assign({}, message, {
+        revision,
+        previewDataUrl: null,
+        previewNodeId: null
+      });
+      const first = selection[0];
+      $("selectionName").textContent = first ? String(first.name || "Selected frame") : "No frame selected";
+      $("selectionDetails").textContent = first
+        ? [message.pageName || "Current page",
+           first.type || "Layer",
+           Number.isFinite(first.width) && Number.isFinite(first.height) ? Math.round(first.width) + " × " + Math.round(first.height) + " px" : "",
+           selection.length > 1 ? selection.length + " selected" : "1 selected"].filter(Boolean).join(" · ")
+        : "Select a frame or layer in Figma.";
+      $("selectionPreview").hidden = true;
+      $("selectionPreview").removeAttribute("src");
+      if (!first) {
+        setSelectionPreviewStatus("No selection to scan.");
+      } else {
+        setSelectionPreviewStatus("Preparing visual preview…");
+      }
+    }
+
+    function updateSelectionPreview(message) {
+      if (!message || message.fileKey !== ALLOWED_FILE_KEY ||
+          !Number.isInteger(message.revision) ||
+          message.revision !== currentSelection.revision) return;
+      const first = Array.isArray(currentSelection.selection) ? currentSelection.selection[0] : null;
+      if (!first || (message.nodeId && message.nodeId !== first.id)) return;
+      if (message.error) {
+        currentSelection.previewDataUrl = null;
+        currentSelection.previewNodeId = null;
+        $("selectionPreview").hidden = true;
+        setSelectionPreviewStatus("Preview unavailable: " + String(message.error).slice(0, 160), "error");
+        return;
+      }
+      try {
+        const dataUrl = bytesToDataUrl(message.bytes, message.mimeType);
+        if (!/^data:image\/jpeg;base64,/.test(dataUrl) || dataUrl.length > 2800000) {
+          throw new Error("The selected-frame preview exceeds the safe image limit.");
+        }
+        currentSelection.previewDataUrl = dataUrl;
+        currentSelection.previewNodeId = message.nodeId;
+        const image = $("selectionPreview");
+        image.src = dataUrl;
+        image.alt = "Visual preview of " + String(message.name || first.name || "selected frame");
+        image.hidden = false;
+        setSelectionPreviewStatus("Visual preview ready · included in visual scans", "ready");
+      } catch (error) {
+        currentSelection.previewDataUrl = null;
+        currentSelection.previewNodeId = null;
+        setSelectionPreviewStatus(error && error.message ? error.message : "Could not display preview.", "error");
+      }
     }
 
     async function sendChatMessage(overrideText) {
       if (isSending) return;
       const prompt = (typeof overrideText === "string" ? overrideText : $("prompt").value).trim();
       if (prompt.length < 1) return;
+      const visualIntent = /\b(visual(?:ly)?|scan|look\s+at|inspect|review|audit|critique|improv(?:e|ement)|better|redesign|layout|spacing|alignment|screen|screenshot|compare|design quality|hierarchy)\b/i.test(prompt);
+      if (visualIntent && !currentSelection.previewDataUrl) {
+        appendMessage("assistant", "I can’t scan this frame visually yet because its screenshot preview is not ready. Select the frame in Figma and wait until the cockpit says “Visual preview ready,” then retry. No inference or document changes were made.");
+        return;
+      }
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) {
         appendMessage("assistant", "I can’t start a conversation until this Figma document passes the approved-file check.");
         return;
@@ -647,7 +763,8 @@
             selection: {
               pageName: String(currentSelection.pageName || "").slice(0, 160),
               totalCount: Array.isArray(currentSelection.selection) ? currentSelection.selection.length : 0,
-              items: selectedNodes
+              items: selectedNodes,
+              ...(visualIntent && currentSelection.previewDataUrl ? { previewDataUrl: currentSelection.previewDataUrl } : {})
             }
           })
         });
@@ -692,14 +809,16 @@
         chatHistory.push({ role: "assistant", content: data.content });
         if (data.provider && data.model) {
           const actual = modelOptions.find(model => model.provider === data.provider && model.id === data.model);
-          if (actual) {
+          if (data.routingStrategy === "vision-direct") {
+            setModelStatus("ok", "Visual scan complete", data.model + " analyzed the selected-frame screenshot through the budget-checked vision route.");
+          } else if (data.tier === "paid" || actual?.tier === "paid") {
+            // Keep the dropdown preference intact. Report the paid model used for this turn separately.
+            modelAvailable = true;
+            setModelStatus("ok", "Paid fallback used", data.model + " returned this response. " + (data.fallbackReason || "Paid inference passed the gateway budget checks."));
+          } else if (actual) {
             currentModel = actual;
             modelAvailable = true;
             setModelStatus("ok", "Free model connected", actual.label + " returned the chat response.");
-          } else if (data.tier === "paid") {
-            // Do not replace the selected free preference: the next turn must retry free first.
-            modelAvailable = true;
-            setModelStatus("ok", "Paid fallback used", data.model + " returned the response after free models were unavailable. " + (data.fallbackReason || ""));
           }
         }
         appendMessage("assistant", data.content);
@@ -784,6 +903,10 @@
         return;
       }
 
+      if (message.type === "selection-preview") {
+        updateSelectionPreview(message);
+        return;
+      }
       if (message.type !== "selection") return;
       if (message.fileKey !== ALLOWED_FILE_KEY) return;
       updateSelectionContext(message);
