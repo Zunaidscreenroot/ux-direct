@@ -109,7 +109,7 @@ function cleanSettings(input: unknown): GatewaySettings {
 }
 export async function getGatewaySettings(): Promise<GatewaySettings> {
   const key = envScopeKey();
-  const store = await withStoreTimeout(getStore(), "Netlify Blobs store initialization").catch(() => null);
+  const store = await withStoreTimeout(getStore(), "Netlify Blobs store initialization");
   if (store) {
     try {
       const value = await withStoreTimeout(store.get(key, { type: "json" }), "Netlify Blobs settings read");
@@ -127,7 +127,7 @@ export async function saveGatewaySettings(input: unknown): Promise<GatewaySettin
   const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
   const settings = cleanSettings({ ...raw, updatedAt: new Date().toISOString() });
   runtimeSettings.set(key, settings);
-  const store = await getStore();
+  const store = await withStoreTimeout(getStore(), "Netlify Blobs store initialization");
   if (store) {
     try { await withStoreTimeout(store.setJSON(key, settings), "Netlify Blobs settings write"); }
     catch (error) { throw new Error("Could not persist gateway settings to Netlify Blobs: " + (error instanceof Error ? error.message : "unknown error")); }
