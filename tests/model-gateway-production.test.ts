@@ -126,3 +126,15 @@ test("Figma cockpit keeps explicit no-edit prompts in conversational planning mo
   assert.equal(requestsFigmaEdit("Rename the selected frame to VKYC Verification"), true);
   assert.equal(requestsFigmaEdit("Update the primary CTA text"), true);
 });
+
+
+test("visual edit requests have bounded deterministic output and an explicit vision timeout", () => {
+  const route = read("app/api/assistant/chat/route.ts");
+  const gateway = read("src/model-gateway/index.ts");
+  const ui = read("figma-plugin/ui.html");
+  assert.ok(route.includes('temperature: data.intent === "design-operation" ? 0.1 : 0.3'));
+  assert.ok(route.includes('max_tokens: data.intent === "design-operation" ? 1000 : 1400'));
+  assert.ok(gateway.includes("Math.max(timeoutMs, 24_000)"));
+  assert.ok(gateway.includes("does not support screenshot input"));
+  assert.ok(ui.includes('const routeNote = data.fallbackReason ? data.fallbackReason + " " : ""'));
+});
