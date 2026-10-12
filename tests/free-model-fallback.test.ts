@@ -107,7 +107,7 @@ test("paid fallback runs only after both free IDs fail and is assigned by task e
 });
 
 
-test("an explicitly chosen paid fallback is used only after both free models fail", async () => {
+test("an explicitly selected paid model is called directly without free-model attempts", async () => {
   const attempts: string[] = [];
   const selectedPaid = "openai/gpt-6-luna";
   const result = await chatCompletionFreeFirstThenPaid({
@@ -138,7 +138,9 @@ test("an explicitly chosen paid fallback is used only after both free models fai
 
   assert.equal(result.model, selectedPaid);
   assert.equal(result.tier, "paid");
-  assert.deepEqual(attempts, [LIGHTNING, ULTRA, selectedPaid]);
+  assert.equal(result.routingStrategy, "paid-direct");
+  assert.deepEqual(attempts, [selectedPaid]);
+  assert.match(result.fallbackReason ?? "", /called directly/i);
 });
 
 test("visual requests skip text-only free models and attach the selected-frame image to one paid vision call", async () => {
@@ -147,6 +149,7 @@ test("visual requests skip text-only free models and attach the selected-frame i
   const result = await chatCompletionFreeFirstThenPaid({
     model: LIGHTNING,
     providerId: "openrouter",
+    preferredPaidModelId: "deepseek/deepseek-v4-flash-0731",
     imageDataUrl,
     messages: [{ role: "user", content: "Visually inspect this selected frame." }],
     max_tokens: 32
@@ -177,4 +180,5 @@ test("visual requests skip text-only free models and attach the selected-frame i
   assert.equal(result.tier, "paid");
   assert.equal(result.routingStrategy, "vision-direct");
   assert.deepEqual(attempts, ["deepseek/deepseek-v4.1-flash"]);
+  assert.match(result.fallbackReason ?? "", /does not support screenshot input/i);
 });
