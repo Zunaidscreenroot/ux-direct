@@ -30,6 +30,10 @@ export type GatewayRequest = {
   openRouterPaidSelection?: boolean;
   /** Internal flag for a fixed allowlisted free OpenRouter attempt. */
   openRouterFreeSelection?: boolean;
+  /** Optional approved paid model preference, used only after free attempts fail. */
+  preferredPaidModelId?: string;
+  /** Bounded JPEG data URL, added only to an approved image-capable paid call. */
+  imageDataUrl?: string;
 };
 export type TokenUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 type ProviderChatPayload = { id?: unknown; model?: unknown; choices?: Array<{ message?: { content?: unknown } }>; usage?: TokenUsage };
@@ -41,7 +45,7 @@ export type GatewayResponse = {
   provider: string;
   latencyMs: number;
   tier?: "free-tier" | "paid";
-  routingStrategy?: "free-first";
+  routingStrategy?: "free-first" | "vision-direct";
   attemptedModels?: string[];
   fallbackReason?: string;
 };
@@ -282,7 +286,19 @@ export async function chatCompletion(
   if (!request.model?.trim()) throw new GatewayError("A model is required.",400);
   if (!Array.isArray(request.messages)||request.messages.length===0) throw new GatewayError("At least one chat message is required.",400);
   if(request.messages.some(m=>!m||!["system","user","assistant"].includes(m.role)||typeof m.content!=="string"))throw new GatewayError("Messages must contain a supported role and string content.",400);
-  const promptChars=request.messages.reduce((n,m)=>n+m.content.length,0);
+  if (request.imageDataUrl !== undefined &&
+      (typeof request.imageDataUrl !== "string" ||
+       request.imageDataUrl.length > 2_800_000 ||
+       !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(request.imageDataUrl))) {
+    throw new GatewayError("Visual input must be a bounded JPEG data URL.",400,"openrouter");
+  }
+  if (request.imageDataUrl && !getOpenRouterPaidChatModel(request.model)?.supportsImages) {
+    throw new GatewayError("The selected OpenRouter model does not support screenshot input.",400,"openrouter");
+  }
+  // Image tokens vary by provider; reserve a conservative input estimate for the
+  // image in addition to the text so budget preflight does not ignore screenshots.
+  const promptChars=request.messages.reduce((n,m)=>n+m.content.length,0) +
+    (request.imageDataUrl ? 12_000 : 0);
   if(promptChars>200_000)throw new GatewayError("Request content exceeds the 200,000-character limit.",413);
 
   const providers=options.providers??providersFromEnv();
@@ -368,7 +384,21 @@ export async function chatCompletion(
   const rates={billable,inputPriceInrPerMillion:modelPolicy.inputPriceInrPerMillion,outputPriceInrPerMillion:modelPolicy.outputPriceInrPerMillion};
   try{
     const headers:Record<string,string>={"Content-Type":"application/json",...(provider.apiKey?(provider.apiKeyHeader?{[provider.apiKeyHeader]:provider.apiKey}:{Authorization:`Bearer ${provider.apiKey}`}):{}),...provider.headers};
-    const response=await fetchImpl(`${trimSlash(provider.baseUrl)}/chat/completions`,{method:"POST",headers,body:JSON.stringify({model,messages:request.messages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{}),...(request.reasoning?{reasoning:request.reasoning}:{})}),signal:controller.signal});
+    let providerMessages: unknown[] = request.messages;
+    if (request.imageDataUrl) {
+      let lastUserIndex = -1;
+      for (let i = request.messages.length - 1; i >= 0; i--) {
+        if (request.messages[i].role === "user") { lastUserIndex = i; break; }
+      }
+      if (lastUserIndex < 0) throw new GatewayError("Visual review requires a user message.",400,"openrouter");
+      providerMessages = request.messages.map((message, index) => index === lastUserIndex
+        ? { role: message.role, content: [
+            { type: "text", text: message.content },
+            { type: "image_url", image_url: { url: request.imageDataUrl } }
+          ] }
+        : message);
+    }
+    const response=await fetchImpl(`${trimSlash(provider.baseUrl)}/chat/completions`,{method:"POST",headers,body:JSON.stringify({model,messages:providerMessages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{}),...(request.reasoning?{reasoning:request.reasoning}:{})}),signal:controller.signal});
     if(!response.ok)throw new GatewayError(`Provider returned HTTP ${response.status}.`,response.status===429?429:response.status>=500?502:response.status,provider.name);
     let payload:ProviderChatPayload;try{payload=await response.json() as ProviderChatPayload;}catch{throw new GatewayError("Provider returned invalid JSON.",502,provider.name);}
     const content=payload.choices?.[0]?.message?.content;
@@ -455,6 +485,37 @@ export async function chatCompletionFreeFirstThenPaid(
 
   const lastUserMessage = [...request.messages].reverse().find(message => message.role === "user")?.content ?? "";
   const reasoningFirst = /\b(strategy|strategic|complex reasoning|deep reasoning|critique|audit|heuristic|information architecture|\bia\b|user journey|journey map|flow design|trade[- ]off|research synthesis|accessibility review|product direction|decision framework|root cause)\b/i.test(lastUserMessage);
+
+  // A screenshot cannot be analyzed by either approved free Nemotron model.
+  // Route a visual request to exactly one approved vision-capable paid model;
+  // no paid request is made until this user-initiated function is called.
+  if (request.imageDataUrl) {
+    const selected = request.preferredPaidModelId
+      ? getOpenRouterPaidChatModel(request.preferredPaidModelId)
+      : undefined;
+    if (request.preferredPaidModelId && !selected) {
+      throw new GatewayError("Selected paid fallback is not in the approved OpenRouter model pool.",400,"openrouter");
+    }
+    const visionModel = selected?.supportsImages
+      ? selected
+      : OPENROUTER_PAID_CHAT_MODELS.find(model => model.supportsImages);
+    if (!visionModel) throw new GatewayError("No approved vision-capable paid model is configured.",503,"openrouter");
+    const result = await chatCompletionWithOpenRouterPaid({
+      ...request,
+      model: visionModel.id,
+      providerId: "openrouter",
+      moduleId: undefined,
+      openRouterFreeSelection: undefined,
+      openRouterPaidSelection: true
+    }, { ...options, providers, timeoutMs: Math.max(timeoutMs, 18_000) });
+    return {
+      ...result,
+      tier: "paid",
+      routingStrategy: "vision-direct",
+      attemptedModels: [visionModel.id],
+      fallbackReason: "Visual review requires image input; the two approved free Nemotron models are text-only. Paid inference was budget-checked before execution."
+    };
+  }
   const preferred = getOpenRouterFreeChatModel(request.model)?.id;
   const freeOrder = preferred
     ? [preferred, ...OPENROUTER_FREE_CHAT_MODELS.map(model => model.id).filter(id => id !== preferred)]
@@ -488,7 +549,13 @@ export async function chatCompletionFreeFirstThenPaid(
     }
   }
 
-  const paidModel = selectOpenRouterPaidChatModel(request.messages);
+  const selectedPaid = request.preferredPaidModelId
+    ? getOpenRouterPaidChatModel(request.preferredPaidModelId)
+    : undefined;
+  if (request.preferredPaidModelId && !selectedPaid) {
+    throw new GatewayError("Selected paid fallback is not in the approved OpenRouter model pool.",400,"openrouter");
+  }
+  const paidModel = selectedPaid ?? selectOpenRouterPaidChatModel(request.messages);
   try {
     const result = await chatCompletionWithOpenRouterPaid({
       ...request,
