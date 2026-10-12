@@ -231,6 +231,7 @@ async function runSelectedModelProbe(provider: ProviderId, model: string) {
         { role: "user", content: "Reply with exactly: UXD_PAID_MODEL_CHECK_OK" }
       ],
       temperature: 0,
+      reasoning: { effort: "minimal" },
       max_tokens: 128
     }, { timeoutMs: 18000 });
     const responseReceived = typeof result.content === "string" && result.content.trim().length > 0;
