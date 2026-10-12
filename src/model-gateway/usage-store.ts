@@ -120,7 +120,10 @@ export function estimateCostInr(
   return promptTokens * (override?.inputPriceInrPerMillion ?? config.inputPriceInrPerMillion) / 1_000_000 +
     completionTokens * (override?.outputPriceInrPerMillion ?? config.outputPriceInrPerMillion) / 1_000_000;
 }
-export async function recordModelUsage(input: Omit<UsageRecord, "id" | "at"> & { id?: string; at?: string }) {
+export async function recordModelUsage(
+  input: Omit<UsageRecord, "id" | "at"> & { id?: string; at?: string },
+  options: { persist?: boolean } = {}
+) {
   const item: UsageRecord = {
     ...input,
     id: input.id ?? randomUUID(),
@@ -136,11 +139,14 @@ export async function recordModelUsage(input: Omit<UsageRecord, "id" | "at"> & {
     moduleId: input.moduleId?.slice(0, 60),
     note: input.note?.slice(0, 240)
   };
-  const { records, store } = await readRecords();
-  const next = [item, ...records].slice(0, MAX_RECORDS);
+  const persist = options.persist !== false;
+  const recordsAndStore = persist
+    ? await readRecords()
+    : { records: [...runtimeRecords], store: null as LedgerStore | null };
+  const next = [item, ...recordsAndStore.records].slice(0, MAX_RECORDS);
   runtimeRecords.splice(0, runtimeRecords.length, ...next);
-  if (store) {
-    try { await withStoreTimeout(store.setJSON(scopedLedgerKey(), next), "Netlify Blobs usage-ledger write"); }
+  if (persist && recordsAndStore.store) {
+    try { await withStoreTimeout(recordsAndStore.store.setJSON(scopedLedgerKey(), next), "Netlify Blobs usage-ledger write"); }
     catch { /* The UI will report runtime-only retention if subsequent reads fail. */ }
   }
   // Structured logs never contain prompts, completions, or credentials.
