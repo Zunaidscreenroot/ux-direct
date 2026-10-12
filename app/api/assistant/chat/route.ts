@@ -177,8 +177,10 @@ export async function POST(request: Request) {
       providerId: "openrouter",
       budgetModuleId: "general",
       messages,
-      temperature: 0.3,
-      max_tokens: 1400,
+      // Structured edit plans benefit from lower-variance, shorter output;
+      // ordinary UX conversation keeps the larger response allowance.
+      temperature: data.intent === "design-operation" ? 0.1 : 0.3,
+      max_tokens: data.intent === "design-operation" ? 1000 : 1400,
       signal: request.signal
     }, { timeoutMs: 10_000 });
     const latencyMs = Date.now() - startedAt;
