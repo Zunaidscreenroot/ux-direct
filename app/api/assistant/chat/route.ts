@@ -159,6 +159,7 @@ export async function POST(request: Request) {
       // the approved free pool before it can invoke one paid model by expertise.
       model: data.model && data.model.endsWith(":free") ? data.model : "nvidia/nemotron-3.5-lightning:free",
       providerId: "openrouter",
+      budgetModuleId: "general",
       messages,
       temperature: 0.3,
       max_tokens: 1400,
