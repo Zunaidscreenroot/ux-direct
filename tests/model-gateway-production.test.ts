@@ -39,7 +39,7 @@ test("gateway admin secret is entered transiently, not stored in web storage", (
   assert.equal(page.includes("sessionStorage.setItem(\"adminKey\""), false);
 });
 
-test("OpenRouter cockpit uses only the two approved free and three expertise-routed paid models", () => {
+test("OpenRouter cockpit uses only the explicit free and expertise-routed paid allowlists", () => {
   const env = read(".env.example");
   const gateway = read("src/model-gateway/index.ts");
   const allowlist = read("src/model-gateway/openrouter-paid.ts");
@@ -50,10 +50,13 @@ test("OpenRouter cockpit uses only the two approved free and three expertise-rou
   assert.ok(env.includes("MODEL_GATEWAY_ADMIN_KEY="));
   assert.ok(allowlist.includes('id: "nvidia/nemotron-3.5-lightning:free"'));
   assert.ok(allowlist.includes('id: "nvidia/nemotron-3-ultra-550b-a55b:free"'));
+  assert.ok(allowlist.includes('id: "qwen/qwen3.8-27b:free"'));
+  assert.ok(allowlist.includes('id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"'));
+  assert.ok(allowlist.includes('id: "openai/gpt-oss-20b"'));
+  assert.ok(allowlist.includes('id: "openai/gpt-oss-120b"'));
   assert.ok(allowlist.includes('id: "deepseek/deepseek-v4.1-flash"'));
   assert.ok(allowlist.includes('id: "openai/gpt-6-luna"'));
   assert.ok(allowlist.includes('id: "deepseek/deepseek-v4-flash-0731"'));
-  assert.equal(allowlist.includes('id: "openai/gpt-oss-20b"'), false);
   assert.ok(gateway.includes("chatCompletionFreeFirstThenPaid"));
   assert.equal(gateway.includes("assertBudgetAllows(promptChars"), false);
   assert.ok(chatRoute.includes("chatCompletionFreeFirstThenPaid"));
@@ -80,14 +83,18 @@ test("OpenRouter account reporting is server-side and removed from application-s
 });
 
 
-test("gateway exact-model selector exposes all five approved OpenRouter models", () => {
+test("gateway exact-model selector exposes all nine approved OpenRouter models", () => {
   const page = read("app/page.tsx");
   for (const id of [
     "nvidia/nemotron-3.5-lightning:free",
     "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "qwen/qwen3.8-27b:free",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
     "openai/gpt-6-luna",
-    "deepseek/deepseek-v4.1-flash",
-    "deepseek/deepseek-v4-flash-0731"
+    "deepseek/deepseek-v4-flash-0731",
+    "deepseek/deepseek-v4.1-flash"
   ]) assert.ok(page.includes("\"" + id + "\""));
   assert.ok(page.includes("models.filter(m=>selectionCompatible(mode,m))"));
   assert.ok(page.includes('APPROVED_OPENROUTER_MODEL_IDS.has(m.id)'));
@@ -149,4 +156,16 @@ test("screenshot requests use bounded reasoning even when the user asks for a co
   assert.ok(route.includes('data.selection?.previewDataUrl || data.intent === "design-operation"'));
   assert.ok(route.includes('data.selection?.previewDataUrl ? 1200 : data.intent === "design-operation" ? 900 : 1400'));
   assert.ok(route.includes('data.selection?.previewDataUrl || data.intent === "design-operation"\n        ? { reasoning: { effort: "minimal" as const, max_tokens: 160 } }'));
+});
+
+
+test("free vision models are shown with their screenshot capability and only need paid inference after free attempts fail", () => {
+  const route = read("app/api/model-status/route.ts");
+  const gateway = read("src/model-gateway/index.ts");
+  const ui = read("figma-plugin/ui.html");
+  assert.ok(route.includes("supportsImages: model.supportsImages"));
+  assert.ok(gateway.includes("selectOpenRouterPaidVisionModel"));
+  assert.ok(gateway.includes("freeVisionModels.filter(model => model.supportsImages)"));
+  assert.ok(ui.includes("up to two approved free vision models first"));
+  assert.ok(ui.includes("a paid fallback may consume account credits"));
 });
