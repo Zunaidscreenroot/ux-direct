@@ -198,9 +198,11 @@ async function sendSelection() {
   }
 
   try {
+    var sourceWidth = typeof firstSelected.width === "number" ? Math.round(firstSelected.width) : 960;
+    var previewWidth = Math.max(1, Math.min(960, sourceWidth || 960));
     var previewBytes = await firstSelected.exportAsync({
       format: "JPG",
-      constraint: { type: "WIDTH", value: 960 },
+      constraint: { type: "WIDTH", value: previewWidth },
       quality: 0.65
     });
     assertUxDirectFileScope("export selected frame preview");
@@ -209,7 +211,7 @@ async function sendSelection() {
     if (previewBytes.length > 1500000) {
       previewBytes = await firstSelected.exportAsync({
         format: "JPG",
-        constraint: { type: "WIDTH", value: 720 },
+        constraint: { type: "WIDTH", value: Math.max(1, Math.min(720, previewWidth)) },
         quality: 0.5
       });
       if (!(previewBytes instanceof Uint8Array)) previewBytes = new Uint8Array(previewBytes);
