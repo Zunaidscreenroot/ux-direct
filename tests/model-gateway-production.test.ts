@@ -112,7 +112,7 @@ test("Figma cockpit identifies all approved pool tiers and paid-model readiness"
 test("Figma cockpit keeps explicit no-edit prompts in conversational planning mode", () => {
   const ui = read("figma-plugin/ui.html");
   const start = ui.indexOf("function requestsFigmaEdit(text) {");
-  const end = ui.indexOf("\\n      const designIntent =", start);
+  const end = ui.indexOf("\n      const designIntent =", start);
   assert.ok(start >= 0, "intent classifier should be present in the plugin UI");
   assert.ok(end > start, "intent classifier should end before the request is built");
   const classifierSource = ui.slice(start, end).trim();
