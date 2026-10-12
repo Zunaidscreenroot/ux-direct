@@ -77,3 +77,32 @@ test("OpenRouter account reporting is server-side and removed from application-s
   assert.equal(/Global monthly budget|Module budget \/ month|Max cost \/ request|MONTHLY CAP|MAX \/ REQUEST/.test(page), false);
   assert.equal(gateway.includes("assertBudgetAllows(promptChars"), false);
 });
+
+
+test("gateway exact-model selector exposes all five approved OpenRouter models", () => {
+  const page = read("app/page.tsx");
+  for (const id of [
+    "nvidia/nemotron-3.5-lightning:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "openai/gpt-6-luna",
+    "deepseek/deepseek-v4.1-flash",
+    "deepseek/deepseek-v4-flash-0731"
+  ]) assert.ok(page.includes("\"" + id + "\""));
+  assert.ok(page.includes("models.filter(m=>selectionCompatible(mode,m))"));
+  assert.ok(page.includes('APPROVED_OPENROUTER_MODEL_IDS.has(m.id)'));
+});
+
+test("cockpit task planner reports real gateway mode/model instead of hard-coded mock mode", () => {
+  const page = read("app/page.tsx");
+  assert.ok(page.includes('planResult.mode === "gateway" ? "OPENROUTER" : "MOCK"'));
+  assert.ok(page.includes('planResult.diagnostics?.model ?? "not reported"'));
+  assert.equal(page.includes("Plan created in mock mode."), false);
+  assert.equal(page.includes("This first vertical slice uses a deterministic mock provider."), false);
+});
+
+test("Figma cockpit identifies all approved pool tiers and paid-model readiness", () => {
+  const ui = read("figma-plugin/ui.html");
+  assert.ok(ui.includes('freeGroup.label = "Free · tried first ("'));
+  assert.ok(ui.includes('paidGroup.label = "Paid · fallback ("'));
+  assert.ok(ui.includes('" + readyPaidModels + " of " + paidModels.length'));
+});
