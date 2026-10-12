@@ -68,9 +68,9 @@ export async function GET() {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Gateway settings are unavailable.";
     const safeMessage = message
-      .replace(/Bearer\\s+[^\\s]+/gi, "Bearer [redacted]")
+      .replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]")
       .replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]")
-      .replace(/[\\r\\n\\t]+/g, " ")
+      .replace(/[\r\n\t]+/g, " ")
       .slice(0, 240);
     console.error("[gateway-settings]", JSON.stringify({
       event: "settings-endpoint-failed",
