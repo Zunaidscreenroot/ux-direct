@@ -373,9 +373,10 @@ export async function GET(request: Request) {
       if (provider !== "openrouter") {
         return NextResponse.json({ available: false, error: "Unsupported provider.", diagnosticId: id }, { status: 400, headers });
       }
-      if (!model.endsWith(":free") && !getOpenRouterPaidChatModel(model)) {
+      if ((!model.endsWith(":free") && !getOpenRouterPaidChatModel(model)) ||
+          (model.endsWith(":free") && !getOpenRouterFreeChatModel(model))) {
         return NextResponse.json({
-          available: false, error: "Only free IDs or explicitly allowlisted low-cost paid OpenRouter models can be probed.", diagnosticId: id
+          available: false, error: "Only the two approved free Nemotron IDs and three approved paid model IDs can be probed.", diagnosticId: id
         }, { status: 400, headers });
       }
       // Probe only the explicitly selected model. Paid probes are restricted to the
@@ -388,7 +389,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: "Unsupported provider.", diagnosticId: id }, { status: 400, headers });
       }
       const result = await discoverWorkingFreeModel();
-      return NextResponse.json({ ...result, diagnosticId: id, note: "Models are fetched live from the provider API; no static model allowlist is used by this endpoint." }, { headers });
+      return NextResponse.json({ ...result, diagnosticId: id, note: "Discovery tests only the two approved free Nemotron models; paid fallback is selected separately by task expertise." }, { headers });
     }
     // Fetch the live catalog without probing every candidate. The plugin probes only
     // the user's selected model, avoiding multiple inference requests on startup.
@@ -446,8 +447,8 @@ export async function POST(request: Request) {
   }
   const parsed = body as { provider?: unknown; model?: unknown; fileKey?: unknown };
   if (parsed.provider !== "openrouter" || typeof parsed.model !== "string" || typeof parsed.fileKey !== "string" ||
-      (!parsed.model.endsWith(":free") && !getOpenRouterPaidChatModel(parsed.model))) {
-    return NextResponse.json({ available: false, error: "A free OpenRouter model or allowlisted paid model ID and fileKey are required.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
+      (!getOpenRouterFreeChatModel(parsed.model) && !getOpenRouterPaidChatModel(parsed.model))) {
+    return NextResponse.json({ available: false, error: "One of the two approved free Nemotron IDs or three approved paid model IDs and fileKey are required.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
   }
   if (!originAllowed(request) || !approvedFileKey(request, parsed.fileKey) || !isAllowedFigmaFileKey(parsed.fileKey)) {
     return NextResponse.json({ available: false, error: "Origin or Figma file key not allowed.", diagnosticId: diagnosticId() }, { status: 403, headers: corsHeaders() });
