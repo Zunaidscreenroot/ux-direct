@@ -342,9 +342,11 @@
         }
         selector.replaceChildren();
         const freeGroup = document.createElement("optgroup");
-        freeGroup.label = "Free · tried first";
+        freeGroup.label = "Free · tried first (" + modelOptions.filter(model => model.tier === "free-tier").length + ")";
         const paidGroup = document.createElement("optgroup");
-        paidGroup.label = "Paid · explicit preference / fallback";
+        const paidModels = modelOptions.filter(model => model.tier === "paid");
+        const readyPaidModels = paidModels.filter(model => model.available === true).length;
+        paidGroup.label = "Paid · fallback (" + readyPaidModels + "/" + paidModels.length + " ready)";
         modelOptions.forEach(model => {
           const option = document.createElement("option");
           option.value = model.id;
@@ -357,6 +359,7 @@
           (model.tier === "paid" ? paidGroup : freeGroup).appendChild(option);
         });
         selector.append(freeGroup, paidGroup);
+        selector.title = "Approved OpenRouter pool: " + modelOptions.filter(model => model.tier === "free-tier").length + " free-first model(s), " + readyPaidModels + " of " + paidModels.length + " paid fallback model(s) verified. Unverified paid choices remain visible but cannot be used.";
         const preferred = modelOptions.find(model => model.id === payload.selectedModel && model.available !== false)
           || modelOptions.find(model => model.tier === "free-tier");
         selector.value = preferred.id;
@@ -365,7 +368,7 @@
         const detail = error && error.message ? error.message : "Could not load models.";
         selector.disabled = true;
         setModelStatus("bad", "Model list failed", detail);
-        if (!modelProbeRow) modelProbeRow = appendMessage("assistant", "I couldn’t load the free-model list from Netlify Preview.\n\n" + detail);
+        if (!modelProbeRow) modelProbeRow = appendMessage("assistant", "I couldn’t load the approved model list from Netlify Preview.\n\n" + detail);
         console.warn("[UX Direct free model list]", error);
       }
     }
