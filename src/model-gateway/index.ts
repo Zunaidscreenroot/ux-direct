@@ -165,10 +165,10 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
     { id: "google/gemma-4-26b-a4b-it:free", provider: "openrouter", label: "Gemma 4 26B A4B · OpenRouter free", tier: "free-tier", tasks: ["classification","extraction","summaries","vision"], notes: "Verify exact free endpoint availability before activation." },
     ...OPENROUTER_PAID_CHAT_MODELS.map(model => ({
       id: model.id, provider: "openrouter", label: model.label, tier: "paid" as const,
-      tasks: ["chat", "UX drafting", "reasoning"],
-      notes: "Allowlisted OpenRouter paid test model. Listed base price $0.02 input / $0.10 output per 1M tokens; gateway budget reserves at 5x listed price.",
-      usdInputPerMillion: model.budgetInputUsdPerMillion,
-      usdOutputPerMillion: model.budgetOutputUsdPerMillion,
+      tasks: [...model.expertise],
+      notes: "Approved expertise-routed paid fallback. Per-request budget reserve is 5x listed price; paid inference occurs only after the two approved free models fail.",
+      usdInputPerMillion: model.listedInputUsdPerMillion,
+      usdOutputPerMillion: model.listedOutputUsdPerMillion,
       pricingSource: model.pricingSource,
       pricingReviewedAt: "2026-10-12"
     })),
@@ -178,7 +178,15 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
   ];
   const known = base.map(m => {
     const configuredProvider = providers.find(p => p.name === m.provider && (p.models.includes(m.id) || (p.models.includes("default") && ["ollama","custom"].includes(p.name))));
-    return { ...m, ...(configuredProvider?.kind === "paid" && m.tier !== "mock" && m.tier !== "local" ? { tier: "paid" as const } : {}), configured: Boolean(configuredProvider) };
+    const openRouterKeyReady = m.provider === "openrouter" && Boolean(
+      providers.find(p => p.name === "openrouter" && p.apiKey) &&
+      (getOpenRouterFreeChatModel(m.id) || getOpenRouterPaidChatModel(m.id))
+    );
+    return {
+      ...m,
+      ...(configuredProvider?.kind === "paid" && m.tier !== "mock" && m.tier !== "local" ? { tier: "paid" as const } : {}),
+      configured: Boolean(configuredProvider) || openRouterKeyReady
+    };
   });
   const extras: ModelCatalogEntry[] = providers.flatMap(p => p.models.filter(id => id !== "default" && !known.some(m => m.provider === p.name && m.id === id)).map(id => ({
     id, provider: p.name, label: p.name + ": " + id,
@@ -186,7 +194,13 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
     tasks: p.kind === "local" ? ["classification","extraction","summaries"] : p.kind === "free-tier" ? ["general","reasoning","critique"] : ["general"],
     configured: true, notes: id.endsWith(":free") ? "Explicit free model. Account quota still applies." : "Verify provider quota and published rates before billing."
   } as ModelCatalogEntry)));
-  return [...known, ...extras].filter((m, i, a) => a.findIndex(o => o.id === m.id && o.provider === m.provider) === i);
+  const unique = [...known, ...extras].filter((m, i, a) => a.findIndex(o => o.id === m.id && o.provider === m.provider) === i);
+  const approvedOpenRouter = (model: ModelCatalogEntry) =>
+    model.provider === "openrouter" && Boolean(getOpenRouterFreeChatModel(model.id) || getOpenRouterPaidChatModel(model.id));
+  // The visible Model Gateway catalog is deliberately reduced to the approved five
+  // OpenRouter models plus the explicit no-inference mock. Legacy provider/model
+  // registrations are not eligible for this product's cockpit routing.
+  return unique.filter(model => (model.provider === "mock" && model.id === "mock/ux-direct") || approvedOpenRouter(model));
 }
 export function resolveProvider(model: string, providers: ProviderConfig[]): ProviderConfig {
   const exact = providers.find(provider => provider.models.includes(model));
