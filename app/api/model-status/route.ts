@@ -371,7 +371,7 @@ export async function GET(request: Request) {
       // Probe only the explicitly selected model. Paid probes are restricted to the
       // server-side allowlist and use a 128-token response cap.
       const result = await runSelectedModelProbe(provider, model);
-      return NextResponse.json({ ...result, diagnosticId: id }, { headers });
+      return NextResponse.json({ ...result, probeVersion: "paid-probe-minimal-reasoning-store-timeouts-v1", diagnosticId: id }, { headers });
     }
     if (provider) {
       if (provider !== "openrouter") {
@@ -412,6 +412,7 @@ export async function GET(request: Request) {
       ...(!models.length ? { reason: ("reason" in result ? result.reason : undefined) ?? "No free OpenRouter models were returned by the live catalog." } : {}),
       checkedAt: result.checkedAt ?? new Date().toISOString(),
       diagnosticId: id,
+      probeVersion: "paid-probe-minimal-reasoning-store-timeouts-v1",
       note: "Free model IDs and the allowlisted paid model are verified against OpenRouter live catalog pricing. The plugin probes only the selected model before enabling chat."
     }, { headers });
   } catch (error) {
