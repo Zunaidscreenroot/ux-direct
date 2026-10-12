@@ -80,9 +80,13 @@ function modeCompatible(mode:GatewayMode,m:GatewayModel){if(mode==="free")return
 const APPROVED_OPENROUTER_MODEL_IDS = new Set([
  "nvidia/nemotron-3.5-lightning:free",
  "nvidia/nemotron-3-ultra-550b-a55b:free",
+ "qwen/qwen3.8-27b:free",
+ "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+ "openai/gpt-oss-20b",
+ "openai/gpt-oss-120b",
  "openai/gpt-6-luna",
- "deepseek/deepseek-v4.1-flash",
- "deepseek/deepseek-v4-flash-0731"
+ "deepseek/deepseek-v4-flash-0731",
+ "deepseek/deepseek-v4.1-flash"
 ]);
 function selectionCompatible(mode:GatewayMode,m:GatewayModel){
  if(mode==="free"&&m.provider==="openrouter")return APPROVED_OPENROUTER_MODEL_IDS.has(m.id);
@@ -139,7 +143,7 @@ function ModelGatewayPanel(){
  function applySuggestion(module:GatewayModule,mode:GatewayMode){const m=recommendation(module,mode);if(!m)return;updateModule(module.id,{mode,selectedModelKey:m.selectionKey});setMessage("Selected "+m.label+" for "+module.label+". Save to apply.");}
   return <div className="content gateway-content accountant-content">
   <div className="eyebrow"><span className="pulse"/> MODEL OPERATIONS · OPENROUTER</div>
-  <div className="gateway-title-row"><div><h1>Model gateway.<br/><em>Spend from available credits.</em></h1><p className="intro">UX Direct tries the two approved free Nemotron models first, then routes to one approved paid model when needed. OpenRouter is the provider gateway; its account balance and key limits determine available paid usage. UX Direct shows usage and estimates without imposing monthly spending caps.</p></div>
+  <div className="gateway-title-row"><div><h1>Model gateway.<br/><em>Spend from available credits.</em></h1><p className="intro">UX Direct keeps a strict OpenRouter allowlist: free Nemotron, Qwen and Omni models first, then one task-matched paid fallback if needed. Routine code/drafts can use GPT-OSS 20B; UX critique and planning can use GPT-OSS 120B; more complex implementation stays on DeepSeek. Screenshot review tries up to two approved free vision models first unless you explicitly select a paid model. OpenRouter account credits and key limits govern paid usage. UX Direct records estimated usage without adding app-side spend caps.</p></div>
    <div className="gateway-header-actions"><button className="secondary-button" type="button" onClick={()=>void smoke()} disabled={smokeBusy}>{smokeBusy?"Testing…":"Run free smoke test ↗"}</button><button className="submit-button" type="button" onClick={()=>void load()} disabled={busy}>{busy?"Refreshing…":"Refresh ↻"}</button></div></div>
   {loadError&&<p className="inline-note" role="alert">{loadError}</p>}{smokeMessage&&<p className="gateway-smoke-message" role="status">{smokeMessage}</p>}
   <div className="gateway-mode-banner"><span className="gateway-status-dot gateway-dot-live"/><div><strong>OpenRouter provider gateway · free-first with one paid fallback</strong><p>Try Nemotron 3.5 Lightning and Nemotron 3 Ultra first. If neither returns a usable response, route once to GPT-6 Luna for general UX, DeepSeek V4.1 Flash for strategy/critique, or DeepSeek V4 Flash for coding and implementation. OpenRouter enforces account credits, key limits and provider rate limits; UX Direct retains model allowlists, request rate limits and usage telemetry.</p></div><span className="gateway-fee">₹0 gateway fee</span></div>
@@ -178,7 +182,7 @@ function ModelGatewayPanel(){
    <label className="gateway-control-field"><span>Exact model <i>{p.selectedModelKey==="auto"?"Auto within mode":"Strict allowlist"}</i></span><select disabled={!p.enabled} value={p.selectedModelKey} onChange={e=>updateModule(module.id,{selectedModelKey:e.target.value})}><option value="auto">Auto recommendation · selected mode only</option>{modeOptions(p.mode).map(m=><option key={m.selectionKey} value={m.selectionKey}>{m.label}{m.configured?" · connected":" · not connected"}</option>)}</select></label>
    {chosen&&<p className="gateway-selected-note"><span className={"status-dot-inline "+(chosen.configured?"green":"amber")}/>{chosen.configured?"Configured":"Not connected; request will be blocked"} · {chosen.notes}</p>}
    <div className="gateway-recommendation"><div><strong>Current-mode suggestion</strong><p>{rec?rec.label+" — task fit and connection status guide this choice." : "No catalog option for this mode yet."}</p></div>{rec&&<button className="text-button" type="button" onClick={()=>applySuggestion(module,p.mode)}>Use suggestion ↗</button>}</div>
-   <div className="gateway-recommendation paid-recommendation"><div><strong>Paid fallback · automatic expertise match</strong><p>General UX and writing → GPT-6 Luna · strategy and critique → DeepSeek V4.1 Flash · coding and implementation → DeepSeek V4 Flash. The chosen paid model is attempted only after both approved free models fail.</p></div></div>
+   <div className="gateway-recommendation paid-recommendation"><div><strong>Paid fallback · automatic expertise match</strong><p>Routine code, extraction and short drafts → GPT-OSS 20B (~$0.02/$0.10 per 1M tokens) · UX critique and planning → GPT-OSS 120B (~$0.03/$0.17) · complex implementation → DeepSeek V4 Flash · advanced reasoning → DeepSeek V4.1 Flash · low-cost paid vision fallback → GPT-6 Luna. Automatic routing uses at most two free attempts before one paid fallback.</p></div></div>
   </article>;})}</div>
   <div className="gateway-section-heading"><div><span className="section-kicker">02 · MODEL PRICING</span><h2>Estimate token costs</h2><p>Rates are INR per 1 million tokens. Example assumes 100k input + 20k output tokens. Rates are for planning and usage estimates only; OpenRouter enforces provider-side credit limits.</p></div><span className="count">{models.length} MODEL OPTIONS</span></div>
   <section className="gateway-panel model-accountant-panel"><div className="model-catalog-toolbar"><label className="gateway-control-field"><span>Filter models</span><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All</option><option value="connected">Connected only</option><option value="free">Free-tier candidates</option><option value="paid">Billable models</option><option value="local">Local models</option></select></label><span className="gateway-footnote">Published rates are editable suggestions, not a live quote.</span></div>
