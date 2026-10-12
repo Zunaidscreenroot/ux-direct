@@ -15,6 +15,7 @@ export type GatewayRequest = {
   temperature?: number;
   max_tokens?: number;
   signal?: AbortSignal;
+  reasoning?: { effort?: "minimal" | "low" | "medium" | "high"; max_tokens?: number };
   moduleId?: string;
   providerId?: string;
   /** Set only by the server-side allowlisted OpenRouter paid-model helper. */
@@ -325,7 +326,7 @@ export async function chatCompletion(
   const rates={billable,inputPriceInrPerMillion:modelPolicy.inputPriceInrPerMillion,outputPriceInrPerMillion:modelPolicy.outputPriceInrPerMillion};
   try{
     const headers:Record<string,string>={"Content-Type":"application/json",...(provider.apiKey?(provider.apiKeyHeader?{[provider.apiKeyHeader]:provider.apiKey}:{Authorization:`Bearer ${provider.apiKey}`}):{}),...provider.headers};
-    const response=await fetchImpl(`${trimSlash(provider.baseUrl)}/chat/completions`,{method:"POST",headers,body:JSON.stringify({model,messages:request.messages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{})}),signal:controller.signal});
+    const response=await fetchImpl(`${trimSlash(provider.baseUrl)}/chat/completions`,{method:"POST",headers,body:JSON.stringify({model,messages:request.messages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{}),...(request.reasoning?{reasoning:request.reasoning}:{})}),signal:controller.signal});
     if(!response.ok)throw new GatewayError(`Provider returned HTTP ${response.status}.`,response.status===429?429:response.status>=500?502:response.status,provider.name);
     let payload:ProviderChatPayload;try{payload=await response.json() as ProviderChatPayload;}catch{throw new GatewayError("Provider returned invalid JSON.",502,provider.name);}
     const content=payload.choices?.[0]?.message?.content;
