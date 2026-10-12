@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { GatewayError, chatCompletionWithOpenRouterPaid } from "@/src/model-gateway";
+import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 import {
   getOpenRouterFreeChatModel,
   getOpenRouterPaidChatModel,
@@ -245,7 +246,7 @@ async function runSelectedModelProbe(provider: ProviderId, model: string) {
       temperature: 0,
       reasoning: { effort: "minimal" },
       max_tokens: 128
-    }, { timeoutMs: 12000 });
+    }, { timeoutMs: 18000 });
     const responseReceived = typeof result.content === "string" && result.content.trim().length > 0;
     return {
       available: responseReceived,
@@ -479,6 +480,21 @@ export async function POST(request: Request) {
   }
   if (!originAllowed(request) || !approvedFileKey(request, parsed.fileKey) || !isAllowedFigmaFileKey(parsed.fileKey)) {
     return NextResponse.json({ available: false, error: "Origin or Figma file key not allowed.", diagnosticId: diagnosticId() }, { status: 403, headers: corsHeaders() });
+  }
+  if (approvedPaid) {
+    const clientIp = request.headers.get("x-nf-client-connection-ip") ||
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+    const limit = checkGatewayRateLimit("paid-model-test:" + clientIp, Date.now(), 3);
+    if (!limit.allowed) {
+      return NextResponse.json({
+        available: false,
+        error: "Paid model test limit reached. Wait a minute before trying another connection check.",
+        diagnosticId: diagnosticId()
+      }, {
+        status: 429,
+        headers: { ...corsHeaders(), "Retry-After": String(limit.retryAfterSeconds) }
+      });
+    }
   }
   // POST probes are only triggered by an explicit UI action. A paid probe
   // runs through the shared gateway, budget guard and usage ledger; GET never
