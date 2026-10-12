@@ -355,3 +355,35 @@ test("visual requests try an approved free vision model before spending paid cre
   assert.deepEqual(attempts, [QWEN_VISION]);
   assert.match(result.fallbackReason ?? "", /no paid inference/i);
 });
+
+
+test("structured visual edit plans use one low-cost paid vision request without free retries", async () => {
+  const attempts: string[] = [];
+  const result = await chatCompletionFreeFirstThenPaid({
+    model: LIGHTNING,
+    providerId: "openrouter",
+    imageDataUrl: "data:image/jpeg;base64,AAAA",
+    forcePaidVision: true,
+    messages: [{ role: "user", content: "Propose safe Figma edit operations as JSON." }],
+    max_tokens: 128
+  }, {
+    providers,
+    timeoutMs: 2000,
+    fetchImpl: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { model: string };
+      attempts.push(body.model);
+      return new Response(JSON.stringify({
+        id: "openrouter-structured-vision-test",
+        model: body.model,
+        choices: [{ message: { content: '{"operations":[]}' } }],
+        usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 }
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch
+  });
+
+  assert.equal(result.model, "openai/gpt-6-luna");
+  assert.equal(result.tier, "paid");
+  assert.equal(result.routingStrategy, "vision-direct");
+  assert.deepEqual(attempts, ["openai/gpt-6-luna"]);
+  assert.match(result.fallbackReason ?? "", /structured Figma edit plans/i);
+});
