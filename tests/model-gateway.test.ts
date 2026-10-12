@@ -91,9 +91,10 @@ test("provider environment config enables free-tier options only when a key exis
     GROQ_MODELS: "openai/gpt-oss-20b"
   });
   assert.equal(configured.some(p => p.name === "groq"), true);
-  assert.equal(getModelCatalog(configured).some(m => m.id === "openai/gpt-oss-20b"), false);
+  const gptOss = getModelCatalog(configured).find(m => m.provider === "openrouter" && m.id === "openai/gpt-oss-20b");
+  assert.equal(gptOss?.configured, false);
   assert.equal(getModelCatalog(configured).some(m => m.provider === "groq"), false);
-  // The catalog deliberately exposes only the approved five OpenRouter models plus mock.
+  // Approved OpenRouter entries remain visible as not connected; this must not expose configured Groq entries.
   assert.equal(routeTask("classify", configured).provider, "mock");
 });
 
@@ -236,7 +237,7 @@ test("usage ledger records token-level counts and computes monthly budget totals
 });
 
 
-test("Model Gateway catalog stays restricted to the approved five OpenRouter models plus mock", async () => {
+test("Model Gateway catalog stays restricted to the explicit OpenRouter allowlist plus mock", async () => {
   const { providersFromEnv, getModelCatalog } = await import("../src/model-gateway");
   const providers = providersFromEnv({
     NODE_ENV: "production",
@@ -251,11 +252,15 @@ test("Model Gateway catalog stays restricted to the approved five OpenRouter mod
   const allowedIds = [
     "nvidia/nemotron-3.5-lightning:free",
     "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "qwen/qwen3.8-27b:free",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
     "deepseek/deepseek-v4.1-flash",
     "openai/gpt-6-luna",
     "deepseek/deepseek-v4-flash-0731"
   ].sort();
   assert.deepEqual(catalog.filter(model => model.provider === "openrouter").map(model => model.id).sort(), allowedIds);
   assert.equal(catalog.some(model => model.provider !== "openrouter" && model.provider !== "mock"), false);
-  assert.equal(catalog.some(model => model.id === "openai/gpt-4o-mini" || model.id === "deepseek-v4-pro" || model.id === "openai/gpt-oss-20b"), false);
+  assert.equal(catalog.some(model => model.id === "openai/gpt-4o-mini" || model.id === "deepseek-v4-pro"), false);
 });
