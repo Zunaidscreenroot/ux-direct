@@ -44,7 +44,7 @@ export type GatewayResponse = {
   provider: string;
   latencyMs: number;
   tier?: "free-tier" | "paid";
-  routingStrategy?: "free-first" | "vision-direct";
+  routingStrategy?: "free-first" | "vision-direct" | "paid-direct";
   attemptedModels?: string[];
   fallbackReason?: string;
 };
@@ -484,19 +484,39 @@ export async function chatCompletionFreeFirstThenPaid(
   const lastUserMessage = [...request.messages].reverse().find(message => message.role === "user")?.content ?? "";
   const reasoningFirst = /\b(strategy|strategic|complex reasoning|deep reasoning|critique|audit|heuristic|information architecture|\bia\b|user journey|journey map|flow design|trade[- ]off|research synthesis|accessibility review|product direction|decision framework|root cause)\b/i.test(lastUserMessage);
   const timeoutMs = options.timeoutMs ?? 10_000;
+  const selectedPaid = request.preferredPaidModelId
+    ? getOpenRouterPaidChatModel(request.preferredPaidModelId)
+    : undefined;
+  if (request.preferredPaidModelId && !selectedPaid) {
+    throw new GatewayError("Selected paid model is not in the approved OpenRouter model pool.",400,"openrouter");
+  }
+
+  // An exact paid choice in the cockpit is an explicit instruction: do not
+  // burn latency or free-model retries before calling the selected model.
+  if (selectedPaid && !request.imageDataUrl) {
+    const result = await chatCompletionWithOpenRouterPaid({
+      ...request,
+      model: selectedPaid.id,
+      providerId: "openrouter",
+      moduleId: undefined,
+      openRouterFreeSelection: undefined,
+      openRouterPaidSelection: true
+    }, { ...options, providers, timeoutMs: Math.max(timeoutMs, 20_000) });
+    return {
+      ...result,
+      tier: "paid",
+      routingStrategy: "paid-direct",
+      attemptedModels: [selectedPaid.id],
+      fallbackReason: "The selected paid model was called directly; free models were not attempted."
+    };
+  }
 
   // A screenshot cannot be analyzed by either approved free Nemotron model.
-  // Route a visual request to exactly one approved vision-capable paid model;
-  // no paid request is made until this user-initiated function is called.
+  // Route visual work to exactly one approved image-capable paid model, and
+  // make any capability-based model substitution visible to the caller.
   if (request.imageDataUrl) {
-    const selected = request.preferredPaidModelId
-      ? getOpenRouterPaidChatModel(request.preferredPaidModelId)
-      : undefined;
-    if (request.preferredPaidModelId && !selected) {
-      throw new GatewayError("Selected paid fallback is not in the approved OpenRouter model pool.",400,"openrouter");
-    }
-    const visionModel = selected?.supportsImages
-      ? selected
+    const visionModel = selectedPaid?.supportsImages
+      ? selectedPaid
       : OPENROUTER_PAID_CHAT_MODELS.find(model => model.supportsImages);
     if (!visionModel) throw new GatewayError("No approved vision-capable paid model is configured.",503,"openrouter");
     const result = await chatCompletionWithOpenRouterPaid({
@@ -506,13 +526,16 @@ export async function chatCompletionFreeFirstThenPaid(
       moduleId: undefined,
       openRouterFreeSelection: undefined,
       openRouterPaidSelection: true
-    }, { ...options, providers, timeoutMs: Math.max(timeoutMs, 18_000) });
+    }, { ...options, providers, timeoutMs: Math.max(timeoutMs, 24_000) });
+    const changedForVision = Boolean(selectedPaid && selectedPaid.id !== visionModel.id);
     return {
       ...result,
       tier: "paid",
       routingStrategy: "vision-direct",
       attemptedModels: [visionModel.id],
-      fallbackReason: "Visual review requires image input; the two approved free Nemotron models are text-only. This user-approved paid request is billed through OpenRouter and uses provider-side credit limits."
+      fallbackReason: changedForVision
+        ? "The selected model (" + selectedPaid!.label + ") does not support screenshot input. This request used " + visionModel.label + " instead so the selected screen could be analyzed. The request went to one paid model only."
+        : "Visual review requires image input; the two approved free Nemotron models are text-only. This request went to one approved vision-capable paid model only."
     };
   }
   const preferred = getOpenRouterFreeChatModel(request.model)?.id;
