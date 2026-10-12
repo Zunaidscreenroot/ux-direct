@@ -176,7 +176,7 @@ export async function POST(request: Request) {
       requestId,
       provider: result.provider,
       model: result.model,
-      tier: result.tier ?? (result.model.endsWith(":free") ? "free-tier" : "paid"),
+      tier: result.tier ?? (result.model?.endsWith(":free") ? "free-tier" : "paid"),
       routingStrategy: result.routingStrategy ?? "free-first",
       attemptedModels: result.attemptedModels ?? [result.model],
       fallbackReason: result.fallbackReason ?? null,
