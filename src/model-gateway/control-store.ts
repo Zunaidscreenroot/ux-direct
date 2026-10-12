@@ -60,14 +60,86 @@ function safeStoreError(error: unknown): string {
 function logStoreDiagnostic(event: string, fields: Record<string, unknown> = {}) {
   console.info("[gateway-control-store]", JSON.stringify({ event, ...fields, runtime: storeRuntimeContext() }));
 }
+function blobEndpointHost(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  try { return new URL(value).host.slice(0, 160); } catch { return undefined; }
+}
+function tracedBlobsFetch(): typeof fetch {
+  return async (input, init) => {
+    let url: URL | undefined;
+    try {
+      const raw = input instanceof Request ? input.url : input instanceof URL ? input.href : String(input);
+      url = new URL(raw);
+    } catch {
+      // Fetch still gets the original input; only safe diagnostics are omitted.
+    }
+    const startedAt = Date.now();
+    const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+    const routeKind = url?.pathname.includes("/region:") ? "edge-region-route" :
+      url?.pathname.startsWith("/api/v1/blobs/") ? "api-route" : "edge-route";
+    console.info("[gateway-control-store]", JSON.stringify({
+      event: "blob-fetch-started",
+      endpointHost: url?.host,
+      method,
+      routeKind
+    }));
+    const sourceSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const timeoutSignal = AbortSignal.timeout(9_000);
+    const signal = sourceSignal ? AbortSignal.any([sourceSignal, timeoutSignal]) : timeoutSignal;
+    try {
+      const response = await fetch(input, { ...init, signal });
+      console.info("[gateway-control-store]", JSON.stringify({
+        event: "blob-fetch-completed",
+        endpointHost: url?.host,
+        method,
+        status: response.status,
+        durationMs: Date.now() - startedAt
+      }));
+      return response;
+    } catch (error) {
+      console.error("[gateway-control-store]", JSON.stringify({
+        event: "blob-fetch-rejected",
+        endpointHost: url?.host,
+        method,
+        durationMs: Date.now() - startedAt,
+        timedOut: timeoutSignal.aborted,
+        error: safeStoreError(error)
+      }));
+      throw error;
+    }
+  };
+}
 async function getStore(): Promise<BlobStore | null> {
   if (process.env.NETLIFY !== "true" && !process.env.NETLIFY_BLOBS_CONTEXT) return null;
   if (!storePromise) storePromise = (async () => {
     try {
       const { getStore } = await import("@netlify/blobs");
-      // Branch-prefixed keys below isolate preview settings from production settings.
-      const store = getStore("ux-direct-gateway-control") as unknown as BlobStore;
-      logStoreDiagnostic("store-initialized", { store: "ux-direct-gateway-control" });
+      // This site-wide store is pinned to the region reported by Netlify for
+      // this project. The explicit region is important for edge-backed access.
+      const store = getStore({
+        name: "ux-direct-gateway-control",
+        region: "us-east-2",
+        fetch: tracedBlobsFetch()
+      }) as unknown as BlobStore;
+      const rawContext = process.env.NETLIFY_BLOBS_CONTEXT;
+      let edgeHost: string | undefined;
+      let apiHost: string | undefined;
+      let primaryRegion: string | undefined;
+      if (rawContext) {
+        try {
+          const context = JSON.parse(Buffer.from(rawContext, "base64").toString("utf8")) as Record<string, unknown>;
+          edgeHost = blobEndpointHost(context.edgeURL);
+          apiHost = blobEndpointHost(context.apiURL);
+          primaryRegion = typeof context.primaryRegion === "string" ? context.primaryRegion.slice(0, 40) : undefined;
+        } catch { /* Only safe endpoint metadata is logged. */ }
+      }
+      logStoreDiagnostic("store-initialized", {
+        store: "ux-direct-gateway-control",
+        configuredRegion: "us-east-2",
+        edgeHost,
+        apiHost,
+        primaryRegion
+      });
       return store;
     } catch (error) {
       console.error("[gateway-control-store]", JSON.stringify({
