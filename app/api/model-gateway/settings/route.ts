@@ -48,7 +48,7 @@ export async function PUT(request: Request) {
     const rawModule = rawModules[def.id];
     if (!rawModule || typeof rawModule !== "object" || Array.isArray(rawModule)) return jsonError("Missing module settings: " + def.id, 400);
     const m = rawModule as Record<string, unknown>;
-    if (!["free", "paid", "local", "mock"].includes(String(m.mode))) return jsonError("Invalid routing mode for " + def.id, 400);
+    if (!["free", "mock"].includes(String(m.mode))) return jsonError("Routing mode must be free-first or mock-only for " + def.id, 400);
     const selected = typeof m.selectedModelKey === "string" ? m.selectedModelKey : "";
     if (selected !== "auto" && !allowed.has(selected)) return jsonError("Unknown selected model for " + def.id, 400);
     if (selected !== "auto") {
