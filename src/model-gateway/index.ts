@@ -32,8 +32,10 @@ export type GatewayRequest = {
   openRouterFreeSelection?: boolean;
   /** Optional approved paid model preference, used only after free attempts fail. */
   preferredPaidModelId?: string;
-  /** Bounded JPEG data URL, added only to an approved image-capable paid call. */
+  /** Bounded JPEG data URL, added only to an approved image-capable model call. */
   imageDataUrl?: string;
+  /** Server-only: structured Figma edit plans use low-cost paid vision for reliable JSON output. */
+  forcePaidVision?: boolean;
 };
 export type TokenUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 type ProviderChatMessage = {
@@ -616,7 +618,7 @@ export async function chatCompletionFreeFirstThenPaid(
   // Explicit paid selections stay direct. If the selected paid model is text-only,
   // substitute the cheapest approved vision-capable paid model rather than call a
   // different paid model and the selected paid model in the same request.
-  if (request.imageDataUrl && selectedPaid) {
+  if (request.imageDataUrl && (selectedPaid || request.forcePaidVision)) {
     const visionModel = selectedPaid.supportsImages ? selectedPaid : selectOpenRouterPaidVisionModel();
     const result = await chatCompletionWithOpenRouterPaid({
       ...request,
@@ -632,9 +634,11 @@ export async function chatCompletionFreeFirstThenPaid(
       tier: "paid",
       routingStrategy: "vision-direct",
       attemptedModels: [visionModel.id],
-      fallbackReason: changedForVision
-        ? "The selected model (" + selectedPaid.label + ") does not support screenshot input. This request used " + visionModel.label + ", the lowest-listed-cost approved vision model, instead. One paid model was called."
-        : "The explicitly selected paid vision model was called directly. One paid model was called."
+      fallbackReason: request.forcePaidVision && !selectedPaid
+        ? "Structured Figma edit plans use the lowest-listed-cost approved paid vision model to preserve valid JSON output. One paid model was called."
+        : changedForVision
+          ? "The selected model (" + selectedPaid!.label + ") does not support screenshot input. This request used " + visionModel.label + ", the lowest-listed-cost approved vision model, instead. One paid model was called."
+          : "The explicitly selected paid vision model was called directly. One paid model was called."
     };
   }
 
