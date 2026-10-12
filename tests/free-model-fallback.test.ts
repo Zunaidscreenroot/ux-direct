@@ -284,7 +284,7 @@ test("free OpenRouter chat normalizes multipart assistant text content", async (
     }) as typeof fetch
   });
 
-  assert.equal(result.content, "Hierarchy is clear.\\nImprove the primary action contrast.");
+  assert.equal(result.content, "Hierarchy is clear.\nImprove the primary action contrast.");
 });
 
 test("provider response without user-facing text returns a safe diagnostic, not hidden reasoning", async () => {
