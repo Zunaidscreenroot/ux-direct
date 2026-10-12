@@ -485,6 +485,7 @@ export async function chatCompletionFreeFirstThenPaid(
 
   const lastUserMessage = [...request.messages].reverse().find(message => message.role === "user")?.content ?? "";
   const reasoningFirst = /\b(strategy|strategic|complex reasoning|deep reasoning|critique|audit|heuristic|information architecture|\bia\b|user journey|journey map|flow design|trade[- ]off|research synthesis|accessibility review|product direction|decision framework|root cause)\b/i.test(lastUserMessage);
+  const timeoutMs = options.timeoutMs ?? 10_000;
 
   // A screenshot cannot be analyzed by either approved free Nemotron model.
   // Route a visual request to exactly one approved vision-capable paid model;
@@ -523,7 +524,6 @@ export async function chatCompletionFreeFirstThenPaid(
         ? ["nvidia/nemotron-3-ultra-550b-a55b:free", "nvidia/nemotron-3.5-lightning:free"]
         : ["nvidia/nemotron-3.5-lightning:free", "nvidia/nemotron-3-ultra-550b-a55b:free"]);
   const failedFreeModels: string[] = [];
-  const timeoutMs = options.timeoutMs ?? 10_000;
 
   for (const model of freeOrder) {
     try {
