@@ -65,7 +65,7 @@ function normalizeChatText(value: unknown): string | undefined {
     if (typeof item.content === "string" && (item.type === "text" || item.type === "output_text")) return item.content;
     return "";
   }).filter(Boolean);
-  const text = parts.join("\\n").trim();
+  const text = parts.join("\n").trim();
   return text || undefined;
 }
 export type GatewayResponse = {
