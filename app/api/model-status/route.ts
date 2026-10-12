@@ -68,7 +68,7 @@ async function discoverModels(provider: ProviderId) {
   if (!response.ok) return { provider, configured: true, models: [], reason: `Provider model-list endpoint returned HTTP ${response.status}.` };
   const payload = await response.json() as { data?: Array<{ id?: string; name?: string; supportedGenerationMethods?: string[]; pricing?: { prompt?: string; completion?: string } }>; models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> };
   const liveIds = new Set((payload.data ?? []).map(item => item.id).filter((id): id is string => typeof id === "string"));
-  // This product uses only the two user-approved free models, never the wider live catalog.
+  // This product uses only explicitly allowlisted free models, never the wider live catalog.
   const models = OPENROUTER_FREE_CHAT_MODELS.filter(model => liveIds.has(model.id)).map(model => model.id);
   const paidModels = OPENROUTER_PAID_CHAT_MODELS.flatMap(model => {
     const live = (payload.data ?? []).find(item => item.id === model.id);
@@ -380,12 +380,12 @@ export async function GET(request: Request) {
       if (!getOpenRouterFreeChatModel(model)) {
         return NextResponse.json({
           available: false,
-          error: "Direct probes are free-tier only. Approved paid models run only after the free-first chat router exhausts both free models.",
+          error: "Direct probes are free-tier only. Paid models are invoked only through the free-first chat router or an explicit paid selection.",
           diagnosticId: id
         }, { status: 400, headers });
       }
       // A direct health probe must never incur paid inference. Paid models can only
-      // be invoked through chatCompletionFreeFirstThenPaid after both free models fail.
+      // be invoked through chatCompletionFreeFirstThenPaid only after the approved free attempts fail.
       const result = await runSelectedModelProbe(provider, model);
       return NextResponse.json({ ...result, probeVersion: "paid-probe-minimal-reasoning-store-timeouts-v1", diagnosticId: id }, { headers });
     }
@@ -394,15 +394,16 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: "Unsupported provider.", diagnosticId: id }, { status: 400, headers });
       }
       const result = await discoverWorkingFreeModel();
-      return NextResponse.json({ ...result, diagnosticId: id, note: "Discovery tests only the two approved free Nemotron models; paid fallback is selected separately by task expertise." }, { headers });
+      return NextResponse.json({ ...result, diagnosticId: id, note: "Discovery tests a minimal free chat path; the cockpit exposes only explicitly allowlisted models, and paid fallback is selected separately by task expertise." }, { headers });
     }
     // Fetch the live catalog without probing every candidate. The plugin probes only
     // the user's selected model, avoiding multiple inference requests on startup.
     const result = await discoverModels("openrouter");
     const preferredOrder = [
       "nvidia/nemotron-3.5-lightning:free",
-      "dots-studio/dots-3-note-preview:free",
-      "apodex/apodex-1.1-mini:free"
+      "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "qwen/qwen3.8-27b:free",
+      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
     ];
     const rank = (modelId: string) => {
       const index = preferredOrder.indexOf(modelId);
@@ -415,11 +416,12 @@ export async function GET(request: Request) {
     const freeModels = OPENROUTER_FREE_CHAT_MODELS.map(model => ({
       provider: "openrouter", id: model.id, label: model.label,
       configured: result.configured, tier: "free-tier",
+      supportsImages: model.supportsImages,
       listedInLiveCatalog: liveModelIds.includes(model.id)
     }));
     const verifiedPaidModels = "paidModels" in result && Array.isArray(result.paidModels) ? result.paidModels : [];
     const verifiedPaidById = new Map(verifiedPaidModels.map(model => [model.id, model]));
-    // Always show all three approved paid models in the cockpit dropdown, but
+    // Always show all approved paid models in the cockpit dropdown, but
     // disable any option whose exact live ID and positive price were not verified.
     const paidModels = OPENROUTER_PAID_CHAT_MODELS.map(model => {
       const verified = verifiedPaidById.get(model.id);
@@ -447,7 +449,7 @@ export async function GET(request: Request) {
       checkedAt: result.checkedAt ?? new Date().toISOString(),
       diagnosticId: id,
       probeVersion: "paid-probe-minimal-reasoning-store-timeouts-v1",
-      note: "Only the two approved free models and three allowlisted paid models are shown. Paid options are enabled only when the live catalogue and positive pricing are verified; selecting a paid option never sends a test inference."
+      note: "Only the approved free and paid allowlists are shown. Paid options are enabled only when the live catalogue and positive pricing are verified; selecting a paid option never sends a test inference."
     }, { headers });
   } catch (error) {
     console.error("[model-status] request failed", JSON.stringify({ diagnosticId: id, message: safeError(error) }));
