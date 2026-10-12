@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { timingSafeEqual } from "node:crypto";
 import { getModelCatalog, providersFromEnv } from "@/src/model-gateway";
 import { GATEWAY_MODULES, getGatewaySettings, getDefaultModelPolicy, modelKey, saveGatewaySettings } from "@/src/model-gateway/control-store";
@@ -23,7 +24,36 @@ function localSettingsWritesAllowed(request: Request): boolean {
     ["localhost", "127.0.0.1", "::1"].includes(hostname);
 }
 export async function GET() {
-  return NextResponse.json({ settings: await getGatewaySettings(), modules: GATEWAY_MODULES }, { headers: { "Cache-Control": "no-store" } });
+  const diagnosticId = randomUUID();
+  try {
+    const settings = await getGatewaySettings();
+    return NextResponse.json({ settings, modules: GATEWAY_MODULES, diagnosticId }, {
+      headers: { "Cache-Control": "no-store" }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Gateway settings are unavailable.";
+    const safeMessage = message
+      .replace(/Bearer\\s+[^\\s]+/gi, "Bearer [redacted]")
+      .replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]")
+      .replace(/[\\r\\n\\t]+/g, " ")
+      .slice(0, 240);
+    console.error("[gateway-settings]", JSON.stringify({
+      event: "settings-endpoint-failed",
+      diagnosticId,
+      reason: safeMessage,
+      context: (process.env.CONTEXT || "unknown").slice(0, 40),
+      branch: (process.env.NETLIFY_BRANCH || process.env.BRANCH || "unknown").slice(0, 80),
+      hasNetlifySiteId: Boolean(process.env.NETLIFY_SITE_ID),
+      hasNetlifyDeployId: Boolean(process.env.NETLIFY_DEPLOY_ID),
+      hasNetlifyBlobsContext: Boolean(process.env.NETLIFY_BLOBS_CONTEXT)
+    }));
+    return NextResponse.json({
+      ok: false,
+      error: "Gateway settings could not be loaded. Paid inference remains blocked until stored budget settings and the persistent usage ledger can be verified.",
+      reason: safeMessage,
+      diagnosticId
+    }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
 }
 export async function PUT(request: Request) {
   if (!sameOrigin(request)) return jsonError("Cross-origin or non-browser gateway setting changes are not allowed.", 403);
