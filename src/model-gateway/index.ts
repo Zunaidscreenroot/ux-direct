@@ -306,7 +306,7 @@ export async function chatCompletion(
     try{
       await usageStore.assertBudgetAllows(promptChars,request.max_tokens??1024,process.env,model,{
         moduleId,modelKey:exactKey,inputPriceInrPerMillion:modelPolicy.inputPriceInrPerMillion,
-        outputPriceInrPerMillion:modelPolicy.outputPriceInrPerMillion,maxRequestCostInr:Math.min(policy.maxRequestCostInr,modelPolicy.maxRequestCostInr)
+        outputPriceInrPerMillion:modelPolicy.outputPriceInrPerMillion,maxRequestCostInr:Math.min(policy.maxRequestCostInr,modelPolicy.maxRequestCostInr),gatewaySettings:settings
       });
     }catch(error){
       await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model,tier:"paid",promptTokens:0,completionTokens:0,totalTokens:0,usageReported:false,estimatedCostInr:0,latencyMs:Date.now()-started,status:"blocked",note:error instanceof Error?error.message:"Budget guard blocked request."});
