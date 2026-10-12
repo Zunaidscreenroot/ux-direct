@@ -135,7 +135,7 @@ test("visual edit requests have bounded deterministic output and an explicit vis
   assert.ok(route.includes('temperature: data.intent === "design-operation" ? 0.1 : 0.3'));
   assert.ok(route.includes('max_tokens: data.intent === "design-operation" ? 900 : 1400'));
   assert.ok(route.includes('reasoning: { effort: "minimal" as const, max_tokens: 160 }'));
-  assert.ok(gateway.includes('provider:{sort:"throughput"}'));
+  assert.match(gateway, /provider:\s*\{\s*sort:\s*"throughput"\s*\}/);
   assert.ok(gateway.includes("Math.max(timeoutMs, 45_000)"));
   assert.ok(gateway.includes("does not support screenshot input"));
   assert.ok(ui.includes('const routeNote = data.fallbackReason ? data.fallbackReason + " " : ""'));
