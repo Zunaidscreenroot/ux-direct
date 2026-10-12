@@ -31,10 +31,10 @@ test("OpenRouter provider starts with no static model list", () => {
   assert.equal(configured?.apiKey, "test-key");
 });
 
-test("free request cannot expand the model allowlist to an unapproved ID", () => {
+test("free request cannot expand the model allowlist to an unapproved ID", async () => {
   const extended = providersForFreeChat(providers, "live/unapproved:free");
   assert.deepEqual(extended.find(provider => provider.name === "openrouter")?.models, []);
-  assert.throws(() => chatCompletionWithFreeFallback({
+  await assert.rejects(() => chatCompletionWithFreeFallback({
     model: "live/unapproved:free",
     providerId: "openrouter",
     messages: [{ role: "user", content: "Say hello." }]
