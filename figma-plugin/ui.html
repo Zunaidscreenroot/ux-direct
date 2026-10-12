@@ -889,7 +889,8 @@
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
         if (designIntent) {
           if (data.routingStrategy === "vision-direct") {
-            setModelStatus("ok", "Visual scan complete", data.model + " inspected the screenshot and prepared a proposal. No changes are applied until you confirm.");
+            const routeNote = data.fallbackReason ? data.fallbackReason + " " : "";
+            setModelStatus("ok", "Visual scan complete", data.model + " inspected the screenshot and prepared a proposal. " + routeNote + "No Figma changes have been applied; review the proposed plan before confirming.");
           }
           let plan;
           try {
@@ -933,7 +934,9 @@
           } else if (data.tier === "paid" || actual?.tier === "paid") {
             // Keep the dropdown preference intact. Report the paid model used for this turn separately.
             modelAvailable = true;
-            setModelStatus("ok", "Paid fallback used", data.model + " returned this response. " + (data.fallbackReason || "Paid inference passed the gateway budget checks."));
+            const directSelection = data.routingStrategy === "paid-direct";
+            setModelStatus("ok", directSelection ? "Selected paid model used" : "Paid fallback used",
+              data.model + " returned this response. " + (data.fallbackReason || "Paid inference passed the gateway checks."));
           } else if (actual) {
             // Report the model that answered without overwriting the user's
             // selected free preference or paid-fallback preference for later turns.
