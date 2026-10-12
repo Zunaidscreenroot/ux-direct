@@ -2,9 +2,9 @@ name: UX Direct CI
 
 on:
   push:
-    branches: [main, fix/model-probe-preview-routing]
+    branches: [main, fix/model-probe-preview-routing, feat/figma-read-write-execution]
   pull_request:
-    branches: [main]
+    branches: [main, fix/model-probe-preview-routing]
 
 permissions:
   contents: read

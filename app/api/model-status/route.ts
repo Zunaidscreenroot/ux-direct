@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { GatewayError, chatCompletionWithOpenRouterPaid } from "@/src/model-gateway";
+import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 import {
   getOpenRouterFreeChatModel,
   getOpenRouterPaidChatModel,
@@ -86,6 +87,8 @@ async function discoverModels(provider: ProviderId) {
       label: model.label + " · $" + liveInputPrice.toFixed(3) + " in / $" + liveOutputPrice.toFixed(3) + " out per 1M",
       configured: true,
       tier: "paid",
+      available: true,
+      supportsImages: model.supportsImages,
       listedInputUsdPerMillion: liveInputPrice,
       listedOutputUsdPerMillion: liveOutputPrice,
       budgetInputUsdPerMillion: model.budgetInputUsdPerMillion,
@@ -243,7 +246,7 @@ async function runSelectedModelProbe(provider: ProviderId, model: string) {
       temperature: 0,
       reasoning: { effort: "minimal" },
       max_tokens: 128
-    }, { timeoutMs: 12000 });
+    }, { timeoutMs: 18000 });
     const responseReceived = typeof result.content === "string" && result.content.trim().length > 0;
     return {
       available: responseReceived,
@@ -413,9 +416,27 @@ export async function GET(request: Request) {
       configured: result.configured, tier: "free-tier",
       listedInLiveCatalog: liveModelIds.includes(model.id)
     }));
-    const paidModels = "paidModels" in result && Array.isArray(result.paidModels) ? result.paidModels : [];
+    const verifiedPaidModels = "paidModels" in result && Array.isArray(result.paidModels) ? result.paidModels : [];
+    const verifiedPaidById = new Map(verifiedPaidModels.map(model => [model.id, model]));
+    // Always show all three approved paid models in the cockpit dropdown, but
+    // disable any option whose exact live ID and positive price were not verified.
+    const paidModels = OPENROUTER_PAID_CHAT_MODELS.map(model => {
+      const verified = verifiedPaidById.get(model.id);
+      if (verified) return verified;
+      return {
+        provider: "openrouter",
+        id: model.id,
+        label: model.label,
+        configured: result.configured,
+        tier: "paid",
+        available: false,
+        supportsImages: model.supportsImages,
+        reason: ("reason" in result && typeof result.reason === "string" ? result.reason + " " : "") +
+          "The exact live model ID and positive live pricing are not verified. This option remains visible but paid inference is blocked."
+      };
+    });
     const models = [...freeModels, ...paidModels];
-    const selectedModel = freeModels[0]?.id ?? paidModels[0]?.id ?? null;
+    const selectedModel = freeModels[0]?.id ?? null;
     return NextResponse.json({
       models,
       selectedModel,
@@ -425,7 +446,7 @@ export async function GET(request: Request) {
       checkedAt: result.checkedAt ?? new Date().toISOString(),
       diagnosticId: id,
       probeVersion: "paid-probe-minimal-reasoning-store-timeouts-v1",
-      note: "Free model IDs and the allowlisted paid model are verified against OpenRouter live catalog pricing. The plugin probes only the selected model before enabling chat."
+      note: "Only the two approved free models and three allowlisted paid models are shown. Paid options are enabled only when the live catalogue and positive pricing are verified; selecting a paid option never sends a test inference."
     }, { headers });
   } catch (error) {
     console.error("[model-status] request failed", JSON.stringify({ diagnosticId: id, message: safeError(error) }));
@@ -447,15 +468,43 @@ export async function POST(request: Request) {
     return NextResponse.json({ available: false, error: "Request body must be valid JSON.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
   }
   const parsed = body as { provider?: unknown; model?: unknown; fileKey?: unknown };
+  const approvedFree = typeof parsed.model === "string" && Boolean(getOpenRouterFreeChatModel(parsed.model));
+  const approvedPaid = typeof parsed.model === "string" && Boolean(getOpenRouterPaidChatModel(parsed.model));
   if (parsed.provider !== "openrouter" || typeof parsed.model !== "string" || typeof parsed.fileKey !== "string" ||
-      !getOpenRouterFreeChatModel(parsed.model)) {
-    return NextResponse.json({ available: false, error: "A fileKey and one of the two approved free Nemotron IDs are required. Paid model probes are disabled; paid inference is free-first only.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
+      (!approvedFree && !approvedPaid)) {
+    return NextResponse.json({
+      available: false,
+      error: "A fileKey and an explicitly allowlisted OpenRouter model ID are required.",
+      diagnosticId: diagnosticId()
+    }, { status: 400, headers: corsHeaders() });
   }
   if (!originAllowed(request) || !approvedFileKey(request, parsed.fileKey) || !isAllowedFigmaFileKey(parsed.fileKey)) {
     return NextResponse.json({ available: false, error: "Origin or Figma file key not allowed.", diagnosticId: diagnosticId() }, { status: 403, headers: corsHeaders() });
   }
+  if (approvedPaid) {
+    const clientIp = request.headers.get("x-nf-client-connection-ip") ||
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+    const limit = checkGatewayRateLimit("paid-model-test:" + clientIp, Date.now(), 3);
+    if (!limit.allowed) {
+      return NextResponse.json({
+        available: false,
+        error: "Paid model test limit reached. Wait a minute before trying another connection check.",
+        diagnosticId: diagnosticId()
+      }, {
+        status: 429,
+        headers: { ...corsHeaders(), "Retry-After": String(limit.retryAfterSeconds) }
+      });
+    }
+  }
+  // POST probes are only triggered by an explicit UI action. A paid probe
+  // runs through the shared gateway, budget guard and usage ledger; GET never
+  // sends paid inference. A successful paid probe may incur a small provider charge.
   try {
-    return NextResponse.json({ ...(await runSelectedModelProbe(parsed.provider, parsed.model)), diagnosticId: diagnosticId() }, { headers: corsHeaders() });
+    return NextResponse.json({
+      ...(await runSelectedModelProbe(parsed.provider, parsed.model)),
+      probeKind: approvedPaid ? "explicit-budget-checked-paid-inference" : "free-connectivity-inference",
+      diagnosticId: diagnosticId()
+    }, { headers: corsHeaders() });
   } catch (error) {
     return NextResponse.json({ available: false, provider: parsed.provider, model: parsed.model, reason: safeError(error), diagnosticId: diagnosticId() }, { status: 502, headers: corsHeaders() });
   }

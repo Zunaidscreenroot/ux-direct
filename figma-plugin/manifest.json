@@ -12,7 +12,8 @@
       "https://uxdirect.netlify.app",
       "https://deploy-preview-21--uxdirect.netlify.app",
       "https://6acbb8f26af9a70008310b29--uxdirect.netlify.app",
-      "https://deploy-preview-24--uxdirect.netlify.app"
+      "https://deploy-preview-24--uxdirect.netlify.app",
+      "https://deploy-preview-25--uxdirect.netlify.app"
     ],
     "reasoning": "Allow only the UX Direct production hostname and explicitly named Netlify Preview hosts used for feature-branch testing. No API key is embedded in the plugin."
   },
