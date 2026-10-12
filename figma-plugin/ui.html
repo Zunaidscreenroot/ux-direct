@@ -726,7 +726,7 @@
         return;
       }
       if (!currentModel || !modelAvailable) {
-        appendMessage("assistant", "Choose an OpenRouter model and wait until its status says Connected. Chat remains paused until the selected model passes a live response check.");
+        appendMessage("assistant", "Choose an OpenRouter model and wait until its status says Connected or Paid model armed. Paid model selections are budget-checked only when you send a prompt.");
         return;
       }
 
@@ -748,7 +748,8 @@
         ...(Number.isFinite(node.height) ? { height: node.height } : {}),
         ...(node.tree ? { tree: node.tree } : {})
       })) : [];
-      const designIntent = /\b(add|create|insert|change|update|edit|modify|rename|replace|set|make|remove|delete|redesign|apply|adjust|color|colour|button|text|heading|frame|section|padding|spacing|font|fill)\b/i.test(prompt);
+      // Treat visual inspection as read-only unless the prompt actually asks for a change.
+      const designIntent = /\b(add|create|insert|change|update|edit|modify|rename|replace|set|make|remove|delete|redesign|apply|adjust|fix|implement|build|improv(?:e|ement|ements)|restyle|recolor|move|resize)\b/i.test(prompt);
       try {
         const response = await fetch(API + "/api/assistant/chat", {
           method: "POST",
@@ -772,6 +773,9 @@
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
         if (designIntent) {
+          if (data.routingStrategy === "vision-direct") {
+            setModelStatus("ok", "Visual scan complete", data.model + " inspected the screenshot and prepared a proposal. No changes are applied until you confirm.");
+          }
           let plan;
           try {
             const cleaned = data.content.trim().replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
