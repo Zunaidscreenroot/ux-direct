@@ -17,6 +17,10 @@ type BlobStore = { get(key: string, options: { type: "json" }): Promise<unknown>
 const runtimeSettings = new Map<string, GatewaySettings>();
 const runtimeSettingsAt = new Map<string, number>();
 const SETTINGS_CACHE_TTL_MS = 10_000;
+const SETTINGS_READ_TIMEOUT_MS = 12_000;
+// Share one store read when the free-first gateway warms settings in parallel
+// with a second free-model attempt and the paid path needs the same snapshot.
+const inFlightSettings = new Map<string, Promise<GatewaySettings>>();
 let storePromise: Promise<BlobStore | null> | null = null;
 
 function withStoreTimeout<T>(operation: Promise<T>, label: string, timeoutMs = 8000): Promise<T> {
@@ -117,37 +121,55 @@ export async function getGatewaySettings(): Promise<GatewaySettings> {
   const cachedAt = runtimeSettingsAt.get(key) ?? 0;
   if (cached && Date.now() - cachedAt < SETTINGS_CACHE_TTL_MS) return cleanSettings(cached);
 
-  let store: BlobStore | null;
-  try {
-    store = await withStoreTimeout(getStore(), "Netlify Blobs store initialization");
-  } catch (error) {
-    if (cached && Date.now() - cachedAt < 60_000) return cleanSettings(cached);
-    throw new Error("Could not initialize Netlify Blobs for gateway settings: " + (error instanceof Error ? error.message : "unknown store error"));
-  }
-  if (store) {
-    try {
-      const value = await withStoreTimeout(store.get(key, { type: "json" }), "Netlify Blobs settings read");
-      const settings = cleanSettings(value && typeof value === "object" ? value : defaultGatewaySettings());
-      runtimeSettings.set(key, settings);
-      runtimeSettingsAt.set(key, Date.now());
-      return settings;
-    } catch (error) {
-      // Use only a previously verified snapshot and only for a short stale window.
-      // A cold instance never substitutes defaults for an unreadable deployed store.
-      if (cached && Date.now() - cachedAt < 60_000) return cleanSettings(cached);
-      if (process.env.NETLIFY === "true" || process.env.NETLIFY_BLOBS_CONTEXT) {
-        throw new Error("Could not read gateway settings from Netlify Blobs: " + (error instanceof Error ? error.message : "unknown store error"));
-      }
-      /* Local development can fall back to runtime defaults. */
-    }
-  } else if (process.env.NETLIFY === "true" || process.env.NETLIFY_BLOBS_CONTEXT) {
-    throw new Error("Netlify Blobs is unavailable in this deployed runtime; gateway settings cannot be verified.");
-  }
+  const pending = inFlightSettings.get(key);
+  if (pending) return cleanSettings(await pending);
 
-  const defaults = cleanSettings(runtimeSettings.get(key) ?? defaultGatewaySettings());
-  runtimeSettings.set(key, defaults);
-  runtimeSettingsAt.set(key, Date.now());
-  return defaults;
+  const load = (async (): Promise<GatewaySettings> => {
+    let store: BlobStore | null;
+    try {
+      store = await withStoreTimeout(getStore(), "Netlify Blobs store initialization");
+    } catch (error) {
+      if (cached && Date.now() - cachedAt < 60_000) return cleanSettings(cached);
+      throw new Error("Could not initialize Netlify Blobs for gateway settings: " + (error instanceof Error ? error.message : "unknown store error"));
+    }
+
+    if (store) {
+      // Cache a successfully verified snapshot even if the caller's timeout wins
+      // the race. A later request on this warm instance can then recover without
+      // starting another Blob read.
+      const read = store.get(key, { type: "json" }).then(value => {
+        const settings = cleanSettings(value && typeof value === "object" ? value : defaultGatewaySettings());
+        runtimeSettings.set(key, settings);
+        runtimeSettingsAt.set(key, Date.now());
+        return settings;
+      });
+      try {
+        return cleanSettings(await withStoreTimeout(read, "Netlify Blobs settings read", SETTINGS_READ_TIMEOUT_MS));
+      } catch (error) {
+        // Use only a previously verified snapshot and only for a short stale window.
+        // A cold instance never substitutes defaults for an unreadable deployed store.
+        if (cached && Date.now() - cachedAt < 60_000) return cleanSettings(cached);
+        if (process.env.NETLIFY === "true" || process.env.NETLIFY_BLOBS_CONTEXT) {
+          throw new Error("Could not read gateway settings from Netlify Blobs: " + (error instanceof Error ? error.message : "unknown store error"));
+        }
+        /* Local development can fall back to runtime defaults. */
+      }
+    } else if (process.env.NETLIFY === "true" || process.env.NETLIFY_BLOBS_CONTEXT) {
+      throw new Error("Netlify Blobs is unavailable in this deployed runtime; gateway settings cannot be verified.");
+    }
+
+    const defaults = cleanSettings(runtimeSettings.get(key) ?? defaultGatewaySettings());
+    runtimeSettings.set(key, defaults);
+    runtimeSettingsAt.set(key, Date.now());
+    return defaults;
+  })();
+
+  inFlightSettings.set(key, load);
+  try {
+    return cleanSettings(await load);
+  } finally {
+    if (inFlightSettings.get(key) === load) inFlightSettings.delete(key);
+  }
 }
 export async function saveGatewaySettings(input: unknown): Promise<GatewaySettings> {
   const key = envScopeKey();
