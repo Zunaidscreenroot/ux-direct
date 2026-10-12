@@ -86,6 +86,8 @@ async function discoverModels(provider: ProviderId) {
       label: model.label + " · $" + liveInputPrice.toFixed(3) + " in / $" + liveOutputPrice.toFixed(3) + " out per 1M",
       configured: true,
       tier: "paid",
+      available: true,
+      supportsImages: model.supportsImages,
       listedInputUsdPerMillion: liveInputPrice,
       listedOutputUsdPerMillion: liveOutputPrice,
       budgetInputUsdPerMillion: model.budgetInputUsdPerMillion,
@@ -413,9 +415,27 @@ export async function GET(request: Request) {
       configured: result.configured, tier: "free-tier",
       listedInLiveCatalog: liveModelIds.includes(model.id)
     }));
-    const paidModels = "paidModels" in result && Array.isArray(result.paidModels) ? result.paidModels : [];
+    const verifiedPaidModels = "paidModels" in result && Array.isArray(result.paidModels) ? result.paidModels : [];
+    const verifiedPaidById = new Map(verifiedPaidModels.map(model => [model.id, model]));
+    // Always show all three approved paid models in the cockpit dropdown, but
+    // disable any option whose exact live ID and positive price were not verified.
+    const paidModels = OPENROUTER_PAID_CHAT_MODELS.map(model => {
+      const verified = verifiedPaidById.get(model.id);
+      if (verified) return verified;
+      return {
+        provider: "openrouter",
+        id: model.id,
+        label: model.label + " · not verified",
+        configured: result.configured,
+        tier: "paid",
+        available: false,
+        supportsImages: model.supportsImages,
+        reason: ("reason" in result && typeof result.reason === "string" ? result.reason + " " : "") +
+          "The exact live model ID and positive live pricing are not verified. This option remains visible but paid inference is blocked."
+      };
+    });
     const models = [...freeModels, ...paidModels];
-    const selectedModel = freeModels[0]?.id ?? paidModels[0]?.id ?? null;
+    const selectedModel = freeModels[0]?.id ?? null;
     return NextResponse.json({
       models,
       selectedModel,
@@ -425,7 +445,7 @@ export async function GET(request: Request) {
       checkedAt: result.checkedAt ?? new Date().toISOString(),
       diagnosticId: id,
       probeVersion: "paid-probe-minimal-reasoning-store-timeouts-v1",
-      note: "Free model IDs and the allowlisted paid model are verified against OpenRouter live catalog pricing. The plugin probes only the selected model before enabling chat."
+      note: "Only the two approved free models and three allowlisted paid models are shown. Paid options are enabled only when the live catalogue and positive pricing are verified; selecting a paid option never sends a test inference."
     }, { headers });
   } catch (error) {
     console.error("[model-status] request failed", JSON.stringify({ diagnosticId: id, message: safeError(error) }));
