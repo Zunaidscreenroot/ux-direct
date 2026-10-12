@@ -434,7 +434,7 @@ export async function chatCompletion(
       } catch {
         try { detail = (await response.clone().text()).slice(0, 240); } catch { /* No response text available. */ }
       }
-      detail = detail.replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]").replace(/Bearer\\s+[^\\s]+/gi, "Bearer [redacted]").slice(0, 240);
+      detail = detail.replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]").replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]").slice(0, 240);
       const firstReason = compatibilityError ? " Initial visual request was also rejected: " + compatibilityError.replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]").slice(0, 160) + "." : "";
       const status = response.status === 429 ? 429 : response.status >= 500 ? 502 : response.status;
       throw new GatewayError(`Provider returned HTTP ${response.status}${detail ? ": " + detail : "."}${firstReason}`, status, provider.name);
