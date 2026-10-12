@@ -291,7 +291,7 @@
 
     async function loadModelOptions() {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
-      setModelStatus("warn", "Loading models…", "Fetching free models and a budget-capped paid OpenRouter option.");
+      setModelStatus("warn", "Loading free models…", "Two approved free Nemotron models are tried first; paid fallback is automatic and expertise-based.");
       const selector = $("modelSelect");
       selector.disabled = true;
       try {
@@ -300,15 +300,19 @@
         if (!response.ok || !Array.isArray(payload.models)) {
           throw new Error(payload.error || "Model list endpoint returned HTTP " + response.status + ".");
         }
+        const approvedFreeIds = new Set([
+          "nvidia/nemotron-3.5-lightning:free",
+          "nvidia/nemotron-3-ultra-550b-a55b:free"
+        ]);
+        // The dropdown only selects a preferred free model. Paid models are never
+        // manually selected or probed here; server routing calls paid inference only after free failure.
         modelOptions = payload.models.filter(model =>
           model && model.provider === "openrouter" &&
-          typeof model.id === "string" &&
-          typeof model.label === "string" &&
-          (model.tier === "free-tier" || model.tier === "paid") &&
-          (model.tier !== "paid" || !model.id.endsWith(":free"))
+          typeof model.id === "string" && approvedFreeIds.has(model.id) &&
+          typeof model.label === "string" && model.tier === "free-tier"
         );
         if (!modelOptions.length) {
-          throw new Error(payload.reason || "OpenRouter did not return any free or approved paid models.");
+          throw new Error(payload.reason || "OpenRouter did not return either of the two approved free Nemotron models.");
         }
         selector.replaceChildren();
         modelOptions.forEach(model => {
@@ -335,12 +339,10 @@
       currentModel = modelOptions.find(model => model.id === selectedId) || modelOptions[0] || null;
       modelAvailable = false;
       updateSendAvailability();
-      if (openRouterFreeQuotaExhausted && currentModel && currentModel.tier !== "paid") {
-        const hasPaidOption = modelOptions.some(model => model.tier === "paid");
-        $("modelSelect").disabled = !hasPaidOption || !backendHealthy || isSending;
-        setModelStatus("bad", "Free quota exhausted", hasPaidOption
-          ? "Free models are quota-limited. Select the paid OpenRouter model to continue with real AI."
-          : "OpenRouter blocked free-model inference. No approved paid option was returned by the live catalog.");
+      if (openRouterFreeQuotaExhausted && currentModel && currentModel.tier === "free-tier") {
+        modelAvailable = true;
+        $("modelSelect").disabled = !backendHealthy || isSending;
+        setModelStatus("warn", "Paid fallback armed", "OpenRouter's account-level free quota is exhausted. Chat will choose one paid model by expertise; paid inference starts only when you send a message.");
         updateSendAvailability();
         return;
       }
@@ -374,20 +376,16 @@
           openRouterFreeQuotaExhausted = true;
           modelAvailable = false;
           const detail = payload.reason || "OpenRouter has exhausted this account's daily free-model request quota.";
-          const hasPaidOption = modelOptions.some(option => option.tier === "paid");
-          setModelStatus("bad", "Free quota exhausted", "HTTP 429: " + detail);
-          const message = "OpenRouter has blocked free-model inference because the account-level daily quota is exhausted.\n\n" +
-            detail + "\n\nI stopped further free-model probes to avoid wasting requests. " +
-            (hasPaidOption
-              ? "A paid OpenRouter option is available in the model dropdown; choosing it will run one small paid probe, then enforce the gateway budget caps for chat."
-              : "A saved card or future autopay does not count as a completed credit top-up until OpenRouter confirms credits. Add credits or wait for quota reset, then reload the plugin.") +
-            " Broad paid-provider fallback remains disabled.";
+          modelAvailable = true;
+          setModelStatus("warn", "Paid fallback armed", "HTTP 429: " + detail + " The server will stop redundant free retries and choose one paid model by expertise when you send a message.");
+          const message = "OpenRouter's daily free-model quota is exhausted.\n\n" +
+            detail + "\n\nI will not probe more free models on startup. When you send a message, the server will use its free-first strategy and then attempt exactly one approved paid model selected by task expertise. Paid inference is not triggered until you send that message.";
           if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
           else {
             const bubble = modelProbeRow.querySelector(".bubble");
             if (bubble) bubble.textContent = message;
           }
-          $("modelSelect").disabled = !hasPaidOption || !backendHealthy || isSending;
+          $("modelSelect").disabled = !backendHealthy || isSending;
           updateSendAvailability();
           return;
         }
@@ -399,11 +397,23 @@
             modelProbeRow.remove();
             modelProbeRow = null;
           }
+        } else if (model.tier === "free-tier") {
+          // A failed single-model probe does not end the session. The chat API will
+          // attempt both approved free models before one paid expertise fallback.
+          modelAvailable = true;
+          const reason = payload.reason || payload.error || "The selected free model did not return a usable response.";
+          setModelStatus("warn", "Free fallback ready", model.label + ": " + reason + " Chat will retry the approved free pool before considering paid inference.");
+          const message = model.label + " did not pass its probe.\n\n" + reason + "\n\nAutomatic routing remains available: on your next message, the server will try both approved free Nemotron models, then choose exactly one paid model based on the task if neither free model works.";
+          if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
+          else {
+            const bubble = modelProbeRow.querySelector(".bubble");
+            if (bubble) bubble.textContent = message;
+          }
         } else {
           modelAvailable = false;
           const reason = payload.reason || payload.error || "The provider did not return a usable response.";
           setModelStatus("bad", "Not available", model.label + ": " + reason);
-          const message = model.label + " is not available in this Preview.\n\n" + reason + "\n\nSelect another model to retry. Chat stays disabled until a real model response is confirmed.";
+          const message = model.label + " is not available in this Preview.\n\n" + reason + "\n\nSelect another model to retry.";
           if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
           else {
             const bubble = modelProbeRow.querySelector(".bubble");
@@ -647,7 +657,11 @@
           if (actual) {
             currentModel = actual;
             modelAvailable = true;
-            setModelStatus("ok", actual.tier === "paid" ? "Paid model connected" : "OpenRouter connected", actual.label + " returned the chat response.");
+            setModelStatus("ok", "Free model connected", actual.label + " returned the chat response.");
+          } else if (data.tier === "paid") {
+            // Do not replace the selected free preference: the next turn must retry free first.
+            modelAvailable = true;
+            setModelStatus("ok", "Paid fallback used", data.model + " returned the response after free models were unavailable. " + (data.fallbackReason || ""));
           }
         }
         appendMessage("assistant", data.content);
