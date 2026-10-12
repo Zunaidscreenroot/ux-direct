@@ -42,14 +42,42 @@ function envScopeKey(env = process.env) {
   if (env.CONTEXT === "production" || (env.NETLIFY === "true" && branch === "main")) return "gateway-control:production";
   return "gateway-control:preview:" + (branch || env.CONTEXT || "local").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 80);
 }
+function storeRuntimeContext() {
+  const env = process.env;
+  return {
+    context: (env.CONTEXT || "unknown").slice(0, 40),
+    branch: (env.NETLIFY_BRANCH || env.BRANCH || "unknown").slice(0, 80),
+    netlify: env.NETLIFY === "true",
+    hasNetlifySiteId: Boolean(env.NETLIFY_SITE_ID),
+    hasNetlifyDeployId: Boolean(env.NETLIFY_DEPLOY_ID),
+    hasNetlifyBlobsContext: Boolean(env.NETLIFY_BLOBS_CONTEXT)
+  };
+}
+function safeStoreError(error: unknown): string {
+  const message = error instanceof Error ? error.name + ": " + error.message : "Unknown store error";
+  return message.replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]").replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]").slice(0, 240);
+}
+function logStoreDiagnostic(event: string, fields: Record<string, unknown> = {}) {
+  console.info("[gateway-control-store]", JSON.stringify({ event, ...fields, runtime: storeRuntimeContext() }));
+}
 async function getStore(): Promise<BlobStore | null> {
   if (process.env.NETLIFY !== "true" && !process.env.NETLIFY_BLOBS_CONTEXT) return null;
   if (!storePromise) storePromise = (async () => {
     try {
       const { getStore } = await import("@netlify/blobs");
       // Branch-prefixed keys below isolate preview settings from production settings.
-      return getStore("ux-direct-gateway-control") as unknown as BlobStore;
-    } catch { return null; }
+      const store = getStore("ux-direct-gateway-control") as unknown as BlobStore;
+      logStoreDiagnostic("store-initialized", { store: "ux-direct-gateway-control" });
+      return store;
+    } catch (error) {
+      console.error("[gateway-control-store]", JSON.stringify({
+        event: "store-initialization-failed",
+        store: "ux-direct-gateway-control",
+        error: safeStoreError(error),
+        runtime: storeRuntimeContext()
+      }));
+      return null;
+    }
   })();
   return storePromise;
 }
@@ -137,15 +165,41 @@ export async function getGatewaySettings(): Promise<GatewaySettings> {
       // Cache a successfully verified snapshot even if the caller's timeout wins
       // the race. A later request on this warm instance can then recover without
       // starting another Blob read.
+      const readStartedAt = Date.now();
       const read = store.get(key, { type: "json" }).then(value => {
         const settings = cleanSettings(value && typeof value === "object" ? value : defaultGatewaySettings());
         runtimeSettings.set(key, settings);
         runtimeSettingsAt.set(key, Date.now());
+        logStoreDiagnostic("settings-read-completed", {
+          store: "ux-direct-gateway-control",
+          scope: key,
+          durationMs: Date.now() - readStartedAt,
+          foundStoredSettings: Boolean(value && typeof value === "object")
+        });
         return settings;
+      }).catch(error => {
+        console.error("[gateway-control-store]", JSON.stringify({
+          event: "settings-read-rejected",
+          store: "ux-direct-gateway-control",
+          scope: key,
+          durationMs: Date.now() - readStartedAt,
+          error: safeStoreError(error),
+          runtime: storeRuntimeContext()
+        }));
+        throw error;
       });
       try {
         return cleanSettings(await withStoreTimeout(read, "Netlify Blobs settings read", SETTINGS_READ_TIMEOUT_MS));
       } catch (error) {
+        console.error("[gateway-control-store]", JSON.stringify({
+          event: "settings-read-failed-or-timed-out",
+          store: "ux-direct-gateway-control",
+          scope: key,
+          durationMs: Date.now() - readStartedAt,
+          timeoutMs: SETTINGS_READ_TIMEOUT_MS,
+          error: safeStoreError(error),
+          runtime: storeRuntimeContext()
+        }));
         // Use only a previously verified snapshot and only for a short stale window.
         // A cold instance never substitutes defaults for an unreadable deployed store.
         if (cached && Date.now() - cachedAt < 60_000) return cleanSettings(cached);
