@@ -2,13 +2,13 @@
 
 UX Direct includes a small, self-hosted-in-application gateway inspired by LiteLLM's provider abstraction. There is **no gateway subscription, proxy vendor, or gateway usage fee**. Requests go from the UX Direct server directly to the chosen model provider. Provider/model usage can still cost money; free model tiers and local models may have limits or infrastructure costs.
 
-## Accountant controls and module routing
+## OpenRouter balance, usage and budget planning
 
-Every module (reasoning, classification, extraction, summarization, vision, UX critique and general) has its own switch, mode (free, paid, local, mock), exact model selection, monthly budget and per-request cap. Each model has separate monthly/per-request caps and INR input/output prices per million tokens. Published USD prices are source-linked and converted using an editable INR rate; verify current provider pricing and account quota before activating paid calls.
+The UX Direct cockpit uses OpenRouter as the provider gateway. Its approved model list remains strict: two free Nemotron models followed by at most one expertise-routed paid model. OpenRouter enforces account credits, any per-key limits, provider rate limits and its own in-flight spending checks. UX Direct does not impose a separate monthly, module, model or per-request spending cap on this approved OpenRouter path. Its local usage ledger and token-price estimates are telemetry only and can differ from provider-reported billing.
 
-Exact model selection is a strict allowlist. If a model is disconnected, incompatible with the chosen mode, the module is off, or any budget cap is exhausted, the request is blocked instead of silently using another model. Paid calls require module mode=paid, gateway paid-routing switch, `ALLOW_PAID_MODELS=true` server-side, keys, positive exact-model rates and passing global/module/model/request budgets. Free-tier API usage estimates as ₹0 only while the connected provider account/request really uses its free tier.
+The Model Gateway page can show account credits (`GET /api/v1/credits`), activity over the last 30 completed UTC days (`GET /api/v1/activity`) and usage/limits for the configured API key (`GET /api/v1/key`). The first two endpoints require `OPENROUTER_MANAGEMENT_KEY`; `/key` uses `OPENROUTER_API_KEY`. See the [OpenRouter credits API](https://openrouter.ai/docs/api/api-reference/credits/get-credits), [activity API](https://openrouter.ai/docs/api/api-reference/analytics/get-user-activity), and [current-key API](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key). Account data is accessed only by the server and the gateway account endpoint requires `MODEL_GATEWAY_ADMIN_KEY`.
 
-Settings and usage keys are branch/environment scoped, so preview does not overwrite production settings or usage records. Netlify Blobs is best-effort key/value storage rather than transactional accounting; concurrent paid calls may race a cap. Use transactional reservations before relying on caps as a production financial guarantee.
+The balance and runway planner are snapshots/projections, not spending locks. OpenRouter states credit totals can be cached for up to 60 seconds, and simultaneous requests may reserve estimated usage against the provider balance. UX Direct's own recent usage ledger remains helpful for per-request diagnosis but is not the source of truth for available credits.
 
 ## What it provides
 
@@ -20,9 +20,9 @@ Settings and usage keys are branch/environment scoped, so preview does not overw
 
 ## Dashboard and usage accounting
 
-The main dashboard includes a Model Gateway tab, provider readiness and non-editable API-key placeholders for the final setup step. It shows per-request prompt/completion/total tokens, model, provider, latency, estimated cost, month-to-date spend and the ₹3,000 default budget. `GET /api/model-gateway/dashboard` returns only sanitized readiness and ledger data.
+The main dashboard includes a Model Gateway tab, provider readiness and non-editable API-key placeholders. It shows provider-reported credits, key-level usage, 30-day activity by date/model, a daily-spend runway planner, and UX Direct's per-request token and estimated-cost ledger. `GET /api/model-gateway/dashboard` returns sanitized readiness and local usage telemetry. `GET /api/model-gateway/openrouter-account` proxies OpenRouter's account endpoints without exposing either credential.
 
-The initial usage ledger is in-memory best-effort telemetry and may reset on serverless restarts. Treat it as operational visibility rather than a durable billing source until persistent storage and concurrency-safe budget reservation are implemented.
+The usage ledger persists to Netlify Blobs when available and otherwise uses best-effort runtime memory. It is operational telemetry rather than a billing source; OpenRouter's account reporting is authoritative.
 
 ## Configure providers
 
@@ -31,6 +31,8 @@ Set secrets only in the server environment; never expose them through `NEXT_PUBL
 OpenRouter:
 ```env
 OPENROUTER_API_KEY=...
+# Required for account credits and 30-day usage analytics. Keep server-side only.
+OPENROUTER_MANAGEMENT_KEY=...
 # OpenRouter :free models are discovered live by the model-status probe.
 # Optional:
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
@@ -71,4 +73,4 @@ Do not call this module directly from browser/plugin code: route requests throug
 
 ## Current scope and follow-up
 
-This slice implements non-streaming chat completions, a deterministic no-network mock, provider/model catalog, task-based selection, authenticated chat/model endpoints, a high-level Model Gateway dashboard, disabled API-key placeholders, per-request token ledger, INR budget tracker and budget guard, and a zero-cost mock smoke test. The task-planning endpoint uses the gateway when a local/free provider is configured; otherwise it remains in deterministic mock mode. Paid task planning requires an exact model ID in `MODEL_GATEWAY_TASK_MODEL`, `ALLOW_PAID_MODELS=true`, a nonzero budget, and configured token prices. Streaming live output, concurrency-safe budget reservations, and per-model pricing remain follow-up work. Usage records persist to Netlify Blobs when running in Netlify and use runtime memory as a local fallback.
+This slice implements non-streaming chat completions, a deterministic no-network mock, provider/model catalog, task-based selection, authenticated chat/model endpoints, a Model Gateway dashboard with OpenRouter credit/activity reporting and runway planning, disabled API-key placeholders, per-request usage telemetry, and a zero-cost mock smoke test. The task-planning endpoint uses the gateway when a local/free provider is configured; otherwise it remains in deterministic mock mode. Paid OpenRouter fallback uses the server-side approved model list and OpenRouter account/key controls. Streaming live output, concurrency-safe budget reservations, and per-model pricing remain follow-up work. Usage records persist to Netlify Blobs when running in Netlify and use runtime memory as a local fallback.
