@@ -384,7 +384,7 @@ export async function chatCompletion(
           ] }
         : message);
     }
-    const response=await fetchImpl(`${trimSlash(provider.baseUrl)}/chat/completions`,{method:"POST",headers,body:JSON.stringify({model,messages:providerMessages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{}),...(request.reasoning?{reasoning:request.reasoning}:{})}),signal:controller.signal});
+    const response=await fetchImpl(`${trimSlash(provider.baseUrl)}/chat/completions`,{method:"POST",headers,body:JSON.stringify({model,messages:providerMessages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{}),...(request.reasoning?{reasoning:request.reasoning}:{}),...(request.imageDataUrl && provider.name === "openrouter" ? {provider:{sort:"throughput"}}:{})}),signal:controller.signal});
     if(!response.ok)throw new GatewayError(`Provider returned HTTP ${response.status}.`,response.status===429?429:response.status>=500?502:response.status,provider.name);
     let payload:ProviderChatPayload;
     try {
@@ -526,7 +526,7 @@ export async function chatCompletionFreeFirstThenPaid(
       moduleId: undefined,
       openRouterFreeSelection: undefined,
       openRouterPaidSelection: true
-    }, { ...options, providers, timeoutMs: Math.max(timeoutMs, 24_000) });
+    }, { ...options, providers, timeoutMs: Math.max(timeoutMs, 45_000) });
     const changedForVision = Boolean(selectedPaid && selectedPaid.id !== visionModel.id);
     return {
       ...result,
