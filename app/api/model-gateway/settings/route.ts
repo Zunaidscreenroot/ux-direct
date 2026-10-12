@@ -23,6 +23,31 @@ function localSettingsWritesAllowed(request: Request): boolean {
     process.env.MODEL_GATEWAY_ALLOW_UNAUTHENTICATED_LOCAL === "true" &&
     ["localhost", "127.0.0.1", "::1"].includes(hostname);
 }
+function blobsContextDiagnostics() {
+  const raw = process.env.NETLIFY_BLOBS_CONTEXT;
+  if (!raw) return { present: false, validBase64Json: false };
+  try {
+    const decoded = Buffer.from(raw, "base64").toString("utf8");
+    const parsed = JSON.parse(decoded) as Record<string, unknown>;
+    return {
+      present: true,
+      encodedLength: raw.length,
+      validBase64Json: true,
+      hasApiURL: typeof parsed.apiURL === "string" && parsed.apiURL.length > 0,
+      hasEdgeURL: typeof parsed.edgeURL === "string" && parsed.edgeURL.length > 0,
+      hasToken: typeof parsed.token === "string" && parsed.token.length > 0,
+      hasSiteID: typeof parsed.siteID === "string" && parsed.siteID.length > 0,
+      hasDeployID: typeof parsed.deployID === "string" && parsed.deployID.length > 0
+    };
+  } catch {
+    return {
+      present: true,
+      encodedLength: raw.length,
+      validBase64Json: false
+    };
+  }
+}
+
 export async function GET() {
   const diagnosticId = randomUUID();
   const runtimeDiagnostics = {
@@ -32,7 +57,8 @@ export async function GET() {
     hasNetlifySiteId: Boolean(process.env.NETLIFY_SITE_ID),
     hasNetlifyDeployId: Boolean(process.env.NETLIFY_DEPLOY_ID),
     hasNetlifyBlobsContext: Boolean(process.env.NETLIFY_BLOBS_CONTEXT),
-    hasNetlifyApiTokenEnv: Boolean(process.env.NETLIFY_API_TOKEN)
+    hasNetlifyApiTokenEnv: Boolean(process.env.NETLIFY_API_TOKEN),
+    blobsContext: blobsContextDiagnostics()
   };
   try {
     const settings = await getGatewaySettings();
