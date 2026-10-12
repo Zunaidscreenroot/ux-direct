@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { runInNewContext } from "node:vm";
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
@@ -105,4 +106,23 @@ test("Figma cockpit identifies all approved pool tiers and paid-model readiness"
   assert.ok(ui.includes('freeGroup.label = "Free · tried first ("'));
   assert.ok(ui.includes('paidGroup.label = "Paid · fallback ("'));
   assert.ok(ui.includes('" + readyPaidModels + " of " + paidModels.length'));
+});
+
+
+test("Figma cockpit keeps explicit no-edit prompts in conversational planning mode", () => {
+  const ui = read("figma-plugin/ui.html");
+  const start = ui.indexOf("function requestsFigmaEdit(text) {");
+  const end = ui.indexOf("\\n      const designIntent =", start);
+  assert.ok(start >= 0, "intent classifier should be present in the plugin UI");
+  assert.ok(end > start, "intent classifier should end before the request is built");
+  const classifierSource = ui.slice(start, end).trim();
+  const requestsFigmaEdit = runInNewContext("(" + classifierSource + ")") as (prompt: string) => boolean;
+
+  assert.equal(
+    requestsFigmaEdit("Plan a VKYC journey. Include consent, identity verification, video verification, failure states, retries, and recovery. Do not modify Figma."),
+    false
+  );
+  assert.equal(requestsFigmaEdit("Review this screen; no Figma changes."), false);
+  assert.equal(requestsFigmaEdit("Rename the selected frame to VKYC Verification"), true);
+  assert.equal(requestsFigmaEdit("Update the primary CTA text"), true);
 });
