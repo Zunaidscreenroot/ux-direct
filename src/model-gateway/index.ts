@@ -619,7 +619,7 @@ export async function chatCompletionFreeFirstThenPaid(
   // substitute the cheapest approved vision-capable paid model rather than call a
   // different paid model and the selected paid model in the same request.
   if (request.imageDataUrl && (selectedPaid || request.forcePaidVision)) {
-    const visionModel = selectedPaid.supportsImages ? selectedPaid : selectOpenRouterPaidVisionModel();
+    const visionModel = selectedPaid?.supportsImages ? selectedPaid : selectOpenRouterPaidVisionModel();
     const result = await chatCompletionWithOpenRouterPaid({
       ...request,
       model: visionModel.id,
