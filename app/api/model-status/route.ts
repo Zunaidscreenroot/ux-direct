@@ -467,15 +467,28 @@ export async function POST(request: Request) {
     return NextResponse.json({ available: false, error: "Request body must be valid JSON.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
   }
   const parsed = body as { provider?: unknown; model?: unknown; fileKey?: unknown };
+  const approvedFree = typeof parsed.model === "string" && Boolean(getOpenRouterFreeChatModel(parsed.model));
+  const approvedPaid = typeof parsed.model === "string" && Boolean(getOpenRouterPaidChatModel(parsed.model));
   if (parsed.provider !== "openrouter" || typeof parsed.model !== "string" || typeof parsed.fileKey !== "string" ||
-      !getOpenRouterFreeChatModel(parsed.model)) {
-    return NextResponse.json({ available: false, error: "A fileKey and one of the two approved free Nemotron IDs are required. Paid model probes are disabled; paid inference is free-first only.", diagnosticId: diagnosticId() }, { status: 400, headers: corsHeaders() });
+      (!approvedFree && !approvedPaid)) {
+    return NextResponse.json({
+      available: false,
+      error: "A fileKey and an explicitly allowlisted OpenRouter model ID are required.",
+      diagnosticId: diagnosticId()
+    }, { status: 400, headers: corsHeaders() });
   }
   if (!originAllowed(request) || !approvedFileKey(request, parsed.fileKey) || !isAllowedFigmaFileKey(parsed.fileKey)) {
     return NextResponse.json({ available: false, error: "Origin or Figma file key not allowed.", diagnosticId: diagnosticId() }, { status: 403, headers: corsHeaders() });
   }
+  // POST probes are only triggered by an explicit UI action. A paid probe
+  // runs through the shared gateway, budget guard and usage ledger; GET never
+  // sends paid inference. A successful paid probe may incur a small provider charge.
   try {
-    return NextResponse.json({ ...(await runSelectedModelProbe(parsed.provider, parsed.model)), diagnosticId: diagnosticId() }, { headers: corsHeaders() });
+    return NextResponse.json({
+      ...(await runSelectedModelProbe(parsed.provider, parsed.model)),
+      probeKind: approvedPaid ? "explicit-budget-checked-paid-inference" : "free-connectivity-inference",
+      diagnosticId: diagnosticId()
+    }, { headers: corsHeaders() });
   } catch (error) {
     return NextResponse.json({ available: false, provider: parsed.provider, model: parsed.model, reason: safeError(error), diagnosticId: diagnosticId() }, { status: 502, headers: corsHeaders() });
   }
