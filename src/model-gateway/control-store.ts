@@ -16,6 +16,16 @@ export const GATEWAY_MODULES = [
 type BlobStore = { get(key: string, options: { type: "json" }): Promise<unknown>; setJSON(key: string, value: unknown): Promise<void> };
 const runtimeSettings = new Map<string, GatewaySettings>();
 let storePromise: Promise<BlobStore | null> | null = null;
+
+function withStoreTimeout<T>(operation: Promise<T>, label: string, timeoutMs = 1500): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    operation,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(label + " timed out after " + timeoutMs + "ms.")), timeoutMs);
+    })
+  ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
+}
 function amount(value: unknown, fallback: number, max = 1_000_000_000): number {
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) && n >= 0 ? Math.min(max, Number(n.toFixed(4))) : fallback;
@@ -99,10 +109,10 @@ function cleanSettings(input: unknown): GatewaySettings {
 }
 export async function getGatewaySettings(): Promise<GatewaySettings> {
   const key = envScopeKey();
-  const store = await getStore();
+  const store = await withStoreTimeout(getStore(), "Netlify Blobs store initialization").catch(() => null);
   if (store) {
     try {
-      const value = await store.get(key, { type: "json" });
+      const value = await withStoreTimeout(store.get(key, { type: "json" }), "Netlify Blobs settings read");
       if (value && typeof value === "object") {
         const settings = cleanSettings(value);
         runtimeSettings.set(key, settings);
@@ -119,7 +129,7 @@ export async function saveGatewaySettings(input: unknown): Promise<GatewaySettin
   runtimeSettings.set(key, settings);
   const store = await getStore();
   if (store) {
-    try { await store.setJSON(key, settings); }
+    try { await withStoreTimeout(store.setJSON(key, settings), "Netlify Blobs settings write"); }
     catch (error) { throw new Error("Could not persist gateway settings to Netlify Blobs: " + (error instanceof Error ? error.message : "unknown error")); }
   }
   return settings;
