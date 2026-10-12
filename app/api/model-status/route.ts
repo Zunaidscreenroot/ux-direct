@@ -233,7 +233,7 @@ async function runSelectedModelProbe(provider: ProviderId, model: string) {
       temperature: 0,
       reasoning: { effort: "minimal" },
       max_tokens: 128
-    }, { timeoutMs: 18000 });
+    }, { timeoutMs: 12000 });
     const responseReceived = typeof result.content === "string" && result.content.trim().length > 0;
     return {
       available: responseReceived,
