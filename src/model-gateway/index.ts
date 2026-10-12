@@ -206,7 +206,7 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
     ...OPENROUTER_PAID_CHAT_MODELS.map(model => ({
       id: model.id, provider: "openrouter", label: model.label, tier: "paid" as const,
       tasks: [...model.expertise],
-      notes: "Approved paid OpenRouter model. Explicit selection calls this model directly; otherwise it may be used as the single paid fallback after the two approved free models fail. OpenRouter enforces account/key limits.",
+      notes: "Approved paid OpenRouter model. Explicit selection calls this model directly; otherwise it may be used as the single paid fallback after at most two approved free attempts. OpenRouter enforces account/key limits.",
       usdInputPerMillion: model.listedInputUsdPerMillion,
       usdOutputPerMillion: model.listedOutputUsdPerMillion,
       pricingSource: model.pricingSource,
