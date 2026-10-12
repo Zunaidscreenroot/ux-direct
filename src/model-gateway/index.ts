@@ -7,10 +7,9 @@ import {
   selectOpenRouterPaidChatModel
 } from "./openrouter-paid";
 /**
- * Cost-guarded model gateway for UX Direct.
- * Requests go directly to provider APIs. No gateway SaaS, account, or usage fee.
- * Provider inference may cost money; explicitly selected paid models pass the
- * per-request, per-module, per-model and global budget checks before invocation.
+ * OpenRouter-backed model gateway for UX Direct.
+ * OpenRouter is the provider gateway and its account/key limits govern billable usage.
+ * UX Direct maintains usage telemetry and conservative cost estimates, not spending caps.
  */
 export type ChatRole = "system" | "user" | "assistant";
 export type ChatMessage = { role: ChatRole; content: string };
@@ -108,7 +107,7 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   // Always register a deterministic mock so tests and empty-credential installs work.
   // Task routing prefers configured real providers and uses mock only as the last resort.
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
-  const paidRoutingReady = env.ALLOW_PAID_MODELS === "true" && Number(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "3000") > 0;
+  const paidRoutingReady = env.ALLOW_PAID_MODELS === "true";
   // OpenRouter model IDs are discovered live by /api/model-status.
   // The free-chat path admits only the explicitly selected :free model per request.
   if (env.OPENROUTER_API_KEY) providers.push({
@@ -318,9 +317,11 @@ export async function chatCompletion(
   if (request.openRouterFreeSelection && !explicitlySelectedOpenRouterFree) {
     throw new GatewayError("Free OpenRouter selection must come from the server-side free-model allowlist.", 403);
   }
-  // A free attempt is independent of Netlify Blobs availability. Paid attempts
-  // still require stored settings and the persistent budget ledger.
-  const settings = explicitlySelectedOpenRouterFree ? defaultGatewaySettings() : await getGatewaySettings();
+  // OpenRouter owns credit enforcement. Routine free/paid calls must not depend
+  // on the UX Direct settings store or its legacy monthly-budget fields.
+  const settings = explicitlySelectedOpenRouterFree || explicitlySelectedOpenRouterPaid
+    ? defaultGatewaySettings()
+    : await getGatewaySettings();
   const moduleId=request.moduleId??request.budgetModuleId??TASK_MODULES[request.model]??"general";
   const policy=settings.modules[moduleId]??settings.modules.general;
   if(!policy.enabled)throw new GatewayError("Module "+moduleId+" is switched off in Model Gateway settings.",403);
@@ -348,29 +349,14 @@ export async function chatCompletion(
   const exactKey=modelKey(provider.name,model);
   const modelPolicy=settings.models[exactKey]??getDefaultModelPolicy(provider.name,model,effective.usdInputPerMillion??0,effective.usdOutputPerMillion??0,settings.usdToInrRate);
   const billable=policy.mode==="paid" || explicitlySelectedOpenRouterPaid;
-  if(billable){
-    // The explicit OpenRouter allowlist is a narrow user-requested exception to
-    // the broad paid-provider switch. It still goes through all cost/budget checks.
-    if((!settings.paidRoutingEnabled||process.env.ALLOW_PAID_MODELS!=="true") && !explicitlySelectedOpenRouterPaid)throw new GatewayError("Paid routing is locked. Enable the gateway switch and set ALLOW_PAID_MODELS=true in server environment.",403,provider.name);
-    if(model.endsWith(":free")||modelPolicy.inputPriceInrPerMillion<=0||modelPolicy.outputPriceInrPerMillion<=0)throw new GatewayError("Exact model needs positive input and output prices before paid routing.",400,provider.name);
-    if(policy.monthlyBudgetInr<=0||modelPolicy.monthlyBudgetInr<=0||policy.maxRequestCostInr<=0||modelPolicy.maxRequestCostInr<=0)throw new GatewayError("Module or model budget/per-request cap is zero; paid request blocked.",402,provider.name);
+  if(billable && model.endsWith(":free")) {
+    throw new GatewayError("A paid request cannot use a model marked as free.", 400, provider.name);
   }
   const started=Date.now();
   const requestId=request.requestId??crypto.randomUUID();
   const usageStore=await import("./usage-store");
   const recordUsage = (item: Parameters<typeof usageStore.recordModelUsage>[0]) =>
     usageStore.recordModelUsage(item, { persist: !explicitlySelectedOpenRouterFree });
-  if(billable){
-    try{
-      await usageStore.assertBudgetAllows(promptChars,request.max_tokens??1024,process.env,model,{
-        moduleId,modelKey:exactKey,inputPriceInrPerMillion:modelPolicy.inputPriceInrPerMillion,
-        outputPriceInrPerMillion:modelPolicy.outputPriceInrPerMillion,maxRequestCostInr:Math.min(policy.maxRequestCostInr,modelPolicy.maxRequestCostInr),gatewaySettings:settings
-      });
-    }catch(error){
-      await recordUsage({requestId,moduleId,provider:provider.name,model,tier:"paid",promptTokens:0,completionTokens:0,totalTokens:0,usageReported:false,estimatedCostInr:0,latencyMs:Date.now()-started,status:"blocked",note:error instanceof Error?error.message:"Budget guard blocked request."});
-      throw error;
-    }
-  }
   if(provider.kind==="mock"||provider.baseUrl.startsWith("mock://")){
     const lastUser=[...request.messages].reverse().find(m=>m.role==="user")?.content??"";
     const usage={prompt_tokens:0,completion_tokens:0,total_tokens:0};
