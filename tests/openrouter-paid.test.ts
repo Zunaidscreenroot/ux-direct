@@ -26,18 +26,19 @@ test("paid OpenRouter helper only admits its explicit low-cost allowlist", () =>
 });
 
 test("selected paid OpenRouter chat makes one request and is covered by budget checks", async () => {
-  const attempts: Array<{ url: string; model: string; max_tokens: number }> = [];
+  const attempts: Array<{ url: string; model: string; max_tokens: number; reasoning?: { effort?: string } }> = [];
   const result = await chatCompletionWithOpenRouterPaid({
     model: "openai/gpt-oss-20b",
     providerId: "openrouter",
     messages: [{ role: "user", content: "Reply with exactly: PAID_OPENROUTER_OK" }],
-    max_tokens: 32
+    max_tokens: 32,
+    reasoning: { effort: "minimal" }
   }, {
     providers,
     timeoutMs: 2000,
     fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body)) as { model: string; max_tokens: number };
-      attempts.push({ url: String(input), model: body.model, max_tokens: body.max_tokens });
+      const body = JSON.parse(String(init?.body)) as { model: string; max_tokens: number; reasoning?: { effort?: string } };
+      attempts.push({ url: String(input), model: body.model, max_tokens: body.max_tokens, reasoning: body.reasoning });
       return new Response(JSON.stringify({
         id: "openrouter-paid-test",
         model: body.model,
@@ -53,4 +54,5 @@ test("selected paid OpenRouter chat makes one request and is covered by budget c
   assert.equal(attempts.length, 1);
   assert.equal(attempts[0].model, "openai/gpt-oss-20b");
   assert.equal(attempts[0].max_tokens, 32);
+  assert.deepEqual(attempts[0].reasoning, { effort: "minimal" });
 });
