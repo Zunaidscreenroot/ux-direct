@@ -830,11 +830,13 @@
         return;
       }
       if (visualIntent) {
-        const detail = currentModel.tier === "paid"
-          ? (currentModel.supportsImages === true
-            ? "The explicitly selected paid vision model will be called directly."
-            : "The selected paid model cannot accept images, so UX Direct will substitute the lowest-listed-cost approved paid vision model.")
-          : "UX Direct will try up to two approved free vision models first, then may make one low-cost paid vision request if both free attempts fail.";
+        const detail = designIntent
+          ? "This request proposes Figma changes, so UX Direct will use the lowest-listed-cost approved paid vision model to produce a bounded structured edit plan."
+          : currentModel.tier === "paid"
+            ? (currentModel.supportsImages === true
+              ? "The explicitly selected paid vision model will be called directly."
+              : "The selected paid model cannot accept images, so UX Direct will substitute the lowest-listed-cost approved paid vision model.")
+            : "UX Direct will try up to two approved free vision models first, then may make one low-cost paid vision request if both free attempts fail.";
         const consent = window.confirm("Visual review sends the selected frame screenshot and prompt to OpenRouter.\n\n" + detail + "\n\nOpenRouter free-model terms and rate limits apply; a paid fallback may consume account credits. No Figma edits happen without a separate confirmation. Continue?");
         if (!consent) return;
       }
