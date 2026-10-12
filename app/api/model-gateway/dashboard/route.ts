@@ -14,7 +14,12 @@ export async function GET() {
   const configuredProviders = new Set(providers.map(provider => provider.name));
   const settings = await getGatewaySettings();
   const catalog = getModelCatalog(providers);
-  const modelSettings = { ...settings.models };
+  const allowedModelKeys = new Set(catalog.map(model => modelKey(model.provider, model.id)));
+  // Remove legacy provider/model policies from the payload so they cannot be
+  // reintroduced into the restricted cockpit when a user saves settings.
+  const modelSettings = Object.fromEntries(
+    Object.entries(settings.models).filter(([key]) => allowedModelKeys.has(key))
+  ) as typeof settings.models;
   for (const model of catalog) {
     const key = modelKey(model.provider, model.id);
     if (!modelSettings[key]) modelSettings[key] = getDefaultModelPolicy(model.provider, model.id, model.usdInputPerMillion ?? 0, model.usdOutputPerMillion ?? 0, settings.usdToInrRate);
