@@ -8,6 +8,7 @@ var UXD_HEALTH_CHECK_RUNNING = false;
 var UXD_HEALTH_CHECK_PENDING_COMMAND_IDS = [];
 var UXD_HEALTH_CHECK_LAST_REPORT = null;
 var UXD_HEALTH_TEST_TIMEOUT_MS = 15000;
+var UXD_SELECTION_PREVIEW_REVISION = 0;
 function assertUxDirectFileScope(actionName) {
   var key = "";
   try { key = typeof figma.fileKey === "string" ? figma.fileKey : ""; } catch (_) {}
@@ -162,11 +163,83 @@ async function executeDesignOperations(payload) {
   sendSelection();
   return results;
 }
-function sendSelection() {
+async function sendSelection() {
   assertUxDirectFileScope("sending Figma context");
-  figma.ui.postMessage({ type: "scope-approved", fileKey: figma.fileKey });
-  figma.ui.postMessage({ type: "selection", fileKey: figma.fileKey,
-    pageName: figma.currentPage.name, selection: getSelectionSummary() });
+  var revision = ++UXD_SELECTION_PREVIEW_REVISION;
+  var fileKey = figma.fileKey;
+  var pageName = figma.currentPage.name;
+  var selectedNodes = figma.currentPage.selection.slice(0, 12);
+  var summary = getSelectionSummary();
+  var firstSelected = selectedNodes.length ? selectedNodes[0] : null;
+
+  figma.ui.postMessage({ type: "scope-approved", fileKey: fileKey });
+  figma.ui.postMessage({
+    type: "selection",
+    fileKey: fileKey,
+    revision: revision,
+    pageName: pageName,
+    selection: summary,
+    previewState: firstSelected ? "pending" : "empty"
+  });
+
+  if (!firstSelected) {
+    figma.ui.postMessage({
+      type: "selection-preview", fileKey: fileKey, revision: revision,
+      nodeId: null, error: "Select a frame or layer to preview it."
+    });
+    return;
+  }
+  if (typeof firstSelected.exportAsync !== "function") {
+    figma.ui.postMessage({
+      type: "selection-preview", fileKey: fileKey, revision: revision,
+      nodeId: firstSelected.id, error: "This selected node cannot be exported as an image."
+    });
+    return;
+  }
+
+  try {
+    var previewBytes = await firstSelected.exportAsync({
+      format: "JPG",
+      constraint: { type: "WIDTH", value: 960 },
+      quality: 0.65
+    });
+    assertUxDirectFileScope("export selected frame preview");
+    if (revision !== UXD_SELECTION_PREVIEW_REVISION) return;
+    if (!(previewBytes instanceof Uint8Array)) previewBytes = new Uint8Array(previewBytes);
+    if (previewBytes.length > 1500000) {
+      previewBytes = await firstSelected.exportAsync({
+        format: "JPG",
+        constraint: { type: "WIDTH", value: 720 },
+        quality: 0.5
+      });
+      if (!(previewBytes instanceof Uint8Array)) previewBytes = new Uint8Array(previewBytes);
+    }
+    if (previewBytes.length > 2000000) {
+      throw new Error("Preview image is too large. Select a smaller frame.");
+    }
+    if (revision !== UXD_SELECTION_PREVIEW_REVISION ||
+        !figma.currentPage.selection.some(function (node) { return node.id === firstSelected.id; })) return;
+    figma.ui.postMessage({
+      type: "selection-preview",
+      fileKey: fileKey,
+      revision: revision,
+      nodeId: firstSelected.id,
+      name: firstSelected.name,
+      width: typeof firstSelected.width === "number" ? firstSelected.width : undefined,
+      height: typeof firstSelected.height === "number" ? firstSelected.height : undefined,
+      mimeType: "image/jpeg",
+      bytes: previewBytes
+    });
+  } catch (error) {
+    if (revision !== UXD_SELECTION_PREVIEW_REVISION) return;
+    figma.ui.postMessage({
+      type: "selection-preview",
+      fileKey: fileKey,
+      revision: revision,
+      nodeId: firstSelected.id,
+      error: error && error.message ? error.message : "Could not export the selected frame preview."
+    });
+  }
 }
 var selectionChangeListenerRegistered = false;
 figma.on("selectionchange", sendSelection);
