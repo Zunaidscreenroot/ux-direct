@@ -6,7 +6,6 @@ import { mockProvider } from "@/src/providers/mock-provider";
 import { gatewayProvider } from "@/src/providers/gateway-provider";
 import { providersFromEnv } from "@/src/model-gateway";
 import { getBudgetSnapshot } from "@/src/model-gateway/usage-store";
-import { getGatewaySettings } from "@/src/model-gateway/control-store";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
@@ -75,28 +74,18 @@ export async function POST(request: Request) {
   }
   const taskInput = { title: parsed.data.title, request: parsed.data.request, project: parsed.data.project };
   const configuredProviders = providersFromEnv();
-  const gatewaySettings = await getGatewaySettings();
-  const reasoningPolicy = gatewaySettings.modules.reasoning;
-  const configuredForMode = configuredProviders.some(provider => {
-    if (provider.kind === "mock") return false;
-    if (reasoningPolicy.mode === "local") return provider.kind === "local";
-    if (reasoningPolicy.mode === "free") return provider.kind === "free-tier" || provider.models.some(model => model.endsWith(":free"));
-    if (reasoningPolicy.mode === "paid") return provider.kind !== "local" && process.env.ALLOW_PAID_MODELS === "true";
-    return false;
-  });
-  // Disabled or explicitly selected policies must reach the gateway so it can block them clearly.
-  // Default free mode stays mock-only when no free/local route is connected.
-  const explicitChoice = reasoningPolicy.selectedModelKey !== "auto";
-  const selectedProvider = reasoningPolicy.mode === "mock" && reasoningPolicy.enabled
-    ? mockProvider
-    : !reasoningPolicy.enabled || reasoningPolicy.mode === "paid" || explicitChoice || configuredForMode
-      ? gatewayProvider : mockProvider;
+  // The UX task planner now follows the same fixed OpenRouter free-first pool as chat.
+  // Do not read gateway settings before attempting free inference; that store can be transiently slow.
+  const openRouterConfigured = configuredProviders.some(provider => provider.name === "openrouter" && Boolean(provider.apiKey));
+  const selectedProvider = openRouterConfigured ? gatewayProvider : mockProvider;
   const executionMode = selectedProvider === mockProvider ? "mock" : "gateway";
   recordOperationalEvent({ source: "backend", event: "Task request received", status: "info", summary: "Task planning request accepted; prompt contents are not stored in the operational log.", requestId, project: parsed.data.project, mode: executionMode });
   try {
     const result = await planUXTask({ ...taskInput, requestId, provider: selectedProvider });
     const durationMs = Date.now() - startedAt;
-    const usage = (await getBudgetSnapshot()).records.find(record => record.requestId === requestId);
+    const usage = await getBudgetSnapshot()
+      .then(snapshot => snapshot.records.find(record => record.requestId === requestId))
+      .catch(() => undefined);
     recordOperationalEvent({ source: "backend", event: "Task response returned", status: "success", summary: executionMode === "mock" ? "Mock plan returned. No model API or Figma edit was performed." : "Model gateway plan returned; no Figma edit was performed.", requestId, project: parsed.data.project, durationMs, mode: executionMode });
     return NextResponse.json({
       ...result, requestId, mode: executionMode,
