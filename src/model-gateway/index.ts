@@ -570,12 +570,6 @@ export async function chatCompletionFreeFirstThenPaid(
     }
   }
 
-  const selectedPaid = request.preferredPaidModelId
-    ? getOpenRouterPaidChatModel(request.preferredPaidModelId)
-    : undefined;
-  if (request.preferredPaidModelId && !selectedPaid) {
-    throw new GatewayError("Selected paid fallback is not in the approved OpenRouter model pool.",400,"openrouter");
-  }
   const paidModel = selectedPaid ?? selectOpenRouterPaidChatModel(request.messages);
   try {
     const result = await chatCompletionWithOpenRouterPaid({
