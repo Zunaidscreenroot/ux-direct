@@ -149,7 +149,7 @@ export async function recordModelUsage(input: Omit<UsageRecord, "id" | "at"> & {
 }
 export async function getBudgetSnapshot(env = process.env, now = new Date()): Promise<BudgetSnapshot> {
   const config = getBudgetConfig(env);
-  const settings = opts.gatewaySettings ?? (env === process.env ? await getGatewaySettings() : null);
+  const settings = env === process.env ? await getGatewaySettings() : null;
   const monthlyBudget = settings?.globalMonthlyBudgetInr ?? config.monthlyBudgetInr;
   const { records, retention } = await readRecords();
   const month = monthKey(now);
@@ -178,7 +178,7 @@ export async function assertBudgetAllows(
   promptChars: number, maxOutputTokens = 1024, env = process.env, model?: string,
   opts: { moduleId?: string; modelKey?: string; inputPriceInrPerMillion?: number; outputPriceInrPerMillion?: number; maxRequestCostInr?: number; gatewaySettings?: Awaited<ReturnType<typeof getGatewaySettings>> } = {}
 ) {
-  const settings = env === process.env ? await getGatewaySettings() : null;
+  const settings = opts.gatewaySettings ?? (env === process.env ? await getGatewaySettings() : null);
   const config = getBudgetConfig(env);
   const moduleId = opts.moduleId ?? "general";
   const modulePolicy = settings?.modules[moduleId];
