@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { chatCompletionWithFallback, GatewayError, type ChatMessage } from "@/src/model-gateway";
+import { chatCompletionFreeFirstThenPaid, getOpenRouterFreeChatModel, getOpenRouterPaidChatModel, GatewayError, type ChatMessage } from "@/src/model-gateway";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 import { GATEWAY_MODULES } from "@/src/model-gateway/control-store";
 
@@ -49,6 +49,12 @@ export async function POST(request: Request) {
   if (typeof value.model !== "string" || !Array.isArray(value.messages)) {
     return NextResponse.json({ error: "Required fields: model (string), messages (array)." }, { status: 400 });
   }
+  if (!getOpenRouterFreeChatModel(value.model) && !getOpenRouterPaidChatModel(value.model)) {
+    return NextResponse.json({ error: "Only the two approved free Nemotron models and three approved paid models are allowed." }, { status: 400 });
+  }
+  if (value.providerId !== undefined && value.providerId !== "openrouter") {
+    return NextResponse.json({ error: "Only OpenRouter is allowed by this gateway route." }, { status: 400 });
+  }
   if (value.messages.length < 1 || value.messages.length > 100) {
     return NextResponse.json({ error: "messages must contain between 1 and 100 entries." }, { status: 400 });
   }
@@ -75,12 +81,14 @@ export async function POST(request: Request) {
   }
   const requestId = randomUUID();
   try {
-    const result = await chatCompletionWithFallback({
+    const preferredFreeModel = getOpenRouterFreeChatModel(value.model)
+      ? value.model
+      : "nvidia/nemotron-3.5-lightning:free";
+    const result = await chatCompletionFreeFirstThenPaid({
       requestId,
-      model: value.model,
+      model: preferredFreeModel,
+      providerId: "openrouter",
       messages,
-      ...(typeof value.moduleId === "string" ? { moduleId: value.moduleId } : {}),
-      ...(typeof value.providerId === "string" ? { providerId: value.providerId } : {}),
       ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
       ...(typeof value.max_tokens === "number" ? { max_tokens: value.max_tokens } : {}),
       signal: request.signal
