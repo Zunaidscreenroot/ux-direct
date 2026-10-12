@@ -120,7 +120,7 @@
   </section>
 
   <script>
-    const API = "https://deploy-preview-24--uxdirect.netlify.app"; // Stable Netlify Deploy Preview alias for PR #21; avoids stale deploy-id permalinks.
+    const API = "https://deploy-preview-25--uxdirect.netlify.app"; // Keep plugin requests on the same PR preview as the visual-analysis backend.
     const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
     const $ = (id) => document.getElementById(id);
     let verifiedFileKey = null;
@@ -281,8 +281,8 @@
         // Netlify's Next.js runtime does not consistently expose CONTEXT to route handlers.
         // Validate the real site host and branch; treat context as diagnostic-only.
         if (!data || data.status !== "ok" || actualPlatform !== "netlify" || !hostMatches ||
-            actualBranch !== "fix/model-probe-preview-routing") {
-          throw new Error("Expected UX Direct Netlify Deploy Preview for branch fix/model-probe-preview-routing; received platform=" + actualPlatform + ", host=" + actualHost + ", context=" + actualContext + ", branch=" + actualBranch + ", status=" + (data && data.status ? data.status : "missing") + ".");
+            actualBranch !== "feat/figma-read-write-execution") {
+          throw new Error("Expected UX Direct Netlify Deploy Preview for branch feat/figma-read-write-execution; received platform=" + actualPlatform + ", host=" + actualHost + ", context=" + actualContext + ", branch=" + actualBranch + ", status=" + (data && data.status ? data.status : "missing") + ".");
         }
         backendHealthy = true;
         setConnection("ok", "Netlify Preview connected");
