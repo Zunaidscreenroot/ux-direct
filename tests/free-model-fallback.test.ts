@@ -11,6 +11,8 @@ import {
 
 const LIGHTNING = "nvidia/nemotron-3.5-lightning:free";
 const ULTRA = "nvidia/nemotron-3-ultra-550b-a55b:free";
+const QWEN_VISION = "qwen/qwen3.8-27b:free";
+const NEMOTRON_OMNI = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
 const providers: ProviderConfig[] = [{
   name: "openrouter",
   baseUrl: "https://openrouter.example/api/v1",
@@ -19,9 +21,9 @@ const providers: ProviderConfig[] = [{
   kind: "free-tier"
 }];
 
-test("free options are restricted to the two approved Nemotron IDs", () => {
-  const options = getFreeChatModelOptions(providers, [LIGHTNING, ULTRA, "live/unapproved:free", "gpt-6-luna"]);
-  assert.deepEqual(options.map(option => option.id), [LIGHTNING, ULTRA]);
+test("free options are restricted to the four approved text and vision IDs", () => {
+  const options = getFreeChatModelOptions(providers, [LIGHTNING, ULTRA, QWEN_VISION, NEMOTRON_OMNI, "live/unapproved:free", "gpt-6-luna"]);
+  assert.deepEqual(options.map(option => option.id), [LIGHTNING, ULTRA, QWEN_VISION, NEMOTRON_OMNI]);
   assert.equal(options.every(option => option.provider === "openrouter" && option.tier === "free-tier"), true);
 });
 
@@ -38,7 +40,7 @@ test("free request cannot expand the model allowlist to an unapproved ID", async
     model: "live/unapproved:free",
     providerId: "openrouter",
     messages: [{ role: "user", content: "Say hello." }]
-  }, { providers }), /two approved OpenRouter free models/);
+  }, { providers }), /approved OpenRouter free model/);
 });
 
 test("free-first returns the first healthy free model without making a paid call", async () => {
@@ -76,7 +78,7 @@ test("paid fallback runs only after both free IDs fail and is assigned by task e
   const result = await chatCompletionFreeFirstThenPaid({
     model: LIGHTNING,
     providerId: "openrouter",
-    messages: [{ role: "user", content: "Debug this TypeScript API route and fix the build error." }],
+    messages: [{ role: "user", content: "Implement the Figma plugin architecture across multiple files and improve the agent workflow." }],
     max_tokens: 32
   }, {
     providers,
@@ -163,7 +165,7 @@ test("visual requests skip text-only free models and attach the selected-frame i
         messages: Array<{ role: string; content: string | Array<{ type: string; image_url?: { url: string }; text?: string }> }>;
       };
       attempts.push(body.model);
-      assert.equal(body.model, "deepseek/deepseek-v4.1-flash");
+      assert.equal(body.model, "openai/gpt-6-luna");
       assert.deepEqual(body.provider, { sort: "throughput" });
       const userMessage = body.messages.find(message => message.role === "user");
       assert.ok(userMessage);
@@ -181,7 +183,7 @@ test("visual requests skip text-only free models and attach the selected-frame i
 
   assert.equal(result.tier, "paid");
   assert.equal(result.routingStrategy, "vision-direct");
-  assert.deepEqual(attempts, ["deepseek/deepseek-v4.1-flash"]);
+  assert.deepEqual(attempts, ["openai/gpt-6-luna"]);
   assert.match(result.fallbackReason ?? "", /does not support screenshot input/i);
 });
 
@@ -312,4 +314,44 @@ test("provider response without user-facing text returns a safe diagnostic, not 
     assert.equal(error.message.includes("private hidden reasoning"), false);
     return true;
   });
+});
+
+
+test("visual requests try an approved free vision model before spending paid credits", async () => {
+  const attempts: string[] = [];
+  const imageDataUrl = "data:image/jpeg;base64,AAAA";
+  const result = await chatCompletionFreeFirstThenPaid({
+    model: LIGHTNING,
+    providerId: "openrouter",
+    imageDataUrl,
+    messages: [{ role: "user", content: "Audit the selected screen." }],
+    max_tokens: 64
+  }, {
+    providers,
+    timeoutMs: 2000,
+    fetchImpl: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        model: string;
+        messages: Array<{ role: string; content: string | Array<{ type: string; image_url?: { url: string }; text?: string }> }>;
+      };
+      attempts.push(body.model);
+      const userMessage = body.messages.find(message => message.role === "user");
+      assert.ok(userMessage);
+      assert.ok(Array.isArray(userMessage.content));
+      const imagePart = userMessage.content.find(part => typeof part === "object" && part.type === "image_url");
+      assert.equal(imagePart?.image_url?.url, imageDataUrl);
+      return new Response(JSON.stringify({
+        id: "openrouter-free-vision-test",
+        model: body.model,
+        choices: [{ message: { content: "The screen hierarchy is clear." } }],
+        usage: { prompt_tokens: 40, completion_tokens: 8, total_tokens: 48 }
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch
+  });
+
+  assert.equal(result.model, QWEN_VISION);
+  assert.equal(result.tier, "free-tier");
+  assert.equal(result.routingStrategy, "free-first");
+  assert.deepEqual(attempts, [QWEN_VISION]);
+  assert.match(result.fallbackReason ?? "", /no paid inference/i);
 });
