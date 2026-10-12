@@ -228,8 +228,9 @@ async function probeModel(provider: ProviderId, model: string) {
 }
 
 /**
- * Paid probes must use the shared gateway so the request is budget-checked and
- * recorded. Free probes remain a direct, single-model connectivity check.
+ * Paid probes must use the shared gateway so the single approved model request
+ * is recorded. OpenRouter enforces provider-side credits/key limits; free probes
+ * remain direct, single-model connectivity checks.
  */
 async function runSelectedModelProbe(provider: ProviderId, model: string) {
   if (!getOpenRouterPaidChatModel(model)) return probeModel(provider, model);
@@ -497,12 +498,12 @@ export async function POST(request: Request) {
     }
   }
   // POST probes are only triggered by an explicit UI action. A paid probe
-  // runs through the shared gateway, budget guard and usage ledger; GET never
-  // sends paid inference. A successful paid probe may incur a small provider charge.
+  // runs through the shared gateway and usage ledger; OpenRouter enforces its
+  // account credit/key limits. GET never sends paid inference. Paid probes may incur a charge.
   try {
     return NextResponse.json({
       ...(await runSelectedModelProbe(parsed.provider, parsed.model)),
-      probeKind: approvedPaid ? "explicit-budget-checked-paid-inference" : "free-connectivity-inference",
+      probeKind: approvedPaid ? "explicit-approved-paid-inference" : "free-connectivity-inference",
       diagnosticId: diagnosticId()
     }, { headers: corsHeaders() });
   } catch (error) {
