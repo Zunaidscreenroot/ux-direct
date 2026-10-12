@@ -35,7 +35,39 @@ export type GatewayRequest = {
   imageDataUrl?: string;
 };
 export type TokenUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
-type ProviderChatPayload = { id?: unknown; model?: unknown; choices?: Array<{ message?: { content?: unknown } }>; usage?: TokenUsage };
+type ProviderChatMessage = {
+  content?: unknown;
+  refusal?: unknown;
+  reasoning?: unknown;
+  reasoning_content?: unknown;
+  [key: string]: unknown;
+};
+type ProviderChatPayload = {
+  id?: unknown;
+  model?: unknown;
+  choices?: Array<{ message?: ProviderChatMessage; finish_reason?: unknown }>;
+  usage?: TokenUsage;
+  output_text?: unknown;
+  error?: unknown;
+};
+
+function normalizeChatText(value: unknown): string | undefined {
+  if (typeof value === "string") return value.trim() || undefined;
+  if (!Array.isArray(value)) return undefined;
+  const parts = value.map(part => {
+    if (typeof part === "string") return part;
+    if (!part || typeof part !== "object") return "";
+    const item = part as Record<string, unknown>;
+    // OpenAI-compatible providers may return a multipart content array rather
+    // than the usual string. Only read user-facing text fields; never expose
+    // internal reasoning fields as a completion.
+    if (typeof item.text === "string") return item.text;
+    if (typeof item.content === "string" && (item.type === "text" || item.type === "output_text")) return item.content;
+    return "";
+  }).filter(Boolean);
+  const text = parts.join("\\n").trim();
+  return text || undefined;
+}
 export type GatewayResponse = {
   id?: string;
   model?: string;
@@ -451,8 +483,22 @@ export async function chatCompletion(
       }
       throw new GatewayError("Provider returned invalid JSON.", 502, provider.name);
     }
-    const content=payload.choices?.[0]?.message?.content;
-    if(typeof content!=="string")throw new GatewayError("Provider response did not contain choices[0].message.content.",502,provider.name);
+    const firstChoice = payload.choices?.[0];
+    const message = firstChoice?.message;
+    const content = normalizeChatText(message?.content) ?? normalizeChatText(message?.refusal) ?? normalizeChatText(payload.output_text);
+    if (!content) {
+      const messageFields = message && typeof message === "object"
+        ? Object.keys(message).filter(key => ["role", "content", "refusal", "reasoning", "reasoning_content", "tool_calls", "audio", "annotations"].includes(key)).join(",")
+        : "missing";
+      const finishReason = typeof firstChoice?.finish_reason === "string" ? firstChoice.finish_reason.slice(0, 80) : "unknown";
+      // Deliberately do not include hidden reasoning or raw provider payloads.
+      throw new GatewayError(
+        "Provider returned no user-facing text (finish_reason=" + finishReason +
+        "; message_fields=" + (messageFields || "none") + "). Try a standard text response or a different approved model.",
+        502,
+        provider.name
+      );
+    }
     const latencyMs=Date.now()-started;const tokenUsage=usageStore.tokenUsageValues(payload.usage);
     const estimatedCostInr=tokenUsage.usageReported
       ?usageStore.estimateCostInr(tokenUsage.promptTokens,tokenUsage.completionTokens,provider,process.env,model,rates)
