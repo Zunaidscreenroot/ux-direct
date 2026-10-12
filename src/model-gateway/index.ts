@@ -434,11 +434,12 @@ export function routeTask(task: "classify" | "extract" | "summarize" | "ux-reaso
 
 /**
  * Retry/fail over only across explicitly configured local/free providers.
- * Paid providers are never used as implicit fallbacks. Direct model requests
- * remain single-provider; task aliases can use this policy.
+ * Paid providers are not used as implicit provider substitutions. The explicit
+ * OpenRouter free-first strategy can select one approved paid fallback, with
+ * account credits and key limits enforced by OpenRouter itself.
  */
 /**
- * paid providers are never used as implicit fallbacks.
+ * OpenRouter is the provider billing gateway; local usage records are estimates only.
  */
 export async function chatCompletionWithFallback(
   request: GatewayRequest,
@@ -468,7 +469,7 @@ export async function chatCompletionWithFreeFallback(
 /**
  * Cockpit/task planning strategy: exhaust the two approved free models first,
  * then select one paid model by task expertise. A request never fans out to
- * multiple paid models, and every paid call uses the budget-checked gateway.
+ * multiple paid models; OpenRouter owns balance and key-limit enforcement.
  */
 export async function chatCompletionFreeFirstThenPaid(
   request: GatewayRequest,
@@ -511,7 +512,7 @@ export async function chatCompletionFreeFirstThenPaid(
       tier: "paid",
       routingStrategy: "vision-direct",
       attemptedModels: [visionModel.id],
-      fallbackReason: "Visual review requires image input; the two approved free Nemotron models are text-only. Paid inference was budget-checked before execution."
+      fallbackReason: "Visual review requires image input; the two approved free Nemotron models are text-only. This user-approved paid request is billed through OpenRouter and uses provider-side credit limits."
     };
   }
   const preferred = getOpenRouterFreeChatModel(request.model)?.id;
