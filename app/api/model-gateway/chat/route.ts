@@ -89,6 +89,7 @@ export async function POST(request: Request) {
       requestId,
       model: preferredFreeModel,
       providerId: "openrouter",
+      budgetModuleId: typeof value.moduleId === "string" ? value.moduleId : "general",
       messages,
       ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
       ...(typeof value.max_tokens === "number" ? { max_tokens: value.max_tokens } : {}),
