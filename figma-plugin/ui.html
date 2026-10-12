@@ -629,8 +629,10 @@
         type: String(node.type || "").slice(0, 60),
         id: String(node.id || "").slice(0, 200),
         ...(Number.isFinite(node.width) ? { width: node.width } : {}),
-        ...(Number.isFinite(node.height) ? { height: node.height } : {})
+        ...(Number.isFinite(node.height) ? { height: node.height } : {}),
+        ...(node.tree ? { tree: node.tree } : {})
       })) : [];
+      const designIntent = /\b(add|create|insert|change|update|edit|modify|rename|replace|set|make|remove|delete|redesign|apply|adjust|color|colour|button|text|heading|frame|section|padding|spacing|font|fill)\b/i.test(prompt);
       try {
         const response = await fetch(API + "/api/assistant/chat", {
           method: "POST",
@@ -640,6 +642,7 @@
             project: "general",
             provider: currentModel.provider,
             model: currentModel.id,
+            intent: designIntent ? "design-operation" : "chat",
             messages: chatHistory.slice(-12),
             selection: {
               pageName: String(currentSelection.pageName || "").slice(0, 160),
@@ -651,6 +654,41 @@
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
+        if (designIntent) {
+          let plan;
+          try {
+            const cleaned = data.content.trim().replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
+            plan = JSON.parse(cleaned);
+          } catch (_) {
+            throw new Error("I couldn’t turn the model response into a safe, structured Figma edit plan. No changes were made.");
+          }
+          const operations = Array.isArray(plan.operations) ? plan.operations.slice(0, 8) : [];
+          if (!operations.length) {
+            appendMessage("assistant", "I analyzed the selected layers, but I couldn’t produce a supported edit plan. No changes were made. Try selecting the exact frame or text layer and describing the specific change.");
+            setActivity("No Figma edits applied.");
+            return;
+          }
+          const summary = operations.map((op, index) => {
+            const target = selectedNodes.find(n => n.id === op.targetId);
+            const targetLabel = target ? target.name : (op.parentId ? (selectedNodes.find(n => n.id === op.parentId)?.name || "selected frame") : "selected frame");
+            if (op.action === "update-text") return (index + 1) + ". Update text in “" + targetLabel + "” to: " + String(op.text || "").slice(0, 100);
+            if (op.action === "rename-node") return (index + 1) + ". Rename “" + targetLabel + "” to “" + String(op.name || "") + "”";
+            if (op.action === "set-fill") return (index + 1) + ". Set fill of “" + targetLabel + "” to " + String(op.color || "");
+            if (op.action === "create-text") return (index + 1) + ". Add text “" + String(op.text || "").slice(0, 100) + "” to “" + targetLabel + "”";
+            if (op.action === "create-rectangle") return (index + 1) + ". Add a " + String(op.width || 0) + "×" + String(op.height || 0) + " shape to “" + targetLabel + "”";
+            return (index + 1) + ". Unsupported operation: " + String(op.action || "unknown");
+          }).join("\n");
+          appendMessage("assistant", "Proposed Figma changes:\n" + summary + "\n\nReview the plan in the confirmation prompt. Nothing has changed yet.");
+          const confirmed = window.confirm("Apply these changes to the selected frame/layers?\n\n" + summary + "\n\nOnly supported operations within the current selection are allowed. No deletion is supported.");
+          if (confirmed) {
+            parent.postMessage({ pluginMessage: { type: "apply-design-operations", payload: { operations } } }, "*");
+            setActivity("Applying approved changes…");
+          } else {
+            appendMessage("assistant", "Cancelled. Your Figma design was not changed.");
+            setActivity("Edit plan cancelled.");
+          }
+          return;
+        }
         chatHistory.push({ role: "assistant", content: data.content });
         if (data.provider && data.model) {
           const actual = modelOptions.find(model => model.provider === data.provider && model.id === data.model);
@@ -732,6 +770,17 @@
 
       if (message.type === "native-health-result") {
         renderHealthReport(message);
+        return;
+      }
+
+      if (message.type === "design-operation-result") {
+        if (message.ok) {
+          appendMessage("assistant", "Figma changes applied and the plugin returned success for " + message.results.length + " operation(s). I refreshed the selected-layer context. Please visually inspect the frame to confirm the final layout.");
+          setActivity("Figma operations reported successful; visual review is still required.");
+        } else {
+          appendMessage("assistant", "Figma edit failed: " + String(message.error || "Unknown plugin error") + ". Some earlier operations may already have applied; inspect the selected frame before retrying.");
+          setActivity("Figma edit failed; inspect the frame before retrying.");
+        }
         return;
       }
 
