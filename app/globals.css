@@ -374,3 +374,30 @@ footer span { margin: 0 6px; color: #9bb98b; }
 @media(max-width:650px){.accountant-summary-grid{grid-template-columns:1fr 1fr;gap:8px}.accountant-summary-grid .gateway-stat-card{padding:13px}.accountant-summary-grid .gateway-stat-card strong{font-size:20px}.accountant-global-controls{grid-template-columns:1fr}.gateway-module-card{padding:15px}.gateway-policy-budget-row{grid-template-columns:1fr 1fr;gap:8px}.model-catalog-toolbar{align-items:stretch;flex-direction:column}.model-catalog-toolbar .gateway-control-field{min-width:0}.gateway-savebar{align-items:stretch;flex-direction:column}.gateway-savebar .submit-button{width:100%}.gateway-section-heading{align-items:flex-start!important;flex-direction:column}}
 
 .gateway-admin-key{display:flex;flex-direction:column;gap:6px;min-width:220px;max-width:280px;color:var(--muted);font-size:10px;font-weight:700}.gateway-admin-key input{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:#fff;color:var(--ink);font-size:12px}.gateway-admin-key small{font-size:9px;font-weight:400;line-height:1.4}@media(max-width:650px){.gateway-admin-key{min-width:0;max-width:none;width:100%}}
+
+/* OpenRouter account telemetry and credit runway planning */
+.openrouter-account-panel { padding: 20px; margin: 17px 0 25px; overflow: visible; }
+.openrouter-account-panel > .gateway-panel-heading { margin-bottom: 18px; }
+.openrouter-account-panel .accountant-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.gateway-account-admin { display: flex; flex-direction: column; gap: 6px; max-width: 520px; margin: 15px 0; }
+.gateway-account-admin input { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfa; padding: 10px 12px; font: 12px 'DM Sans', sans-serif; color: var(--ink); }
+.gateway-account-admin small { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.gateway-account-planner { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(150px, 1fr)); align-items: stretch; gap: 12px; margin: 19px 0 22px; padding: 16px; background: #f7f9f5; border: 1px solid #edf0eb; border-radius: 12px; }
+.gateway-account-planner h3 { margin: 7px 0; font: 700 16px Manrope, sans-serif; }
+.gateway-account-planner p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.gateway-account-planner .gateway-control-field { min-width: 0; }
+.gateway-account-planner input { width: 100%; margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: white; color: var(--ink); font: 12px 'DM Sans', sans-serif; }
+.gateway-account-planner .gateway-stat-card { padding: 14px; }
+.gateway-account-planner .gateway-stat-card strong { font-size: clamp(20px, 2vw, 26px); }
+.gateway-savebar-note { margin: 0; max-width: 320px; color: var(--muted); font-size: 10px; line-height: 1.6; }
+@media (max-width: 1100px) {
+  .openrouter-account-panel .accountant-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gateway-account-planner { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gateway-account-planner > div:first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 560px) {
+  .openrouter-account-panel { padding: 14px; }
+  .openrouter-account-panel .accountant-summary-grid,
+  .gateway-account-planner { grid-template-columns: minmax(0, 1fr); }
+  .gateway-account-planner > div:first-child { grid-column: auto; }
+}
