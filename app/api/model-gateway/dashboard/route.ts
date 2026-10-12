@@ -27,7 +27,8 @@ export async function GET() {
     gateway: {
       name: "UX Direct Model Gateway",
       status: providers.some(provider => provider.kind !== "mock") ? "provider-configured" : "awaiting-keys",
-      paidModelsEnabled: fullSettings.paidRoutingEnabled && env.ALLOW_PAID_MODELS === "true",
+      paidModelsEnabled: Boolean(env.OPENROUTER_API_KEY),
+      routingPolicy: "free-first; one expertise-selected paid model only after the two approved free models fail",
       monthlyBudgetInr: budget.monthlyBudgetInr,
       pricingConfigured: budget.pricingConfigured,
       gatewayFeeInr: 0
