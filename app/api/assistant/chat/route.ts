@@ -170,7 +170,7 @@ export async function POST(request: Request) {
     const result = await chatCompletionFreeFirstThenPaid({
       requestId,
       // Free selection is the default preference. If both free models fail,
-      // a dropdown-paid preference may be used once, after gateway budget checks.
+      // a dropdown-paid preference may be used once; OpenRouter enforces account credits/key limits.
       model: data.model && data.model.endsWith(":free") ? data.model : "nvidia/nemotron-3.5-lightning:free",
       ...(preferredPaid ? { preferredPaidModelId: preferredPaid.id } : {}),
       ...(data.selection?.previewDataUrl ? { imageDataUrl: data.selection.previewDataUrl } : {}),
