@@ -2,7 +2,7 @@ name: UX Direct CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/model-probe-preview-routing]
   pull_request:
     branches: [main]
 
