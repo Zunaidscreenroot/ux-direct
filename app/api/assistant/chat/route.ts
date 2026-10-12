@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { chatCompletionWithFallback, chatCompletionWithFreeFallback, chatCompletionWithOpenRouterPaid, providersForFreeChat, GatewayError, type ChatMessage } from "@/src/model-gateway";
+import { chatCompletionFreeFirstThenPaid, GatewayError, type ChatMessage } from "@/src/model-gateway";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { recordOperationalEvent } from "@/src/observability/event-log";
@@ -153,35 +153,17 @@ export async function POST(request: Request) {
   });
 
   try {
-    const result = data.provider && data.model
-      ? data.model.endsWith(":free")
-        ? await chatCompletionWithFreeFallback({
-            requestId,
-            model: data.model,
-            providerId: data.provider,
-            messages,
-            temperature: 0.3,
-            max_tokens: 1400,
-            signal: request.signal
-          }, { providers: providersForFreeChat() })
-        : await chatCompletionWithOpenRouterPaid({
-            requestId,
-            model: data.model,
-            providerId: data.provider,
-            messages,
-            temperature: 0.3,
-            max_tokens: 1400,
-            signal: request.signal
-          })
-      : await chatCompletionWithFallback({
-          requestId,
-          model: "uxd/reasoning",
-          moduleId: "reasoning",
-          messages,
-          temperature: 0.3,
-          max_tokens: 1400,
-          signal: request.signal
-        });
+    const result = await chatCompletionFreeFirstThenPaid({
+      requestId,
+      // The selected free model is only a preference. The server still exhausts
+      // the approved free pool before it can invoke one paid model by expertise.
+      model: data.model && data.model.endsWith(":free") ? data.model : "nvidia/nemotron-3.5-lightning:free",
+      providerId: "openrouter",
+      messages,
+      temperature: 0.3,
+      max_tokens: 1400,
+      signal: request.signal
+    }, { timeoutMs: 10_000 });
     const latencyMs = Date.now() - startedAt;
     recordOperationalEvent({
       source: "backend", event: "Assistant chat completed", status: "success",
@@ -193,6 +175,10 @@ export async function POST(request: Request) {
       requestId,
       provider: result.provider,
       model: result.model,
+      tier: result.tier ?? (result.model.endsWith(":free") ? "free-tier" : "paid"),
+      routingStrategy: result.routingStrategy ?? "free-first",
+      attemptedModels: result.attemptedModels ?? [result.model],
+      fallbackReason: result.fallbackReason ?? null,
       latencyMs: result.latencyMs,
       usage: result.usage ?? null
     }, {
