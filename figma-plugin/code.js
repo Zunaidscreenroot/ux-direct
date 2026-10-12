@@ -37,12 +37,130 @@ function getUxDirectScopeDecision() {
 function startScopedPlugin() {
   // Create the UI only after the file allowlist succeeds, before any UI messages.
   figma.showUI(__html__, { width: 380, height: 720, themeColors: true });
+function serializeNodeForAI(node, depth, budget) {
+  if (!node || budget.count >= 180 || depth > 5) return null;
+  budget.count += 1;
+  var out = { id: node.id, name: node.name, type: node.type, visible: node.visible };
+  ["x","y","width","height","rotation","opacity"].forEach(function (key) {
+    if (typeof node[key] === "number" && Number.isFinite(node[key])) out[key] = Math.round(node[key] * 100) / 100;
+  });
+  if (node.type === "TEXT") {
+    out.characters = String(node.characters || "").slice(0, 1200);
+    try { if (typeof node.fontSize === "number") out.fontSize = node.fontSize; } catch (_) {}
+    try { if (typeof node.textAlignHorizontal === "string") out.textAlignHorizontal = node.textAlignHorizontal; } catch (_) {}
+    try { if (node.fontName && typeof node.fontName === "object") out.fontName = { family: node.fontName.family, style: node.fontName.style }; } catch (_) {}
+  }
+  ["fills","strokes"].forEach(function (key) {
+    try {
+      var paints = node[key];
+      if (Array.isArray(paints)) out[key] = paints.slice(0, 3).map(function (paint) {
+        var p = { type: paint.type, visible: paint.visible, opacity: paint.opacity };
+        if (paint.color) p.color = { r: paint.color.r, g: paint.color.g, b: paint.color.b };
+        if (paint.gradientStops) p.gradientStops = paint.gradientStops.slice(0, 4);
+        return p;
+      });
+    } catch (_) {}
+  });
+  ["layoutMode","primaryAxisAlignItems","counterAxisAlignItems","itemSpacing","paddingLeft","paddingRight","paddingTop","paddingBottom","clipsContent"].forEach(function (key) {
+    try { if (node[key] !== undefined && (typeof node[key] === "string" || typeof node[key] === "number" || typeof node[key] === "boolean")) out[key] = node[key]; } catch (_) {}
+  });
+  if ("children" in node) {
+    out.children = [];
+    for (var i = 0; i < node.children.length && budget.count < 180; i++) {
+      var child = serializeNodeForAI(node.children[i], depth + 1, budget);
+      if (child) out.children.push(child);
+    }
+    if (node.children.length > out.children.length) out.childrenTruncated = true;
+  }
+  return out;
+}
 function getSelectionSummary() {
   assertUxDirectFileScope("reading selection metadata");
-  return figma.currentPage.selection.map(function (node) {
-    return { id: node.id, name: node.name, type: node.type, visible: node.visible,
-      childCount: "children" in node ? node.children.length : undefined };
+  var budget = { count: 0 };
+  return figma.currentPage.selection.slice(0, 12).map(function (node) {
+    return {
+      id: node.id, name: node.name, type: node.type, visible: node.visible,
+      width: typeof node.width === "number" ? node.width : undefined,
+      height: typeof node.height === "number" ? node.height : undefined,
+      childCount: "children" in node ? node.children.length : undefined,
+      tree: serializeNodeForAI(node, 0, budget)
+    };
   });
+}
+function isDescendantOfSelection(node, selectedIds) {
+  var current = node;
+  while (current) {
+    if (selectedIds.indexOf(current.id) >= 0) return true;
+    current = current.parent;
+  }
+  return false;
+}
+function parseHexColor(value) {
+  var hex = String(value || "").replace(/^#/, "");
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) throw new Error("Color must be a six-digit hex value.");
+  return { r: parseInt(hex.slice(0,2),16)/255, g: parseInt(hex.slice(2,4),16)/255, b: parseInt(hex.slice(4,6),16)/255 };
+}
+async function executeDesignOperations(payload) {
+  assertUxDirectFileScope("execute design operations");
+  var selected = figma.currentPage.selection.slice(0, 12);
+  if (!selected.length) throw new Error("Select a frame or layer before asking UX Direct to edit it.");
+  var selectedIds = selected.map(function (node) { return node.id; });
+  var operations = Array.isArray(payload && payload.operations) ? payload.operations.slice(0, 12) : [];
+  if (!operations.length) throw new Error("The model did not provide any supported operations.");
+  var results = [];
+  for (var i = 0; i < operations.length; i++) {
+    assertUxDirectFileScope("design operation " + (i + 1));
+    var op = operations[i] || {};
+    var node = op.targetId ? figma.getNodeById(String(op.targetId)) : null;
+    if (node && !isDescendantOfSelection(node, selectedIds)) throw new Error("Blocked operation: target is outside the current selection.");
+    if (op.action === "rename-node") {
+      if (!node || typeof op.name !== "string" || !op.name.trim()) throw new Error("rename-node requires a selected descendant and a name.");
+      node.name = op.name.slice(0, 160); results.push({ action: op.action, targetId: node.id, status: "applied" });
+    } else if (op.action === "update-text") {
+      if (!node || node.type !== "TEXT" || typeof op.text !== "string") throw new Error("update-text requires a selected text layer and text.");
+      var font = node.fontName;
+      if (font === figma.mixed) font = { family: "Inter", style: "Regular" };
+      await figma.loadFontAsync(font);
+      assertUxDirectFileScope("update selected text");
+      node.characters = op.text.slice(0, 2000);
+      results.push({ action: op.action, targetId: node.id, status: "applied" });
+    } else if (op.action === "set-fill") {
+      if (!node || !("fills" in node) || !Array.isArray(node.fills)) throw new Error("set-fill requires a selected shape or frame.");
+      node.fills = [{ type: "SOLID", color: parseHexColor(op.color), opacity: 1 }];
+      results.push({ action: op.action, targetId: node.id, status: "applied" });
+    } else if (op.action === "create-text") {
+      var parent = op.parentId ? figma.getNodeById(String(op.parentId)) : selected[0];
+      if (!parent || !isDescendantOfSelection(parent, selectedIds) || !("appendChild" in parent)) throw new Error("create-text parent must be the selected frame or one of its descendants.");
+      var textNode = figma.createText();
+      await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+      assertUxDirectFileScope("create selected text");
+      textNode.fontName = { family: "Inter", style: "Regular" };
+      textNode.characters = String(op.text || "New text").slice(0, 2000);
+      textNode.name = String(op.name || "UX Direct text").slice(0, 160);
+      textNode.fontSize = Math.min(96, Math.max(8, Number(op.fontSize) || 16));
+      textNode.x = Math.max(0, Math.min(10000, Number(op.x) || 0));
+      textNode.y = Math.max(0, Math.min(10000, Number(op.y) || 0));
+      parent.appendChild(textNode);
+      results.push({ action: op.action, targetId: textNode.id, status: "applied" });
+    } else if (op.action === "create-rectangle") {
+      var shapeParent = op.parentId ? figma.getNodeById(String(op.parentId)) : selected[0];
+      if (!shapeParent || !isDescendantOfSelection(shapeParent, selectedIds) || !("appendChild" in shapeParent)) throw new Error("create-rectangle parent must be inside the selected frame.");
+      var shape = figma.createRectangle();
+      shape.name = String(op.name || "UX Direct shape").slice(0, 160);
+      shape.resize(Math.min(4000, Math.max(1, Number(op.width) || 160)), Math.min(4000, Math.max(1, Number(op.height) || 48)));
+      shape.x = Math.max(0, Math.min(10000, Number(op.x) || 0));
+      shape.y = Math.max(0, Math.min(10000, Number(op.y) || 0));
+      shape.fills = [{ type: "SOLID", color: parseHexColor(op.color || "#E5E7EB"), opacity: 1 }];
+      shapeParent.appendChild(shape);
+      results.push({ action: op.action, targetId: shape.id, status: "applied" });
+    } else {
+      throw new Error("Unsupported design operation: " + String(op.action || "unknown"));
+    }
+    assertUxDirectFileScope("verify design operation");
+  }
+  figma.ui.postMessage({ type: "design-operation-result", ok: true, results: results });
+  sendSelection();
+  return results;
 }
 function sendSelection() {
   assertUxDirectFileScope("sending Figma context");
@@ -892,6 +1010,13 @@ figma.ui.onmessage = async function (message) {
     return;
   }
   if (message.type === "get-selection") { assertUxDirectFileScope("refresh selection"); sendSelection(); }
+  if (message.type === "apply-design-operations") {
+    try { await executeDesignOperations(message.payload); }
+    catch (error) {
+      figma.ui.postMessage({ type: "design-operation-result", ok: false, error: error && error.message ? error.message : String(error) });
+    }
+    return;
+  }
   if (message.type === "run-native-health-check") { assertUxDirectFileScope("start health-check command"); await runNativeApiHealthCheck(message.commandId); }
   if (message.type === "close") { assertUxDirectFileScope("close plugin"); figma.closePlugin(); }
 };
