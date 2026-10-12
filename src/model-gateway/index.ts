@@ -628,7 +628,7 @@ export async function chatCompletionFreeFirstThenPaid(
       openRouterFreeSelection: undefined,
       openRouterPaidSelection: true
     }, { ...options, providers, timeoutMs: Math.max(timeoutMs, 45_000) });
-    const changedForVision = selectedPaid.id !== visionModel.id;
+    const changedForVision = Boolean(selectedPaid && selectedPaid.id !== visionModel.id);
     return {
       ...result,
       tier: "paid",
