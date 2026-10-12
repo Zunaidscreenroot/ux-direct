@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 type JsonObject = Record<string, unknown>;
 type OpenRouterResponse = { data?: unknown };
+type OpenRouterFetchResult = { data?: unknown; error?: string };
 
 function matchesSecret(supplied: string | null, expected: string): boolean {
   if (!supplied) return false;
@@ -29,7 +30,7 @@ function safeError(status: number): string {
   if (status >= 500) return "OpenRouter's account endpoint is temporarily unavailable.";
   return "OpenRouter returned HTTP " + status + ".";
 }
-async function getOpenRouterJson(endpoint: string, key: string): Promise<{ data?: unknown; error?: string }> {
+async function getOpenRouterJson(endpoint: string, key: string): Promise<OpenRouterFetchResult> {
   try {
     const response = await fetch("https://openrouter.ai/api/v1/" + endpoint, {
       method: "GET",
@@ -92,11 +93,11 @@ export async function GET(request: Request) {
   const errors: Record<string, string> = {};
 
   const [creditsResult, activityResult, keyResult] = await Promise.all([
-    managementKey ? getOpenRouterJson("credits", managementKey) : Promise.resolve({ error: "Add OPENROUTER_MANAGEMENT_KEY in the server environment to read account credits." }),
-    managementKey ? getOpenRouterJson("activity", managementKey) : Promise.resolve({ error: "Add OPENROUTER_MANAGEMENT_KEY in the server environment to read 30-day activity." }),
+    managementKey ? getOpenRouterJson("credits", managementKey) : Promise.resolve<OpenRouterFetchResult>({ error: "Add OPENROUTER_MANAGEMENT_KEY in the server environment to read account credits." }),
+    managementKey ? getOpenRouterJson("activity", managementKey) : Promise.resolve<OpenRouterFetchResult>({ error: "Add OPENROUTER_MANAGEMENT_KEY in the server environment to read 30-day activity." }),
     apiKey ? getOpenRouterJson("key", apiKey) : managementKey
       ? getOpenRouterJson("key", managementKey)
-      : Promise.resolve({ error: "OPENROUTER_API_KEY is not configured in this deployment." })
+      : Promise.resolve<OpenRouterFetchResult>({ error: "OPENROUTER_API_KEY is not configured in this deployment." })
   ]);
 
   let credits: null | { totalPurchasedUsd: number; totalUsedUsd: number; availableUsd: number } = null;
