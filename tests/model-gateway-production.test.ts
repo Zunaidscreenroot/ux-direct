@@ -38,14 +38,23 @@ test("gateway admin secret is entered transiently, not stored in web storage", (
   assert.equal(page.includes("sessionStorage.setItem(\"adminKey\""), false);
 });
 
-test("OpenRouter keeps broad paid-provider routing locked while exposing a budget-capped allowlisted paid model", () => {
+test("OpenRouter cockpit uses only the two approved free and three expertise-routed paid models", () => {
   const env = read(".env.example");
   const gateway = read("src/model-gateway/index.ts");
   const allowlist = read("src/model-gateway/openrouter-paid.ts");
+  const chatRoute = read("app/api/assistant/chat/route.ts");
+  const catalogRoute = read("app/api/model-gateway/models/route.ts");
   assert.ok(env.includes("OPENROUTER_API_KEY="));
   assert.ok(env.includes("ALLOW_PAID_MODELS=false"));
   assert.ok(env.includes("MODEL_GATEWAY_ADMIN_KEY="));
-  assert.ok(allowlist.includes('id: "openai/gpt-oss-20b"'));
-  assert.ok(gateway.includes("chatCompletionWithOpenRouterPaid"));
+  assert.ok(allowlist.includes('id: "nvidia/nemotron-3.5-lightning:free"'));
+  assert.ok(allowlist.includes('id: "nvidia/nemotron-3-ultra-550b-a55b:free"'));
+  assert.ok(allowlist.includes('id: "deepseek/deepseek-v4.1-flash"'));
+  assert.ok(allowlist.includes('id: "openai/gpt-6-luna"'));
+  assert.ok(allowlist.includes('id: "deepseek/deepseek-v4-flash-0731"'));
+  assert.equal(allowlist.includes('id: "openai/gpt-oss-20b"'), false);
+  assert.ok(gateway.includes("chatCompletionFreeFirstThenPaid"));
   assert.ok(gateway.includes("assertBudgetAllows"));
+  assert.ok(chatRoute.includes("chatCompletionFreeFirstThenPaid"));
+  assert.ok(catalogRoute.includes("getModelCatalog"));
 });
