@@ -483,6 +483,12 @@ export async function chatCompletionFreeFirstThenPaid(
     } catch (error) {
       if (request.signal?.aborted) throw new GatewayError("Model routing was cancelled by the client.", 499, "openrouter");
       failedFreeModels.push(model);
+      // Start the verified settings read while the second free model is being
+      // attempted. If both free endpoints fail, the paid path can reuse this
+      // in-flight read instead of paying the cold-start latency after both fail.
+      if (failedFreeModels.length === 1) {
+        void getGatewaySettings().catch(() => undefined);
+      }
       // Try both approved free IDs even when the first is rate-limited. The pool
       // is intentionally capped at two attempts before one paid expertise fallback.
     }
