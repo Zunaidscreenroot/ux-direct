@@ -8,6 +8,8 @@ import {
   isAllowedPluginOrigin,
   pluginCorsHeaders,
   PluginOpenRouterError,
+  reserveHourlyPaidModelBudget,
+  type HourlyPaidBudgetReservation,
   type PluginChatMessage,
 } from "@/src/figma/plugin-ai-api";
 
@@ -184,6 +186,7 @@ export async function POST(request: Request) {
 
   let lastError: unknown = null;
   let reservedEstimatedCostUsd = 0;
+  let hourlyBudgetInfo: HourlyPaidBudgetReservation | null = null;
   const maxOutputTokens = variationIntent
     ? Math.min(4200, capability.maxOutputTokens + 1000)
     : capability.maxOutputTokens;
@@ -191,7 +194,7 @@ export async function POST(request: Request) {
   // Price metadata is per million tokens; unknown-price models are not auto-routed.
   const estimatedInputTokens = Math.ceil(
     (selectionContext.length + systemPrompt.length + rawMessages.reduce((sum, message) => sum + message.content.length, 0)) / 4
-  ) + (visualIntent ? 2500 : 0);
+  ) + (visualIntent ? 12000 : 1600);
 
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index];
@@ -213,6 +216,21 @@ export async function POST(request: Request) {
     }
     reservedEstimatedCostUsd += estimatedCallCostUsd;
     try {
+      if (candidate.tier === "paid") {
+        const reservation = await reserveHourlyPaidModelBudget({
+          estimatedCostUsd: estimatedCallCostUsd,
+          model: candidate.id,
+        });
+        if (!reservation.allowed) {
+          throw new PluginOpenRouterError(
+            "Hourly AI budget reached: ₹" + reservation.spentInr.toFixed(2) + " of ₹" + reservation.limitInr.toFixed(2) +
+            " was reserved in the last 60 minutes. Estimated remaining budget: ₹" + reservation.remainingInr.toFixed(2) +
+            ". No additional paid model call was made.",
+            402,
+          );
+        }
+        hourlyBudgetInfo = reservation;
+      }
       const result = await callOpenRouterChat(candidate.id, inputMessages, {
         maxTokens: maxOutputTokens,
         temperature: variationIntent ? 0.15 : designIntent ? 0.1 : 0.35,
@@ -266,6 +284,13 @@ export async function POST(request: Request) {
         estimatedCostUsd: estimatedCallCostUsd,
         estimatedCostBudgetUsd: capability.maxEstimatedCostUsd,
         estimatedReservedCostUsd: reservedEstimatedCostUsd,
+        hourlyBudget: hourlyBudgetInfo ? {
+          limitInr: hourlyBudgetInfo.limitInr,
+          reservedInr: hourlyBudgetInfo.reservedInr,
+          spentInr: hourlyBudgetInfo.projectedInr,
+          remainingInr: hourlyBudgetInfo.remainingInr,
+          windowMinutes: 60,
+        } : undefined,
         provider: "openrouter",
         model: result.model,
         tier: candidate.tier,
@@ -280,11 +305,12 @@ export async function POST(request: Request) {
     } catch (error) {
       lastError = error;
       const status = error instanceof PluginOpenRouterError ? error.status : 502;
-      if (status === 401 || status === 403 || status === 400) break;
+      const budgetGuardFailure = error instanceof PluginOpenRouterError && /hourly (?:AI )?budget reached|hourly spend ledger|hourly paid-model budget/i.test(error.message);
+      if (status === 401 || status === 403 || status === 400 || budgetGuardFailure) break;
     }
   }
 
   const reason = lastError instanceof Error ? lastError.message : "No configured model returned a usable response.";
   const status = lastError instanceof PluginOpenRouterError ? lastError.status : 502;
-  return json(request, { error: reason, capability: capability.id, estimatedCostBudgetUsd: capability.maxEstimatedCostUsd, estimatedReservedCostUsd: reservedEstimatedCostUsd, provider: "openrouter", model: selectedModel.id }, status >= 400 && status <= 599 ? status : 502);
+  return json(request, { error: reason, capability: capability.id, estimatedCostBudgetUsd: capability.maxEstimatedCostUsd, estimatedReservedCostUsd: reservedEstimatedCostUsd, hourlyBudgetLimitInr: 50, provider: "openrouter", model: selectedModel.id }, status >= 400 && status <= 599 ? status : 502);
 }
