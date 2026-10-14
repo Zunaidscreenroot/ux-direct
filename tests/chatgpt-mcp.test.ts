@@ -9,6 +9,7 @@ function request(body: unknown, token = TEST_TOKEN) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "MCP-Protocol-Version": "2025-03-26",
       ...(token ? { Authorization: "Bearer " + token } : {}),
     },
     body: JSON.stringify(body),
