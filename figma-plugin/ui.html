@@ -56,6 +56,13 @@
     .budget-ledger-amount { text-align:right; font-variant-numeric:tabular-nums; }
     .budget-ledger-empty { padding:10px 0; color:var(--figma-color-text-secondary); font-size:10px; line-height:1.4; }
     .budget-ledger-note { flex:0 0 auto; margin:0; padding-top:6px; border-top:1px solid var(--figma-color-border); color:var(--figma-color-text-secondary); font-size:9px; line-height:1.4; }
+    .uxd-trace-list { flex:1 1 auto; min-height:40px; overflow:auto; overscroll-behavior:contain; }
+    .uxd-trace-row { padding:8px 0; border-top:1px solid var(--figma-color-border); font-size:10px; line-height:1.4; }
+    .uxd-trace-row-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .uxd-trace-time { color:var(--figma-color-text-secondary); font-size:9px; }
+    .uxd-trace-name { min-width:0; font-weight:650; overflow-wrap:anywhere; }
+    .uxd-trace-detail { padding-top:3px; color:var(--figma-color-text-secondary); font-size:9px; overflow-wrap:anywhere; }
+    .uxd-trace-explain { margin-top:5px; border:1px solid var(--figma-color-border); border-radius:6px; padding:4px 7px; background:var(--figma-color-bg-secondary); color:var(--figma-color-text); font:inherit; font-size:9px; font-weight:700; }
     .muted { color:var(--figma-color-text-secondary); }
     .chat { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; overflow:hidden; }
     .chatlog { display:flex; flex:1 1 auto; flex-direction:column; gap:12px; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px 2px 14px; scroll-behavior:smooth; }
@@ -119,6 +126,7 @@
   <div class="budget-summary-row">
     <div id="budgetStatus" class="budget-status" aria-live="polite" title="Shared rolling 24-hour budget. Paid inference is blocked if this budget cannot be verified.">AI budget · checking live balance…</div>
     <button id="budgetLedgerToggle" class="budget-ledger-button" type="button" aria-controls="budgetLedgerPanel" aria-expanded="false">Ledger</button>
+    <button id="uxdTraceToggle" class="budget-ledger-button" type="button" aria-controls="uxdTracePanel" aria-expanded="false">Runs</button>
   </div>
   <section id="budgetLedgerPanel" class="budget-ledger-panel" aria-label="Live AI budget ledger" hidden>
     <div class="budget-ledger-head">
@@ -138,6 +146,21 @@
     <div class="budget-ledger-columns" aria-hidden="true"><span>Time</span><span>Model</span><span>State</span><span>Reserved</span></div>
     <div id="budgetLedgerEntries" class="budget-ledger-entries"><div class="muted">Waiting for budget reservations…</div></div>
     <p class="budget-ledger-note">One shared ₹50 rolling 24-hour cap covers DMI, Ujjivan, and embedding calls. Amounts include reservation safety margins; uncertain failed attempts remain reserved until they age out.</p>
+  </section>
+  <section id="uxdTracePanel" class="budget-ledger-panel" aria-label="UXD-IR run history" hidden>
+    <div class="budget-ledger-head">
+      <div class="budget-ledger-title">
+        <strong>UXD-IR run history</strong>
+        <span id="uxdTraceMeta" class="muted">Trace history loads only when opened.</span>
+      </div>
+      <div class="budget-ledger-actions">
+        <button id="refreshUxdTraces" type="button">Refresh</button>
+        <button id="closeUxdTraces" type="button" aria-label="Close run history">×</button>
+      </div>
+    </div>
+    <div id="uxdTraceSummary" class="budget-ledger-summary">Machine-readable evidence and operation traces. Natural-language explanations are generated only on request.</div>
+    <div id="uxdTraceList" class="uxd-trace-list"><div class="budget-ledger-empty">Open Runs to load history.</div></div>
+    <p class="budget-ledger-note">Trace artifacts exclude screenshots, credentials and hidden model chain-of-thought. If history is unavailable, apply the Supabase migration in the repository's supabase/migrations folder.</p>
   </section>
   <div id="providerSpendStatus" class="budget-status" aria-live="polite" title="Read-only OpenRouter spending data from the server-side management key.">OpenRouter spend · checking management API…</div>
   <div id="learningStatus" class="budget-status" aria-live="polite" title="Persistent, anonymized model-performance memory. Raw prompts and screenshots are not stored.">Product memory · checking Supabase…</div>
