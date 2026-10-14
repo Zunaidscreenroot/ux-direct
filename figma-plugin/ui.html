@@ -1234,7 +1234,7 @@
         setActivity("Response received. Continue the conversation or give me the next task.");
       } catch (error) {
         const message = error && error.message ? error.message : "Unknown chat error";
-        appendMessage("assistant", "I couldn’t complete that response: " + message + "\n\nYour message is still in this session’s conversation context. You can retry or continue with a smaller request.");
+        appendMessage("assistant", "I couldn’t complete that response: " + message + "\n\nUX Direct did not automatically retry this request. A provider may still bill a failed or truncated paid response; check OpenRouter activity before retrying. The cockpit now limits visual work to a free-first route and at most one paid fallback.");
         setActivity("Response failed. Your Figma document was not changed by this chat request.");
       } finally {
         hideTyping();
