@@ -23,6 +23,6 @@ Set `OPENROUTER_MANAGEMENT_KEY` in Vercel Preview and Production as a server-sid
 - `GET https://openrouter.ai/api/v1/credits` for account-level credit/usage information.
 - `GET https://openrouter.ai/api/v1/activity` for usage grouped by model over the last 30 completed UTC days.
 
-`OPENROUTER_API_KEY` remains the completion/inference key. The management key is never returned to the plugin or sent to Figma. The plugin reports account-level credit balance separately from the existing shared rolling 60-minute INR reservation ledger; they measure different things.
+`OPENROUTER_API_KEY` remains the completion/inference key. The management key is never returned to the plugin or sent to Figma. The plugin reports account-level credit balance separately from the existing shared rolling 24-hour INR reservation ledger; they measure different things.
 
-Provider usage/cost is displayed only when OpenRouter returns those fields. The ₹50 rolling-hour guard still uses conservative preflight reservations, so its remaining amount is not an exact invoice balance.
+Provider usage/cost is displayed only when OpenRouter returns those fields. The ₹50 rolling 24-hour guard reserves a conservative estimate before each paid attempt, then reconciles successful calls to provider-reported cost with a 25% safety margin. Failed attempts without provider cost data remain reserved for 24 hours. This ledger is a spending guard, not an invoice; compare it with OpenRouter account activity for final charges.
