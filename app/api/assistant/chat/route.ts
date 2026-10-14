@@ -220,7 +220,7 @@ export async function POST(request: Request) {
       if (indices.length < 2) continue;
       const matureModels = indices.map((index) => ordered[index])
         .sort((a, b) => (learning.modelScores[b.id]?.routingScore ?? -Infinity) - (learning.modelScores[a.id]?.routingScore ?? -Infinity));
-      indices.forEach((index, rank) => { ordered[index] = matureModels[rank]; });
+      indices.forEach((index, rank) => { const model = matureModels[rank]; if (model) ordered[index] = model; });
     }
     return ordered;
   };
@@ -308,7 +308,7 @@ export async function POST(request: Request) {
   }
   // An image request must never land on a text-only model, even after learning.
   const candidates = useUxdIrPipeline
-    ? [pipelineVisionModels[0]]
+    ? [pipelineVisionModelOrder[0]]
     : orderedCandidates.slice(0, Math.max(1, capability.maxModelAttempts));
   if (!candidates.length) {
     return json(request, {
