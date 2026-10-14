@@ -183,11 +183,38 @@ export async function POST(request: Request) {
   }
 
   let lastError: unknown = null;
+  let reservedEstimatedCostUsd = 0;
+  const maxOutputTokens = variationIntent
+    ? Math.min(4200, capability.maxOutputTokens + 1000)
+    : capability.maxOutputTokens;
+  // Conservative preflight estimate: text characters/4 plus a bounded image allowance.
+  // Price metadata is per million tokens; unknown-price models are not auto-routed.
+  const estimatedInputTokens = Math.ceil(
+    (selectionContext.length + systemPrompt.length + rawMessages.reduce((sum, message) => sum + message.content.length, 0)) / 4
+  ) + (visualIntent ? 2500 : 0);
+
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index];
+    const inputRate = candidate.inputUsdPerMillion;
+    const outputRate = candidate.outputUsdPerMillion;
+    if (candidate.tier === "paid" && (inputRate === null || outputRate === null)) {
+      lastError = new PluginOpenRouterError("This model has no verified price metadata and is excluded from automatic routing.", 402);
+      continue;
+    }
+    const estimatedCallCostUsd = candidate.tier === "free-tier"
+      ? 0
+      : ((estimatedInputTokens * (inputRate ?? 0)) + (maxOutputTokens * (outputRate ?? 0))) / 1_000_000;
+    if (candidate.tier === "paid" && reservedEstimatedCostUsd + estimatedCallCostUsd > capability.maxEstimatedCostUsd) {
+      lastError = new PluginOpenRouterError(
+        "The remaining estimated cost budget for " + capability.label + " is too low for the next model. No additional paid call was made.",
+        402,
+      );
+      continue;
+    }
+    reservedEstimatedCostUsd += estimatedCallCostUsd;
     try {
       const result = await callOpenRouterChat(candidate.id, inputMessages, {
-        maxTokens: variationIntent ? Math.min(4200, capability.maxOutputTokens + 1000) : capability.maxOutputTokens,
+        maxTokens: maxOutputTokens,
         temperature: variationIntent ? 0.15 : designIntent ? 0.1 : 0.35,
         timeoutMs: 30000,
         reasoningEffort: capability.reasoningEffort,
@@ -236,6 +263,9 @@ export async function POST(request: Request) {
         capabilityLabel: capability.label,
         qualityTarget: capability.targetQuality,
         paidRequired: capability.paidRequired,
+        estimatedCostUsd: estimatedCallCostUsd,
+        estimatedCostBudgetUsd: capability.maxEstimatedCostUsd,
+        estimatedReservedCostUsd: reservedEstimatedCostUsd,
         provider: "openrouter",
         model: result.model,
         tier: candidate.tier,
@@ -256,5 +286,5 @@ export async function POST(request: Request) {
 
   const reason = lastError instanceof Error ? lastError.message : "No configured model returned a usable response.";
   const status = lastError instanceof PluginOpenRouterError ? lastError.status : 502;
-  return json(request, { error: reason, capability: capability.id, provider: "openrouter", model: selectedModel.id }, status >= 400 && status <= 599 ? status : 502);
+  return json(request, { error: reason, capability: capability.id, estimatedCostBudgetUsd: capability.maxEstimatedCostUsd, estimatedReservedCostUsd: reservedEstimatedCostUsd, provider: "openrouter", model: selectedModel.id }, status >= 400 && status <= 599 ? status : 502);
 }
