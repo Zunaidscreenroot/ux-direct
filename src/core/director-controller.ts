@@ -1,9 +1,9 @@
-import type { ProjectProfileId } from "./hand-contracts";
+import type { WorkspaceId } from "./hand-contracts";
 import {
   FixtureWorkspaceContextResolver,
   type WorkspaceContextResolver,
   type UXWorkspaceContext,
-} from "./project-profiles";
+} from "./workspace-context";
 import {
   InMemoryWorldModel,
   type WorldFact,
@@ -18,7 +18,7 @@ import {
 export interface DirectorTask {
   requestId: string;
   objective: string;
-  workspaceId?: ProjectProfileId;
+  workspaceId?: WorkspaceId;
   intentTags?: readonly string[];
   requiredModalities?: ToolDiscoveryRequest["requiredModalities"];
   constraints?: Readonly<Record<string, unknown>>;
