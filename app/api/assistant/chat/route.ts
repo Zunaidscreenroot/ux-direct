@@ -43,15 +43,15 @@ function requestFigmaEditSystemPrompt(selectionContext: string): string {
   ].join("\n\n");
 }
 
-function requestVariationSystemPrompt(selectionContext: string): string {
+function requestVariationSystemPrompt(selectionContext: string, variationCount: number): string {
   return [
     "You are UX Direct, a senior product/UX designer creating new screen variations inside Figma.",
     "The selected frame is the source reference. The original must remain unchanged. The native plugin will clone it into sibling frames and apply your operations only to each clone.",
     "Return ONLY JSON shaped like {\"variations\":[{\"name\":\"Frame name\",\"rationale\":\"Short design direction\",\"operations\":[...]}]}; no Markdown or prose.",
-    "Return exactly two clearly distinct variations unless the user explicitly asks for a different count. Maximum three variations, and maximum eight operations per variation.",
+    `Return exactly ${variationCount} clearly distinct variation(s), with no extra variations. Maximum three variations. Use only 3–5 concise, high-impact operations per variation so the JSON response fits within the output budget.`,
     "Use only node IDs in the supplied selected-frame tree. targetId is for an existing node to update; parentId is for a FRAME that will receive a new child. IDs refer to the original tree and the plugin maps them onto the cloned tree.",
     "Supported operations: {\"action\":\"update-text\",\"targetId\":\"TEXT node id\",\"text\":\"replacement\"}; {\"action\":\"rename-node\",\"targetId\":\"node id\",\"name\":\"new name\"}; {\"action\":\"set-fill\",\"targetId\":\"node id\",\"color\":\"#RRGGBB\"}; {\"action\":\"move-node\",\"targetId\":\"node id\",\"x\":16,\"y\":16}; {\"action\":\"resize-node\",\"targetId\":\"node id\",\"width\":320,\"height\":80}; {\"action\":\"create-text\",\"parentId\":\"FRAME node id\",\"text\":\"label\",\"x\":16,\"y\":16,\"fontSize\":14,\"color\":\"#RRGGBB\"}; or {\"action\":\"create-rectangle\",\"parentId\":\"FRAME node id\",\"width\":120,\"height\":48,\"x\":16,\"y\":16,\"color\":\"#RRGGBB\"}.",
-    "Each variation must be a meaningful visual alternative, not just a renamed duplicate. Use 3-8 high-impact changes across hierarchy, spacing, card treatment, contrast, copy, or CTA emphasis where suitable. Keep the existing product purpose and essential information. Never delete nodes, call arbitrary APIs, or use IDs outside the selected frame. Use #RRGGBB colors. Do not output empty operations arrays.",
+    "Each variation must be a meaningful visual alternative, not just a renamed duplicate. Prioritize the most important improvements across hierarchy, spacing, card treatment, contrast, copy, or CTA emphasis. Keep the existing product purpose and essential information. Never delete nodes, call arbitrary APIs, or use IDs outside the selected frame. Use #RRGGBB colors. Do not output empty operations arrays.",
     "Current Figma context: " + selectionContext,
   ].join("\n\n");
 }
@@ -109,10 +109,17 @@ export async function POST(request: Request) {
   }
 
   const variationIntent = body.intent === "design-variation";
+  const lastUserPrompt = [...rawMessages].reverse().find((message) => message.role === "user")?.content ?? "";
+  const variationCountMatch = variationIntent
+    ? /\\b(one|two|three|1|2|3)\\s+(?:new\\s+)?(?:screen\\s+)?variations?\\b/i.exec(lastUserPrompt)
+    : null;
+  const variationCount = variationCountMatch
+    ? ({ one: 1, two: 2, three: 3, "1": 1, "2": 2, "3": 3 } as Record<string, number>)[variationCountMatch[1].toLowerCase()] ?? 2
+    : 2;
   const designIntent = body.intent === "design-operation" || variationIntent;
   const visualIntent = Boolean(previewDataUrl);
   const systemPrompt = variationIntent
-    ? requestVariationSystemPrompt(selectionContext)
+    ? requestVariationSystemPrompt(selectionContext, variationCount)
     : designIntent
       ? requestFigmaEditSystemPrompt(selectionContext)
       : conversationSystemPrompt(selectionContext);
@@ -163,9 +170,17 @@ export async function POST(request: Request) {
     // Image-bearing requests must use an image-capable model even when the
     // user's dropdown preference is a paid text-only model.
     candidates.push(selectedForInference);
-    const paidVision = modelOptions.find((model) =>
-      model.tier === "paid" && model.available && model.supportsImages && model.id !== selectedForInference.id);
-    if (selectedForInference.tier !== "paid" && paidVision) candidates.push(paidVision);
+    if (selectedForInference.tier !== "paid") {
+      const paidVision = modelOptions.find((model) =>
+        model.tier === "paid" && model.available && model.supportsImages && model.id !== selectedForInference.id);
+      if (paidVision) candidates.push(paidVision);
+    } else {
+      // If the preferred paid vision model fails or exhausts its output budget,
+      // retry once on the approved free vision model rather than returning an empty plan.
+      const freeVision = modelOptions.find((model) =>
+        model.tier === "free-tier" && model.available && model.supportsImages && model.id !== selectedForInference.id);
+      if (freeVision) candidates.push(freeVision);
+    }
   } else if (selectedModel.tier === "paid") {
     candidates.push(selectedModel);
   } else {
@@ -185,7 +200,7 @@ export async function POST(request: Request) {
     const candidate = candidates[index];
     try {
       const result = await callOpenRouterChat(candidate.id, inputMessages, {
-        maxTokens: variationIntent ? 2200 : designIntent ? 1400 : 1100,
+        maxTokens: variationIntent ? 2400 : designIntent ? 1400 : 1100,
         temperature: variationIntent ? 0.15 : designIntent ? 0.1 : 0.35,
         timeoutMs: 30000,
       });
