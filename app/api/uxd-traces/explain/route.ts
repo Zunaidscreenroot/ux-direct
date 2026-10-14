@@ -4,6 +4,7 @@ import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { resolveKnowledgeProjectKey } from "@/src/figma/knowledge-rag";
 import {
   callOpenRouterChat,
+  checkPluginRateLimit,
   getPluginModelList,
   isAllowedPluginOrigin,
   pluginCorsHeaders,
@@ -89,6 +90,10 @@ export async function POST(request: Request) {
     },
     { role: "user" as const, content: "Explain this UXD-IR run trace:\n" + traceText },
   ];
+  const limit = checkPluginRateLimit(request);
+  if (!limit.allowed) {
+    return json(request, { error: "Trace explanation rate limit reached. Retry in " + limit.retryAfterSeconds + " seconds." }, 429);
+  }
   const modelOptions = getPluginModelList().filter((model) => model.available && model.automaticRouting !== false);
   const freeModels = modelOptions.filter((model) => model.tier === "free-tier" && !model.supportsImages);
   const paidModels = modelOptions.filter((model) => model.tier === "paid" && (model.id === "deepseek/deepseek-v4.1-flash" || model.id === "anthropic/claude-haiku-5.5"));
