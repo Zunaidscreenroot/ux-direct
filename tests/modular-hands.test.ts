@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDirectorPlanningContext, validateDirectorPlan, type DirectorPlan } from "../src/core/director-controller";
-import { getHandDefinition, UX_HANDS, type HandTaskRequest } from "../src/core/hand-contracts";
+import { getHandDefinition, UX_HANDS, UXHandRegistry, type HandTaskRequest } from "../src/core/hand-contracts";
 import {
   FixtureWorkspaceContextResolver,
   WORKSPACE_FIXTURES,
@@ -341,4 +341,19 @@ test("hand contract accepts a new hand and exploratory task without a fixed capa
   };
   assert.equal(request.workspaceId, undefined);
   assert.equal(request.preferredToolIds, undefined);
+});
+
+test("a specialist hand can register at runtime without changing the Brain's source enum", () => {
+  const registry = new UXHandRegistry();
+  registry.register({
+    id: "future-specialist-hand",
+    name: "Future Specialist",
+    role: "specialist",
+    description: "A plugin registered after the core Brain was built.",
+    pluginPackage: "plugins/future-specialist",
+    invocation: "on-demand",
+    outputs: ["text"],
+  });
+  assert.equal(registry.get("future-specialist-hand")?.name, "Future Specialist");
+  assert.ok(registry.list().some((hand) => hand.id === "future-specialist-hand"));
 });
