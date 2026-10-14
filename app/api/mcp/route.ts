@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -61,6 +62,12 @@ const TOOLS = [
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: "ux_direct_connection_status",
+    description: "Show whether ChatGPT has recently called the authenticated UX Direct connector and whether the approved Figma plugin is online. ChatGPT state means authenticated MCP activity within five minutes; Figma state means a heartbeat within 75 seconds.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: "ux_direct_plan_task",
     description: "Ask UX Direct for a reviewable UX task plan. Planning only: this does not edit Figma or execute external writes. Use 'general' for BFCI website revamp and other general UX tasks, or 'express-computers' for Express Computers work. DMI-specific project data is not exposed through this connector.",
     inputSchema: {
@@ -87,6 +94,37 @@ async function callTool(name: string, args: unknown, request: Request) {
     });
     const body = await response.json().catch(() => ({ error: "UX Direct health endpoint returned invalid JSON." }));
     return response.ok ? toolText(body) : toolText({ status: response.status, body }, true);
+  }
+
+  if (name === "ux_direct_connection_status") {
+    const [chatgptConnector, figmaPlugin, backendResponse] = await Promise.all([
+      getChatGPTConnectionStatus(),
+      getFigmaPluginConnectionStatus(),
+      fetch(new URL("/api/health", request.url), {
+        method: "GET",
+        headers: { accept: "application/json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(10_000),
+      }),
+    ]);
+    const backend = await backendResponse.json().catch(() => ({ error: "Health endpoint returned invalid JSON." }));
+    return toolText({
+      checkedAt: new Date().toISOString(),
+      backend: { reachable: backendResponse.ok, status: backendResponse.ok ? "connected" : "error", details: backend },
+      chatgptConnector: {
+        state: chatgptConnector.state,
+        connected: chatgptConnector.connected,
+        lastActivityAt: chatgptConnector.lastActivityAt,
+        note: "Connected means the server received authenticated ChatGPT MCP activity in the last five minutes.",
+      },
+      figmaPlugin: {
+        state: figmaPlugin.state,
+        connected: figmaPlugin.connected,
+        connectedSessions: figmaPlugin.connectedSessions,
+        lastHeartbeatAt: figmaPlugin.lastHeartbeatAt,
+        note: "Connected means at least one allowlisted Figma plugin session sent a heartbeat in the last 75 seconds.",
+      },
+    });
   }
 
   if (name === "ux_direct_plan_task") {
@@ -146,6 +184,11 @@ export async function POST(request: Request) {
       { status: 401, headers: { ...headers, "WWW-Authenticate": "Bearer" } },
     );
   }
+
+  // Persist only a timestamp. Never store the bearer key or the user's prompt here.
+  await recordChatGPTActivity().catch(() => {
+    console.warn("[ux-direct-mcp] Could not persist ChatGPT connection activity.");
+  });
 
   if (!(request.headers.get("content-type") ?? "").toLowerCase().includes("application/json")) {
     return NextResponse.json({ error: "Content-Type must be application/json." }, { status: 415, headers });
