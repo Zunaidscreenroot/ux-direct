@@ -231,7 +231,7 @@ export async function POST(request: Request) {
       lastError = new PluginOpenRouterError(
         "The per-task estimated cost ceiling for " + capability.label + " would be exceeded by the next retry (estimated task total $" +
           (reservedEstimatedCostUsd + estimatedCallCostUsd).toFixed(4) + " of $" + capability.maxEstimatedCostUsd.toFixed(2) +
-          "). This is separate from the shared ₹50 rolling-day budget. UX Direct will not send another paid request.",
+          "). This is separate from the shared ₹50 daily budget. UX Direct will not send another paid request.",
         402,
       );
       continue;
@@ -375,7 +375,7 @@ export async function POST(request: Request) {
       const status = error instanceof PluginOpenRouterError ? error.status : 502;
       const budgetGuardFailure = error instanceof PluginOpenRouterError && /daily (?:AI )?budget reached|daily spend ledger|daily paid-model budget/i.test(error.message);
       const validationFailure = variationIntent && error instanceof Error && /invalid variation-plan JSON|quality gate/i.test(error.message);
-      const budgetBlocked = (status === 402 || budgetGuardFailure) && /budget|pricing|price metadata|hourly|ledger/i.test(error instanceof Error ? error.message : "");
+      const budgetBlocked = (status === 402 || budgetGuardFailure) && /budget|pricing|price metadata|daily|ledger/i.test(error instanceof Error ? error.message : "");
       await recordModelLearningEvent({
         requestId: learningRequestId,
         capability: capability.id,
