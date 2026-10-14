@@ -153,6 +153,7 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
   const frame = { pageName: input.pageName.slice(0, 160), size: getNodeSize(input.frameItems, input.frameWidth, input.frameHeight), nodes };
   let estimatedCostUsd = 0;
   let observedCostUsd: number | null = null;
+  let latestReservation: DailyPaidBudgetReservation | null = null;
   let latencyMs = 0;
   let usage: NumericUsage = { promptTokens: null, completionTokens: null, totalTokens: null };
   let visionEvidence: ReturnType<typeof normalizeVisionEvidence> = null;
@@ -185,6 +186,7 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
       if (model.tier === "paid") {
         if (budgetBlocked) continue;
         const reservation = await reserveDailyPaidModelBudget({ estimatedCostUsd: stageEstimate, model: model.id, requestId });
+        latestReservation = reservation;
         if (!reservation.allowed) {
           budgetBlocked = true;
           lastVisionError = "Daily AI budget reached before a paid vision stage; no additional paid call was sent.";
@@ -360,6 +362,6 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
     estimatedCostUsd,
     observedCostUsd,
     trace,
-    dailyBudgetInfo: null,
+    dailyBudgetInfo: latestReservation,
   };
 }
