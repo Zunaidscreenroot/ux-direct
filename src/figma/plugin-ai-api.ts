@@ -568,7 +568,7 @@ export async function callOpenRouterChat(
       // Do not return private reasoning as user-facing content. Let the chat route try
       // the next explicitly approved model and expose bounded diagnostics if all fail.
       const emptyContentMessage = finishReason === "length"
-        ? "Model " + model + " exhausted its output-token budget before returning usable message content (finish_reason=length). UX Direct will try the next approved model when one is available."
+        ? "Model " + model + " hit its output-token limit before returning usable message content (finish_reason=length). UX Direct will try the next approved model when one is available."
         : "Model " + model + " returned empty message content (finish_reason=" + finishReason + ").";
       throw new PluginOpenRouterError(emptyContentMessage, 502);
     }
