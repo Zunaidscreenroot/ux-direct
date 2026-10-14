@@ -178,7 +178,7 @@ export async function POST(request: Request) {
       // If the preferred paid vision model fails or exhausts its output budget,
       // retry once on the approved free vision model rather than returning an empty plan.
       const freeVision = modelOptions.find((model) =>
-        model.tier === "free-tier" && model.available && model.supportsImages && model.id !== selectedForInference.id);
+        model.tier === "free-tier" && model.available && model.supportsImages);
       if (freeVision) candidates.push(freeVision);
     }
   } else if (selectedModel.tier === "paid") {
