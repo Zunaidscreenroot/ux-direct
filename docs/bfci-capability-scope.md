@@ -10,9 +10,9 @@ UX Direct is a banking application design agent, not a general-purpose Figma cha
 
 Supported canvases: mobile app, mobile web, desktop web, and responsive web. The design output is editable Figma nodes, not a flattened screenshot.
 
-## Capability registry
+## Execution contracts and representative task coverage
 
-Each capability is independently versioned and can be enabled, disabled, tested and routed without adding another branch to the main chat endpoint. A capability entry should declare:
+The task catalogue below is **not an exhaustive list of what the Brain can do** and must not become a closed ontology of UX intelligence. These IDs are useful evaluation scenarios and reusable domain skills. At runtime, the Brain discovers executable tools and composes a plan; new task shapes must not require new client-specific planner branches. Each registered executable tool/skill should declare:
 
 - \`id\`, \`version\`, \`profile\`, \`enabled\`, and user-facing name.
 - Input contract (prompt, selected frame/tree, screenshot, viewport/device hints and reference frames).
@@ -25,7 +25,9 @@ Each capability is independently versioned and can be enabled, disabled, tested 
 
 The router should classify tasks without spending a separate model call by default. It may use a low-cost classifier later if deterministic intent classification is ambiguous. A high-cost model is chosen only when the capability warrants it; the model must never be selected solely because it appears first in a dropdown.
 
-## BFCI capability catalogue
+## BFCI representative task and evaluation catalogue (non-exhaustive)
+
+These examples define current domain coverage and tests, not the limits of the Brain's reasoning. The same generic world model, planning controller, tool registry and Design IR should support tasks outside this table.
 
 | ID | Capability | Initial use in DMI HFC | Expected output | Default routing class |
 |---|---|---|---|---|
