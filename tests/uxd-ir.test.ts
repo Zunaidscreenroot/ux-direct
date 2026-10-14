@@ -5,6 +5,7 @@ import {
   compactFigmaNodes,
   parseUxdirJson,
   normalizeVisionEvidence,
+  validateUxdirVariationPlan,
   summarizeUxdIrTrace,
   classifyUxdIrError,
 } from "../src/figma/uxd-ir";
@@ -48,6 +49,28 @@ test("vision evidence is normalized and hallucinated node IDs are removed", () =
 test("vision evidence fails closed when the role/version or useful payload is missing", () => {
   assert.equal(normalizeVisionEvidence({ v: 1, stage: "reasoning", facts: [], observations: [] }, new Set()), null);
   assert.equal(normalizeVisionEvidence({ v: 1, stage: "vision", facts: [], observations: [], elements: [] }, new Set()), null);
+});
+
+test("variation plans must be structurally distinct and use supported operations", () => {
+  const goodPlan = {
+    variations: [{
+      name: "Pay all EMIs",
+      rationale: "Make the full amount payable in one clear primary action.",
+      operations: [
+        { action: "move-node", targetId: "cta", x: 12, y: 24 },
+        { action: "resize-node", targetId: "cta", width: 320, height: 48 },
+        { action: "set-layout", targetId: "frame", layoutMode: "VERTICAL" },
+        { action: "set-fill", targetId: "cta", color: "#114488" },
+        { action: "update-text", targetId: "label", text: "Pay All EMIs" },
+        { action: "set-text-style", targetId: "label", fontSize: 14 },
+      ],
+    }],
+  };
+  assert.deepEqual(validateUxdirVariationPlan(goodPlan, 1), {
+    valid: true, variationCount: 1, operationCount: 6,
+  });
+  assert.equal(validateUxdirVariationPlan({ variations: [{ ...goodPlan.variations[0], operations: goodPlan.variations[0].operations.slice(0, 5) }] }, 1).valid, false);
+  assert.equal(validateUxdirVariationPlan({ variations: [{ ...goodPlan.variations[0], operations: goodPlan.variations[0].operations.map((op) => ({ ...op, action: "unknown" })) }] }, 1).reason, "unsupported_action");
 });
 
 test("trace summary is deterministic and error labels are coarse", () => {
