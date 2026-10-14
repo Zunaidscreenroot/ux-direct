@@ -178,7 +178,7 @@ This branch introduces:
 - `world-model.ts`: versioned claims/evidence/relations with project/client/global scope filtering.
 - `tool-registry.ts`: runtime discovery and policy-checked invocation of declared tools.
 - `director-controller.ts`: planning context assembly and validation for dynamically composed plans.
-- `project-profiles.ts`: data-driven workspace metadata without hardcoded workflow sequences.
+- `workspace-context.ts`: data-driven workspace metadata without hardcoded workflow sequences.
 - `hand-contracts.ts`: shared hand contracts; workspace IDs are strings rather than a closed project enum.
 - Tests for scope isolation, discovery, approval/budget gates, dependency cycles and adaptive plans.
 
