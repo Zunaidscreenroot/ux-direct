@@ -309,6 +309,79 @@ export async function getDailyPaidModelBudgetStatus(): Promise<{
   }
 }
 
+export type DailyPaidModelBudgetLedgerEntry = {
+  reservedAt: string;
+  amountInr: number;
+  modelId: string;
+  state: string;
+};
+
+export type DailyPaidModelBudgetLedger = {
+  available: boolean;
+  checkedAt: string;
+  totalCount: number;
+  entries: DailyPaidModelBudgetLedgerEntry[];
+  error?: string;
+};
+
+/**
+ * Return a bounded, read-only view of the real reservation rows behind the
+ * rolling 24-hour budget. Request IDs and credentials are never returned.
+ */
+export async function getDailyPaidModelBudgetLedger(limit = 8): Promise<DailyPaidModelBudgetLedger> {
+  const checkedAt = new Date().toISOString();
+  const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\\/+$/, "");
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
+  if (!supabaseUrl || !serviceKey) {
+    return { available: false, checkedAt, totalCount: 0, entries: [], error: "Supabase budget ledger configuration is unavailable." };
+  }
+
+  const safeLimit = Math.max(1, Math.min(20, Math.floor(Number.isFinite(limit) ? limit : 8)));
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const url = new URL(supabaseUrl + "/rest/v1/uxd_model_hourly_reservations");
+  url.searchParams.set("select", "reserved_at,amount_inr,model_id,state");
+  url.searchParams.set("scope", "eq.ux-direct:shared-paid-inference");
+  url.searchParams.set("reserved_at", "gt." + cutoff);
+  url.searchParams.set("order", "reserved_at.desc");
+  url.searchParams.set("limit", String(safeLimit));
+
+  try {
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        apikey: serviceKey,
+        Authorization: "Bearer " + serviceKey,
+        Prefer: "count=exact",
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) {
+      return { available: false, checkedAt, totalCount: 0, entries: [], error: "Supabase ledger query returned HTTP " + response.status + "." };
+    }
+    const payload: unknown = await response.json().catch(() => null);
+    if (!Array.isArray(payload)) {
+      return { available: false, checkedAt, totalCount: 0, entries: [], error: "Supabase returned an invalid reservation ledger." };
+    }
+
+    const entries: DailyPaidModelBudgetLedgerEntry[] = payload.flatMap((item) => {
+      if (!isRecord(item)) return [];
+      const reservedAt = typeof item.reserved_at === "string" ? item.reserved_at : "";
+      const amountInr = Number(item.amount_inr);
+      const modelId = typeof item.model_id === "string" ? item.model_id.slice(0, 160) : "";
+      const state = typeof item.state === "string" ? item.state.slice(0, 40) : "unknown";
+      if (!reservedAt || !Number.isFinite(Date.parse(reservedAt)) || !Number.isFinite(amountInr) || amountInr < 0 || !modelId) return [];
+      return [{ reservedAt, amountInr, modelId, state }];
+    });
+    const contentRange = response.headers.get("content-range") || "";
+    const countMatch = /\\/(\\d+)$/.exec(contentRange);
+    const totalCount = countMatch ? Number(countMatch[1]) : entries.length;
+    return { available: true, checkedAt: new Date().toISOString(), totalCount, entries };
+  } catch {
+    return { available: false, checkedAt, totalCount: 0, entries: [], error: "Could not read reservation rows from the live Supabase ledger." };
+  }
+}
+
 /**
  * Reconcile a successful paid attempt to provider-reported cost. The database
  * keeps a 25% safety margin after settlement. If no billable cost is returned,
