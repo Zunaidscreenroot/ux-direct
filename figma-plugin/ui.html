@@ -1155,7 +1155,7 @@
         modelOrder = [freeText, freeTextFallback];
       }
       const filtered = choose(modelOrder);
-      const uxdIrPipeline = (variation || audit) ? {
+      const uxdIrPipeline = (variation || audit || (visual && design)) ? {
         v: 1,
         visionModels: choose([freeVision, glmVision, kimiVision, haiku]),
         reasoningModels: choose([freeText, freeTextFallback, deepseekVision, haiku])
