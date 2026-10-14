@@ -38,9 +38,9 @@ function isRecord(value: unknown): value is JsonRecord {
 function hasId(value: unknown): value is JsonRpcId {
   return typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
 }
-function rpc(requestId: JsonRpcId, result: unknown) {
+function rpc(requestId: JsonRpcId, result: unknown, protocolVersion = "2025-03-26") {
   return NextResponse.json({ jsonrpc: "2.0", id: requestId, result }, {
-    headers: { "Cache-Control": "no-store", "MCP-Protocol-Version": "2025-03-26" },
+    headers: { "Cache-Control": "no-store", "MCP-Protocol-Version": protocolVersion },
   });
 }
 function rpcError(requestId: JsonRpcId | null, code: number, message: string) {
@@ -400,7 +400,7 @@ export async function POST(request: Request) {
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: "ux-direct-chatgpt-bridge", version: "1.0.0" },
       instructions: "UX Direct is a distinct participant in the current ChatGPT conversation. Use ux_direct_consult when asked to involve UX Direct or compare its position with ChatGPT. Only call ux_direct_teach on explicit user requests to remember a durable instruction. The brain's memory scope is website-revamp for Indian BFSI clients and excludes DMI-specific knowledge.",
-    });
+    }, protocolVersion);
   }
   if (parsed.method === "ping") return rpc(requestId, {});
   if (parsed.method === "tools/list") return rpc(requestId, { tools: TOOLS });
