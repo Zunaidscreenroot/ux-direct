@@ -85,9 +85,9 @@
       <button id="healthStatus" class="status-tag warn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="healthPanel" title="Automatic native API checks; click for details"><span id="healthDot" class="dot"></span><span id="healthStatusText" class="tagtext">API checks pending</span></button>
     </div>
   </header>
-  <div class="modelbar" aria-label="OpenRouter model selection">
-    <select id="modelSelect" class="model-select" aria-label="OpenRouter model selection" title="Choose an available OpenRouter model" disabled>
-      <option value="">Loading OpenRouter models…</option>
+  <div class="modelbar" aria-label="UX Direct model selection">
+    <select id="modelSelect" class="model-select" aria-label="UX Direct model selection" title="Choose an available UX Direct model" disabled>
+      <option value="">Loading UX Direct models…</option>
     </select>
     <div id="modelStatus" class="status-tag warn" aria-live="polite" title="Shows catalogue status and the latest connection-test result.">
       <span id="modelDot" class="dot"></span><span id="modelStatusText" class="tagtext">Model pending</span>
@@ -257,9 +257,9 @@
     function connectionDiagnostic(error) {
       const detail = error && error.message ? error.message : String(error || "Unknown network error");
       if (/failed to fetch|networkerror|load failed|fetch failed/i.test(detail)) {
-        return "I can’t reach the Vercel backend health endpoint. The request was blocked before a readable API response arrived, so OpenRouter has not been tested yet. Check that the Preview URL opens without a Netlify login/protection page, then reload this plugin from the latest manifest with the Preview domain allowed. If it still fails, the Figma plugin console will distinguish a CORS/CSP block from a server error.\n\nTechnical detail: " + detail;
+        return "I can’t reach the Vercel backend health endpoint. The request was blocked before a readable API response arrived, so UX Direct has not been tested yet. Check that the Preview URL opens without a Netlify login/protection page, then reload this plugin from the latest manifest with the Preview domain allowed. If it still fails, the Figma plugin console will distinguish a CORS/CSP block from a server error.\n\nTechnical detail: " + detail;
       }
-      return "The Vercel backend health check failed before OpenRouter was called.\n\nTechnical detail: " + detail;
+      return "The Vercel backend health check failed before UX Direct was called.\n\nTechnical detail: " + detail;
     }
 
     async function checkConnection() {
@@ -312,7 +312,7 @@
 
     async function loadModelOptions() {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
-      setModelStatus("warn", "Loading approved models…", "Approved free text and vision models are tried first. Automatic routing uses at most two free attempts before one paid fallback; OpenRouter credit and key limits govern billed usage.");
+      setModelStatus("warn", "Loading approved models…", "Approved free text and vision models are tried first. Automatic routing uses at most two free attempts before one paid fallback; UX Direct credit and key limits govern billed usage.");
       const selector = $("modelSelect");
       selector.disabled = true;
       try {
@@ -361,7 +361,7 @@
           (model.tier === "paid" ? paidGroup : freeGroup).appendChild(option);
         });
         selector.append(freeGroup, paidGroup);
-        selector.title = "Approved OpenRouter pool: " + modelOptions.filter(model => model.tier === "free-tier").length + " free-first model(s), " + readyPaidModels + " of " + paidModels.length + " paid fallback model(s) verified. Unverified paid choices remain visible but cannot be used.";
+        selector.title = "Approved UX Direct pool: " + modelOptions.filter(model => model.tier === "free-tier").length + " free-first model(s), " + readyPaidModels + " of " + paidModels.length + " paid fallback model(s) verified. Unverified paid choices remain visible but cannot be used.";
         const preferred = modelOptions.find(model => model.id === payload.selectedModel && model.available !== false)
           || modelOptions.find(model => model.tier === "free-tier");
         selector.value = preferred.id;
@@ -384,7 +384,7 @@
       if (openRouterFreeQuotaExhausted && currentModel && currentModel.tier === "free-tier") {
         modelAvailable = true;
         $("modelSelect").disabled = !backendHealthy || isSending;
-        setModelStatus("warn", "Paid fallback armed", "OpenRouter's account-level free quota is exhausted. Chat will choose one paid model by expertise; paid inference starts only when you send a message.");
+        setModelStatus("warn", "Paid fallback armed", "UX Direct's account-level free quota is exhausted. Chat will choose one paid model by expertise; paid inference starts only when you send a message.");
         updateSendAvailability();
         return;
       }
@@ -412,7 +412,7 @@
         // The server only calls it after an explicit message, using budget checks.
         modelAvailable = true;
         $("modelSelect").disabled = !backendHealthy || isSending;
-        setModelStatus("warn", "Paid model armed", model.label + " is your preferred paid model. No paid probe is sent on selection; OpenRouter credit and configured key limits apply to billed inference. Visual scans use this model if it accepts images, otherwise UX Direct substitutes the lowest-listed-cost approved paid vision model.");
+        setModelStatus("warn", "Paid model armed", model.label + " is your preferred paid model. No paid probe is sent on selection; UX Direct credit and configured key limits apply to billed inference. Visual scans use this model if it accepts images, otherwise UX Direct substitutes the lowest-listed-cost approved paid vision model.");
         updateSendAvailability();
         return;
       }
@@ -431,10 +431,10 @@
             (payload.status === 429 && /free-models-per-day|free model requests per day/i.test(String(payload.reason || "")))) {
           openRouterFreeQuotaExhausted = true;
           modelAvailable = false;
-          const detail = payload.reason || "OpenRouter has exhausted this account's daily free-model request quota.";
+          const detail = payload.reason || "UX Direct has exhausted this account's daily free-model request quota.";
           modelAvailable = true;
           setModelStatus("warn", "Paid fallback armed", "HTTP 429: " + detail + " The server will stop redundant free retries and choose one paid model by expertise when you send a message.");
-          const message = "OpenRouter's daily free-model quota is exhausted.\n\n" +
+          const message = "UX Direct's daily free-model quota is exhausted.\n\n" +
             detail + "\n\nI will not probe more free models on startup. When you send a message, the server will use its free-first strategy and then attempt exactly one approved paid model selected by task expertise. Paid inference is not triggered until you send that message.";
           if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
           else {
@@ -447,7 +447,7 @@
         }
         if (payload.available === true && payload.responseReceived === true) {
           modelAvailable = true;
-          const providerLabel = isPaidModel ? "Paid model connected" : "OpenRouter connected";
+          const providerLabel = isPaidModel ? "Paid model connected" : "UX Direct connected";
           setModelStatus("ok", providerLabel, model.label + " returned a response in " + Math.max(0, Number(payload.latencyMs || 0)) + " ms.");
           if (modelProbeRow) {
             modelProbeRow.remove();
@@ -827,7 +827,7 @@
         return;
       }
       if (!currentModel || !modelAvailable) {
-        appendMessage("assistant", "Choose an OpenRouter model and wait until its status says Connected or Paid model armed. Automatic paid fallback follows at most two approved free attempts; OpenRouter credit and key limits govern billed usage.");
+        appendMessage("assistant", "Choose an UX Direct model and wait until its status says Connected or Paid model armed. Automatic paid fallback follows at most two approved free attempts; UX Direct credit and key limits govern billed usage.");
         return;
       }
       if (visualIntent) {
@@ -840,7 +840,7 @@
                 ? "The explicitly selected paid vision model will be called directly."
                 : "The selected paid model cannot accept images, so UX Direct will use an approved image-capable model.")
               : "UX Direct will try an approved free vision model first and may use one low-cost paid vision request if the free model fails.";
-        const consent = window.confirm("Visual review sends the selected frame screenshot and prompt to OpenRouter.\n\n" + detail + "\n\nOpenRouter free-model terms and rate limits apply; a paid fallback may consume account credits. No Figma edits happen without a separate confirmation. Continue?");
+        const consent = window.confirm("Visual review sends the selected frame screenshot and prompt to UX Direct.\n\n" + detail + "\n\nUX Direct free-model terms and rate limits apply; a paid fallback may consume account credits. No Figma edits happen without a separate confirmation. Continue?");
         if (!consent) return;
       }
 
