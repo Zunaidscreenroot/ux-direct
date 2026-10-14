@@ -831,17 +831,22 @@
         totalCount: Array.isArray(currentSelection.selection) ? currentSelection.selection.length : 0,
         items: selectedNodes
       }).slice(0, 30000);
-      const core = "You are UX Direct, a senior product/UX designer embedded in Figma. Use the current selected-frame tree and screenshot only. Never invent banking rules, interest rates, fees, dates, financial values, eligibility criteria or consent meanings. Preserve all essential financial values unless explicitly asked otherwise. State uncertainty clearly. Do not claim any Figma changes were applied until the native plugin confirms.";
+      const core = "You are UX Direct, a senior product/UX designer embedded in Figma. Use the current selected-frame tree and the attached screenshot when present. Never invent banking rules, interest rates, fees, due dates, financial values, eligibility criteria, disclosures, or consent meanings. Preserve all essential financial values unless explicitly asked otherwise. Mark uncertainty clearly. Never claim edits were applied until the native plugin confirms them.";
+      const actions = "Supported native actions: update-text, rename-node, set-fill, set-stroke, set-opacity, set-visible, set-locked, set-blend-mode, move-node, resize-node, set-rotation, set-corner-radius, set-text-style, set-layout, set-layout-sizing, set-layout-positioning, set-constraints, set-clip-content, set-layout-grid, set-effects, set-description, create-component (child frames only), detach-instance, reorder-node, clone-node, remove-node (explicitly requested child layers only), create-text, create-rectangle, create-ellipse, create-line, create-frame, create-svg. Use only IDs in the supplied frame tree. Create actions require a FRAME parentId; update-text/set-text-style require TEXT target; set-layout requires FRAME target. Colors must be #RRGGBB. Text style supports fontFamily, fontStyle, fontSize, color, letterSpacing, lineHeight, paragraphSpacing, textAlignHorizontal, textAlignVertical, textAutoResize, textCase and textDecoration. set-layout accepts layoutMode NONE/HORIZONTAL/VERTICAL, itemSpacing, paddingTop/Right/Bottom/Left, primaryAxisAlignItems MIN/CENTER/MAX/SPACE_BETWEEN, counterAxisAlignItems MIN/CENTER/MAX/BASELINE, primaryAxisSizingMode AUTO/FIXED and counterAxisSizingMode AUTO/FIXED. set-layout-sizing accepts horizontal/vertical HUG/FILL/FIXED; set-layout-positioning accepts AUTO/ABSOLUTE. set-constraints uses horizontal MIN/CENTER/MAX/STRETCH/SCALE and vertical MIN/CENTER/MAX/STRETCH/SCALE. Effects and SVG are validated by the plugin. Never call arbitrary APIs or operate outside the selected frame.";
+      const context = "\n\nCurrent Figma context: " + selectionContext;
       if (variationCount > 0) {
-        return core + "\n\nCreate exactly " + variationCount + " distinct screen variation(s) as sibling copies. The original must remain unchanged. Return ONLY JSON: {\"variations\":[{\"name\":\"...\",\"rationale\":\"...\",\"operations\":[...]}]}. Use 6–16 meaningful native Figma operations per variation, including structural/layout changes as well as style or content changes. Use only IDs in the selected tree; created nodes must be children of a frame. Prioritize hierarchy, spacing, legibility, payment action clarity and card grouping.\n\nCurrent Figma context: " + selectionContext;
+        return core + "\n\nCreate exactly " + variationCount + " meaningfully distinct screen variation(s). The source frame must remain unchanged; create sibling copies only after the user confirms. Return ONLY JSON shaped like {\"variations\":[{\"name\":\"Frame name\",\"rationale\":\"Short design direction\",\"operations\":[...]}]}. Give each variation 6–16 high-impact operations. Include at least two structural/layout operations and multiple style/content improvements; do not make a renamed duplicate. Preserve essential product information, amounts and due dates. The native plugin validates each operation and scopes changes to the cloned frame.\n\n" + actions + context;
       }
       if (capabilityId === "bfci.screen-audit") {
-        return core + "\n\nVisually inspect the attached screenshot, not just the layer names. Return 4–6 concise, actionable findings. For each, give observed evidence, why it matters, and the recommended change. Cover hierarchy, contrast/legibility, spacing/alignment, and CTA priority where relevant. Separate observation from inference. Do not return JSON unless requested.\n\nCurrent Figma context: " + selectionContext;
+        return core + "\n\nInspect the attached selected-frame screenshot pixels. Return 4–6 concise actionable findings. For each, give visible evidence, why it matters, and a recommended change. Cover hierarchy, text legibility/contrast, spacing/alignment, primary CTA and financial-content clarity as relevant. Separate observations from assumptions. Don't claim you cannot see pixels if the screenshot is attached. Do not return a JSON edit plan unless asked." + context;
       }
       if (capabilityId === "bfci.screen-edit" || capabilityId === "bfci.screen-redesign" || capabilityId === "bfci.screen-generation") {
-        return core + "\n\nFor Figma changes, return ONLY JSON shaped like {\"operations\":[...]}. Allowed action types: update-text, rename-node, set-fill, set-stroke, set-opacity, set-visible, set-locked, set-blend-mode, move-node, resize-node, set-rotation, set-corner-radius, set-text-style, set-layout, set-layout-sizing, set-layout-positioning, set-constraints, set-clip-content, set-layout-grid, set-effects, set-description, create-component, detach-instance, reorder-node, clone-node, remove-node (explicitly requested child layers only), create-text, create-rectangle, create-ellipse, create-line, create-frame, create-svg. Use only IDs shown in the current frame tree, at most 32 operations. Never remove the source root or mutate pages. Use #RRGGBB colors.\n\nCurrent Figma context: " + selectionContext;
+        return core + "\n\nPrepare a structured Figma proposal and return ONLY JSON shaped like {\"operations\":[...]}; no Markdown. Limit to 32 operations. Substantial redesign requests should improve structure, spacing, hierarchy, contrast, typography and CTA grouping rather than only copy. Keep edits within the supplied frame tree, never remove the root frame, never mutate pages, and remove child layers only when explicitly requested. If a safe supported change cannot be determined, return {\"operations\":[]}." + context + "\n\n" + actions;
       }
-      return core + "\n\nAnswer directly and concisely. When reviewing banking UX, ground claims in supplied evidence and identify questions requiring product-owner confirmation.\n\nCurrent Figma context: " + selectionContext;
+      if (capabilityId === "bfci.journey-design") {
+        return core + "\n\nDesign a practical, sequenced banking journey. Cover entry point, each step, required information, primary/secondary action, loading, success, error, retry and exit states as relevant. Preserve supplied financial facts; label missing policy details as open questions rather than inventing them. Be concise and implementation-ready." + context;
+      }
+      return core + "\n\nAnswer directly and concisely. For copy, use plain language and preserve meaning. For audits, ground findings in the screenshot and selected layer tree. For risk reviews, give potential risks and mitigations, not compliance certification." + context;
     }
 
     async function sendChatMessage(overrideText) {
@@ -866,19 +871,19 @@
         return;
       }
       if (!currentModel || !modelAvailable) {
-        appendMessage("assistant", "Choose an UX Direct model preference and wait until its status says Connected or Paid model armed. The capability router selects the model for each task; high-compute paid requests require consent and stay within an estimated per-task budget.");
+        appendMessage("assistant", "The automatic AI router is still loading its approved model catalogue. No paid model probes are made at startup; please retry when the status says AI routing · automatic.");
         return;
       }
       if (visualIntent || highComputeIntent) {
         const detail = variationIntent
-          ? "This is a high-compute screen redesign. UX Direct will route to a suitable paid visual-design model, with an estimated per-task ceiling of US$0.12 and a shared hard limit of ₹50 across any rolling 60 minutes. It will propose exactly the requested number of new sibling frames. Your original remains unchanged until you approve the plan."
+          ? "The cockpit will try an approved free vision model first, then at most one low-cost paid fallback if needed. Paid inference is limited by a US$0.12 task ceiling and the shared ₹50 rolling-hour budget. Your source frame remains unchanged."
           : designIntent
             ? "This request proposes Figma changes, so UX Direct will prepare a structured edit plan for your review."
             : currentModel.tier === "paid"
               ? (currentModel.supportsImages === true
-                ? "The explicitly selected paid vision model will be called directly."
-                : "The selected paid model cannot accept images, so UX Direct will use an approved image-capable model.")
-              : "UX Direct routes screenshot work to an available image-capable model. The configured free vision model has been unreliable, so a low-cost paid vision model may be used within the task cost ceiling.";
+                ? "Automatic routing chooses the model for this task; no provider probe is made on startup."
+                : "The cockpit selects only an approved image-capable model for visual requests.")
+              : "The cockpit tries the approved free vision route first. If it cannot return a usable audit, only one low-cost paid fallback may be attempted within the task budget.";
         const consentIntro = visualIntent
           ? "Visual review sends the selected screenshot and prompt to UX Direct."
           : "This request may require a paid model for high-compute BFCI design work.";
@@ -916,6 +921,14 @@
         return /\b(add|create|insert|change|update|edit|modify|rename|replace|set|remove|delete|redesign|apply|adjust|fix|implement|build|improv(?:e|ement|ements)|restyle|recolor|move|resize|polish|polished|optimize|optimise|clean\s+up)\b/i.test(text) ||
           /\bmake\b.*\b(better|clearer|more|less|consistent|accessible|modern|polished)\b/i.test(text);
       }
+      const variationMatch = variationIntent
+        ? /\b(one|two|three|1|2|3)\s+(?:new\s+)?(?:screen\s+)?variations?\b/i.exec(prompt)
+        : null;
+      const variationCount = variationMatch
+        ? ({ one: 1, two: 2, three: 3, "1": 1, "2": 2, "3": 3 })[variationMatch[1].toLowerCase()] || 2
+        : (variationIntent ? 2 : 0);
+      const clientRoute = resolveClientRoute(prompt, { variationIntent, visualIntent, designIntent, highComputeIntent });
+      const clientSystemPrompt = buildClientSystemPrompt(prompt, clientRoute.capabilityId, selectedNodes, variationCount);
       try {
         const response = await fetch(API + "/api/assistant/chat", {
           method: "POST",
@@ -926,10 +939,8 @@
             provider: currentModel.provider,
             model: currentModel.id,
             intent: variationIntent ? "design-variation" : designIntent ? "design-operation" : "chat",
-            clientRoute: resolveClientRoute(prompt, { variationIntent, visualIntent, designIntent, highComputeIntent }),
-            systemPrompt: buildClientSystemPrompt(prompt,
-              resolveClientRoute(prompt, { variationIntent, visualIntent, designIntent, highComputeIntent }).capabilityId,
-              selectedNodes, variationIntent ? (Number((/\\b(?:one|two|three|1|2|3)\\s+(?:new\\s+)?(?:screen\\s+)?variations?\\b/i.exec(prompt) || [])[1] === "one" ? 1 : (/\\b(?:one|two|three|1|2|3)\\s+(?:new\\s+)?(?:screen\\s+)?variations?\\b/i.exec(prompt) || [])[1] === "three" ? 3 : 2)) : 0),
+            clientRoute,
+            systemPrompt: clientSystemPrompt,
             messages: chatHistory.slice(-12),
             selection: {
               pageName: String(currentSelection.pageName || "").slice(0, 160),
