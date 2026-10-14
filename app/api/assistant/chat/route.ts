@@ -181,8 +181,9 @@ export async function POST(request: Request) {
   const designIntent = body.intent === "design-operation" || variationIntent;
   const visualIntent = Boolean(previewDataUrl);
   const useUxdIrVariationPipeline = variationIntent && hasUxdIrStages;
+  const useUxdIrEditPipeline = designIntent && !variationIntent && visualIntent && hasUxdIrStages;
   const useUxdIrAuditPipeline = body.auditIntent === true && !variationIntent && !designIntent && visualIntent && hasUxdIrStages;
-  const useUxdIrPipeline = useUxdIrVariationPipeline || useUxdIrAuditPipeline;
+  const useUxdIrPipeline = useUxdIrVariationPipeline || useUxdIrEditPipeline || useUxdIrAuditPipeline;
   const baseSystemPrompt = variationIntent
     ? requestVariationSystemPrompt(selectionContext, variationCount)
     : designIntent
@@ -366,7 +367,7 @@ export async function POST(request: Request) {
       let uxdIrTrace: UxdIrTrace | undefined;
       const result = useUxdIrPipeline
         ? await runUxdVisionReasoningPipeline({
-            mode: useUxdIrAuditPipeline ? "audit" : "variation",
+            mode: useUxdIrAuditPipeline ? "audit" : useUxdIrEditPipeline ? "edit" : "variation",
             runId: learningRequestId,
             projectKey: activeProjectKey,
             capability: capability.id,
