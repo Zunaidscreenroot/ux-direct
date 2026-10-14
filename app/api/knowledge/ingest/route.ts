@@ -83,7 +83,7 @@ export async function POST(request: Request) {
   const metadata = isRecord(payload.metadata) ? payload.metadata : {};
   const metadataSize = JSON.stringify(metadata).length;
 
-  if (!projectKey) return NextResponse.json({ error: "projectKey must be DMI_HFC, UJJIVAN_SFB, or INDIA_BFCI_SHARED." }, { status: 400 });
+  if (!projectKey) return NextResponse.json({ error: "projectKey must be DMI (shared by DMI Finance, DMI Wealth, and DMI Housing Finance), UJJIVAN_SFB, or INDIA_BFCI_SHARED." }, { status: 400 });
   if (!title || content.length < 30 || content.length > 80000) {
     return NextResponse.json({ error: "Provide a title and 30–80,000 characters of source text." }, { status: 400 });
   }
