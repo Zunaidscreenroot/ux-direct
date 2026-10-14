@@ -211,6 +211,7 @@
     let heartbeatTimer = null;
     let isSending = false;
     let lastUxdRunId = null;
+    let uxdTraceLoading = false;
     let connectionDiagnosticRow = null;
     let modelProbeRow = null;
     let currentModel = null;
@@ -352,13 +353,139 @@
       });
     }
 
+    async function explainUxdTrace(runId, button) {
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
+      const previous = button ? button.textContent : "";
+      if (button) { button.disabled = true; button.textContent = "Explaining…"; }
+      try {
+        const response = await fetch(API + "/api/uxd-traces/explain", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileKey: verifiedFileKey, project: ACTIVE_PROJECT_KEY, runId })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || typeof payload.explanation !== "string") throw new Error(payload.error || "Trace explanation unavailable.");
+        appendMessage("assistant", "Run explanation · " + runId + "\n\n" + payload.explanation);
+        if (payload.usage) {
+          const tokens = payload.usage.totalTokens;
+          const cost = Number(payload.observedCostUsd);
+          setModelStatus("ok", "Trace explained", (payload.model || "Approved model") +
+            (Number.isFinite(Number(tokens)) ? " · " + Number(tokens).toLocaleString() + " tokens" : "") +
+            (Number.isFinite(cost) ? " · $" + cost.toFixed(5) : ""));
+        }
+      } catch (error) {
+        appendMessage("assistant", "Could not explain run " + runId + ": " + (error && error.message ? error.message : "Trace explanation failed."));
+      } finally {
+        if (button) { button.disabled = false; button.textContent = previous || "Explain"; }
+      }
+    }
+
+    async function loadUxdTraceHistory() {
+      const meta = $("uxdTraceMeta");
+      const summary = $("uxdTraceSummary");
+      const list = $("uxdTraceList");
+      if (!meta || !summary || !list || uxdTraceLoading) return;
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) {
+        meta.textContent = "Vercel backend and approved Figma file are required.";
+        return;
+      }
+      uxdTraceLoading = true;
+      meta.textContent = "Loading recent traces…";
+      try {
+        const url = API + "/api/uxd-traces?fileKey=" + encodeURIComponent(verifiedFileKey) +
+          "&project=" + encodeURIComponent(ACTIVE_PROJECT_KEY) + "&limit=20";
+        const response = await fetch(url, { method: "GET", cache: "no-store" });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !Array.isArray(payload.traces)) {
+          throw new Error(payload.error || "Trace history returned HTTP " + response.status + ".");
+        }
+        const traces = payload.traces;
+        meta.textContent = "Updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " · " + traces.length + " recent run(s)";
+        summary.textContent = traces.length
+          ? "Stored compact evidence, model stages, token/cost metadata and execution status. Choose Explain only when you want a readable summary."
+          : "No UXD-IR runs found in this project yet.";
+        list.replaceChildren();
+        if (!traces.length) {
+          const empty = document.createElement("div");
+          empty.className = "budget-ledger-empty";
+          empty.textContent = "Run a screen variation or a visual audit to create the first trace.";
+          list.appendChild(empty);
+        }
+        traces.forEach((trace) => {
+          const row = document.createElement("div");
+          row.className = "uxd-trace-row";
+          const head = document.createElement("div");
+          head.className = "uxd-trace-row-head";
+          const when = document.createElement("span");
+          when.className = "uxd-trace-time";
+          const date = new Date(trace.created_at);
+          when.textContent = Number.isNaN(date.getTime()) ? "Unknown time" : date.toLocaleString();
+          const state = document.createElement("span");
+          state.className = "uxd-trace-time";
+          state.textContent = String(trace.status || "unknown").replace(/_/g, " ");
+          head.append(when, state);
+          const name = document.createElement("div");
+          name.className = "uxd-trace-name";
+          name.textContent = String(trace.capability || "UX task") + " · " + String(trace.intent_summary || "").slice(0, 140);
+          const stages = Array.isArray(trace.stages) ? trace.stages : [];
+          const modelNames = [...new Set(stages.map((stage) => stage && typeof stage.model === "string" ? stage.model : "").filter(Boolean))];
+          const promptTokens = Number(trace.total_prompt_tokens);
+          const completionTokens = Number(trace.total_completion_tokens);
+          const cost = Number(trace.observed_cost_usd ?? trace.estimated_cost_usd);
+          const detail = document.createElement("div");
+          detail.className = "uxd-trace-detail";
+          const detailParts = [
+            modelNames.length ? modelNames.join(" → ") : stages.length + " recorded stages",
+            Number.isFinite(promptTokens + completionTokens) ? (promptTokens + completionTokens).toLocaleString() + " tokens" : "",
+            Number.isFinite(cost) ? "$" + cost.toFixed(5) : ""
+          ].filter(Boolean);
+          detail.textContent = detailParts.join(" · ");
+          const explain = document.createElement("button");
+          explain.type = "button";
+          explain.className = "uxd-trace-explain";
+          explain.textContent = "Explain";
+          explain.title = "Generate a natural-language explanation from this stored trace on demand.";
+          explain.addEventListener("click", () => void explainUxdTrace(String(trace.run_id || ""), explain));
+          row.append(head, name, detail, explain);
+          list.appendChild(row);
+        });
+      } catch (error) {
+        meta.textContent = "Trace history unavailable";
+        summary.textContent = error && error.message
+          ? error.message
+          : "Apply the Supabase migration and verify the Vercel server credentials.";
+        list.replaceChildren();
+        const hint = document.createElement("div");
+        hint.className = "budget-ledger-empty";
+        hint.textContent = "The trace API stores no screenshots or private model chain-of-thought. Database setup may be incomplete.";
+        list.appendChild(hint);
+      } finally {
+        uxdTraceLoading = false;
+      }
+    }
+
+    function toggleUxdTracePanel(open) {
+      const panel = $("uxdTracePanel");
+      if (!panel) return;
+      const show = typeof open === "boolean" ? open : panel.hidden;
+      panel.hidden = !show;
+      $("uxdTraceToggle").setAttribute("aria-expanded", String(show));
+      if (show) {
+        toggleBudgetLedger(false);
+        void loadUxdTraceHistory();
+      }
+    }
+
     function toggleBudgetLedger(open) {
       const panel = $("budgetLedgerPanel");
       if (!panel) return;
       const show = typeof open === "boolean" ? open : panel.hidden;
       panel.hidden = !show;
       $("budgetLedgerToggle").setAttribute("aria-expanded", String(show));
-      if (show) void loadOpenRouterMonitoring();
+      if (show) {
+        toggleUxdTracePanel(false);
+        void loadOpenRouterMonitoring();
+      }
     }
 
     function updateOpenRouterSpendStatus(monitoring) {
@@ -1460,10 +1587,14 @@
     $("budgetLedgerToggle").addEventListener("click", () => toggleBudgetLedger());
     $("refreshBudgetLedger").addEventListener("click", () => void loadOpenRouterMonitoring());
     $("closeBudgetLedger").addEventListener("click", () => toggleBudgetLedger(false));
+    $("uxdTraceToggle").addEventListener("click", () => toggleUxdTracePanel());
+    $("refreshUxdTraces").addEventListener("click", () => void loadUxdTraceHistory());
+    $("closeUxdTraces").addEventListener("click", () => toggleUxdTracePanel(false));
     window.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         toggleHealthPanel(false);
         toggleBudgetLedger(false);
+        toggleUxdTracePanel(false);
       }
     });
     document.addEventListener("visibilitychange", () => {
