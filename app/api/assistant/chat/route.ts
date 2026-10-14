@@ -253,7 +253,7 @@ export async function POST(request: Request) {
           variationOperationsValid(item)
         );
         if (!structurallyValid) {
-          throw new PluginOpenRouterError("Model " + candidate.id + " returned an incomplete variation plan (expected named frames with 1–8 operations each).", 502);
+          throw new PluginOpenRouterError("Model " + candidate.id + " returned a plan that did not meet the redesign quality gate (expected 6–16 operations including layout/structure changes).", 502);
         }
       }
       const wasFallback = candidate.id !== selectedModel.id;
