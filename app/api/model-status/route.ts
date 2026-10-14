@@ -9,6 +9,11 @@ import {
   PluginOpenRouterError,
 } from "@/src/figma/plugin-ai-api";
 
+type JsonRecord = Record<string, unknown>;
+function isRecord(value: unknown): value is JsonRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -103,14 +108,16 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   if (!isAllowedPluginOrigin(request)) return json(request, { error: "Origin not allowed." }, 403);
-  let body: any;
-  try { body = await request.json(); }
+  let parsed: unknown;
+  try { parsed = await request.json(); }
   catch { return json(request, { available: false, responseReceived: false, reason: "Request body must be JSON." }, 400); }
-  if (!isAllowedFigmaFileKey(body?.fileKey)) {
+  if (!isRecord(parsed)) return json(request, { available: false, responseReceived: false, reason: "Request body must be a JSON object." }, 400);
+  const body = parsed;
+  if (typeof body.fileKey !== "string" || !isAllowedFigmaFileKey(body.fileKey)) {
     return json(request, { available: false, responseReceived: false, reason: "Figma file is not allowlisted." }, 403);
   }
-  const provider = body?.provider;
-  const modelId = body?.model;
+  const provider = body.provider;
+  const modelId = body.model;
   const model = getPluginModelList().find((entry) => entry.id === modelId);
   if (provider !== "openrouter" || !model || model.tier !== "paid" || !model.available) {
     return json(request, { available: false, responseReceived: false, reason: "The requested paid model is not enabled." }, 403);

@@ -10,6 +10,17 @@ import {
   type PluginChatMessage,
 } from "@/src/figma/plugin-ai-api";
 
+type JsonRecord = Record<string, unknown>;
+type ChatHistoryMessage = { role: "user" | "assistant"; content: string };
+function isRecord(value: unknown): value is JsonRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function isChatHistoryMessage(value: unknown): value is ChatHistoryMessage {
+  if (!isRecord(value)) return false;
+  return (value.role === "user" || value.role === "assistant") &&
+    typeof value.content === "string" && value.content.length <= 8000;
+}
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -43,13 +54,15 @@ function conversationSystemPrompt(selectionContext: string): string {
 
 export async function POST(request: Request) {
   if (!isAllowedPluginOrigin(request)) return json(request, { error: "Origin not allowed." }, 403);
-  let body: any;
-  try { body = await request.json(); }
+  let parsed: unknown;
+  try { parsed = await request.json(); }
   catch { return json(request, { error: "Request body must be valid JSON." }, 400); }
-  if (!isAllowedFigmaFileKey(body?.fileKey)) {
+  if (!isRecord(parsed)) return json(request, { error: "Request body must be a JSON object." }, 400);
+  const body = parsed;
+  if (typeof body.fileKey !== "string" || !isAllowedFigmaFileKey(body.fileKey)) {
     return json(request, { error: "Figma file is not allowlisted." }, 403);
   }
-  if (body?.provider !== "openrouter" || typeof body?.model !== "string") {
+  if (body.provider !== "openrouter" || typeof body.model !== "string") {
     return json(request, { error: "Select an approved OpenRouter model." }, 400);
   }
   const modelOptions = getPluginModelList();
@@ -57,13 +70,12 @@ export async function POST(request: Request) {
   if (!selectedModel || !selectedModel.available) {
     return json(request, { error: "The selected model is not available in this Vercel Preview." }, 503);
   }
-  const rawMessages = Array.isArray(body.messages) ? body.messages.slice(-12) : [];
-  if (!rawMessages.length || rawMessages.some((message: any) =>
-    !message || !["user", "assistant"].includes(message.role) || typeof message.content !== "string" ||
-    message.content.length > 8000)) {
+  const incomingMessages: unknown[] = Array.isArray(body.messages) ? body.messages.slice(-12) : [];
+  const rawMessages = incomingMessages.filter(isChatHistoryMessage);
+  if (!rawMessages.length || rawMessages.length !== incomingMessages.length) {
     return json(request, { error: "Conversation messages are missing or invalid." }, 400);
   }
-  const totalChars = rawMessages.reduce((total: number, message: any) => total + message.content.length, 0);
+  const totalChars = rawMessages.reduce((total, message) => total + message.content.length, 0);
   if (totalChars > 50000) return json(request, { error: "Conversation exceeds the safe input limit." }, 413);
 
   const limit = checkPluginRateLimit(request);
@@ -71,11 +83,11 @@ export async function POST(request: Request) {
     return json(request, { error: "Conversational Cockpit rate limit reached. Retry in " + limit.retryAfterSeconds + " seconds." }, 429);
   }
 
-  const selection = body.selection && typeof body.selection === "object" ? body.selection : {};
+  const selection = isRecord(body.selection) ? body.selection : {};
   const items = Array.isArray(selection.items) ? selection.items.slice(0, 12) : [];
   const selectionContext = JSON.stringify({
     pageName: typeof selection.pageName === "string" ? selection.pageName.slice(0, 160) : "",
-    totalCount: Number.isFinite(selection.totalCount) ? selection.totalCount : items.length,
+    totalCount: typeof selection.totalCount === "number" && Number.isFinite(selection.totalCount) ? selection.totalCount : items.length,
     items,
   }).slice(0, 30000);
   const previewDataUrl = typeof selection.previewDataUrl === "string" ? selection.previewDataUrl : "";
@@ -91,7 +103,7 @@ export async function POST(request: Request) {
 
   const inputMessages: PluginChatMessage[] = [
     { role: "system", content: systemPrompt },
-    ...rawMessages.map((message: any) => ({
+    ...rawMessages.map((message) => ({
       role: message.role as "user" | "assistant",
       content: message.content,
     })),

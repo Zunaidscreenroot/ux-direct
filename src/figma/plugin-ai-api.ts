@@ -54,6 +54,17 @@ export const PLUGIN_PAID_MODELS = [
   },
 ] as const;
 
+type OpenRouterResponsePayload = {
+  model?: unknown;
+  error?: { message?: unknown };
+  choices?: Array<{ message?: { content?: unknown } }>;
+};
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 export class PluginOpenRouterError extends Error {
   status: number;
   constructor(message: string, status = 502) {
@@ -162,38 +173,44 @@ export async function callOpenRouterChat(
       cache: "no-store",
     });
 
-    const payload = await response.json().catch(() => ({} as Record<string, unknown>));
+    const payloadValue: unknown = await response.json().catch(() => ({}));
+    const payload = asRecord(payloadValue) as OpenRouterResponsePayload | null;
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
         throw new PluginOpenRouterError("OpenRouter rejected the API key or model access (HTTP " + response.status + ").", response.status);
       }
       if (response.status === 429) {
-        const raw = typeof (payload as any)?.error?.message === "string" ? (payload as any).error.message : "";
+        const rawMessage = payload?.error?.message;
+        const raw = typeof rawMessage === "string" ? rawMessage : "";
         const lower = raw.toLowerCase();
         const message = lower.includes("free-models-per-day") || lower.includes("free model requests per day")
           ? raw.slice(0, 280)
           : "OpenRouter free-model requests per day limit or provider rate limit reached (HTTP 429).";
         throw new PluginOpenRouterError(message, 429);
       }
-      const detail = typeof (payload as any)?.error?.message === "string"
-        ? String((payload as any).error.message).slice(0, 220)
+      const errorMessage = payload?.error?.message;
+      const detail = typeof errorMessage === "string"
+        ? errorMessage.slice(0, 220)
         : "OpenRouter returned HTTP " + response.status + ".";
       throw new PluginOpenRouterError(detail, response.status);
     }
 
-    const choices = Array.isArray((payload as any)?.choices) ? (payload as any).choices : [];
+    const choices = Array.isArray(payload?.choices) ? payload.choices : [];
     const rawContent = choices[0]?.message?.content;
     const content = typeof rawContent === "string"
       ? rawContent
       : Array.isArray(rawContent)
-        ? rawContent.map((part: any) => typeof part?.text === "string" ? part.text : "").join("\n").trim()
+        ? rawContent.map((part: unknown) => {
+            const record = asRecord(part);
+            return typeof record?.text === "string" ? record.text : "";
+          }).join("\n").trim()
         : "";
     if (!content.trim()) {
       throw new PluginOpenRouterError("OpenRouter returned a response without usable message text.", 502);
     }
     return {
       content,
-      model: typeof (payload as any)?.model === "string" ? (payload as any).model : model,
+      model: typeof payload?.model === "string" ? payload.model : model,
       latencyMs: Date.now() - startedAt,
     };
   } catch (error) {
