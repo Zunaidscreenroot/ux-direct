@@ -353,7 +353,7 @@ export async function runUxdVisionReasoningPipeline(input: UxdVisionReasoningPip
     } catch (error) {
       const message = error instanceof Error ? error.message : "Reasoning stage failed.";
       lastPlanError = message;
-      traceStages.push({ role: "reasoning", status: "failed", model: model.id, estimatedCostUsd: stageEstimate, note: /budget|pricing|ledger/i.test(message) ? "budget_or_pricing" : /json|quality gates|operation plan/i.test(message) ? "invalid_plan" : "provider_error" });
+      traceStages.push({ role: "reasoning", status: "failed", model: model.id, estimatedCostUsd: stageEstimate, note: /budget|pricing|ledger/i.test(message) ? "budget_or_pricing" : /json|quality gates|operation plan|output-token|finish_reason=length/i.test(message) ? "invalid_plan" : "provider_error" });
       await recordModelLearningEvent({
         requestId, capability: input.capability, modelId: model.id, modelTier: model.tier,
         outcome: /budget|pricing|ledger/i.test(message) ? "budget_blocked" : /json|quality gates|operation plan/i.test(message) ? "validation_failure" : "provider_error",
