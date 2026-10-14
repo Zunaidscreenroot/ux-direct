@@ -49,7 +49,8 @@ test("tool list only exposes status and safe UX planning", async () => {
     const response = await POST(request({ jsonrpc: "2.0", id: 2, method: "tools/list" }, { key: validKey }));
     const body = await response.json();
     assert.deepEqual(body.result.tools.map((tool: { name: string }) => tool.name), ["ux_direct_status", "ux_direct_connection_status", "ux_direct_plan_task"]);
-    assert.deepEqual(body.result.tools[1].inputSchema.properties.project.enum, ["general", "express-computers"]);
+    const planner = body.result.tools.find((tool: { name: string }) => tool.name === "ux_direct_plan_task");
+    assert.deepEqual(planner.inputSchema.properties.project.enum, ["general", "express-computers"]);
   } finally {
     if (original === undefined) delete process.env.UX_DIRECT_MCP_API_KEY;
     else process.env.UX_DIRECT_MCP_API_KEY = original;
