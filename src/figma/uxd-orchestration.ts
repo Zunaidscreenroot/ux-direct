@@ -170,6 +170,7 @@ export async function runUxdVisionReasoningPipeline(input: UxdVariationPipelineI
   let usage: NumericUsage = { promptTokens: null, completionTokens: null, totalTokens: null };
   let visionEvidence: ReturnType<typeof normalizeVisionEvidence> = null;
   let budgetBlocked = false;
+  let paidStageCallUsed = false;
   let lastVisionError = "No approved vision model returned usable UXD-IR evidence.";
 
   const imageUserMessage: PluginChatMessage = {
@@ -196,7 +197,7 @@ export async function runUxdVisionReasoningPipeline(input: UxdVariationPipelineI
         continue;
       }
       if (model.tier === "paid") {
-        if (budgetBlocked) continue;
+        if (budgetBlocked || (input.mode === "audit" && paidStageCallUsed)) continue;
         const reservation = await reserveDailyPaidModelBudget({ estimatedCostUsd: stageEstimate, model: model.id, requestId });
         latestReservation = reservation;
         if (!reservation.allowed) {
@@ -206,6 +207,7 @@ export async function runUxdVisionReasoningPipeline(input: UxdVariationPipelineI
         }
       }
       estimatedCostUsd += stageEstimate;
+      if (model.tier === "paid") paidStageCallUsed = true;
       const started = Date.now();
       const result = await callOpenRouterChat(model.id, messages, { maxTokens: 900, temperature: 0.05, timeoutMs: 30000, reasoningEffort: "low" });
       latencyMs += Date.now() - started;
@@ -290,7 +292,7 @@ export async function runUxdVisionReasoningPipeline(input: UxdVariationPipelineI
     const requestId = input.runId + ":reasoning:" + index;
     let stageEstimate = 0;
     try {
-      if (model.tier === "paid" && paidPlanBudgetBlocked) continue;
+      if (model.tier === "paid" && (paidPlanBudgetBlocked || budgetBlocked || (input.mode === "audit" && paidStageCallUsed))) continue;
       stageEstimate = priceEstimate(model, plannerMessages, 3000);
       if (estimatedCostUsd + stageEstimate > input.maxEstimatedCostUsd) {
         lastPlanError = "Reasoning stage stopped by the per-task estimated cost ceiling.";
@@ -306,6 +308,7 @@ export async function runUxdVisionReasoningPipeline(input: UxdVariationPipelineI
         }
       }
       estimatedCostUsd += stageEstimate;
+      if (model.tier === "paid") paidStageCallUsed = true;
       const started = Date.now();
       const result = await callOpenRouterChat(model.id, plannerMessages, { maxTokens: 3000, temperature: 0.1, timeoutMs: 30000, reasoningEffort: "low" });
       latencyMs += Date.now() - started;
