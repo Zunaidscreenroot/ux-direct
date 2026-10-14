@@ -76,7 +76,7 @@ export async function POST(request: Request) {
     return json(request, { error: "Figma file is not allowlisted." }, 403);
   }
   if (body.provider !== "openrouter" || typeof body.model !== "string") {
-    return json(request, { error: "Select an approved OpenRouter model." }, 400);
+    return json(request, { error: "Select an approved UX Direct model." }, 400);
   }
   const modelOptions = getPluginModelList();
   const selectedModel = modelOptions.find((entry) => entry.id === body.model && entry.provider === "openrouter");
@@ -139,7 +139,7 @@ export async function POST(request: Request) {
       model.tier === "free-tier" && model.available && model.supportsImages);
     if (visionModel) {
       selectedForInference = visionModel;
-      fallbackReason = "The selected model cannot accept screenshots; used the approved OpenRouter vision model.";
+      fallbackReason = "The selected model cannot accept screenshots; UX Direct routed the request to an approved vision model.";
     } else {
       const paidVision = modelOptions.find((model) =>
         model.tier === "paid" && model.available && model.supportsImages);
@@ -213,7 +213,7 @@ export async function POST(request: Request) {
           throw new PluginOpenRouterError("Model " + candidate.id + " returned an invalid variation-plan JSON response.", 502);
         }
         const envelope = isRecord(plan) && Array.isArray(plan.variations) ? plan.variations : [];
-        const structurallyValid = envelope.length >= 1 && envelope.length <= 3 && envelope.every((item) =>
+        const structurallyValid = envelope.length === variationCount && envelope.every((item) =>
           isRecord(item) && typeof item.name === "string" && item.name.trim().length > 0 &&
           Array.isArray(item.operations) && item.operations.length >= 1 && item.operations.length <= 8
         );
@@ -246,7 +246,7 @@ export async function POST(request: Request) {
     }
   }
 
-  const reason = lastError instanceof Error ? lastError.message : "OpenRouter did not return a usable response.";
+  const reason = lastError instanceof Error ? lastError.message : "No configured model returned a usable response.";
   const status = lastError instanceof PluginOpenRouterError ? lastError.status : 502;
   return json(request, { error: reason, provider: "openrouter", model: selectedModel.id }, status >= 400 && status <= 599 ? status : 502);
 }
