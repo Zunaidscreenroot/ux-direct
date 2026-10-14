@@ -12,9 +12,24 @@ export type TaskStatus =
 export type CapabilityRisk = "low" | "medium" | "high";
 export type CapabilityCostClass = "free-local" | "paid-model" | "external-read" | "external-write";
 
+export type CapabilityModality =
+  | "text"
+  | "image"
+  | "web-evidence"
+  | "figma-nodes"
+  | "structured-data"
+  | "website"
+  | "application-ui"
+  | "mobile-app";
+
 export type CapabilityDefinition = {
   id: string;
+  version?: string;
   description: string;
+  tags?: readonly string[];
+  modalities?: readonly CapabilityModality[];
+  available?: () => boolean;
+  validateInput?: (input: Record<string, unknown>) => { valid: boolean; errors: string[] };
   risk: CapabilityRisk;
   costClass: CapabilityCostClass;
   requiresApproval: boolean;
