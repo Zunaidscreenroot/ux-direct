@@ -138,7 +138,7 @@ function reasoningSystemPrompt(variationCount: number): string {
 function editReasoningSystemPrompt(): string {
   return [
     "You are the UX Direct Reasoning Stone. Convert compact UXD-IR visual evidence and the user's intent into a minimal native Figma operation plan.",
-    "Return ONLY JSON shaped like {\\"operations\\":[...]}; never return prose or private chain-of-thought.",
+    "Return only a JSON object containing an operations array. Never return prose or private chain-of-thought.",
     "Use 1–8 high-value operations. Prefer the smallest correct change that satisfies the request; do not redesign unrelated areas.",
     "Allowed action names: update-text, rename-node, set-fill, set-stroke, set-opacity, set-visible, set-locked, set-blend-mode, move-node, resize-node, set-rotation, set-corner-radius, set-text-style, set-layout, set-layout-sizing, set-layout-positioning, set-constraints, set-clip-content, set-layout-grid, set-effects, set-description, create-component, detach-instance, reorder-node, clone-node, remove-node, create-text, create-rectangle, create-ellipse, create-line, create-frame, create-svg.",
     "Use only node IDs in the supplied UXD-IR index. Existing-node operations use targetId; creation operations use parentId referencing a FRAME. update-text requires a TEXT target; set-layout requires a FRAME target. Use action-specific fields and #RRGGBB colors.",
