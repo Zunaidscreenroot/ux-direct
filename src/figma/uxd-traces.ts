@@ -153,6 +153,50 @@ export async function getUxdIrTrace(runId: string): Promise<StoredUxdTrace | nul
   }
 }
 
+/**
+ * Cache the human-readable explanation only after the user explicitly requests
+ * it. The canonical trace stays compact and structured; this optional cache
+ * prevents repeated explanation requests from repeatedly consuming model tokens.
+ */
+export async function cacheUxdIrExplanation(input: {
+  runId: string;
+  projectKey: string;
+  explanation: string;
+}): Promise<boolean> {
+  const config = supabaseConfig();
+  if (!config || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.runId)) return false;
+  const trace = await getUxdIrTrace(input.runId);
+  if (!trace || trace.project_key !== input.projectKey) return false;
+  const artifacts = safeValue({
+    ...trace.artifacts,
+    readableExplanation: input.explanation.trim().slice(0, 6000),
+  }) as JsonRecord;
+  try {
+    const query = new URLSearchParams({
+      run_id: "eq." + input.runId,
+      project_key: "eq." + input.projectKey.slice(0, 80),
+      select: "run_id",
+    });
+    const response = await fetch(config.url + "/rest/v1/uxd_run_traces?" + query.toString(), {
+      method: "PATCH",
+      headers: {
+        apikey: config.key,
+        Authorization: "Bearer " + config.key,
+        "Content-Type": "application/json",
+        Prefer: "return=representation",
+      },
+      body: JSON.stringify({ artifacts, updated_at: new Date().toISOString() }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(2200),
+    });
+    if (!response.ok) return false;
+    const updated: unknown = await response.json().catch(() => null);
+    return Array.isArray(updated) && updated.some((row) => isRecord(row) && row.run_id === input.runId);
+  } catch {
+    return false;
+  }
+}
+
 export async function updateUxdIrTraceStatus(input: {
   runId: string;
   projectKey: string;
