@@ -185,7 +185,7 @@ export class PluginOpenRouterError extends Error {
   }
 }
 
-export type HourlyPaidBudgetReservation = {
+export type DailyPaidBudgetReservation = {
   allowed: boolean;
   spentInr: number;
   projectedInr: number;
@@ -202,16 +202,16 @@ function positiveEnvNumber(name: string, fallback: number, maximum: number): num
 
 /**
  * Reserve estimated maximum spend for one paid model attempt in a shared,
- * transactionally serialized rolling 60-minute budget. Failed attempts remain
+ * transactionally serialized rolling 24-hour budget. Failed attempts remain
  * reserved because providers may bill even when their response is unusable.
  * Fails closed when the persistent database cannot verify the budget.
  */
-export async function reserveHourlyPaidModelBudget(input: {
+export async function reserveDailyPaidModelBudget(input: {
   estimatedCostUsd: number;
   model: string;
   requestId?: string;
-}): Promise<HourlyPaidBudgetReservation> {
-  const hourlyLimitInr = positiveEnvNumber("UXD_MODEL_BUDGET_INR_PER_HOUR", 50, 500);
+}): Promise<DailyPaidBudgetReservation> {
+  const dailyLimitInr = positiveEnvNumber("UXD_MODEL_BUDGET_INR_PER_DAY", 50, 50);
   const usdToInr = positiveEnvNumber("UXD_USD_TO_INR_RATE", 100, 250);
   const safetyMultiplier = positiveEnvNumber("UXD_MODEL_COST_SAFETY_MULTIPLIER", 1.5, 5);
   if (!Number.isFinite(input.estimatedCostUsd) || input.estimatedCostUsd <= 0 || input.estimatedCostUsd > 1) {
@@ -221,14 +221,14 @@ export async function reserveHourlyPaidModelBudget(input: {
   const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
   if (!supabaseUrl || !serviceKey) {
-    throw new PluginOpenRouterError("The shared hourly spend ledger is unavailable. Paid inference is blocked to protect the ₹" + hourlyLimitInr + "/hour budget.", 503);
+    throw new PluginOpenRouterError("The shared daily spend ledger is unavailable. Paid inference is blocked to protect the ₹" + dailyLimitInr + "/day budget.", 503);
   }
 
   const reservedInr = Math.max(0.0001, Number((input.estimatedCostUsd * usdToInr * safetyMultiplier).toFixed(6)));
   const requestId = (input.requestId || randomUUID()).slice(0, 120);
   let response: Response;
   try {
-    response = await fetch(supabaseUrl + "/rest/v1/rpc/reserve_uxd_model_budget", {
+    response = await fetch(supabaseUrl + "/rest/v1/rpc/reserve_uxd_model_daily_budget", {
       method: "POST",
       headers: {
         apikey: serviceKey,
@@ -238,58 +238,58 @@ export async function reserveHourlyPaidModelBudget(input: {
       body: JSON.stringify({
         p_scope: "ux-direct:shared-paid-inference",
         p_amount_inr: reservedInr,
-        p_hourly_limit_inr: hourlyLimitInr,
+        p_daily_limit_inr: dailyLimitInr,
         p_model: input.model,
         p_request_id: requestId,
       }),
       cache: "no-store",
     });
   } catch {
-    throw new PluginOpenRouterError("The shared hourly spend ledger could not be reached. Paid inference is blocked; free-model tasks remain available.", 503);
+    throw new PluginOpenRouterError("The shared daily spend ledger could not be reached. Paid inference is blocked; free-model tasks remain available.", 503);
   }
 
   if (!response.ok) {
-    throw new PluginOpenRouterError("The shared hourly spend ledger could not verify the limit (HTTP " + response.status + "). Paid inference is blocked.", 503);
+    throw new PluginOpenRouterError("The shared daily spend ledger could not verify the limit (HTTP " + response.status + "). Paid inference is blocked.", 503);
   }
   const payload: unknown = await response.json().catch(() => null);
   const row = Array.isArray(payload) && payload.length ? payload[0] : null;
   if (!row || typeof row !== "object") {
-    throw new PluginOpenRouterError("The shared hourly spend ledger returned an invalid result. Paid inference is blocked.", 503);
+    throw new PluginOpenRouterError("The shared daily spend ledger returned an invalid result. Paid inference is blocked.", 503);
   }
   const result = row as Record<string, unknown>;
-  const reservation: HourlyPaidBudgetReservation = {
+  const reservation: DailyPaidBudgetReservation = {
     allowed: result.allowed === true,
     spentInr: Number(result.spent_inr ?? 0),
     projectedInr: Number(result.projected_inr ?? 0),
-    limitInr: Number(result.limit_inr ?? hourlyLimitInr),
+    limitInr: Number(result.limit_inr ?? dailyLimitInr),
     remainingInr: Number(result.remaining_inr ?? 0),
     reservedInr,
   };
   if (![reservation.spentInr, reservation.projectedInr, reservation.limitInr, reservation.remainingInr].every(Number.isFinite)) {
-    throw new PluginOpenRouterError("The shared hourly spend ledger returned invalid amounts. Paid inference is blocked.", 503);
+    throw new PluginOpenRouterError("The shared daily spend ledger returned invalid amounts. Paid inference is blocked.", 503);
   }
   return reservation;
 }
 
-export async function getHourlyPaidModelBudgetStatus(): Promise<{
+export async function getDailyPaidModelBudgetStatus(): Promise<{
   spentInr: number;
   limitInr: number;
   remainingInr: number;
   windowMinutes: number;
 } | null> {
-  const limitInr = positiveEnvNumber("UXD_MODEL_BUDGET_INR_PER_HOUR", 50, 500);
+  const limitInr = positiveEnvNumber("UXD_MODEL_BUDGET_INR_PER_DAY", 50, 50);
   const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
   if (!supabaseUrl || !serviceKey) return null;
   try {
-    const response = await fetch(supabaseUrl + "/rest/v1/rpc/uxd_model_budget_status", {
+    const response = await fetch(supabaseUrl + "/rest/v1/rpc/uxd_model_daily_budget_status", {
       method: "POST",
       headers: {
         apikey: serviceKey,
         Authorization: "Bearer " + serviceKey,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ p_scope: "ux-direct:shared-paid-inference", p_hourly_limit_inr: limitInr }),
+      body: JSON.stringify({ p_scope: "ux-direct:shared-paid-inference", p_daily_limit_inr: limitInr }),
       cache: "no-store",
     });
     if (!response.ok) return null;
@@ -301,11 +301,50 @@ export async function getHourlyPaidModelBudgetStatus(): Promise<{
       spentInr: Number(value.spent_inr ?? 0),
       limitInr: Number(value.limit_inr ?? limitInr),
       remainingInr: Number(value.remaining_inr ?? 0),
-      windowMinutes: Number(value.window_minutes ?? 60),
+      windowMinutes: Number(value.window_minutes ?? 1440),
     };
     return Object.values(result).every(Number.isFinite) ? result : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Reconcile a successful paid attempt to provider-reported cost. The database
+ * keeps a 25% safety margin after settlement. If no billable cost is returned,
+ * the original reservation remains to protect against uncertain billing.
+ */
+export async function settleDailyPaidModelBudget(input: {
+  requestId: string;
+  actualCostUsd: number;
+}): Promise<boolean> {
+  if (!Number.isFinite(input.actualCostUsd) || input.actualCostUsd < 0 || input.actualCostUsd > 1) return false;
+  const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
+  if (!supabaseUrl || !serviceKey) return false;
+  const usdToInr = positiveEnvNumber("UXD_USD_TO_INR_RATE", 100, 250);
+  const settledInr = Math.max(0.0001, Number((input.actualCostUsd * usdToInr * 1.25).toFixed(6)));
+  try {
+    const response = await fetch(supabaseUrl + "/rest/v1/rpc/settle_uxd_model_daily_budget", {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: "Bearer " + serviceKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        p_scope: "ux-direct:shared-paid-inference",
+        p_request_id: input.requestId.slice(0, 120),
+        p_actual_amount_inr: settledInr,
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!response.ok) return false;
+    const payload: unknown = await response.json().catch(() => false);
+    return payload === true || (Array.isArray(payload) && payload[0] === true);
+  } catch {
+    return false;
   }
 }
 
