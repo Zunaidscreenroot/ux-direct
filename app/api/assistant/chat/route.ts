@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { classifyBfciCapability, orderedModelIds } from "@/src/figma/bfci-capabilities";
+import { BFCI_CAPABILITIES, classifyBfciCapability, orderedModelIds, type BfciCapabilityId } from "@/src/figma/bfci-capabilities";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { getModelLearningContext, recordModelLearningEvent } from "@/src/figma/model-learning";
 import {
@@ -117,11 +117,29 @@ export async function POST(request: Request) {
 
   const variationIntent = body.intent === "design-variation";
   const lastUserPrompt = [...rawMessages].reverse().find((message) => message.role === "user")?.content ?? "";
-  const capability = classifyBfciCapability({
+  const inferredCapability = classifyBfciCapability({
     intent: typeof body.intent === "string" ? body.intent : "chat",
     prompt: lastUserPrompt,
     hasScreenshot: Boolean(previewDataUrl),
   });
+  // Routing policy originates in the Figma cockpit. The server validates its
+  // capability/model allowlists and enforces budgets, but does not reorder a
+  // cockpit-supplied route using a second intelligence policy.
+  const clientRoute = isRecord(body.clientRoute) ? body.clientRoute : null;
+  const clientCapabilityId = typeof clientRoute?.capabilityId === "string" &&
+    Object.prototype.hasOwnProperty.call(BFCI_CAPABILITIES, clientRoute.capabilityId)
+    ? clientRoute.capabilityId as BfciCapabilityId
+    : null;
+  const requestedClientModels = Array.isArray(clientRoute?.modelOrder)
+    ? [...new Set(clientRoute.modelOrder.filter((id): id is string => typeof id === "string").slice(0, 5))]
+    : [];
+  const useClientRoute = clientRoute?.source === "cockpit" && Boolean(clientCapabilityId) && requestedClientModels.length > 0;
+  const capability = useClientRoute && clientCapabilityId
+    ? BFCI_CAPABILITIES[clientCapabilityId]
+    : inferredCapability;
+  const clientSystemPrompt = typeof body.systemPrompt === "string" && body.systemPrompt.length <= 32000
+    ? body.systemPrompt.trim()
+    : "";
   const variationCountMatch = variationIntent
     ? /\b(one|two|three|1|2|3)\s+(?:new\s+)?(?:screen\s+)?variations?\b/i.exec(lastUserPrompt)
     : null;
@@ -154,8 +172,10 @@ export async function POST(request: Request) {
     ? body.project
     : "general";
   const learning = await getModelLearningContext(capability.id, learningProjectKey);
-  const systemPrompt = baseSystemPrompt + "\n\n" + capabilityGuardrails +
-    (learning.promptContext ? "\n\n" + learning.promptContext : "");
+  const systemPrompt = useClientRoute && clientSystemPrompt
+    ? clientSystemPrompt
+    : baseSystemPrompt + "\n\n" + capabilityGuardrails +
+      (learning.promptContext ? "\n\n" + learning.promptContext : "");
 
   // Attach the exported JPEG to the latest user turn. Previously the screenshot
   // was used only for model selection and cost estimation, while OpenRouter
@@ -186,9 +206,11 @@ export async function POST(request: Request) {
 
   const availableById = new Map(modelOptions.map((model) => [model.id, model]));
   const configuredOrder = orderedModelIds(capability);
-  let orderedCandidates = configuredOrder
+  const routeOrder = useClientRoute ? requestedClientModels : configuredOrder;
+  let orderedCandidates = routeOrder
     .map((id) => availableById.get(id))
-    .filter((model): model is (typeof modelOptions)[number] => Boolean(model && model.available && model.automaticRouting !== false));
+    .filter((model): model is (typeof modelOptions)[number] => Boolean(model && model.available &&
+      (useClientRoute || model.automaticRouting !== false)));
 
   // For an incidental screenshot attached to a small edit, upgrade only to a
   // low-cost vision model if the free text route cannot consume the image.
@@ -204,7 +226,7 @@ export async function POST(request: Request) {
   const matureLearnedCandidates = orderedCandidates
     .filter((model) => (learning.modelScores[model.id]?.attempts ?? 0) >= 3)
     .sort((a, b) => (learning.modelScores[b.id]?.routingScore ?? -Infinity) - (learning.modelScores[a.id]?.routingScore ?? -Infinity));
-  if (matureLearnedCandidates.length > 1) {
+  if (!useClientRoute && matureLearnedCandidates.length > 1) {
     let learnedIndex = 0;
     orderedCandidates = orderedCandidates.map((model) =>
       (learning.modelScores[model.id]?.attempts ?? 0) >= 3 ? matureLearnedCandidates[learnedIndex++] : model
