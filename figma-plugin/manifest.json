@@ -9,7 +9,7 @@
   ],
   "networkAccess": {
     "allowedDomains": [
-      "https://ux-direct-hiz39dxqn-screenroot.vercel.app"
+      "https://ux-direct-l42fp2nru-screenroot.vercel.app"
     ],
     "reasoning": "UX Direct sends the user's prompt and selected node metadata to the Vercel Preview backend for task planning and health telemetry. Provider-backed model execution is only available when the backend gateway is configured."
   },
