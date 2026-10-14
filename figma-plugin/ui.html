@@ -169,7 +169,7 @@
       $("healthStatus").className = "status-tag " + state;
       $("healthDot").className = "dot";
       $("healthStatusText").textContent = label;
-      $("healthStatus").title = state === "ok" ? "All executed health checks passed. Click for details." : "Click to inspect Plugin API health-check details.";
+      $("healthStatus").title = state === "ok" ? "Native Figma Plugin API health checks passed. These checks measure API availability/behavior, not the number of design actions supported by UX Direct." : "Inspect native Figma Plugin API health checks. Health-check count is separate from the UX Direct action catalog.";
     }
     function updateHourlyBudgetStatus(budget) {
       const target = $("budgetStatus");
@@ -791,7 +791,7 @@
       const healthFailed = failed > 0 || suiteInvalid;
       const label = healthFailed ? ("API " + failed + " failed") : ("API " + passed + " passed");
       setHealth(healthFailed ? "bad" : "ok", label);
-      $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + available + " available · " + notTested + " not tested · " + checkedAt + ". Team Library access remains intentionally not tested.";
+      $("healthSummary").textContent = passed + " native API checks passed · " + failed + " failed · " + available + " available · " + notTested + " not tested · " + checkedAt + ". This count is not the supported-action count. Team Library access remains intentionally not tested.";
       $("healthResults").replaceChildren();
       if (suiteInvalid) appendHealthRow("FAIL", "Health report", "The plugin returned no individual check results; the suite cannot be considered passed.", "fail");
       checks.forEach((item) => {
@@ -1017,17 +1017,27 @@
               if (Array.isArray(node.children)) node.children.forEach(collectVariationTree);
             }
             collectVariationTree(source.tree || source);
-            const allowedActions = new Set(["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-layout", "reorder-node"]);
+            const allowedActions = new Set(["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "set-clip-content", "set-locked", "set-blend-mode", "set-rotation", "clone-node", "remove-node", "reorder-node"]);
             const proposed = Array.isArray(plan.variations) ? plan.variations.slice(0, 3) : [];
             function validOperation(op) {
               if (!op || typeof op !== "object" || !allowedActions.has(op.action)) return false;
-              if (op.action === "create-text" || op.action === "create-rectangle") {
+              const createActions = ["create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg"];
+              if (createActions.includes(op.action)) {
                 if (!allowedIds.has(op.parentId) || nodeTypes.get(op.parentId) !== "FRAME") return false;
               } else if (!allowedIds.has(op.targetId)) return false;
               if (op.action === "update-text") return nodeTypes.get(op.targetId) === "TEXT" && typeof op.text === "string" && !!op.text.trim();
               if (op.action === "set-text-style") return nodeTypes.get(op.targetId) === "TEXT" &&
                 (!("fontSize" in op) || (Number.isFinite(op.fontSize) && op.fontSize >= 8 && op.fontSize <= 48)) &&
-                (!("fontStyle" in op) || ["Regular", "Medium", "Semi Bold", "Bold"].includes(op.fontStyle)) &&
+                (!("fontStyle" in op) || ["Thin", "Extra Light", "Light", "Regular", "Medium", "Semi Bold", "Bold", "Extra Bold", "Black"].includes(op.fontStyle)) &&
+                (!("fontFamily" in op) || (typeof op.fontFamily === "string" && op.fontFamily.length <= 80)) &&
+                (!("letterSpacing" in op) || Number.isFinite(op.letterSpacing)) &&
+                (!("lineHeight" in op) || op.lineHeight === "AUTO" || Number.isFinite(op.lineHeight)) &&
+                (!("paragraphSpacing" in op) || Number.isFinite(op.paragraphSpacing)) &&
+                (!("textAlignHorizontal" in op) || ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"].includes(op.textAlignHorizontal)) &&
+                (!("textAlignVertical" in op) || ["TOP", "CENTER", "BOTTOM"].includes(op.textAlignVertical)) &&
+                (!("textAutoResize" in op) || ["NONE", "HEIGHT", "WIDTH_AND_HEIGHT"].includes(op.textAutoResize)) &&
+                (!("textCase" in op) || ["ORIGINAL", "UPPER", "LOWER", "TITLE"].includes(op.textCase)) &&
+                (!("textDecoration" in op) || ["NONE", "UNDERLINE", "STRIKETHROUGH"].includes(op.textDecoration)) &&
                 (!("color" in op) || /^#?[0-9a-fA-F]{6}$/.test(op.color));
               if (op.action === "set-corner-radius") return Number.isFinite(op.radius) && op.radius >= 0 && op.radius <= 128;
               if (op.action === "set-stroke") return typeof op.color === "string" && /^#?[0-9a-fA-F]{6}$/.test(op.color) &&
@@ -1048,7 +1058,30 @@
               if (op.action === "move-node") return Number.isFinite(op.x) && Number.isFinite(op.y);
               if (op.action === "resize-node") return Number.isFinite(op.width) && Number.isFinite(op.height) && op.width > 0 && op.height > 0;
               if (op.action === "create-text") return typeof op.text === "string" && !!op.text.trim() && Number.isFinite(op.x) && Number.isFinite(op.y) && (!("fontSize" in op) || Number.isFinite(op.fontSize)) && (!("color" in op) || /^#?[0-9a-fA-F]{6}$/.test(op.color));
-              if (op.action === "create-rectangle") return Number.isFinite(op.width) && Number.isFinite(op.height) && op.width > 0 && op.height > 0 && Number.isFinite(op.x) && Number.isFinite(op.y) && (!("color" in op) || /^#?[0-9a-fA-F]{6}$/.test(op.color));
+              if (op.action === "create-rectangle" || op.action === "create-ellipse" || op.action === "create-frame") {
+                return Number.isFinite(op.width) && Number.isFinite(op.height) && op.width > 0 && op.height > 0 &&
+                  Number.isFinite(op.x) && Number.isFinite(op.y) && (!("color" in op) || /^#?[0-9a-fA-F]{6}$/.test(op.color));
+              }
+              if (op.action === "create-line") return Number.isFinite(op.width) && op.width > 0 &&
+                (!("height" in op) || (Number.isFinite(op.height) && op.height >= 0)) &&
+                Number.isFinite(op.x) && Number.isFinite(op.y) && (!("color" in op) || /^#?[0-9a-fA-F]{6}$/.test(op.color));
+              if (op.action === "create-svg") return typeof op.svg === "string" && op.svg.length > 0 && op.svg.length <= 10000 &&
+                /<svg[\\s>]/i.test(op.svg) && !/<\\s*(script|foreignObject)\\b/i.test(op.svg) &&
+                !/\\bon[a-z]+\\s*=/i.test(op.svg) && !/(?:href|src)\\s*=\\s*["']\\s*(?:https?:|\\/\\/|javascript:|data:)/i.test(op.svg) &&
+                Number.isFinite(op.x) && Number.isFinite(op.y);
+              if (op.action === "set-rotation") return Number.isFinite(op.rotation) && Math.abs(op.rotation) <= 360;
+              if (op.action === "set-layout-sizing") return
+                (!("horizontal" in op) || ["HUG", "FILL", "FIXED"].includes(op.horizontal)) &&
+                (!("vertical" in op) || ["HUG", "FILL", "FIXED"].includes(op.vertical));
+              if (op.action === "set-layout-positioning") return ["AUTO", "ABSOLUTE"].includes(op.positioning);
+              if (op.action === "set-constraints") return
+                (!("horizontal" in op) || ["LEFT", "CENTER", "RIGHT", "LEFT_RIGHT", "SCALE"].includes(op.horizontal)) &&
+                (!("vertical" in op) || ["TOP", "CENTER", "BOTTOM", "TOP_BOTTOM", "SCALE"].includes(op.vertical));
+              if (op.action === "set-clip-content") return nodeTypes.get(op.targetId) === "FRAME" && typeof op.clipsContent === "boolean";
+              if (op.action === "set-locked") return typeof op.locked === "boolean";
+              if (op.action === "set-blend-mode") return ["PASS_THROUGH", "NORMAL", "DARKEN", "MULTIPLY", "LINEAR_BURN", "COLOR_BURN", "LIGHTEN", "SCREEN", "LINEAR_DODGE", "COLOR_DODGE", "OVERLAY", "SOFT_LIGHT", "HARD_LIGHT", "DIFFERENCE", "EXCLUSION", "HUE", "SATURATION", "COLOR", "LUMINOSITY"].includes(op.mode);
+              if (op.action === "clone-node") return op.targetId !== source.id;
+              if (op.action === "remove-node") return op.targetId !== source.id;
               return false;
             }
             const variations = proposed.map((item) => ({
@@ -1058,16 +1091,16 @@
             }));
             const sourceIdsMatch = proposed.every((item) => item && (!item.targetId || item.targetId === source.id));
             function operationCategory(action) {
-              if (["set-layout", "move-node", "resize-node", "reorder-node", "set-visible"].includes(action)) return "structure";
-              if (["set-fill", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity"].includes(action)) return "style";
-              if (["update-text", "create-text", "create-rectangle"].includes(action)) return "content";
+              if (["set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "move-node", "resize-node", "set-rotation", "reorder-node", "set-visible", "set-clip-content", "clone-node", "remove-node"].includes(action)) return "structure";
+              if (["set-fill", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-locked", "set-blend-mode"].includes(action)) return "style";
+              if (["update-text", "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg"].includes(action)) return "content";
               return "other";
             }
             const valid = variations.length >= 1 && sourceIdsMatch && variations.every((item, index) =>
               item.name.length > 0 && item.operations.length >= 6 && item.operations.length <= 16 &&
               item.operations.every(validOperation) &&
               new Set(item.operations.map(op => operationCategory(op.action))).size >= 2 &&
-              item.operations.filter(op => ["set-layout", "move-node", "resize-node", "reorder-node"].includes(op.action)).length >= 2 &&
+              item.operations.filter(op => ["set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "move-node", "resize-node", "set-rotation", "reorder-node", "clone-node"].includes(op.action)).length >= 2 &&
               Array.isArray(proposed[index] && proposed[index].operations) &&
               proposed[index].operations.length >= 6 && proposed[index].operations.length <= 16
             );
@@ -1085,13 +1118,26 @@
               if (op.action === "move-node") return "Reposition “" + label + "”";
               if (op.action === "resize-node") return "Resize “" + label + "”";
               if (op.action === "create-text") return "Add text to “" + label + "”";
-              if (op.action === "create-rectangle") return "Add shape to “" + label + "”";
+              if (op.action === "create-rectangle") return "Add rectangle to “" + label + "”";
+              if (op.action === "create-ellipse") return "Add ellipse to “" + label + "”";
+              if (op.action === "create-line") return "Add line to “" + label + "”";
+              if (op.action === "create-frame") return "Add frame inside “" + label + "”";
+              if (op.action === "create-svg") return "Add editable vector to “" + label + "”";
               if (op.action === "set-text-style") return "Restyle typography in “" + label + "”";
               if (op.action === "set-corner-radius") return "Adjust corner radius of “" + label + "”";
               if (op.action === "set-stroke") return "Add/adjust border on “" + label + "”";
               if (op.action === "set-opacity") return "Adjust opacity of “" + label + "”";
               if (op.action === "set-visible") return (op.visible ? "Show “" : "Hide “") + label + "”";
               if (op.action === "set-layout") return "Change auto-layout/spacing of “" + label + "”";
+              if (op.action === "set-layout-sizing") return "Change auto-layout sizing of “" + label + "”";
+              if (op.action === "set-layout-positioning") return "Change auto-layout positioning of “" + label + "”";
+              if (op.action === "set-constraints") return "Change responsive constraints of “" + label + "”";
+              if (op.action === "set-clip-content") return "Change clipping on “" + label + "”";
+              if (op.action === "set-locked") return (op.locked ? "Lock “" : "Unlock “") + label + "”";
+              if (op.action === "set-blend-mode") return "Change blend mode of “" + label + "”";
+              if (op.action === "set-rotation") return "Rotate “" + label + "”";
+              if (op.action === "clone-node") return "Duplicate “" + label + "”";
+              if (op.action === "remove-node") return "Remove child layer “" + label + "”";
               if (op.action === "reorder-node") return "Reorder “" + label + "”";
               return op.action;
             }
