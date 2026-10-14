@@ -49,9 +49,9 @@ function requestVariationSystemPrompt(selectionContext: string, variationCount: 
     "You are UX Direct, a senior product/UX designer creating new screen variations inside Figma.",
     "The selected frame is the source reference. The original must remain unchanged. The native plugin will clone it into sibling frames and apply your operations only to each clone.",
     "Return ONLY JSON shaped like {\"variations\":[{\"name\":\"Frame name\",\"rationale\":\"Short design direction\",\"operations\":[...]}]}; no Markdown or prose.",
-    `Return exactly ${variationCount} clearly distinct variation(s), with no extra variations. Maximum three variations. Use only 3–5 concise, high-impact operations per variation so the JSON response fits within the output budget.`,
+    `Return exactly ${variationCount} clearly distinct variation(s), with no extra variations. Use 8–14 high-impact operations per variation (maximum 16). Do not satisfy a redesign by only changing copy or renaming the frame: materially improve hierarchy, auto-layout/spacing, typography, card treatment, contrast, CTA priority and grouping.`,
     "Use only node IDs in the supplied selected-frame tree. targetId is for an existing node to update; parentId is for a FRAME that will receive a new child. IDs refer to the original tree and the plugin maps them onto the cloned tree.",
-    "Supported operations: {\"action\":\"update-text\",\"targetId\":\"TEXT node id\",\"text\":\"replacement\"}; {\"action\":\"rename-node\",\"targetId\":\"node id\",\"name\":\"new name\"}; {\"action\":\"set-fill\",\"targetId\":\"node id\",\"color\":\"#RRGGBB\"}; {\"action\":\"move-node\",\"targetId\":\"node id\",\"x\":16,\"y\":16}; {\"action\":\"resize-node\",\"targetId\":\"node id\",\"width\":320,\"height\":80}; {\"action\":\"create-text\",\"parentId\":\"FRAME node id\",\"text\":\"label\",\"x\":16,\"y\":16,\"fontSize\":14,\"color\":\"#RRGGBB\"}; or {\"action\":\"create-rectangle\",\"parentId\":\"FRAME node id\",\"width\":120,\"height\":48,\"x\":16,\"y\":16,\"color\":\"#RRGGBB\"}.",
+    "Supported operations: {\"action\":\"update-text\",\"targetId\":\"TEXT node id\",\"text\":\"replacement\"}; {\"action\":\"rename-node\",\"targetId\":\"node id\",\"name\":\"new name\"}; {\"action\":\"set-fill\",\"targetId\":\"node id\",\"color\":\"#RRGGBB\"}; {\"action\":\"move-node\",\"targetId\":\"node id\",\"x\":16,\"y\":16}; {\"action\":\"resize-node\",\"targetId\":\"node id\",\"width\":320,\"height\":80}; {\"action\":\"set-text-style\",\"targetId\":\"TEXT node id\",\"fontSize\":16,\"fontStyle\":\"Semi Bold\"}; {\"action\":\"set-corner-radius\",\"targetId\":\"node id\",\"radius\":12}; {\"action\":\"set-stroke\",\"targetId\":\"node id\",\"color\":\"#RRGGBB\",\"width\":1}; {\"action\":\"set-opacity\",\"targetId\":\"node id\",\"opacity\":1}; {\"action\":\"set-visible\",\"targetId\":\"node id\",\"visible\":true}; {\"action\":\"set-layout\",\"targetId\":\"FRAME node id\",\"layoutMode\":\"VERTICAL\",\"itemSpacing\":12,\"paddingTop\":16,\"paddingRight\":16,\"paddingBottom\":16,\"paddingLeft\":16}; {\"action\":\"reorder-node\",\"targetId\":\"node id\",\"index\":0}; {\"action\":\"create-text\",\"parentId\":\"FRAME node id\",\"text\":\"label\",\"x\":16,\"y\":16,\"fontSize\":14,\"color\":\"#RRGGBB\"}; or {\"action\":\"create-rectangle\",\"parentId\":\"FRAME node id\",\"width\":120,\"height\":48,\"x\":16,\"y\":16,\"color\":\"#RRGGBB\"}. Use only values supported by the target node type; keep edits inside the source frame tree.",
     "Each variation must be a meaningful visual alternative, not just a renamed duplicate. Prioritize the most important improvements across hierarchy, spacing, card treatment, contrast, copy, or CTA emphasis. Keep the existing product purpose and essential information. Never delete nodes, call arbitrary APIs, or use IDs outside the selected frame. Use #RRGGBB colors. Do not output empty operations arrays.",
     "Current Figma context: " + selectionContext,
   ].join("\n\n");
@@ -187,7 +187,7 @@ export async function POST(request: Request) {
     const candidate = candidates[index];
     try {
       const result = await callOpenRouterChat(candidate.id, inputMessages, {
-        maxTokens: variationIntent ? Math.min(3600, capability.maxOutputTokens) : capability.maxOutputTokens,
+        maxTokens: variationIntent ? Math.min(4200, capability.maxOutputTokens + 1000) : capability.maxOutputTokens,
         temperature: variationIntent ? 0.15 : designIntent ? 0.1 : 0.35,
         timeoutMs: 30000,
         reasoningEffort: capability.reasoningEffort,
@@ -203,7 +203,7 @@ export async function POST(request: Request) {
         const envelope = isRecord(plan) && Array.isArray(plan.variations) ? plan.variations : [];
         const structurallyValid = envelope.length === variationCount && envelope.every((item) =>
           isRecord(item) && typeof item.name === "string" && item.name.trim().length > 0 &&
-          Array.isArray(item.operations) && item.operations.length >= 1 && item.operations.length <= 8
+          Array.isArray(item.operations) && item.operations.length >= 6 && item.operations.length <= 16
         );
         if (!structurallyValid) {
           throw new PluginOpenRouterError("Model " + candidate.id + " returned an incomplete variation plan (expected named frames with 1–8 operations each).", 502);
