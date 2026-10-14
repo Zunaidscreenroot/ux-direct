@@ -3,9 +3,9 @@
 ## Scope
 
 Only ingest:
-- **DMI_HFC**: approved DMI Housing Finance briefs, journeys, reference screens, decisions and design-system rules.
+- **DMI**: the single umbrella project covering DMI Finance, DMI Wealth, and DMI Housing Finance. The current database retains the compatible internal namespace `DMI_HFC`; ingestion accepts `DMI` and maps it to that namespace.
 - **UJJIVAN_SFB**: Ujjivan Small Finance Bank discovery, approved product material, journeys and decisions.
-- **INDIA_BFCI_SHARED**: official Indian BFCI rules/guidance that directly supports those two projects.
+- **INDIA_BFCI_SHARED**: reusable official Indian BFCI guidance shared by those two client projects; this is a shared knowledge scope, not a third client project.
 
 The search function never retrieves one client's namespace for the other. Project documents must be approved before retrieval.
 
@@ -25,7 +25,7 @@ Do not ingest real customer identifiers, PAN/Aadhaar numbers, account details, s
 
 UX Direct uses **hybrid RAG + bounded context augmentation**. It keeps embeddings enabled, and it does not fine-tune a model.
 
-1. The ingestion endpoint splits approved or draft source text into overlapping chunks, calls OpenRouter's **openai/text-embedding-3-small** embeddings endpoint, and stores 1,536-dimensional vectors in Supabase pgvector.
+1. The ingestion endpoint splits approved or draft source text into overlapping chunks, calls OpenRouter's **openai/text-embedding-3-small** embeddings endpoint, and stores 1,536-dimensional vectors in Supabase pgvector. DMI Finance, DMI Wealth, and DMI Housing Finance all use the same DMI project scope.
 2. For a task, UX Direct runs semantic vector search and indexed PostgreSQL full-text search in parallel. Reciprocal-rank fusion merges duplicate hits and promotes evidence found by both routes. If the embedding provider is unavailable or the embedding budget is blocked, keyword results can still be used.
 3. Retrieval is restricted to the explicitly selected client namespace plus approved shared BFCI knowledge. The prompt never selects a client from arbitrary prompt-text mentions.
 4. A context-assembly layer combines current task requirements, the selected Figma frame, approved source passages and secondary historical learning patterns. It deduplicates and bounds supplemental context so a large repository is not blindly copied into every model call.
@@ -56,7 +56,7 @@ Example knowledge-source.json:
 
 ~~~json
 {
-  "projectKey": "DMI_HFC",
+  "projectKey": "DMI",
   "title": "DMI VKYC recovery requirements",
   "sourceUrl": "https://approved-internal-source.example/path",
   "sourceType": "brief",
