@@ -203,6 +203,7 @@ export async function POST(request: Request) {
         maxTokens: variationIntent ? 2400 : designIntent ? 1400 : 1100,
         temperature: variationIntent ? 0.15 : designIntent ? 0.1 : 0.35,
         timeoutMs: 30000,
+        reasoningEffort: designIntent ? "low" : undefined,
       });
       if (variationIntent) {
         let plan: unknown;
