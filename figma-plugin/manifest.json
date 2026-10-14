@@ -9,9 +9,9 @@
   ],
   "networkAccess": {
     "allowedDomains": [
-      "https://ux-direct-git-work-vercel-cockpit-preflight-screenroot.vercel.app"
+      "https://ux-direct-git-work-gpt-model-routing-cost-safe-screenroot.vercel.app"
     ],
-    "reasoning": "UX Direct sends the user's prompt and selected node metadata to the Vercel backend for task planning and health telemetry. Provider-backed model execution is handled server-side; no API key is embedded in the plugin."
+    "reasoning": "UX Direct sends the user's prompt and selected node metadata to the isolated GPT-routing Vercel Preview. Provider-backed model execution is handled server-side; no API key is embedded in the plugin."
   },
   "enablePrivatePluginApi": true,
   "documentAccess": "dynamic-page"
