@@ -541,6 +541,7 @@
           body: JSON.stringify({ provider: model.provider, model: model.id, fileKey: verifiedFileKey })
         });
         const payload = await response.json().catch(() => ({}));
+        if (payload.hourlyBudget) updateHourlyBudgetStatus(payload.hourlyBudget);
         if (currentModel?.id !== testedModelId) return;
         if (!response.ok) {
           throw new Error(payload.reason || payload.error || ("Paid model test returned HTTP " + response.status + "."));
@@ -921,9 +922,9 @@
           })
         });
         const data = await response.json().catch(() => ({}));
+        if (data.hourlyBudget) updateHourlyBudgetStatus(data.hourlyBudget);
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
-        if (data.hourlyBudget) updateHourlyBudgetStatus(data.hourlyBudget);
         if (designIntent) {
           if (data.routingStrategy === "vision-direct") {
             const routeNote = data.fallbackReason ? data.fallbackReason + " " : "";
