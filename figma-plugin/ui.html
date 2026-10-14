@@ -86,14 +86,14 @@
       <button id="healthStatus" class="status-tag warn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="healthPanel" title="Automatic native API checks; click for details"><span id="healthDot" class="dot"></span><span id="healthStatusText" class="tagtext">API checks pending</span></button>
     </div>
   </header>
-  <div class="modelbar" aria-label="UX Direct model selection">
-    <select id="modelSelect" class="model-select" aria-label="UX Direct model selection" title="Model preference. UX Direct routes complex BFCI tasks to a suitable image-capable model." disabled>
-      <option value="">Loading UX Direct models…</option>
+  <div class="modelbar" aria-label="Automatic AI routing">
+    <select id="modelSelect" class="model-select" aria-hidden="true" tabindex="-1" hidden disabled>
+      <option value="">Automatic routing</option>
     </select>
-    <div id="modelStatus" class="status-tag warn" aria-live="polite" title="Shows catalogue status and the latest connection-test result.">
-      <span id="modelDot" class="dot"></span><span id="modelStatusText" class="tagtext">Model pending</span>
+    <div id="modelStatus" class="status-tag ok" aria-live="polite" title="UX Direct chooses a model by task and visual requirements. No startup test requests are sent.">
+      <span id="modelDot" class="dot"></span><span id="modelStatusText" class="tagtext">AI routing · automatic</span>
     </div>
-    <button id="testPaidModel" class="model-test" type="button" hidden disabled title="Run one explicit, budget-checked paid inference test. A small provider charge may apply.">Test</button>
+    <button id="testPaidModel" class="model-test" type="button" hidden disabled aria-hidden="true" tabindex="-1">Test</button>
   </div>
   <div id="budgetStatus" class="budget-status" aria-live="polite" title="Shared rolling 60-minute budget. Paid inference is blocked if this budget cannot be verified.">AI budget · ₹50/hour · checking usage…</div>
   <div id="providerSpendStatus" class="budget-status" aria-live="polite" title="Read-only OpenRouter spending data from the server-side management key.">OpenRouter spend · checking management API…</div>
@@ -388,32 +388,28 @@
 
     async function loadModelOptions() {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
-      setModelStatus("warn", "Loading approved models…", "Routine chat and copy use free Nemotron models. Visual audits and redesigns route by capability to image-capable models; paid calls stay within the estimated task budget and require consent.");
       const selector = $("modelSelect");
       selector.disabled = true;
       try {
         const response = await fetch(API + "/api/model-status?fileKey=" + encodeURIComponent(verifiedFileKey), { method: "GET", cache: "no-store" });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !Array.isArray(payload.models)) {
-          throw new Error(payload.error || "Model list endpoint returned HTTP " + response.status + ".");
+          throw new Error(payload.error || "Model catalogue returned HTTP " + response.status + ".");
         }
         const approvedIds = new Set([
           "nvidia/nemotron-3.5-lightning:free",
           "nvidia/nemotron-3-ultra-550b-a55b:free",
-          "qwen/qwen3.8-27b:free",
           "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-          "openai/gpt-oss-20b",
-          "openai/gpt-oss-120b",
-          "openai/gpt-6-luna",
           "deepseek/deepseek-v4-flash-0731",
           "deepseek/deepseek-v4.1-flash",
           "anthropic/claude-haiku-5.5",
           "z-ai/glm-4.6v",
           "moonshotai/kimi-k2.5",
           "google/gemini-3.1-pro-preview",
-          "anthropic/claude-sonnet-5.5"
+          "anthropic/claude-sonnet-5.5",
+          "openai/gpt-6-luna"
         ]);
-        const tierRank = model => model.tier === "free-tier" ? 0 : model.tier === "paid" ? 1 : 2;
+        const tierRank = model => model.tier === "free-tier" ? 0 : 1;
         modelOptions = payload.models
           .filter(model => model && model.provider === "openrouter" &&
             typeof model.id === "string" && approvedIds.has(model.id) &&
@@ -421,158 +417,48 @@
             (model.tier === "free-tier" || model.tier === "paid"))
           .sort((a, b) => tierRank(a) - tierRank(b) || a.label.localeCompare(b.label));
         if (!modelOptions.some(model => model.tier === "free-tier")) {
-          throw new Error(payload.reason || "The approved free-model entries are missing from the model catalogue.");
+          throw new Error("The approved free-model list is unavailable. Paid inference will not be used as an automatic startup probe.");
         }
         selector.replaceChildren();
-        const freeGroup = document.createElement("optgroup");
-        freeGroup.label = "Free · tried first (" + modelOptions.filter(model => model.tier === "free-tier").length + ")";
-        const paidGroup = document.createElement("optgroup");
-        const paidModels = modelOptions.filter(model => model.tier === "paid");
-        const readyPaidModels = paidModels.filter(model => model.available === true).length;
-        paidGroup.label = "Paid · fallback (" + readyPaidModels + "/" + paidModels.length + " ready)";
         modelOptions.forEach(model => {
           const option = document.createElement("option");
           option.value = model.id;
           option.textContent = model.label;
-          if (model.tier === "paid" && model.available !== true) {
-            option.disabled = true;
-            option.textContent += " · not verified";
-            option.title = model.reason || "The live model catalogue/pricing did not verify this option. Paid calls remain blocked.";
-          }
-          (model.tier === "paid" ? paidGroup : freeGroup).appendChild(option);
+          selector.appendChild(option);
         });
-        selector.append(freeGroup, paidGroup);
-        selector.title = "UX Direct routes by task capability: free models for routine chat/copy; approved paid vision/reasoning models for complex banking design. " + readyPaidModels + " paid model(s) are configured. Use Test to verify a paid model before manual selection.";
-        const preferred = modelOptions.find(model => model.id === payload.selectedModel && model.available !== false)
+        // This model is a safe request-envelope default only. resolveClientRoute()
+        // picks the actual candidate order for every request in the plugin UI.
+        const preferred = modelOptions.find(model => model.id === "nvidia/nemotron-3.5-lightning:free" && model.available !== false)
           || modelOptions.find(model => model.tier === "free-tier");
         selector.value = preferred.id;
-        await checkSelectedModel();
+        currentModel = preferred;
+        modelAvailable = true;
+        setModelStatus("ok", "AI routing · automatic",
+          "The cockpit classifies each request and supplies an approved model order. The backend enforces the spend guard, validates output and proxies OpenRouter securely. No model probe is called on startup.");
+        updateSendAvailability();
         updateHourlyBudgetStatus(payload.hourlyBudget);
         void loadOpenRouterMonitoring();
       } catch (error) {
-        const detail = error && error.message ? error.message : "Could not load models.";
+        const detail = error && error.message ? error.message : "Could not load the approved model catalogue.";
         selector.disabled = true;
-        setModelStatus("bad", "Model list failed", detail);
-        if (!modelProbeRow) modelProbeRow = appendMessage("assistant", "I couldn’t load the approved model list from Vercel backend.\n\n" + detail);
-        console.warn("[UX Direct free model list]", error);
+        currentModel = null;
+        modelAvailable = false;
+        setModelStatus("bad", "AI router unavailable", detail);
+        updateSendAvailability();
+        console.warn("[UX Direct automatic routing]", detail);
       }
     }
 
-    async function checkSelectedModel() {
-      const version = ++modelProbeVersion;
-      const selectedId = $("modelSelect").value;
-      currentModel = modelOptions.find(model => model.id === selectedId) || modelOptions[0] || null;
-      modelAvailable = false;
-      updateSendAvailability();
-      if (openRouterFreeQuotaExhausted && currentModel && currentModel.tier === "free-tier") {
-        modelAvailable = true;
-        $("modelSelect").disabled = !backendHealthy || isSending;
-        setModelStatus("warn", "Paid fallback armed", "The free-model quota may be exhausted. Routine chat/copy can use available free alternatives; high-compute visual tasks route by capability and may require a paid model after consent.");
-        updateSendAvailability();
-        return;
-      }
-      if (!currentModel) {
-        $("modelSelect").disabled = true;
-        setModelStatus("warn", "Choose a model", "No free model is available to probe.");
-        return;
-      }
-      if (!backendHealthy || !verifiedFileKey) {
-        setModelStatus("bad", "Preview offline", "Reconnect Vercel backend before checking models.");
-        return;
-      }
-
-      const model = currentModel;
-      const isPaidModel = currentModel.tier === "paid";
-      if (isPaidModel) {
-        if (model.available !== true) {
-          modelAvailable = false;
-          $("modelSelect").disabled = false;
-          setModelStatus("bad", "Paid model unverified", model.reason || "The exact model and positive live pricing were not verified; no inference will be called.");
-          updateSendAvailability();
-          return;
-        }
-        // Selecting a paid model is not a probe and must not spend money.
-        // The server only calls it after an explicit message, using budget checks.
-        modelAvailable = true;
-        $("modelSelect").disabled = !backendHealthy || isSending;
-        setModelStatus("warn", "Paid model armed", model.label + " is your preferred paid model. No paid probe is sent on selection; UX Direct credit and configured key limits apply to billed inference. Visual scans use this model if it accepts images, otherwise UX Direct substitutes the lowest-listed-cost approved paid vision model.");
-        updateSendAvailability();
-        return;
-      }
-      $("modelSelect").disabled = true;
-      setModelStatus("warn", "Checking free model…", "Sending one small test prompt to the selected free model.");
-      try {
-        const probeUrl = new URL(API + "/api/model-status");
-        probeUrl.searchParams.set("fileKey", verifiedFileKey);
-        probeUrl.searchParams.set("provider", model.provider);
-        probeUrl.searchParams.set("model", model.id);
-        const response = await fetch(probeUrl.toString(), { method: "GET", cache: "no-store" });
-        const payload = await response.json().catch(() => ({}));
-        if (version !== modelProbeVersion) return;
-        if (!response.ok) throw new Error(payload.error || "Model check returned HTTP " + response.status + ".");
-        if (payload.quotaExhausted === true ||
-            (payload.status === 429 && /free-models-per-day|free model requests per day/i.test(String(payload.reason || "")))) {
-          openRouterFreeQuotaExhausted = true;
-          modelAvailable = false;
-          const detail = payload.reason || "UX Direct has exhausted this account's daily free-model request quota.";
-          modelAvailable = true;
-          setModelStatus("warn", "Paid fallback armed", "HTTP 429: " + detail + " The capability router will use a suitable available model for the task. High-compute paid routing remains subject to confirmation and the estimated cost ceiling.");
-          const message = "UX Direct's daily free-model quota is exhausted.\n\n" +
-            detail + "\n\nI will not probe more free models on startup. When you send a message, the server will use its free-first strategy and then attempt exactly one approved paid model selected by task expertise. Paid inference is not triggered until you send that message.";
-          if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
-          else {
-            const bubble = modelProbeRow.querySelector(".bubble");
-            if (bubble) bubble.textContent = message;
-          }
-          $("modelSelect").disabled = !backendHealthy || isSending;
-          updateSendAvailability();
-          return;
-        }
-        if (payload.available === true && payload.responseReceived === true) {
-          modelAvailable = true;
-          const providerLabel = isPaidModel ? "Paid model connected" : "UX Direct connected";
-          setModelStatus("ok", providerLabel, model.label + " returned a response in " + Math.max(0, Number(payload.latencyMs || 0)) + " ms.");
-          if (modelProbeRow) {
-            modelProbeRow.remove();
-            modelProbeRow = null;
-          }
-        } else if (model.tier === "free-tier") {
-          // A failed single-model probe does not end the session. The chat API will
-          // The backend now routes each task by BFCI capability; this UI only probes the explicitly selected model.
-          modelAvailable = true;
-          const reason = payload.reason || payload.error || "The selected free model did not return a usable response.";
-          setModelStatus("warn", "Free fallback ready", model.label + ": " + reason + " Chat will retry the approved free pool before considering paid inference.");
-          const message = model.label + " did not pass its probe.\n\n" + reason + "\n\nAutomatic routing remains capability-based: routine chat/copy prefer free Nemotron models; screenshot audits and substantial redesigns use image-capable specialists with bounded fallbacks.";
-          if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
-          else {
-            const bubble = modelProbeRow.querySelector(".bubble");
-            if (bubble) bubble.textContent = message;
-          }
-        } else {
-          modelAvailable = false;
-          const reason = payload.reason || payload.error || "The provider did not return a usable response.";
-          setModelStatus("bad", "Not available", model.label + ": " + reason);
-          const message = model.label + " is not available in this Preview.\n\n" + reason + "\n\nSelect another model to retry.";
-          if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
-          else {
-            const bubble = modelProbeRow.querySelector(".bubble");
-            if (bubble) bubble.textContent = message;
-          }
-        }
-      } catch (error) {
-        if (version !== modelProbeVersion) return;
-        modelAvailable = false;
-        const detail = error && error.message ? error.message : String(error || "Unknown model check failure.");
-        setModelStatus("bad", "Model check failed", detail);
-        const message = "I couldn’t verify " + model.label + " from the Preview.\n\n" + detail + "\n\nSelect another model to retry. Chat stays disabled until a real model response is confirmed.";
-        if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
-        else {
-          const bubble = modelProbeRow.querySelector(".bubble");
-          if (bubble) bubble.textContent = message;
-        }
-        console.warn("[UX Direct model probe]", detail);
-      }
-      $("modelSelect").disabled = !backendHealthy || modelOptions.length === 0 || isSending;
+    function checkSelectedModel() {
+      // Kept as an internal compatibility hook; changing a hidden selector never
+      // triggers a billed provider probe. The request router chooses per task.
+      currentModel = modelOptions.find(model => model.id === $("modelSelect").value) ||
+        modelOptions.find(model => model.id === "nvidia/nemotron-3.5-lightning:free") ||
+        modelOptions.find(model => model.tier === "free-tier") || null;
+      modelAvailable = Boolean(currentModel && backendHealthy);
+      setModelStatus(modelAvailable ? "ok" : "warn",
+        modelAvailable ? "AI routing · automatic" : "Waiting for model catalogue",
+        "No model is manually selected. The cockpit chooses an approved model based on task type, screenshot availability and cost policy.");
       updateSendAvailability();
     }
 
@@ -653,7 +539,7 @@
       } finally {
         isSending = false;
         $("prompt").disabled = false;
-        $("modelSelect").disabled = !backendHealthy || modelOptions.length === 0;
+        $("modelSelect").disabled = true;
         updateSendAvailability();
       }
     }
@@ -1222,7 +1108,7 @@
             modelAvailable = true;
             const usedFallback = !currentModel || actual.id !== currentModel.id;
             setModelStatus("ok", usedFallback ? "Free-first response" : "Free model connected",
-              actual.label + " returned the response. The dropdown preference remains " + (currentModel ? currentModel.label : actual.label) + ".");
+              actual.label + " returned the response through automatic task-based routing.");
           }
         }
         appendMessage("assistant", data.content);
