@@ -47,6 +47,22 @@ test("UX Direct MCP handshake and tool discovery work without model or database 
     const listJson = await listed.json() as { result?: { tools?: Array<{ name: string }> } };
     const names = (listJson.result?.tools || []).map(tool => tool.name);
     assert.deepEqual(names, ["ux_direct_consult", "ux_direct_teach", "ux_direct_search_memory"]);
+
+    const blockedDmiMemory = await POST(request({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "ux_direct_teach",
+        arguments: { rule: "DMI loan flow includes a client-specific fee requirement." },
+      },
+    }));
+    assert.equal(blockedDmiMemory.status, 200);
+    const blockedJson = await blockedDmiMemory.json() as {
+      result?: { isError?: boolean; content?: Array<{ text?: string }> };
+    };
+    assert.equal(blockedJson.result?.isError, true);
+    assert.match(blockedJson.result?.content?.[0]?.text || "", /DMI-specific client knowledge/);
   } finally {
     if (previous === undefined) delete process.env.UX_DIRECT_MCP_TOKEN;
     else process.env.UX_DIRECT_MCP_TOKEN = previous;
