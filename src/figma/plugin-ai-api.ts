@@ -217,7 +217,7 @@ export async function reserveHourlyPaidModelBudget(input: {
     throw new PluginOpenRouterError("Estimated paid-model cost is invalid; paid inference is blocked.", 402);
   }
 
-  const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\\/+$/, "");
+  const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
   if (!supabaseUrl || !serviceKey) {
     throw new PluginOpenRouterError("The shared hourly spend ledger is unavailable. Paid inference is blocked to protect the ₹" + hourlyLimitInr + "/hour budget.", 503);
@@ -268,6 +268,44 @@ export async function reserveHourlyPaidModelBudget(input: {
     throw new PluginOpenRouterError("The shared hourly spend ledger returned invalid amounts. Paid inference is blocked.", 503);
   }
   return reservation;
+}
+
+export async function getHourlyPaidModelBudgetStatus(): Promise<{
+  spentInr: number;
+  limitInr: number;
+  remainingInr: number;
+  windowMinutes: number;
+} | null> {
+  const limitInr = positiveEnvNumber("UXD_MODEL_BUDGET_INR_PER_HOUR", 50, 500);
+  const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
+  if (!supabaseUrl || !serviceKey) return null;
+  try {
+    const response = await fetch(supabaseUrl + "/rest/v1/rpc/uxd_model_budget_status", {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: "Bearer " + serviceKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_scope: "ux-direct:shared-paid-inference", p_hourly_limit_inr: limitInr }),
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    const payload: unknown = await response.json().catch(() => null);
+    const row = Array.isArray(payload) && payload.length ? payload[0] : null;
+    if (!row || typeof row !== "object") return null;
+    const value = row as Record<string, unknown>;
+    const result = {
+      spentInr: Number(value.spent_inr ?? 0),
+      limitInr: Number(value.limit_inr ?? limitInr),
+      remainingInr: Number(value.remaining_inr ?? 0),
+      windowMinutes: Number(value.window_minutes ?? 60),
+    };
+    return Object.values(result).every(Number.isFinite) ? result : null;
+  } catch {
+    return null;
+  }
 }
 
 export function pluginCorsHeaders(request: Request): Record<string, string> {
