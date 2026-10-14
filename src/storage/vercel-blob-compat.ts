@@ -24,7 +24,7 @@ async function request(path: string, init: RequestInit = {}) {
 export function getStore(storeName: string, _options: StoreOptions = {}) {
   const safeName = storeName.slice(0, 100);
   return {
-    async get(itemKey: string, options: GetOptions = {}): Promise<any> {
+    async get(itemKey: string, options: GetOptions = {}): Promise<unknown | null> {
       const q = "?store_name=eq." + encodeURIComponent(safeName) + "&item_key=eq." + encodeURIComponent(itemKey) + "&select=value&limit=1";
       const rows = await (await request(q)).json() as Array<{ value: unknown }>;
       if (!rows.length) return null;
