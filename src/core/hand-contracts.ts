@@ -183,3 +183,32 @@ export function getHandDefinition(id: UXHandId): UXHandDefinition {
   if (!hand) throw new Error(`Unknown UX hand: ${id}`);
   return hand;
 }
+
+
+/**
+ * Runtime hand catalogue. Production can hydrate it from authorised plugin
+ * registrations; the seed list above is only a development default.
+ */
+export class UXHandRegistry {
+  private readonly hands = new Map<string, UXHandDefinition>();
+
+  constructor(seed: readonly UXHandDefinition[] = UX_HANDS) {
+    for (const hand of seed) this.register(hand);
+  }
+
+  register(hand: UXHandDefinition): void {
+    if (!hand.id.trim()) throw new Error("Hand id is required.");
+    if (this.hands.has(hand.id)) throw new Error(`Hand already registered: ${hand.id}`);
+    if (!hand.pluginPackage.trim()) throw new Error(`Hand package is required: ${hand.id}`);
+    this.hands.set(hand.id, structuredClone(hand));
+  }
+
+  get(id: string): UXHandDefinition | undefined {
+    const hand = this.hands.get(id);
+    return hand ? structuredClone(hand) : undefined;
+  }
+
+  list(): UXHandDefinition[] {
+    return [...this.hands.values()].map((hand) => structuredClone(hand));
+  }
+}
