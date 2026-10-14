@@ -36,10 +36,11 @@
   </style>
 </head>
 <body>
-  <header><div class="brand"><span class="mark">ux</span> UX Direct</div><span class="pill">CONVERSATIONAL COPILOT · GEMINI</span></header>
+  <header><div class="brand"><span class="mark">ux</span> UX Direct</div><span class="pill">CONVERSATIONAL COPILOT · OPENROUTER</span></header>
   <div class="connection" aria-live="polite"><span id="connectionDot" class="dot"></span><strong id="connectionText">Checking backend connection…</strong></div>
   <h1>Conversational Copilot</h1>
   <p class="sub">Describe your UX task in natural language. Powered by Gemini when the Gemini free-tier provider is configured. UX Direct prepares a structured plan; the native API self-test runs only inside the approved file's dedicated UXD API Test Lab page.</p>
+  <section class="selection" aria-live="polite" style="margin:10px 0"><strong>Model gateway</strong><p id="gatewaySummary" class="muted" style="margin:7px 0">Loading provider and model status…</p><label for="modelSelect" style="margin-top:8px">Model</label><select id="modelSelect"><option value="">Loading models…</option></select><button id="testModel" class="secondary" type="button" style="width:100%;margin-top:8px">Test model availability</button><p id="modelTestResult" class="muted" style="margin:7px 0 0">Checks configuration only; no inference call is made.</p></section>
   <label for="project">Project</label>
   <select id="project"><option value="general">General UX</option><option value="express-computers">Express Computers</option><option value="dmi-finance">DMI Finance</option></select>
   <label for="prompt">Your brief</label>
@@ -51,18 +52,57 @@
     <div id="healthResults" style="margin-top:8px"></div>
   </section>
   <div class="selection" aria-live="polite"><strong>Selected Figma context</strong><div id="selection" class="muted" style="margin-top:6px">Reading current selection…</div><button id="refresh" class="secondary" style="margin-top:9px">Refresh selection</button></div>
-  <button id="submit" class="primary">Ask Gemini Copilot ↗</button>
+  <button id="submit" class="primary">Ask UX Direct ↗</button>
   <div id="status" class="status" role="status">Ready. No Figma changes will be made.</div>
   <div id="result" class="result" hidden></div>
   <footer>Planning sends prompt text and selected-node metadata only. UXD API Test Lab and its test fixtures are created once and reused. Test nodes, components, variables, and the storage probe are intentionally preserved between runs; no per-run cleanup is performed. No Figma REST API or OAuth access is used.</footer>
 <script>
   const API = "https://ux-direct-hiz39dxqn-screenroot.vercel.app";
   const $ = (id) => document.getElementById(id);
+  let gatewayModels = [];
+  async function loadGatewayModels() {
+    const summary = $("gatewaySummary"), select = $("modelSelect");
+    try {
+      const response = await fetch(API + "/api/model-gateway/dashboard", { method: "GET", cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Gateway status returned " + response.status);
+      gatewayModels = Array.isArray(data.models) ? data.models : [];
+      select.replaceChildren();
+      if (!gatewayModels.length) {
+        const option = document.createElement("option"); option.value = ""; option.textContent = "No provider models configured"; select.appendChild(option);
+      }
+      gatewayModels.forEach((model) => {
+        const option = document.createElement("option");
+        option.value = model.selectionKey || (model.provider + "/" + model.id);
+        option.textContent = (model.name || model.id) + " · " + (model.tier || "unknown tier");
+        select.appendChild(option);
+      });
+      const configured = data.gateway && data.gateway.status === "provider-configured";
+      summary.textContent = (configured ? "Provider configured" : "Awaiting provider credentials") + " · " + gatewayModels.length + " catalog model(s) · gateway fee ₹0 · paid routing " + (data.gateway && data.gateway.paidModelsEnabled ? "enabled" : "disabled");
+      $("testModel").disabled = !gatewayModels.length;
+    } catch (error) {
+      summary.textContent = "Could not load gateway catalog: " + (error && error.message ? error.message : "Unknown error");
+      select.replaceChildren();
+      const option = document.createElement("option"); option.value = ""; option.textContent = "Gateway unavailable"; select.appendChild(option);
+      $("testModel").disabled = true;
+    }
+  }
+  $("testModel").addEventListener("click", async () => {
+    const button = $("testModel"); button.disabled = true;
+    $("modelTestResult").textContent = "Refreshing provider configuration…";
+    await loadGatewayModels();
+    const selected = gatewayModels.find(model => (model.selectionKey || (model.provider + "/" + model.id)) === $("modelSelect").value);
+    if (!selected) $("modelTestResult").textContent = "No selectable provider model is configured; real inference cannot be tested.";
+    else if (selected.provider === "mock" || selected.tier === "mock") $("modelTestResult").textContent = "Selected model is a deterministic mock, not a real model availability test.";
+    else $("modelTestResult").textContent = "Model is listed in the configured catalog. Real inference is not run by this configuration check.";
+    button.disabled = gatewayModels.length === 0;
+  });
   const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
   let verifiedFileKey = null;
   let pluginSessionStarted = false;
   let currentSelection = { fileKey: null, pageName: "", selection: [] };
   const status = (message) => { $("status").textContent = message; };
+  void loadGatewayModels();
   $("runHealth").disabled = true;
   $("submit").disabled = true;
   async function sendTelemetry(event, result, summary, details = {}) {
