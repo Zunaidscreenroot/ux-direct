@@ -92,9 +92,6 @@ export class CapabilityRegistry {
     if (options.allowedCapabilityIds && !options.allowedCapabilityIds.includes(id)) {
       throw new Error(`Capability is not allowed for this execution: ${id}`);
     }
-    if (capability.available && !capability.available()) {
-      throw new Error(`Capability is currently unavailable: ${id}`);
-    }
     if (capability.costClass === "paid-model") {
       if (!this.allowPaidModelCapabilities) {
         throw new Error("Paid model capabilities are disabled until explicitly configured and approved.");
@@ -108,6 +105,9 @@ export class CapabilityRegistry {
     }
     if (capability.requiresApproval && !options.humanApproved) {
       throw new Error(`Capability requires human approval: ${id}`);
+    }
+    if (capability.available && !capability.available()) {
+      throw new Error(`Capability is currently unavailable: ${id}`);
     }
     if (capability.validateInput) {
       const validation = capability.validateInput(input);
