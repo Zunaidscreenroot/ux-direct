@@ -29,6 +29,7 @@ export type ProjectKnowledgeResult = {
   projectKey: string | null;
   hits: ProjectKnowledgeHit[];
   context: string;
+  retrievalMode?: "hybrid" | "semantic" | "keyword" | "none";
 };
 
 function record(value: unknown): value is JsonRecord {
@@ -118,7 +119,6 @@ export async function generateBudgetedEmbeddings(texts: string[]): Promise<numbe
 function buildContext(hits: ProjectKnowledgeHit[]): string {
   if (!hits.length) return "";
   return hits.slice(0, 4).map((hit, index) => {
-    const similarity = Number.isFinite(hit.similarity) ? hit.similarity.toFixed(2) : "unknown";
     return [
       "[Approved knowledge source " + (index + 1) + "]",
       "Project namespace: " + hit.project_key,
