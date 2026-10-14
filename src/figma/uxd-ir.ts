@@ -205,6 +205,58 @@ export function normalizeVisionEvidence(
   };
 }
 
+/** Validate only the compact variation envelope and its structural minimum. */
+export function validateUxdirVariationPlan(value: unknown, expectedCount: number): { valid: boolean; reason?: string; variationCount: number; operationCount: number } {
+  if (!isRecord(value) || !Array.isArray(value.variations)) {
+    return { valid: false, reason: "missing_variations", variationCount: 0, operationCount: 0 };
+  }
+  const variations = value.variations;
+  if (variations.length !== expectedCount) {
+    return { valid: false, reason: "variation_count", variationCount: variations.length, operationCount: 0 };
+  }
+  const allowedActions = new Set([
+    "update-text", "rename-node", "set-fill", "move-node", "resize-node",
+    "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg",
+    "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible",
+    "set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "set-clip-content",
+    "set-layout-grid", "set-effects", "set-description", "create-component", "detach-instance",
+    "set-locked", "set-blend-mode", "set-rotation", "clone-node", "remove-node", "reorder-node",
+  ]);
+  const structuralActions = new Set([
+    "set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "set-layout-grid",
+    "move-node", "resize-node", "set-rotation", "reorder-node", "clone-node", "create-component", "detach-instance",
+  ]);
+  const styleActions = new Set([
+    "set-fill", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-blend-mode",
+    "set-locked", "set-effects", "set-visible",
+  ]);
+  const contentActions = new Set([
+    "update-text", "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame",
+    "create-svg", "set-description", "rename-node",
+  ]);
+  let operationCount = 0;
+  for (const variation of variations) {
+    if (!isRecord(variation) || typeof variation.name !== "string" || !variation.name.trim() ||
+      !Array.isArray(variation.operations) || variation.operations.length < 6 || variation.operations.length > 16) {
+      return { valid: false, reason: "operation_count_or_name", variationCount: variations.length, operationCount };
+    }
+    const operations = variation.operations;
+    if (!operations.every((operation) => isRecord(operation) && typeof operation.action === "string" && allowedActions.has(operation.action))) {
+      return { valid: false, reason: "unsupported_action", variationCount: variations.length, operationCount };
+    }
+    const categories = new Set(operations.map((operation) => {
+      const action = isRecord(operation) ? String(operation.action) : "";
+      return structuralActions.has(action) ? "structure" : styleActions.has(action) ? "style" : contentActions.has(action) ? "content" : "other";
+    }));
+    const structuralCount = operations.filter((operation) => isRecord(operation) && structuralActions.has(String(operation.action))).length;
+    if (categories.size < 2 || structuralCount < 2) {
+      return { valid: false, reason: "structural_quality_gate", variationCount: variations.length, operationCount };
+    }
+    operationCount += operations.length;
+  }
+  return { valid: true, variationCount: variations.length, operationCount };
+}
+
 export function summarizeUxdIrTrace(trace: Pick<UxdIrTrace, "runId" | "capability" | "mode" | "status" | "stages">): string {
   const completed = trace.stages.filter((stage) => stage.status === "completed").length;
   const failed = trace.stages.filter((stage) => stage.status === "failed").length;
