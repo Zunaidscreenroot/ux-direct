@@ -1137,6 +1137,58 @@ async function applyUXDNodeOperation(target, operation, protectedRoot) {
   } else if (action === "set-clip-content") {
     if (target.type !== "FRAME" || typeof operation.clipsContent !== "boolean") throw new Error("Clip-content must target a FRAME and provide a boolean.");
     target.clipsContent = operation.clipsContent;
+  } else if (action === "set-effects") {
+    if (!("effects" in target)) throw new Error("Effects are not supported by this target.");
+    if (operation.enabled === false) {
+      target.effects = [];
+    } else {
+      var shadowColor = parseUXDHexColor(operation.color || "#000000");
+      var alpha = Number.isFinite(Number(operation.opacity)) ? Math.max(0, Math.min(1, Number(operation.opacity))) : 0.16;
+      target.effects = [{
+        type: operation.inner === true ? "INNER_SHADOW" : "DROP_SHADOW",
+        color: { r: shadowColor.r, g: shadowColor.g, b: shadowColor.b, a: alpha },
+        offset: {
+          x: Number.isFinite(Number(operation.x)) ? Math.max(-100, Math.min(100, Number(operation.x))) : 0,
+          y: Number.isFinite(Number(operation.y)) ? Math.max(-100, Math.min(100, Number(operation.y))) : 4
+        },
+        radius: Number.isFinite(Number(operation.blur)) ? Math.max(0, Math.min(100, Number(operation.blur))) : 12,
+        spread: Number.isFinite(Number(operation.spread)) ? Math.max(-50, Math.min(100, Number(operation.spread))) : 0,
+        visible: true,
+        blendMode: "NORMAL"
+      }];
+    }
+  } else if (action === "set-layout-grid") {
+    if (target.type !== "FRAME") throw new Error("Layout grids must target a FRAME.");
+    if (operation.enabled === false) {
+      target.layoutGrids = [];
+    } else {
+      var gridPattern = ["COLUMNS", "ROWS", "GRID"].indexOf(operation.pattern) >= 0 ? operation.pattern : "COLUMNS";
+      var gridCount = Number.isFinite(Number(operation.count)) ? Math.max(1, Math.min(24, Math.floor(Number(operation.count)))) : 4;
+      var gridColor = parseUXDHexColor(operation.color || "#2563EB");
+      var gridAlpha = Number.isFinite(Number(operation.opacity)) ? Math.max(0.01, Math.min(0.5, Number(operation.opacity))) : 0.1;
+      var grid = {
+        pattern: gridPattern,
+        sectionSize: Number.isFinite(Number(operation.sectionSize)) ? Math.max(1, Math.min(500, Number(operation.sectionSize))) : 60,
+        visible: true,
+        color: { r: gridColor.r, g: gridColor.g, b: gridColor.b, a: gridAlpha },
+        alignment: ["STRETCH", "MIN", "CENTER", "MAX"].indexOf(operation.alignment) >= 0 ? operation.alignment : "STRETCH",
+        gutterSize: Number.isFinite(Number(operation.gutterSize)) ? Math.max(0, Math.min(128, Number(operation.gutterSize))) : 16,
+        offset: Number.isFinite(Number(operation.offset)) ? Math.max(0, Math.min(2000, Number(operation.offset))) : 0,
+        count: gridCount
+      };
+      target.layoutGrids = [grid];
+    }
+  } else if (action === "set-description") {
+    if (!("description" in target) || typeof operation.description !== "string") throw new Error("Description is not supported by this target.");
+    target.description = operation.description.slice(0, 500);
+  } else if (action === "create-component") {
+    if (target === protectedRoot || target.type !== "FRAME") throw new Error("Only a child FRAME in a variation can be converted to a component.");
+    var component = figma.createComponentFromNode(target);
+    return { action: action, id: component.id, name: component.name };
+  } else if (action === "detach-instance") {
+    if (target.type !== "INSTANCE" || typeof target.detachInstance !== "function") throw new Error("detach-instance must target an instance.");
+    var detached = target.detachInstance();
+    return { action: action, id: detached.id, name: detached.name };
   } else if (action === "set-locked") {
     if (typeof operation.locked !== "boolean" || !("locked" in target)) throw new Error("Lock state must be a boolean on a node.");
     target.locked = operation.locked;
@@ -1283,7 +1335,7 @@ async function applyOneVariationOperation(cloneRoot, nodeMap, operation) {
   var target = nodeMap[operation.targetId];
   var rootSafeActions = ["rename-node", "set-fill", "move-node", "resize-node", "set-corner-radius", "set-stroke",
     "set-opacity", "set-visible", "set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints",
-    "set-clip-content", "set-blend-mode", "set-rotation", "set-text-style", "set-locked"];
+    "set-clip-content", "set-layout-grid", "set-blend-mode", "set-effects", "set-description", "set-rotation", "set-text-style", "set-locked"];
   if (!target || (target === cloneRoot && rootSafeActions.indexOf(action) === -1)) {
     throw new Error("Variation target is not inside the cloned frame, or this action cannot target the source frame root.");
   }
@@ -1321,7 +1373,7 @@ async function applyApprovedDesignVariations(payload) {
         }
         // Recheck every target against the source frame before cloning. Native code never
         // accepts model-supplied page IDs or targets outside this selected frame.
-        var allowedActions = ["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "set-clip-content", "set-locked", "set-blend-mode", "set-rotation", "clone-node", "remove-node", "reorder-node"];
+        var allowedActions = ["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "set-clip-content", "set-layout-grid", "set-effects", "set-description", "create-component", "detach-instance", "set-locked", "set-blend-mode", "set-rotation", "clone-node", "remove-node", "reorder-node"];
         for (var j = 0; j < variation.operations.length; j += 1) {
           var op = variation.operations[j];
           if (!op || allowedActions.indexOf(op.action) === -1) throw new Error("Unsupported operation in variation " + (i + 1) + ".");
@@ -1407,6 +1459,17 @@ async function applyApprovedDesignVariations(payload) {
               !sourceTarget.parent || !("children" in sourceTarget.parent))) {
             throw new Error("Reorder operation is invalid for this target.");
           }
+          if (op.action === "set-effects" && (("enabled" in op && typeof op.enabled !== "boolean") ||
+              ("opacity" in op && (!Number.isFinite(op.opacity) || op.opacity < 0 || op.opacity > 1)) ||
+              ("blur" in op && (!Number.isFinite(op.blur) || op.blur < 0 || op.blur > 100)) ||
+              ("color" in op && (typeof op.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(op.color)))) throw new Error("Effects operation is invalid.");
+          if (op.action === "set-layout-grid" && (sourceTarget.type !== "FRAME" ||
+              ("pattern" in op && ["COLUMNS", "ROWS", "GRID"].indexOf(op.pattern) === -1) ||
+              ("count" in op && (!Number.isInteger(op.count) || op.count < 1 || op.count > 24)) ||
+              ("gutterSize" in op && (!Number.isFinite(op.gutterSize) || op.gutterSize < 0 || op.gutterSize > 128)))) throw new Error("Layout-grid operation is invalid.");
+          if (op.action === "set-description" && (typeof op.description !== "string" || op.description.length > 500)) throw new Error("Description must be text of 500 characters or fewer.");
+          if (op.action === "create-component" && (sourceTarget.type !== "FRAME" || sourceTarget === source)) throw new Error("Only a child frame can be converted to a component.");
+          if (op.action === "detach-instance" && sourceTarget.type !== "INSTANCE") throw new Error("Detach-instance must target an instance.");
           if (op.action === "set-rotation" && (!Number.isFinite(op.rotation) || Math.abs(op.rotation) > 360)) throw new Error("Rotation must be within -360 to 360 degrees.");
           if (op.action === "set-layout-sizing" &&
               (("horizontal" in op && ["HUG", "FILL", "FIXED"].indexOf(op.horizontal) === -1) ||
