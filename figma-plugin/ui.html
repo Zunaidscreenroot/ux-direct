@@ -1561,6 +1561,7 @@
         setActivity("Response received. Continue the conversation or give me the next task.");
       } catch (error) {
         const message = error && error.message ? error.message : "Unknown chat error";
+        if (lastUxdRunId && (variationIntent || auditIntent)) void updateUxdTraceStatus("failed", []);
         appendMessage("assistant", "I couldn’t complete that response: " + message + "\n\nYour message is still in this session’s conversation context. You can retry or continue with a smaller request.");
         setActivity("Response failed. Your Figma document was not changed by this chat request.");
       } finally {
