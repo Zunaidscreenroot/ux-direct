@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import {
@@ -7,8 +8,9 @@ import {
   isAllowedPluginOrigin,
   pluginCorsHeaders,
   PluginOpenRouterError,
-  reserveHourlyPaidModelBudget,
-  getHourlyPaidModelBudgetStatus,
+  reserveDailyPaidModelBudget,
+  getDailyPaidModelBudgetStatus,
+  settleDailyPaidModelBudget,
 } from "@/src/figma/plugin-ai-api";
 
 type JsonRecord = Record<string, unknown>;
@@ -42,8 +44,8 @@ export async function GET(request: Request) {
     return json(request, {
       models,
       selectedModel: models.find((model) => model.tier === "free-tier" && model.available)?.id ?? null,
-      hourlyBudget: await getHourlyPaidModelBudgetStatus(),
-      hourlyBudgetEnforced: true,
+      dailyBudget: await getDailyPaidModelBudgetStatus(),
+      dailyBudgetEnforced: true,
       checkedAt: new Date().toISOString(),
     });
   }
@@ -143,22 +145,24 @@ export async function POST(request: Request) {
     return json(request, {
       available: false,
       responseReceived: false,
-      reason: "The model cannot be tested until its current pricing is verified; unknown-price models are blocked by the hourly budget guard.",
+      reason: "The model cannot be tested until its current pricing is verified; unknown-price models are blocked by the daily budget guard.",
       checkedAt: new Date().toISOString(),
     }, 402);
   }
   try {
-    const budget = await reserveHourlyPaidModelBudget({
+    const requestId = randomUUID();
+    const budget = await reserveDailyPaidModelBudget({
       estimatedCostUsd: ((50 * model.inputUsdPerMillion) + (64 * model.outputUsdPerMillion)) / 1_000_000,
       model: modelId,
+      requestId,
     });
     if (!budget.allowed) {
       return json(request, {
         available: false,
         responseReceived: false,
-        reason: "Hourly AI budget reached: ₹" + budget.spentInr.toFixed(2) + " of ₹" + budget.limitInr.toFixed(2) +
-          " reserved in the last 60 minutes; approximately ₹" + budget.remainingInr.toFixed(2) + " remains.",
-        hourlyBudget: { limitInr: budget.limitInr, spentInr: budget.spentInr, remainingInr: budget.remainingInr, windowMinutes: 60 },
+        reason: "Daily AI budget reached: ₹" + budget.spentInr.toFixed(2) + " of ₹" + budget.limitInr.toFixed(2) +
+          " reserved in the last 24 hours; approximately ₹" + budget.remainingInr.toFixed(2) + " remains.",
+        dailyBudget: { limitInr: budget.limitInr, spentInr: budget.spentInr, remainingInr: budget.remainingInr, windowMinutes: 1440 },
         checkedAt: new Date().toISOString(),
       }, 402);
     }
@@ -168,13 +172,16 @@ export async function POST(request: Request) {
       timeoutMs: 15000,
       reasoningEffort: model.id === "deepseek/deepseek-v4.1-flash" ? "low" : undefined,
     });
+    if (result.observedCostUsd !== null) {
+      await settleDailyPaidModelBudget({ requestId, actualCostUsd: result.observedCostUsd });
+    }
     return json(request, {
       available: true,
       responseReceived: true,
       provider: "openrouter",
       model: result.model,
       latencyMs: result.latencyMs,
-      hourlyBudget: { limitInr: budget.limitInr, spentInr: budget.projectedInr, reservedInr: budget.reservedInr, remainingInr: budget.remainingInr, windowMinutes: 60 },
+      dailyBudget: { limitInr: budget.limitInr, spentInr: budget.projectedInr, reservedInr: budget.reservedInr, remainingInr: budget.remainingInr, windowMinutes: 1440 },
       checkedAt: new Date().toISOString(),
     });
   } catch (error) {
