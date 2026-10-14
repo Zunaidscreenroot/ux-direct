@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { classifyBfciCapability, orderedModelIds } from "@/src/figma/bfci-capabilities";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
+import { getModelLearningContext, recordModelLearningEvent } from "@/src/figma/model-learning";
 import {
   callOpenRouterChat,
   checkPluginRateLimit,
@@ -76,6 +78,7 @@ export async function POST(request: Request) {
   catch { return json(request, { error: "Request body must be valid JSON." }, 400); }
   if (!isRecord(parsed)) return json(request, { error: "Request body must be a JSON object." }, 400);
   const body = parsed;
+  const learningRequestId = randomUUID();
   if (typeof body.fileKey !== "string" || !isAllowedFigmaFileKey(body.fileKey)) {
     return json(request, { error: "Figma file is not allowlisted." }, 403);
   }
@@ -147,7 +150,9 @@ export async function POST(request: Request) {
       ? "This is a redesign capability, not a clone capability. Prefer substantial layout, spacing, hierarchy, card/section and CTA changes. Use the available operation budget to make a cohesive alternative rather than a handful of cosmetic edits."
       : "",
   ].filter(Boolean).join("\n\n");
-  const systemPrompt = baseSystemPrompt + "\n\n" + capabilityGuardrails;
+  const learning = await getModelLearningContext(capability.id);
+  const systemPrompt = baseSystemPrompt + "\n\n" + capabilityGuardrails +
+    (learning.promptContext ? "\n\n" + learning.promptContext : "");
 
   const inputMessages: PluginChatMessage[] = [
     { role: "system", content: systemPrompt },
@@ -172,8 +177,18 @@ export async function POST(request: Request) {
       if (safeVision?.available) orderedCandidates = [safeVision];
     }
   }
-  // The user-selected model remains a preference, but the capability router
-  // owns the final choice. An image request must never land on a text-only model.
+  // The capability registry remains the hard constraint: memory can reorder only
+  // already-approved candidates, and only where at least three prior attempts exist.
+  const matureLearnedCandidates = orderedCandidates
+    .filter((model) => (learning.modelScores[model.id]?.attempts ?? 0) >= 3)
+    .sort((a, b) => (learning.modelScores[b.id]?.routingScore ?? -Infinity) - (learning.modelScores[a.id]?.routingScore ?? -Infinity));
+  if (matureLearnedCandidates.length > 1) {
+    let learnedIndex = 0;
+    orderedCandidates = orderedCandidates.map((model) =>
+      (learning.modelScores[model.id]?.attempts ?? 0) >= 3 ? matureLearnedCandidates[learnedIndex++] : model
+    );
+  }
+  // An image request must never land on a text-only model, even after learning.
   const candidates = orderedCandidates.slice(0, Math.max(1, capability.maxModelAttempts));
   if (!candidates.length) {
     return json(request, {
@@ -216,6 +231,11 @@ export async function POST(request: Request) {
       continue;
     }
     reservedEstimatedCostUsd += estimatedCallCostUsd;
+    let attemptLatencyMs: number | undefined;
+    let attemptObservedCostUsd: number | null = null;
+    let attemptUsage = { promptTokens: null as number | null, completionTokens: null as number | null, totalTokens: null as number | null };
+    let validationPassed = false;
+    let operationProfile: Record<string, unknown> = {};
     try {
       if (candidate.tier === "paid") {
         const reservation = await reserveHourlyPaidModelBudget({
@@ -238,6 +258,9 @@ export async function POST(request: Request) {
         timeoutMs: 30000,
         reasoningEffort: capability.reasoningEffort,
       });
+      attemptLatencyMs = result.latencyMs;
+      attemptObservedCostUsd = result.observedCostUsd;
+      attemptUsage = result.usage;
       if (variationIntent) {
         let plan: unknown;
         try {
@@ -274,7 +297,36 @@ export async function POST(request: Request) {
         if (!structurallyValid) {
           throw new PluginOpenRouterError("Model " + candidate.id + " returned a plan that did not meet the redesign quality gate (expected 6–16 operations including layout/structure changes).", 502);
         }
+        const operations = envelope.flatMap((item) => isRecord(item) && Array.isArray(item.operations) ? item.operations : []);
+        const isAction = (operation: unknown, actions: string[]) => isRecord(operation) && actions.includes(String(operation.action));
+        const structuralOperations = operations.filter((op) => isAction(op, ["set-layout", "move-node", "resize-node", "reorder-node"])).length;
+        const styleOperations = operations.filter((op) => isAction(op, ["set-fill", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible"])).length;
+        const contentOperations = operations.filter((op) => isAction(op, ["update-text", "create-text", "create-rectangle", "rename-node"])).length;
+        operationProfile = {
+          variations: envelope.length,
+          totalOperations: operations.length,
+          structuralOperations,
+          styleOperations,
+          contentOperations,
+          qualityGate: "passed",
+        };
+        validationPassed = true;
       }
+      await recordModelLearningEvent({
+        requestId: learningRequestId,
+        capability: capability.id,
+        modelId: candidate.id,
+        modelTier: candidate.tier,
+        outcome: validationPassed ? "validated" : "usable",
+        validationPassed,
+        latencyMs: attemptLatencyMs,
+        estimatedCostUsd: estimatedCallCostUsd,
+        observedCostUsd: attemptObservedCostUsd,
+        promptTokens: attemptUsage.promptTokens ?? undefined,
+        completionTokens: attemptUsage.completionTokens ?? undefined,
+        totalTokens: attemptUsage.totalTokens ?? undefined,
+        operationProfile,
+      });
       const wasFallback = candidate.id !== selectedModel.id;
       return json(request, {
         content: result.content,
@@ -283,6 +335,8 @@ export async function POST(request: Request) {
         qualityTarget: capability.targetQuality,
         paidRequired: capability.paidRequired,
         estimatedCostUsd: estimatedCallCostUsd,
+        observedCostUsd: result.observedCostUsd,
+        usage: result.usage,
         estimatedCostBudgetUsd: capability.maxEstimatedCostUsd,
         estimatedReservedCostUsd: reservedEstimatedCostUsd,
         hourlyBudget: hourlyBudgetInfo ? {
@@ -307,6 +361,24 @@ export async function POST(request: Request) {
       lastError = error;
       const status = error instanceof PluginOpenRouterError ? error.status : 502;
       const budgetGuardFailure = error instanceof PluginOpenRouterError && /hourly (?:AI )?budget reached|hourly spend ledger|hourly paid-model budget/i.test(error.message);
+      const validationFailure = variationIntent && error instanceof Error && /invalid variation-plan JSON|quality gate/i.test(error.message);
+      const budgetBlocked = status === 402 && /budget|pricing|price metadata|hourly/i.test(error instanceof Error ? error.message : "");
+      await recordModelLearningEvent({
+        requestId: learningRequestId,
+        capability: capability.id,
+        modelId: candidate.id,
+        modelTier: candidate.tier,
+        outcome: budgetBlocked ? "budget_blocked" : validationFailure ? "validation_failure" : "provider_error",
+        validationPassed: false,
+        latencyMs: attemptLatencyMs,
+        estimatedCostUsd: estimatedCallCostUsd,
+        observedCostUsd: attemptObservedCostUsd,
+        promptTokens: attemptUsage.promptTokens ?? undefined,
+        completionTokens: attemptUsage.completionTokens ?? undefined,
+        totalTokens: attemptUsage.totalTokens ?? undefined,
+        operationProfile,
+        errorCategory: budgetBlocked ? "budget" : validationFailure ? "validation" : "provider",
+      });
       if (status === 401 || status === 403 || status === 400 || budgetGuardFailure) break;
     }
   }
