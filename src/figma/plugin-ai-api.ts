@@ -128,7 +128,7 @@ export function getPluginModelList() {
     available: hasApiKey,
     reason: hasApiKey
       ? "Provider key is present. Use Test to verify this model; paid inference may incur an API charge."
-      : "OPENROUTER_API_KEY is not configured for this deployment.",
+      : "Model service credentials are not configured for this deployment.",
   }));
   return [...freeModels, ...paidModels];
 }
@@ -184,8 +184,8 @@ export async function callOpenRouterChat(
         const raw = typeof rawMessage === "string" ? rawMessage : "";
         const lower = raw.toLowerCase();
         const message = lower.includes("free-models-per-day") || lower.includes("free model requests per day")
-          ? raw.slice(0, 280)
-          : "The free-model service rate limit was reached (HTTP 429).";
+          ? "The daily free-model quota was reached. Try another approved model or retry after the quota resets."
+          : "The model service rate limit was reached (HTTP 429).";
         throw new PluginOpenRouterError(message, 429);
       }
       const errorMessage = payload?.error?.message;
