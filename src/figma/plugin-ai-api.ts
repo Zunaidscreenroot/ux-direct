@@ -141,13 +141,13 @@ export async function callOpenRouterChat(
   const provider = getOpenRouterProvider();
   const apiKey = provider?.apiKey || process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    throw new PluginOpenRouterError("OPENROUTER_API_KEY is missing from the Vercel Preview environment.", 503);
+    throw new PluginOpenRouterError("Model service credentials are missing from this Vercel deployment.", 503);
   }
   const allowedFree = PLUGIN_FREE_MODELS.some((item) => item.id === model) &&
     Boolean(provider?.models.includes(model));
   const allowedPaid = PLUGIN_PAID_MODELS.some((item) => item.id === model);
   if (!allowedFree && !allowedPaid) {
-    throw new PluginOpenRouterError("The requested model is not on UX Direct's approved OpenRouter allowlist.", 403);
+    throw new PluginOpenRouterError("The requested model is not on UX Direct's approved model list.", 403);
   }
 
   const baseUrl = (process.env.OPENROUTER_BASE_URL || provider?.baseUrl || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
@@ -177,7 +177,7 @@ export async function callOpenRouterChat(
     const payload = asRecord(payloadValue) as OpenRouterResponsePayload | null;
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
-        throw new PluginOpenRouterError("OpenRouter rejected the API key or model access (HTTP " + response.status + ").", response.status);
+        throw new PluginOpenRouterError("The model service rejected credentials or model access (HTTP " + response.status + ").", response.status);
       }
       if (response.status === 429) {
         const rawMessage = payload?.error?.message;
@@ -185,13 +185,13 @@ export async function callOpenRouterChat(
         const lower = raw.toLowerCase();
         const message = lower.includes("free-models-per-day") || lower.includes("free model requests per day")
           ? raw.slice(0, 280)
-          : "OpenRouter free-model requests per day limit or provider rate limit reached (HTTP 429).";
+          : "The free-model service rate limit was reached (HTTP 429).";
         throw new PluginOpenRouterError(message, 429);
       }
       const errorMessage = payload?.error?.message;
       const detail = typeof errorMessage === "string"
         ? errorMessage.slice(0, 220)
-        : "OpenRouter returned HTTP " + response.status + ".";
+        : "The model service returned HTTP " + response.status + ".";
       throw new PluginOpenRouterError(detail, response.status);
     }
 
@@ -211,7 +211,7 @@ export async function callOpenRouterChat(
       // Do not return private reasoning as user-facing content. Let the chat route try
       // the next explicitly approved model and expose bounded diagnostics if all fail.
       throw new PluginOpenRouterError(
-        "OpenRouter model " + model + " returned empty message content (finish_reason=" + finishReason + ").",
+        "Model " + model + " returned empty message content (finish_reason=" + finishReason + ").",
         502,
       );
     }
@@ -223,10 +223,10 @@ export async function callOpenRouterChat(
   } catch (error) {
     if (error instanceof PluginOpenRouterError) throw error;
     if (controller.signal.aborted) {
-      throw new PluginOpenRouterError("OpenRouter request timed out.", 504);
+      throw new PluginOpenRouterError("The model service request timed out.", 504);
     }
     throw new PluginOpenRouterError(
-      error instanceof Error ? error.message : "OpenRouter request failed.",
+      error instanceof Error ? error.message : "The model service request failed.",
       502,
     );
   } finally {
