@@ -222,7 +222,7 @@ test("tool invocation enforces approval, allowlists and paid budget reservations
   };
   await assert.rejects(registry.invoke("figma.write", {}, base), /Human approval/);
   await assert.rejects(registry.invoke("figma.write", {}, { ...base, humanApproved: true, allowedToolIds: [] }), /not allowed/);
-  await assert.rejects(registry.invoke("model.premium-review", {}, base), /budget must be reserved/);
+  await assert.rejects(registry.invoke("model.premium-review", {}, base), /budget must be reserved/i);
   assert.deepEqual(
     await registry.invoke("model.premium-review", {}, { ...base, paidBudgetReserved: true }),
     { reviewed: true },
