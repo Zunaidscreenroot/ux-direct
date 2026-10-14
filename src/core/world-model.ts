@@ -140,9 +140,14 @@ export class InMemoryWorldModel {
     return fact ? structuredClone(fact) : undefined;
   }
 
-  getRelationsForFact(id: string): WorldRelation[] {
+  getRelationsForFact(id: string, query: WorldQuery): WorldRelation[] {
+    const visibleIds = new Set(this.query(query).facts.map((fact) => fact.id));
+    if (!visibleIds.has(id)) return [];
     return [...this.relations.values()]
-      .filter((relation) => relation.fromFactId === id || relation.toFactId === id)
+      .filter((relation) =>
+        (relation.fromFactId === id || relation.toFactId === id)
+        && visibleIds.has(relation.fromFactId)
+        && visibleIds.has(relation.toFactId))
       .map((relation) => structuredClone(relation));
   }
 
@@ -208,7 +213,11 @@ export class InMemoryWorldModel {
     return { facts: result, omitted };
   }
 
-  listRelations(): WorldRelation[] {
-    return [...this.relations.values()].map((relation) => structuredClone(relation));
+  listRelations(query: WorldQuery): WorldRelation[] {
+    const visibleIds = new Set(this.query(query).facts.map((fact) => fact.id));
+    return [...this.relations.values()]
+      .filter((relation) =>
+        visibleIds.has(relation.fromFactId) && visibleIds.has(relation.toFactId))
+      .map((relation) => structuredClone(relation));
   }
 }
