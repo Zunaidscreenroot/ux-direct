@@ -144,7 +144,7 @@ export async function POST(request: Request) {
       ? "Provide potential UX risks and recommended mitigations, not legal/compliance certification. Clearly mark missing product-owner or compliance confirmation."
       : "",
     capability.id === "bfci.screen-audit"
-      ? "Base findings on what is actually visible in the supplied screenshot and the selected layer tree. Separate observed issues from inferences."
+      ? "The selected-frame screenshot is attached to the latest user message as image content. Inspect the rendered screenshot. Provide 4–6 actionable findings covering hierarchy, text legibility, contrast, spacing/alignment and primary CTA as relevant. For each finding, state the visible evidence, why it matters and a recommended change. Separate visual observations from assumptions. Do not invent measurements or details."
       : "",
     capability.id === "bfci.screen-redesign"
       ? "This is a redesign capability, not a clone capability. Prefer substantial layout, spacing, hierarchy, card/section and CTA changes. Use the available operation budget to make a cohesive alternative rather than a handful of cosmetic edits."
