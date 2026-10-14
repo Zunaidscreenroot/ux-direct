@@ -1,8 +1,10 @@
 # UX Direct Architecture
 
+> The detailed target is defined in [Universal UX Brain Architecture](universal-ux-brain-architecture.md). This file is the concise system overview.
+
 ## Design goal
 
-Build an AI senior-level UX employee, not a one-shot UI generator. The system should be model-agnostic, capability-driven, observable, and able to improve work through evidence-based critique and bounded iteration.
+Build one general UX intelligence that can reason across projects, build a scoped world model from evidence, discover execution tools at runtime, construct adaptive plans and verify outcomes. Workspace context is for state, provenance and access boundaries—not a separate intelligence or a hardcoded workflow.
 
 ## Logical flow
 
@@ -11,14 +13,11 @@ User request
   -> Task intake / cockpit
   -> Context resolver
   -> Task planner and orchestrator
-  -> Capability registry
-       |-- requirements and research
-       |-- UX strategy / journey / IA
-       |-- product-pattern extraction
-       |-- design planning and structured Design IR
-       |-- UX / content / accessibility critique
-       |-- visual QA and comparison
-       |-- Figma read/write adapter
+  -> Scoped world model + runtime tool registry
+  -> Director meta-controller / dynamic planning
+  -> Structured Design IR + policy validation
+  -> Selected hand/tool execution
+  -> Evidence-backed verification and bounded repair
   -> Model gateway (local / free / paid providers)
   -> Execute approved plan
   -> Validate result
@@ -29,11 +28,13 @@ User request
 ## Core modules
 
 - **Task orchestration:** explicit task states, steps, retries, cancellation, and checkpoints.
-- **Capability registry:** each capability declares inputs, outputs, dependencies, permission requirements, risk, cost class, and tests.
-- **Context resolver:** retrieves relevant project, client, design, and task context; surfaces conflicts instead of silently guessing.
-- **Product memory:** separates observed facts, candidate patterns, and trusted/approved patterns. Keep evidence and provenance with each memory item.
-- **Model gateway:** one internal interface for multiple model providers and local models. Route by task complexity, vision needs, privacy, quality, latency, availability, and cost.
-- **Design IR:** validated structured representation for screens, layout, components, content, interactions, and rationale; adapters translate it to Figma operations.
+- **Runtime tool registry:** discovers concrete executable affordances with schemas, modality, availability, risk, costs, approval requirements and expected evidence. Its inventory is extensible and does not constrain what the Brain can reason about.
+- **Product world model:** connects versioned requirements, claims, decisions, user needs, journey states, constraints, components, risks and artifacts through evidence-backed relations.
+- **Workspace context:** enforces client/project scope and resolves relevant current state; it does not prescribe a sequence of task steps.
+- **Multi-timescale memory:** separates task-local context, episodic execution outcomes, approved semantic facts, reusable procedures and calibrated user preferences.
+- **Director meta-controller:** assesses uncertainty, downstream risk, value of information and whether a specialist/model call is worth its cost; composes the plan dynamically.
+- **Model gateway:** one server-side interface for model providers. Route by required modality, health, minimum quality, privacy, latency and cost; reserve budget before paid inference.
+- **Design IR/compiler:** validated semantic representation for requirements, journeys, screens, layout, components, content, interactions, invariants and acceptance criteria; adapters compile it to allowed Figma operations.
 - **Quality gates:** requirement coverage, journey completeness, visual consistency, accessibility, UX writing, responsive behavior, edge states, and interaction integrity.
 - **Figma adapter:** checks API support and permissions, executes scoped changes, and verifies resulting nodes rather than trusting a model's claims.
 - **Observability:** record task status, model/provider, duration, cost estimate, iteration count, tool actions, validation results, and errors.
@@ -56,9 +57,12 @@ Use the least expensive model that can reliably complete a task. Cheap/local mod
 
 Understand -> retrieve evidence -> plan -> compare alternatives -> execute -> critique -> validate -> revise (up to 3 iterations initially) -> present rationale, confidence, known gaps, and next decisions.
 
-## Initial architecture decisions
+## Current implementation status
 
-- Keep the product in this repository only.
-- Do not depend on the separate `figma-design-agent` repository.
-- Do not train a foundation model from scratch; use model APIs/local models plus project memory and retrieval.
-- Do not add a database or external service until the MVP requires persistence; keep interfaces ready for one.
+The modular-hands feature branch contains initial primitives for the world model, runtime tool discovery, director planning context, plan validation and workspace-scoped metadata. They are not yet wired end-to-end into the production backend or real Figma execution.
+
+- Keep all work in this repository; do not modify or depend on the separate `figma-design-agent` repository.
+- Do not train a foundation model from scratch as a prerequisite. Prioritise retrieval, structured world state, tool composition and evaluation.
+- Persist facts, evidence and decisions only through a store that enforces workspace scope. The in-memory world model is currently a reference implementation.
+- Keep model credentials, routing and paid-budget enforcement server-side.
+- Deployments stay separate from feature-branch architecture work.
