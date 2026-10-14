@@ -8,6 +8,7 @@ import {
   pluginCorsHeaders,
   PluginOpenRouterError,
   reserveHourlyPaidModelBudget,
+  getHourlyPaidModelBudgetStatus,
 } from "@/src/figma/plugin-ai-api";
 
 type JsonRecord = Record<string, unknown>;
@@ -41,6 +42,8 @@ export async function GET(request: Request) {
     return json(request, {
       models,
       selectedModel: models.find((model) => model.tier === "free-tier" && model.available)?.id ?? null,
+      hourlyBudget: await getHourlyPaidModelBudgetStatus(),
+      hourlyBudgetEnforced: true,
       checkedAt: new Date().toISOString(),
     });
   }
