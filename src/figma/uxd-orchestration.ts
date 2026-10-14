@@ -36,6 +36,7 @@ export type UxdVariationPipelineInput = {
   runId: string;
   projectKey: string;
   capability: string;
+  mode: "variation" | "audit";
   userIntent: string;
   pageName: string;
   frameItems: unknown[];
@@ -48,7 +49,7 @@ export type UxdVariationPipelineInput = {
   maxEstimatedCostUsd: number;
 };
 
-export type UxdVariationPipelineResult = {
+export type UxdVisionReasoningPipelineResult = {
   content: string;
   model: string;
   modelTier: "free-tier" | "paid";
@@ -131,6 +132,17 @@ function reasoningSystemPrompt(variationCount: number): string {
   ].join("\n");
 }
 
+function auditReasoningSystemPrompt(): string {
+  return [
+    "You are the UX Direct Reasoning Stone for an explicitly requested visual audit.",
+    "Use only the supplied compact UXD-IR evidence and selected-frame node index. Natural-language findings are the deliverable for an audit.",
+    "Return 4–6 concise actionable findings. Each finding must include visible evidence, why it matters to the customer, and a practical recommendation.",
+    "Consider hierarchy, legibility, spacing/alignment, CTA clarity, financial-content clarity, accessibility and recovery where the supplied evidence supports them.",
+    "Preserve every supplied financial amount, due date, rate and term. Distinguish observations from assumptions. Do not claim regulatory compliance or invent policy rules.",
+    "Do not reveal or claim access to hidden private chain-of-thought. Do not create Figma operations and do not claim edits were applied.",
+  ].join("\\n");
+}
+
 function getNodeSize(items: unknown[], width?: number, height?: number) {
   const root = items.find((value) => value !== null && typeof value === "object" && (value as Record<string, unknown>).type === "FRAME") as Record<string, unknown> | undefined;
   const resolvedWidth = width ?? (root && typeof root.width === "number" ? root.width : undefined);
@@ -141,7 +153,7 @@ function getNodeSize(items: unknown[], width?: number, height?: number) {
   };
 }
 
-export async function runUxdVariationPipeline(input: UxdVariationPipelineInput): Promise<UxdVariationPipelineResult> {
+export async function runUxdVisionReasoningPipeline(input: UxdVariationPipelineInput): Promise<UxdVisionReasoningPipelineResult> {
   const nodes: UxdIrNode[] = compactFigmaNodes(input.frameItems, 160);
   if (!nodes.length) throw new PluginOpenRouterError("UXD-IR could not build a safe node index from the selected frame.", 400);
   if (!input.screenshotDataUrl.startsWith("data:image/jpeg;base64,")) {
@@ -239,7 +251,7 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
   if (!visionEvidence) {
     const failedTrace: UxdIrTrace = {
       v: UXD_IR_VERSION, runId: input.runId, projectKey: input.projectKey, capability: input.capability,
-      mode: "action", status: "failed", intentSummary: cleanIntent(input.userIntent), createdAt: new Date().toISOString(),
+      mode: input.mode === "audit" ? "explain" : "action", status: "failed", intentSummary: cleanIntent(input.userIntent), createdAt: new Date().toISOString(),
       stages: [...traceStages, { role: "reasoning", status: "skipped", note: "vision_evidence_unavailable" }],
     };
     await persistUxdIrTrace(failedTrace, { totalPromptTokens: usage.promptTokens, totalCompletionTokens: usage.completionTokens, estimatedCostUsd, observedCostUsd });
@@ -250,22 +262,25 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
     v: UXD_IR_VERSION,
     stage: "reasoning-input",
     goal: cleanIntent(input.userIntent),
-    variationCount: Math.max(1, Math.min(3, Math.floor(input.variationCount))),
+    mode: input.mode,
+    ...(input.mode === "variation" ? { variationCount: Math.max(1, Math.min(3, Math.floor(input.variationCount))) } : {}),
     frame,
     vision: visionEvidence,
-    guardrails: ["source_frame_unchanged", "preserve_financial_facts", "only_known_node_ids", "native_executor_validates_all_operations"],
+    guardrails: ["preserve_financial_facts", "use_only_known_node_ids", "native_executor_validates_all_mutations",
+      ...(input.mode === "variation" ? ["source_frame_unchanged"] : ["audit_is_read_only"])],
   };
   const plannerUserMessage: PluginChatMessage = {
     role: "user",
     content: JSON.stringify(reasoningContext),
   };
   const plannerMessages: PluginChatMessage[] = [
-    { role: "system", content: reasoningSystemPrompt(reasoningContext.variationCount) },
+    { role: "system", content: input.mode === "audit" ? auditReasoningSystemPrompt() : reasoningSystemPrompt(reasoningContext.variationCount as number) },
     plannerUserMessage,
   ];
 
   const reasoningModels = input.reasoningModels.filter((model) => model.available).slice(0, 5);
   let finalPlan: Record<string, unknown> | null = null;
+  let finalContent = "";
   let finalModel: AvailableModel | null = null;
   let lastPlanError = "No approved reasoning model returned a valid operation plan.";
   let paidPlanBudgetBlocked = false;
@@ -299,10 +314,17 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
       if (model.tier === "paid" && result.observedCostUsd !== null) {
         await settleDailyPaidModelBudget({ requestId, actualCostUsd: result.observedCostUsd });
       }
-      const parsed = parseUxdirJson(result.content);
-      const gate = validateUxdirVariationPlan(parsed, reasoningContext.variationCount);
-      if (!parsed || !gate.valid) throw new PluginOpenRouterError("Reasoning model returned an operation plan outside UXD-IR quality gates (" + (gate.reason || "invalid_json") + ").", 502);
-      finalPlan = parsed;
+      let gate: ReturnType<typeof validateUxdirVariationPlan> | null = null;
+      if (input.mode === "audit") {
+        finalContent = result.content.trim();
+        if (!finalContent) throw new PluginOpenRouterError("Reasoning model returned an empty audit.", 502);
+      } else {
+        const parsed = parseUxdirJson(result.content);
+        gate = validateUxdirVariationPlan(parsed, reasoningContext.variationCount as number);
+        if (!parsed || !gate.valid) throw new PluginOpenRouterError("Reasoning model returned an operation plan outside UXD-IR quality gates (" + (gate.reason || "invalid_json") + ").", 502);
+        finalPlan = parsed;
+        finalContent = JSON.stringify(parsed);
+      }
       finalModel = model;
       traceStages.push({
         role: "reasoning", status: "completed", model: result.model, latencyMs: result.latencyMs,
@@ -310,15 +332,15 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
         ...(result.usage.completionTokens !== null ? { completionTokens: result.usage.completionTokens } : {}),
         ...(result.usage.totalTokens !== null ? { totalTokens: result.usage.totalTokens } : {}),
         estimatedCostUsd: stageEstimate, observedCostUsd: result.observedCostUsd,
-        note: "operation_plan_passed_structural_gate",
+        note: input.mode === "audit" ? "readable_audit_generated_from_uxd_ir" : "operation_plan_passed_structural_gate",
       });
       await recordModelLearningEvent({
         requestId, capability: input.capability, modelId: result.model, modelTier: model.tier,
-        outcome: "validated", validationPassed: true, latencyMs: result.latencyMs,
+        outcome: input.mode === "audit" ? "usable" : "validated", validationPassed: input.mode !== "audit", latencyMs: result.latencyMs,
         estimatedCostUsd: stageEstimate, observedCostUsd: result.observedCostUsd,
         promptTokens: result.usage.promptTokens ?? undefined, completionTokens: result.usage.completionTokens ?? undefined,
         totalTokens: result.usage.totalTokens ?? undefined,
-        operationProfile: { uxdIrVersion: UXD_IR_VERSION, stage: "reasoning", variations: gate.variationCount, operations: gate.operationCount },
+        operationProfile: { uxdIrVersion: UXD_IR_VERSION, stage: "reasoning", mode: input.mode, ...(gate ? { variations: gate.variationCount, operations: gate.operationCount } : {}) },
       });
       break;
     } catch (error) {
@@ -335,7 +357,7 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
     }
   }
 
-  if (!finalPlan || !finalModel) {
+  if (!finalModel || (input.mode === "variation" && !finalPlan)) {
     const failedTrace: UxdIrTrace = {
       v: UXD_IR_VERSION, runId: input.runId, projectKey: input.projectKey, capability: input.capability,
       mode: "action", status: "failed", intentSummary: cleanIntent(input.userIntent), createdAt: new Date().toISOString(),
@@ -348,14 +370,18 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
 
   const trace: UxdIrTrace = {
     v: UXD_IR_VERSION, runId: input.runId, projectKey: input.projectKey, capability: input.capability,
-    mode: "action", status: "awaiting_confirmation", intentSummary: cleanIntent(input.userIntent), createdAt: new Date().toISOString(),
-    stages: [...traceStages, { role: "execution", status: "awaiting_confirmation", note: "Native Figma executor is waiting for user confirmation and will validate operation scope before applying." }],
-    artifacts: { visionEvidence, operationPlan: finalPlan },
+    mode: input.mode === "audit" ? "explain" : "action",
+    status: input.mode === "audit" ? "completed" : "awaiting_confirmation",
+    intentSummary: cleanIntent(input.userIntent), createdAt: new Date().toISOString(),
+    stages: [...traceStages, input.mode === "audit"
+      ? { role: "execution", status: "skipped", note: "audit_only_no_mutation" }
+      : { role: "execution", status: "awaiting_confirmation", note: "Native Figma executor is waiting for user confirmation and will validate operation scope before applying." }],
+    artifacts: { visionEvidence, ...(finalPlan ? { operationPlan: finalPlan } : {}) },
   };
   await persistUxdIrTrace(trace, { totalPromptTokens: usage.promptTokens, totalCompletionTokens: usage.completionTokens, estimatedCostUsd, observedCostUsd });
 
   return {
-    content: JSON.stringify(finalPlan),
+    content: input.mode === "audit" ? finalContent : JSON.stringify(finalPlan),
     model: finalModel.id,
     modelTier: finalModel.tier,
     latencyMs,
