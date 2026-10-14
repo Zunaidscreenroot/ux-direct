@@ -6,6 +6,7 @@ import {
   parseUxdirJson,
   normalizeVisionEvidence,
   validateUxdirVariationPlan,
+  validateUxdirEditPlan,
   summarizeUxdIrTrace,
   classifyUxdIrError,
 } from "../src/figma/uxd-ir";
@@ -71,6 +72,50 @@ test("variation plans must be structurally distinct and use supported operations
   });
   assert.equal(validateUxdirVariationPlan({ variations: [{ ...goodPlan.variations[0], operations: goodPlan.variations[0].operations.slice(0, 5) }] }, 1).valid, false);
   assert.equal(validateUxdirVariationPlan({ variations: [{ ...goodPlan.variations[0], operations: goodPlan.variations[0].operations.map((op) => ({ ...op, action: "unknown" })) }] }, 1).reason, "unsupported_action");
+});
+
+test("bounded UXD-IR edit plans accept known nodes and supported operations", () => {
+  const nodes = [
+    { id: "frame-1", type: "FRAME", name: "Payment screen" },
+    { id: "cta-1", type: "TEXT", name: "Primary CTA", text: "Pay ₹10,000" },
+  ];
+  const result = validateUxdirEditPlan({
+    operations: [{ action: "update-text", targetId: "cta-1", text: "Pay All EMIs" }],
+  }, nodes);
+  assert.deepEqual(result, { valid: true, operationCount: 1 });
+});
+
+test("UXD-IR edit validator rejects hallucinated node IDs and unsupported actions", () => {
+  const nodes = [{ id: "frame-1", type: "FRAME", name: "Payment screen" }];
+  const unknownTarget = validateUxdirEditPlan({
+    operations: [{ action: "set-fill", targetId: "missing-node", color: "#FFFFFF" }],
+  }, nodes);
+  assert.equal(unknownTarget.valid, false);
+  assert.equal(unknownTarget.reason, "unknown_target");
+
+  const unsupported = validateUxdirEditPlan({
+    operations: [{ action: "run-arbitrary-code", targetId: "frame-1" }],
+  }, nodes);
+  assert.equal(unsupported.valid, false);
+  assert.equal(unsupported.reason, "unsupported_action");
+});
+
+test("UXD-IR edit validator requires frame parents for creation and caps operation count", () => {
+  const nodes = [
+    { id: "frame-1", type: "FRAME", name: "Payment screen" },
+    { id: "text-1", type: "TEXT", name: "Label" },
+  ];
+  const wrongParent = validateUxdirEditPlan({
+    operations: [{ action: "create-text", parentId: "text-1", text: "Pay All EMIs" }],
+  }, nodes);
+  assert.equal(wrongParent.valid, false);
+  assert.equal(wrongParent.reason, "invalid_parent");
+
+  const tooMany = validateUxdirEditPlan({
+    operations: Array.from({ length: 9 }, () => ({ action: "set-fill", targetId: "frame-1", color: "#FFFFFF" })),
+  }, nodes);
+  assert.equal(tooMany.valid, false);
+  assert.equal(tooMany.reason, "operation_count");
 });
 
 test("trace summary is deterministic and error labels are coarse", () => {
