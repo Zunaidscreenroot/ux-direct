@@ -982,6 +982,194 @@ function applyUXDFill(node, color) {
   if (!("fills" in node)) throw new Error("The target layer does not support fills.");
   node.fills = [{ type: "SOLID", color: parseUXDHexColor(color), opacity: 1 }];
 }
+function validateUXDSvg(svg) {
+  if (typeof svg !== "string" || !svg.trim() || svg.length > 10000) throw new Error("SVG source must be non-empty and no longer than 10,000 characters.");
+  if (!/<svg[\s>]/i.test(svg) || /<\s*(script|foreignObject)\b/i.test(svg) ||
+      /\bon[a-z]+\s*=/i.test(svg) || /(?:href|src)\s*=\s*["']\s*(?:https?:|\/\/|javascript:|data:)/i.test(svg) ||
+      /javascript\s*:/i.test(svg)) {
+    throw new Error("SVG must be self-contained vector markup without scripts, event handlers, foreign objects or external resources.");
+  }
+}
+async function createUXDChildNode(parent, operation) {
+  var action = operation.action;
+  if (!parent || parent.type !== "FRAME") throw new Error("Create actions must target a FRAME inside the selected/duplicate screen.");
+  var node;
+  var width = Number(operation.width);
+  var height = Number(operation.height);
+  var x = Number.isFinite(Number(operation.x)) ? Number(operation.x) : 16;
+  var y = Number.isFinite(Number(operation.y)) ? Number(operation.y) : 16;
+  if (action === "create-text") {
+    var textValue = String(operation.text || "").slice(0, 1000);
+    if (!textValue.trim()) throw new Error("New text cannot be empty.");
+    var font = {
+      family: typeof operation.fontFamily === "string" && operation.fontFamily.length <= 80 ? operation.fontFamily : "Inter",
+      style: ["Regular", "Medium", "Semi Bold", "Bold"].indexOf(operation.fontStyle) >= 0 ? operation.fontStyle : "Regular"
+    };
+    await figma.loadFontAsync(font);
+    node = figma.createText();
+    parent.appendChild(node);
+    node.fontName = font;
+    node.characters = textValue;
+    var size = Number(operation.fontSize);
+    node.fontSize = Number.isFinite(size) ? Math.max(8, Math.min(96, size)) : 14;
+    node.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color || "#202124"), opacity: 1 }];
+  } else if (action === "create-rectangle" || action === "create-ellipse") {
+    node = action === "create-ellipse" ? figma.createEllipse() : figma.createRectangle();
+    parent.appendChild(node);
+    node.resize(Number.isFinite(width) ? Math.max(1, Math.min(2000, width)) : 120,
+      Number.isFinite(height) ? Math.max(1, Math.min(2000, height)) : 48);
+    node.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color || (action === "create-ellipse" ? "#2563EB" : "#FFFFFF")), opacity: 1 }];
+    if (Number.isFinite(Number(operation.radius)) && "cornerRadius" in node) node.cornerRadius = Math.max(0, Math.min(128, Number(operation.radius)));
+  } else if (action === "create-line") {
+    node = figma.createLine();
+    parent.appendChild(node);
+    node.resize(Number.isFinite(width) ? Math.max(1, Math.min(2000, width)) : 120,
+      Number.isFinite(height) ? Math.max(0, Math.min(2000, height)) : 0);
+    node.strokes = [{ type: "SOLID", color: parseUXDHexColor(operation.color || "#B8B8B8"), opacity: 1 }];
+    node.strokeWeight = Number.isFinite(Number(operation.strokeWeight)) ? Math.max(0.5, Math.min(16, Number(operation.strokeWeight))) : 1;
+  } else if (action === "create-frame") {
+    node = figma.createFrame();
+    parent.appendChild(node);
+    node.resize(Number.isFinite(width) ? Math.max(1, Math.min(2000, width)) : 320,
+      Number.isFinite(height) ? Math.max(1, Math.min(2000, height)) : 120);
+    node.fills = operation.color ? [{ type: "SOLID", color: parseUXDHexColor(operation.color), opacity: 1 }] : [];
+    if (["NONE", "HORIZONTAL", "VERTICAL"].indexOf(operation.layoutMode) >= 0) node.layoutMode = operation.layoutMode;
+    if (Number.isFinite(Number(operation.radius))) node.cornerRadius = Math.max(0, Math.min(128, Number(operation.radius)));
+  } else if (action === "create-svg") {
+    validateUXDSvg(operation.svg);
+    node = figma.createNodeFromSvg(operation.svg);
+    parent.appendChild(node);
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 && typeof node.resize === "function") {
+      node.resize(Math.min(2000, width), Math.min(2000, height));
+    }
+  } else {
+    throw new Error("Unsupported create action: " + String(action));
+  }
+  if (typeof operation.name === "string" && operation.name.trim()) node.name = operation.name.trim().slice(0, 120);
+  setVariationPosition(node, x, y);
+  return { action: action, id: node.id, name: node.name };
+}
+async function applyUXDTextStyle(target, operation) {
+  if (!target || target.type !== "TEXT") throw new Error("set-text-style must target a TEXT node.");
+  await loadFontsForTextNode(target);
+  if (Number.isFinite(Number(operation.fontSize))) target.fontSize = Math.max(8, Math.min(96, Number(operation.fontSize)));
+  if (operation.fontFamily !== undefined || operation.fontStyle !== undefined) {
+    var currentFont = target.fontName === figma.mixed ? { family: "Inter", style: "Regular" } : target.fontName;
+    var allowedStyles = ["Thin", "Extra Light", "Light", "Regular", "Medium", "Semi Bold", "Bold", "Extra Bold", "Black"];
+    var fontName = {
+      family: typeof operation.fontFamily === "string" && operation.fontFamily.trim() ? operation.fontFamily.trim().slice(0, 80) : currentFont.family,
+      style: allowedStyles.indexOf(operation.fontStyle) >= 0 ? operation.fontStyle : currentFont.style
+    };
+    await figma.loadFontAsync(fontName);
+    target.fontName = fontName;
+  }
+  if (operation.color !== undefined) target.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color), opacity: 1 }];
+  if (Number.isFinite(Number(operation.letterSpacing))) target.letterSpacing = { unit: "PIXELS", value: Math.max(-10, Math.min(100, Number(operation.letterSpacing))) };
+  if (operation.lineHeight === "AUTO") target.lineHeight = { unit: "AUTO" };
+  else if (Number.isFinite(Number(operation.lineHeight))) target.lineHeight = { unit: "PIXELS", value: Math.max(1, Math.min(200, Number(operation.lineHeight))) };
+  if (Number.isFinite(Number(operation.paragraphSpacing))) target.paragraphSpacing = Math.max(0, Math.min(200, Number(operation.paragraphSpacing)));
+  if (["LEFT", "CENTER", "RIGHT", "JUSTIFIED"].indexOf(operation.textAlignHorizontal) >= 0) target.textAlignHorizontal = operation.textAlignHorizontal;
+  if (["TOP", "CENTER", "BOTTOM"].indexOf(operation.textAlignVertical) >= 0) target.textAlignVertical = operation.textAlignVertical;
+  if (["NONE", "HEIGHT", "WIDTH_AND_HEIGHT"].indexOf(operation.textAutoResize) >= 0) target.textAutoResize = operation.textAutoResize;
+  if (["ORIGINAL", "UPPER", "LOWER", "TITLE"].indexOf(operation.textCase) >= 0) target.textCase = operation.textCase;
+  if (["NONE", "UNDERLINE", "STRIKETHROUGH"].indexOf(operation.textDecoration) >= 0) target.textDecoration = operation.textDecoration;
+}
+async function applyUXDNodeOperation(target, operation, protectedRoot) {
+  var action = operation.action;
+  if (!target) throw new Error("Operation target was not found.");
+  if (action === "rename-node") {
+    var newName = String(operation.name || "").trim().slice(0, 120);
+    if (!newName) throw new Error("Layer name cannot be empty.");
+    target.name = newName;
+  } else if (action === "set-fill") {
+    applyUXDFill(target, operation.color);
+  } else if (action === "update-text") {
+    if (target.type !== "TEXT") throw new Error("update-text must target a TEXT node.");
+    await loadFontsForTextNode(target);
+    var replacement = String(operation.text || "").slice(0, 2000);
+    if (!replacement.trim()) throw new Error("Replacement text cannot be empty.");
+    target.characters = replacement;
+  } else if (action === "move-node") {
+    setVariationPosition(target, Number(operation.x), Number(operation.y));
+  } else if (action === "resize-node") {
+    if (typeof target.resize !== "function") throw new Error("This node cannot be resized.");
+    var width = Number(operation.width), height = Number(operation.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) throw new Error("Resize requires numeric width and height.");
+    target.resize(Math.max(1, Math.min(2000, width)), Math.max(1, Math.min(2000, height)));
+  } else if (action === "set-text-style") {
+    await applyUXDTextStyle(target, operation);
+  } else if (action === "set-corner-radius") {
+    if (!("cornerRadius" in target)) throw new Error("The target does not support corner radius.");
+    target.cornerRadius = Math.max(0, Math.min(128, Number(operation.radius)));
+  } else if (action === "set-stroke") {
+    if (!("strokes" in target) || !("strokeWeight" in target)) throw new Error("The target does not support strokes.");
+    target.strokes = [{ type: "SOLID", color: parseUXDHexColor(operation.color), opacity: Number.isFinite(Number(operation.opacity)) ? Math.max(0, Math.min(1, Number(operation.opacity))) : 1 }];
+    target.strokeWeight = Math.max(0.5, Math.min(16, Number(operation.width)));
+  } else if (action === "set-opacity") {
+    if (!("opacity" in target)) throw new Error("The target does not support opacity.");
+    target.opacity = Math.max(0, Math.min(1, Number(operation.opacity)));
+  } else if (action === "set-visible") {
+    if (!("visible" in target) || typeof operation.visible !== "boolean") throw new Error("Visibility operation is invalid.");
+    target.visible = operation.visible;
+  } else if (action === "set-layout") {
+    if (target.type !== "FRAME") throw new Error("set-layout must target a FRAME.");
+    if (["NONE", "HORIZONTAL", "VERTICAL"].indexOf(operation.layoutMode) >= 0) target.layoutMode = operation.layoutMode;
+    if (Number.isFinite(Number(operation.itemSpacing))) target.itemSpacing = Math.max(0, Math.min(128, Number(operation.itemSpacing)));
+    ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"].forEach(function (key) {
+      if (Number.isFinite(Number(operation[key]))) target[key] = Math.max(0, Math.min(128, Number(operation[key])));
+    });
+    if (["MIN", "CENTER", "MAX", "SPACE_BETWEEN"].indexOf(operation.primaryAxisAlignItems) >= 0) target.primaryAxisAlignItems = operation.primaryAxisAlignItems;
+    if (["MIN", "CENTER", "MAX", "BASELINE"].indexOf(operation.counterAxisAlignItems) >= 0) target.counterAxisAlignItems = operation.counterAxisAlignItems;
+    if (["AUTO", "FIXED"].indexOf(operation.primaryAxisSizingMode) >= 0) target.primaryAxisSizingMode = operation.primaryAxisSizingMode;
+    if (["AUTO", "FIXED"].indexOf(operation.counterAxisSizingMode) >= 0) target.counterAxisSizingMode = operation.counterAxisSizingMode;
+  } else if (action === "set-layout-sizing") {
+    if ("layoutSizingHorizontal" in target && ["HUG", "FILL", "FIXED"].indexOf(operation.horizontal) >= 0) target.layoutSizingHorizontal = operation.horizontal;
+    if ("layoutSizingVertical" in target && ["HUG", "FILL", "FIXED"].indexOf(operation.vertical) >= 0) target.layoutSizingVertical = operation.vertical;
+    if (!("layoutSizingHorizontal" in target) && !("layoutSizingVertical" in target)) throw new Error("Layout sizing is only available for supported auto-layout children.");
+  } else if (action === "set-layout-positioning") {
+    if (!("layoutPositioning" in target) || ["AUTO", "ABSOLUTE"].indexOf(operation.positioning) < 0) throw new Error("Layout positioning is invalid for this target.");
+    target.layoutPositioning = operation.positioning;
+  } else if (action === "set-constraints") {
+    if (!("constraints" in target)) throw new Error("Constraints are not supported by this target.");
+    var horizontal = ["LEFT", "CENTER", "RIGHT", "LEFT_RIGHT", "SCALE"].indexOf(operation.horizontal) >= 0 ? operation.horizontal : target.constraints.horizontal;
+    var vertical = ["TOP", "CENTER", "BOTTOM", "TOP_BOTTOM", "SCALE"].indexOf(operation.vertical) >= 0 ? operation.vertical : target.constraints.vertical;
+    target.constraints = { horizontal: horizontal, vertical: vertical };
+  } else if (action === "set-clip-content") {
+    if (target.type !== "FRAME" || typeof operation.clipsContent !== "boolean") throw new Error("Clip-content must target a FRAME and provide a boolean.");
+    target.clipsContent = operation.clipsContent;
+  } else if (action === "set-locked") {
+    if (typeof operation.locked !== "boolean" || !("locked" in target)) throw new Error("Lock state must be a boolean on a node.");
+    target.locked = operation.locked;
+  } else if (action === "set-blend-mode") {
+    var modes = ["PASS_THROUGH", "NORMAL", "DARKEN", "MULTIPLY", "LINEAR_BURN", "COLOR_BURN", "LIGHTEN", "SCREEN", "LINEAR_DODGE", "COLOR_DODGE", "OVERLAY", "SOFT_LIGHT", "HARD_LIGHT", "DIFFERENCE", "EXCLUSION", "HUE", "SATURATION", "COLOR", "LUMINOSITY"];
+    if (!("blendMode" in target) || modes.indexOf(operation.mode) < 0) throw new Error("Blend mode is invalid for this target.");
+    target.blendMode = operation.mode;
+  } else if (action === "set-rotation") {
+    if (!("rotation" in target) || !Number.isFinite(Number(operation.rotation))) throw new Error("Rotation must be numeric and supported by this target.");
+    target.rotation = Math.max(-360, Math.min(360, Number(operation.rotation)));
+  } else if (action === "set-clip-content") {
+    if (target.type !== "FRAME" || typeof operation.clipsContent !== "boolean") throw new Error("Clip-content must target a FRAME and provide a boolean.");
+    target.clipsContent = operation.clipsContent;
+  } else if (action === "reorder-node") {
+    var parent = target.parent;
+    if (!parent || typeof parent.insertChild !== "function" || !("children" in parent)) throw new Error("The target cannot be reordered.");
+    parent.insertChild(Math.max(0, Math.min(parent.children.length - 1, Math.floor(Number(operation.index)))), target);
+  } else if (action === "clone-node") {
+    if (target === protectedRoot || typeof target.clone !== "function" || !target.parent || typeof target.parent.appendChild !== "function") throw new Error("Only child nodes inside the frame can be cloned.");
+    var clone = target.clone();
+    setVariationPosition(clone, target.x + target.width + 16, target.y);
+    return { action: action, id: clone.id, name: clone.name };
+  } else if (action === "remove-node") {
+    if (target === protectedRoot || !target.parent || typeof target.remove !== "function") throw new Error("The source frame or a parentless node cannot be removed.");
+    var removed = { action: action, id: target.id, name: target.name, removed: true };
+    target.remove();
+    return removed;
+  } else {
+    throw new Error("Unsupported design action: " + String(action || "unknown"));
+  }
+  return { action: action, id: target.id, name: target.name };
+}
+
 async function loadFontsForTextNode(node) {
   if (!node || node.type !== "TEXT") throw new Error("Text operation target is not a text layer.");
   if (node.fontName !== figma.mixed) {
@@ -998,63 +1186,43 @@ async function loadFontsForTextNode(node) {
 async function applyApprovedDesignOperations(operations) {
   var results = [];
   try {
-    if (!Array.isArray(operations) || operations.length < 1 || operations.length > 8) {
-      throw new Error("The design plan must contain between one and eight supported operations.");
+    assertUxDirectFileScope("apply design operations");
+    if (!Array.isArray(operations) || operations.length < 1 || operations.length > 32) {
+      throw new Error("The design plan must contain between one and 32 supported native Figma actions.");
     }
+    var protectedRoots = figma.currentPage.selection.slice();
     for (var i = 0; i < operations.length; i += 1) {
+      assertUxDirectFileScope("validate design operation");
       var operation = operations[i];
       if (!operation || typeof operation !== "object") throw new Error("Operation " + (i + 1) + " is invalid.");
       var action = operation.action;
-      if (action === "create-text" || action === "create-rectangle") {
+      var createActions = ["create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg"];
+      if (createActions.indexOf(action) >= 0) {
         var parent = findSelectedNodeById(operation.parentId);
-        if (!parent || parent.type !== "FRAME") throw new Error("Create operations must target a FRAME inside the current selection.");
-        if (action === "create-text") {
-          var text = String(operation.text || "").slice(0, 1000);
-          if (!text.trim()) throw new Error("New text cannot be empty.");
-          var font = { family: "Inter", style: "Regular" };
-          await figma.loadFontAsync(font);
-          var textNode = figma.createText();
-          parent.appendChild(textNode);
-          textNode.fontName = font;
-          textNode.characters = text;
-          var size = Number(operation.fontSize);
-          textNode.fontSize = Number.isFinite(size) ? Math.max(8, Math.min(48, size)) : 14;
-          textNode.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color || "#202124"), opacity: 1 }];
-          textNode.x = Number.isFinite(Number(operation.x)) ? Math.max(0, Math.min(parent.width - 1, Number(operation.x))) : 16;
-          textNode.y = Number.isFinite(Number(operation.y)) ? Math.max(0, Math.min(parent.height - 1, Number(operation.y))) : 16;
-          results.push({ action: action, id: textNode.id, name: textNode.name });
-        } else {
-          var rect = figma.createRectangle();
-          parent.appendChild(rect);
-          var width = Number(operation.width), height = Number(operation.height);
-          rect.resize(Number.isFinite(width) ? Math.max(1, Math.min(2000, width)) : 120,
-            Number.isFinite(height) ? Math.max(1, Math.min(2000, height)) : 48);
-          rect.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color || "#2563EB"), opacity: 1 }];
-          rect.x = Number.isFinite(Number(operation.x)) ? Math.max(0, Math.min(parent.width - rect.width, Number(operation.x))) : 16;
-          rect.y = Number.isFinite(Number(operation.y)) ? Math.max(0, Math.min(parent.height - rect.height, Number(operation.y))) : 16;
-          results.push({ action: action, id: rect.id, name: rect.name });
-        }
+        if (!parent || parent.type !== "FRAME") throw new Error("Create actions must target a FRAME inside the current selection.");
+        var createdResult = await createUXDChildNode(parent, operation);
+        results.push(createdResult);
         continue;
       }
-
       var target = findSelectedNodeById(operation.targetId);
       if (!target) throw new Error("Target node is not inside the current Figma selection.");
-      if (action === "rename-node") {
-        var newName = String(operation.name || "").trim().slice(0, 120);
-        if (!newName) throw new Error("Layer name cannot be empty.");
-        target.name = newName;
-      } else if (action === "set-fill") {
-        applyUXDFill(target, operation.color);
-      } else if (action === "update-text") {
-        if (target.type !== "TEXT") throw new Error("update-text must target a TEXT node.");
-        await loadFontsForTextNode(target);
-        var replacement = String(operation.text || "").slice(0, 2000);
-        if (!replacement.trim()) throw new Error("Replacement text cannot be empty.");
-        target.characters = replacement;
-      } else {
-        throw new Error("Unsupported design operation: " + String(action || "unknown"));
+      if (action === "set-fill" && (typeof operation.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(operation.color))) {
+        throw new Error("Fill color must use #RRGGBB format.");
       }
-      results.push({ action: action, id: target.id, name: target.name });
+      if (action === "update-text" && (target.type !== "TEXT" || typeof operation.text !== "string" || !operation.text.trim())) {
+        throw new Error("Text edits require a non-empty replacement and a TEXT target.");
+      }
+      if (action === "set-text-style" && (target.type !== "TEXT" ||
+          (operation.color !== undefined && (typeof operation.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(operation.color))) ||
+          (operation.fontSize !== undefined && (!Number.isFinite(operation.fontSize) || operation.fontSize < 8 || operation.fontSize > 96)))) {
+        throw new Error("Text-style operation is invalid for this target.");
+      }
+      if (action === "remove-node" && protectedRoots.indexOf(target) >= 0) {
+        throw new Error("Destructive action blocked: select a parent frame and target a child layer, not the selected root.");
+      }
+      var result = await applyUXDNodeOperation(target, operation, protectedRoots.indexOf(target) >= 0 ? target : null);
+      results.push(result);
+      assertUxDirectFileScope("verify design operation");
     }
     figma.ui.postMessage({ type: "design-operation-result", ok: true, results: results });
     sendSelection();
@@ -1068,8 +1236,6 @@ async function applyApprovedDesignOperations(operations) {
     sendSelection();
   }
 }
-
-
 function findNodeWithin(root, id) {
   if (!root || typeof id !== "string" || !id) return null;
   if (root.id === id) return root;
@@ -1109,102 +1275,19 @@ function setVariationPosition(node, x, y) {
 }
 async function applyOneVariationOperation(cloneRoot, nodeMap, operation) {
   var action = operation && operation.action;
-  if (action === "create-text" || action === "create-rectangle") {
+  var createActions = ["create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg"];
+  if (createActions.indexOf(action) >= 0) {
     var parent = nodeMap[operation.parentId];
-    if (!parent || parent.type !== "FRAME") throw new Error("Variation create operations must target a frame inside the clone.");
-    if (action === "create-text") {
-      var textValue = String(operation.text || "").slice(0, 1000);
-      if (!textValue.trim()) throw new Error("New variation text cannot be empty.");
-      var font = { family: "Inter", style: "Regular" };
-      await figma.loadFontAsync(font);
-      var textNode = figma.createText();
-      parent.appendChild(textNode);
-      textNode.fontName = font;
-      textNode.characters = textValue;
-      var fontSize = Number(operation.fontSize);
-      textNode.fontSize = Number.isFinite(fontSize) ? Math.max(8, Math.min(48, fontSize)) : 14;
-      textNode.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color || "#202124"), opacity: 1 }];
-      setVariationPosition(textNode, Number(operation.x), Number(operation.y));
-      return { action: action, id: textNode.id, name: textNode.name };
-    }
-    var rect = figma.createRectangle();
-    parent.appendChild(rect);
-    var width = Number(operation.width), height = Number(operation.height);
-    rect.resize(Number.isFinite(width) ? Math.max(1, Math.min(2000, width)) : 120,
-      Number.isFinite(height) ? Math.max(1, Math.min(2000, height)) : 48);
-    rect.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color || "#2563EB"), opacity: 1 }];
-    setVariationPosition(rect, Number(operation.x), Number(operation.y));
-    return { action: action, id: rect.id, name: rect.name };
+    return await createUXDChildNode(parent, operation);
   }
-
   var target = nodeMap[operation.targetId];
-  var rootSafeActions = ["rename-node", "set-fill", "move-node", "resize-node", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-layout"];
+  var rootSafeActions = ["rename-node", "set-fill", "move-node", "resize-node", "set-corner-radius", "set-stroke",
+    "set-opacity", "set-visible", "set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints",
+    "set-clip-content", "set-blend-mode", "set-rotation", "set-text-style", "set-locked"];
   if (!target || (target === cloneRoot && rootSafeActions.indexOf(action) === -1)) {
-    throw new Error("Variation target is not inside the cloned frame.");
+    throw new Error("Variation target is not inside the cloned frame, or this action cannot target the source frame root.");
   }
-  if (action === "rename-node") {
-    var name = String(operation.name || "").trim().slice(0, 120);
-    if (!name) throw new Error("Variation layer name cannot be empty.");
-    target.name = name;
-  } else if (action === "set-fill") {
-    applyVariationFill(target, operation.color);
-  } else if (action === "update-text") {
-    if (target.type !== "TEXT") throw new Error("update-text must target a text layer in the clone.");
-    await loadFontsForTextNode(target);
-    var replacement = String(operation.text || "").slice(0, 2000);
-    if (!replacement.trim()) throw new Error("Replacement text cannot be empty.");
-    target.characters = replacement;
-  } else if (action === "move-node") {
-    setVariationPosition(target, Number(operation.x), Number(operation.y));
-  } else if (action === "resize-node") {
-    if (typeof target.resize !== "function") throw new Error("The variation target cannot be resized.");
-    var resizeWidth = Number(operation.width), resizeHeight = Number(operation.height);
-    if (!Number.isFinite(resizeWidth) || !Number.isFinite(resizeHeight)) throw new Error("Resize requires numeric width and height.");
-    target.resize(Math.max(1, Math.min(2000, resizeWidth)), Math.max(1, Math.min(2000, resizeHeight)));
-  } else if (action === "set-text-style") {
-    if (target.type !== "TEXT") throw new Error("set-text-style must target a text layer.");
-    await loadFontsForTextNode(target);
-    if (Number.isFinite(operation.fontSize)) target.fontSize = Math.max(8, Math.min(48, operation.fontSize));
-    if (operation.fontStyle) {
-      var style = ["Regular", "Medium", "Semi Bold", "Bold"].indexOf(operation.fontStyle) >= 0 ? operation.fontStyle : "Regular";
-      var fontName = { family: "Inter", style: style };
-      await figma.loadFontAsync(fontName);
-      target.fontName = fontName;
-    }
-    if (operation.color) target.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color), opacity: 1 }];
-  } else if (action === "set-corner-radius") {
-    if (!("cornerRadius" in target)) throw new Error("The variation target does not support corner radius.");
-    target.cornerRadius = Math.max(0, Math.min(128, Number(operation.radius)));
-  } else if (action === "set-stroke") {
-    if (!("strokes" in target) || !("strokeWeight" in target)) throw new Error("The variation target does not support strokes.");
-    target.strokes = [{ type: "SOLID", color: parseUXDHexColor(operation.color), opacity: 1 }];
-    target.strokeWeight = Math.max(0.5, Math.min(16, Number(operation.width)));
-  } else if (action === "set-opacity") {
-    if (!("opacity" in target)) throw new Error("The variation target does not support opacity.");
-    target.opacity = Math.max(0, Math.min(1, Number(operation.opacity)));
-  } else if (action === "set-visible") {
-    if (!("visible" in target) || typeof operation.visible !== "boolean") throw new Error("Visibility operation is invalid for this target.");
-    target.visible = operation.visible;
-  } else if (action === "set-layout") {
-    if (target.type !== "FRAME") throw new Error("set-layout must target a frame.");
-    if (["NONE", "HORIZONTAL", "VERTICAL"].indexOf(operation.layoutMode) === -1) throw new Error("Unsupported auto-layout mode.");
-    target.layoutMode = operation.layoutMode;
-    if (Number.isFinite(operation.itemSpacing)) target.itemSpacing = Math.max(0, Math.min(128, operation.itemSpacing));
-    ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"].forEach(function (key) {
-      if (Number.isFinite(operation[key])) target[key] = Math.max(0, Math.min(128, operation[key]));
-    });
-    if (["MIN", "CENTER", "MAX", "SPACE_BETWEEN"].indexOf(operation.primaryAxisAlignItems) >= 0) target.primaryAxisAlignItems = operation.primaryAxisAlignItems;
-    if (["MIN", "CENTER", "MAX", "BASELINE"].indexOf(operation.counterAxisAlignItems) >= 0) target.counterAxisAlignItems = operation.counterAxisAlignItems;
-    if (operation.layoutMode !== "NONE" && ["AUTO", "FIXED"].indexOf(operation.primaryAxisSizingMode) >= 0) target.primaryAxisSizingMode = operation.primaryAxisSizingMode;
-    if (operation.layoutMode !== "NONE" && ["AUTO", "FIXED"].indexOf(operation.counterAxisSizingMode) >= 0) target.counterAxisSizingMode = operation.counterAxisSizingMode;
-  } else if (action === "reorder-node") {
-    var parent = target.parent;
-    if (!parent || !("children" in parent) || typeof parent.insertChild !== "function") throw new Error("The node cannot be reordered.");
-    parent.insertChild(Math.max(0, Math.min(parent.children.length - 1, Math.floor(operation.index))), target);
-  } else {
-    throw new Error("Unsupported variation operation: " + String(action || "unknown"));
-  }
-  return { action: action, id: target.id, name: target.name };
+  return await applyUXDNodeOperation(target, operation, cloneRoot);
 }
 async function applyApprovedDesignVariations(payload) {
   var results = [];
@@ -1238,14 +1321,14 @@ async function applyApprovedDesignVariations(payload) {
         }
         // Recheck every target against the source frame before cloning. Native code never
         // accepts model-supplied page IDs or targets outside this selected frame.
-        var allowedActions = ["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-layout", "reorder-node"];
+        var allowedActions = ["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "set-clip-content", "set-locked", "set-blend-mode", "set-rotation", "clone-node", "remove-node", "reorder-node"];
         for (var j = 0; j < variation.operations.length; j += 1) {
           var op = variation.operations[j];
           if (!op || allowedActions.indexOf(op.action) === -1) throw new Error("Unsupported operation in variation " + (i + 1) + ".");
-          var expectedId = op.action === "create-text" || op.action === "create-rectangle" ? op.parentId : op.targetId;
+          var expectedId = ["create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg"].indexOf(op.action) >= 0 ? op.parentId : op.targetId;
           var sourceTarget = findNodeWithin(source, expectedId);
           if (!sourceTarget) throw new Error("A variation operation targets a node outside the selected source frame.");
-          if ((op.action === "create-text" || op.action === "create-rectangle") && sourceTarget.type !== "FRAME") {
+          if (["create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg"].indexOf(op.action) >= 0 && sourceTarget.type !== "FRAME") {
             throw new Error("New text and shape operations must target a frame.");
           }
           if (op.action === "update-text" && (sourceTarget.type !== "TEXT" || typeof op.text !== "string" || !op.text.trim())) {
@@ -1269,6 +1352,18 @@ async function applyApprovedDesignVariations(payload) {
             }
             if (op.color !== undefined && (typeof op.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(op.color))) {
               throw new Error("New variation shape color must use #RRGGBB format.");
+            }
+          }
+          if (["create-ellipse", "create-line", "create-frame"].indexOf(op.action) >= 0 &&
+              (!Number.isFinite(op.width) || !Number.isFinite(op.height) || op.width <= 0 || op.height < 0 ||
+                (op.action !== "create-line" && op.height <= 0) || !Number.isFinite(op.x) || !Number.isFinite(op.y))) {
+            throw new Error("New shape/frame actions require bounded width/height and numeric x/y coordinates.");
+          }
+          if (op.action === "create-svg") {
+            validateUXDSvg(op.svg);
+            if (!Number.isFinite(op.x) || !Number.isFinite(op.y)) throw new Error("SVG creation requires numeric x/y coordinates.");
+            if (("width" in op && (!Number.isFinite(op.width) || op.width <= 0)) || ("height" in op && (!Number.isFinite(op.height) || op.height <= 0))) {
+              throw new Error("SVG width/height must be positive when provided.");
             }
           }
           if (op.action === "set-fill" && (typeof op.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(op.color))) {
@@ -1312,6 +1407,19 @@ async function applyApprovedDesignVariations(payload) {
               !sourceTarget.parent || !("children" in sourceTarget.parent))) {
             throw new Error("Reorder operation is invalid for this target.");
           }
+          if (op.action === "set-rotation" && (!Number.isFinite(op.rotation) || Math.abs(op.rotation) > 360)) throw new Error("Rotation must be within -360 to 360 degrees.");
+          if (op.action === "set-layout-sizing" &&
+              (("horizontal" in op && ["HUG", "FILL", "FIXED"].indexOf(op.horizontal) === -1) ||
+                ("vertical" in op && ["HUG", "FILL", "FIXED"].indexOf(op.vertical) === -1))) throw new Error("Auto-layout sizing must be HUG, FILL or FIXED.");
+          if (op.action === "set-layout-positioning" && ["AUTO", "ABSOLUTE"].indexOf(op.positioning) === -1) throw new Error("Layout positioning must be AUTO or ABSOLUTE.");
+          if (op.action === "set-constraints" &&
+              (("horizontal" in op && ["LEFT", "CENTER", "RIGHT", "LEFT_RIGHT", "SCALE"].indexOf(op.horizontal) === -1) ||
+                ("vertical" in op && ["TOP", "CENTER", "BOTTOM", "TOP_BOTTOM", "SCALE"].indexOf(op.vertical) === -1))) throw new Error("Constraint values are invalid.");
+          if (op.action === "set-clip-content" && (sourceTarget.type !== "FRAME" || typeof op.clipsContent !== "boolean")) throw new Error("Clip-content requires a FRAME and a boolean.");
+          if (op.action === "set-locked" && typeof op.locked !== "boolean") throw new Error("Lock requires a boolean.");
+          if (op.action === "set-blend-mode" && ["PASS_THROUGH", "NORMAL", "DARKEN", "MULTIPLY", "LINEAR_BURN", "COLOR_BURN", "LIGHTEN", "SCREEN", "LINEAR_DODGE", "COLOR_DODGE", "OVERLAY", "SOFT_LIGHT", "HARD_LIGHT", "DIFFERENCE", "EXCLUSION", "HUE", "SATURATION", "COLOR", "LUMINOSITY"].indexOf(op.mode) === -1) throw new Error("Blend mode is invalid.");
+          if (op.action === "clone-node" && (sourceTarget === source || typeof sourceTarget.clone !== "function")) throw new Error("Only child nodes inside the source frame can be cloned.");
+          if (op.action === "remove-node" && (sourceTarget === source || !sourceTarget.parent)) throw new Error("The source frame cannot be removed; remove child layers only.");
         }
 
         assertUxDirectFileScope("clone selected source frame");
