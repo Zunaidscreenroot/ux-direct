@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ProviderConfig, TokenUsage } from "./index";
 import { getGatewaySettings, modelKey } from "./control-store";
+import { getStore } from "@/src/storage/vercel-blob-compat";
 
 export type UsageRecord = {
   id: string;
@@ -31,7 +32,7 @@ export type BudgetSnapshot = {
   pricingConfigured: boolean;
   month: string;
   records: UsageRecord[];
-  retention: "netlify-blobs" | "best-effort-runtime";
+  retention: "supabase" | "best-effort-runtime";
   spentByModuleInr: Record<string, number>;
   spentByModelInr: Record<string, number>;
   paidCallsThisMonth: number;
@@ -65,13 +66,9 @@ function monthKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 async function getPersistentStore(): Promise<LedgerStore | null> {
-  // Netlify Blobs is used only in the deployed Netlify runtime. Local tests/dev
-  // remain dependency-free and use the runtime memory fallback.
-  if (process.env.NETLIFY !== "true" && !process.env.NETLIFY_BLOBS_CONTEXT) return null;
   if (!storePromise) {
     storePromise = (async () => {
       try {
-        const { getStore } = await import("@netlify/blobs");
         return getStore("ux-direct-model-gateway-usage") as unknown as LedgerStore;
       } catch {
         return null;
@@ -87,7 +84,7 @@ async function readRecords(): Promise<{ records: UsageRecord[]; retention: Budge
       const value = await store.get(scopedLedgerKey(), { type: "json" });
       const persisted = Array.isArray(value) ? value as UsageRecord[] : [];
       runtimeRecords.splice(0, runtimeRecords.length, ...persisted.slice(0, MAX_RECORDS));
-      return { records: [...runtimeRecords], retention: "netlify-blobs", store };
+      return { records: [...runtimeRecords], retention: "supabase", store };
     } catch {
       // Keep requests available during a temporary Blobs failure, but expose that
       // the ledger is now only best-effort in memory for this runtime.
