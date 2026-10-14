@@ -62,11 +62,17 @@ async function embedBatch(texts: string[]): Promise<{ embeddings: number[][]; pr
   if (!apiKey) throw new Error("OpenRouter is not configured for RAG embeddings.");
   const estimatedTokens = Math.max(1, texts.reduce((sum, text) => sum + Math.ceil(text.length / 4), 0));
   const requestId = "rag-embedding:" + randomUUID();
-  await reserveDailyPaidModelBudget({
+  const reservation = await reserveDailyPaidModelBudget({
     estimatedCostUsd: estimatedTokens * EMBEDDING_USD_PER_MILLION_TOKENS / 1_000_000,
     model: EMBEDDING_MODEL,
     requestId,
   });
+  if (!reservation.allowed) {
+    throw new Error(
+      "Daily embedding budget reached: ₹" + reservation.spentInr.toFixed(2) +
+      " of ₹" + reservation.limitInr.toFixed(2) + " reserved in the last 24 hours."
+    );
+  }
 
   const response = await fetch("https://openrouter.ai/api/v1/embeddings", {
     method: "POST",
