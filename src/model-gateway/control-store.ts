@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { getStore as getPersistentStoreAdapter } from "@/src/storage/vercel-blob-compat";
 
 export type GatewayMode = "free" | "paid" | "local" | "mock";
 export type ModulePolicy = { enabled: boolean; mode: GatewayMode; selectedModelKey: string; monthlyBudgetInr: number; maxRequestCostInr: number; allowFallback: boolean };
@@ -27,14 +28,7 @@ function envScopeKey(env = process.env) {
   return "gateway-control:preview:" + (branch || env.CONTEXT || "local").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 80);
 }
 async function getStore(): Promise<BlobStore | null> {
-  if (process.env.NETLIFY !== "true" && !process.env.NETLIFY_BLOBS_CONTEXT) return null;
-  if (!storePromise) storePromise = (async () => {
-    try {
-      const { getStore } = await import("@netlify/blobs");
-      // Branch-prefixed keys below isolate preview settings from production settings.
-      return getStore("ux-direct-gateway-control") as unknown as BlobStore;
-    } catch { return null; }
-  })();
+  if (!storePromise) storePromise = Promise.resolve(getPersistentStoreAdapter("ux-direct-gateway-control") as unknown as BlobStore).catch(() => null);
   return storePromise;
 }
 function pricePolicy(inputUsd = 0, outputUsd = 0, fx = 97): ModelPolicy {
@@ -124,7 +118,7 @@ export async function saveGatewaySettings(input: unknown): Promise<GatewaySettin
   const store = await getStore();
   if (store) {
     try { await store.setJSON(key, settings); }
-    catch (error) { throw new Error("Could not persist gateway settings to Netlify Blobs: " + (error instanceof Error ? error.message : "unknown error")); }
+    catch (error) { throw new Error("Could not persist gateway settings to persistent storage: " + (error instanceof Error ? error.message : "unknown error")); }
   }
   return settings;
 }
