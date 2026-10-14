@@ -221,7 +221,7 @@ export async function getModelLearningContext(capability: string, projectKey = "
       averageLatencyMs,
       // $0.01 of average spend is worth ten routing points. Quality/reliability
       // remains dominant, but costs can break close ties among capable models.
-      routingScore: successRate * 100 + validationRate * 12 - averageEstimatedCostUsd * 1000,
+      routingScore: successRate * 100 + validationRate * 12 - (averageObservedCostUsd ?? averageEstimatedCostUsd) * 1000,
     };
   }
 
