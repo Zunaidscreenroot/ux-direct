@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { classifyBfciCapability, orderedModelIds } from "@/src/figma/bfci-capabilities";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import {
   callOpenRouterChat,
@@ -110,6 +111,11 @@ export async function POST(request: Request) {
 
   const variationIntent = body.intent === "design-variation";
   const lastUserPrompt = [...rawMessages].reverse().find((message) => message.role === "user")?.content ?? "";
+  const capability = classifyBfciCapability({
+    intent: typeof body.intent === "string" ? body.intent : "chat",
+    prompt: lastUserPrompt,
+    hasScreenshot: Boolean(previewDataUrl),
+  });
   const variationCountMatch = variationIntent
     ? /\\b(one|two|three|1|2|3)\\s+(?:new\\s+)?(?:screen\\s+)?variations?\\b/i.exec(lastUserPrompt)
     : null;
@@ -118,11 +124,27 @@ export async function POST(request: Request) {
     : 2;
   const designIntent = body.intent === "design-operation" || variationIntent;
   const visualIntent = Boolean(previewDataUrl);
-  const systemPrompt = variationIntent
+  const baseSystemPrompt = variationIntent
     ? requestVariationSystemPrompt(selectionContext, variationCount)
     : designIntent
       ? requestFigmaEditSystemPrompt(selectionContext)
       : conversationSystemPrompt(selectionContext);
+  const capabilityGuardrails = [
+    "Active UX Direct capability: " + capability.id + " — " + capability.label + ".",
+    "BFCI profile: DMI Housing Finance. Use only financial values, due dates, policies and product rules supplied in the prompt, screenshot, selected frame or approved reference context. Never invent an APR, fee, eligibility criterion, disclosure, consent requirement or regulatory claim.",
+    "Preserve every essential customer-facing financial amount, due date, account detail, status and consent meaning unless the user explicitly asks to change it.",
+    "Quality target: " + capability.targetQuality + "/100. Check: " + capability.qualityChecks.join("; ") + ".",
+    capability.id === "bfci.banking-risk-review"
+      ? "Provide potential UX risks and recommended mitigations, not legal/compliance certification. Clearly mark missing product-owner or compliance confirmation."
+      : "",
+    capability.id === "bfci.screen-audit"
+      ? "Base findings on what is actually visible in the supplied screenshot and the selected layer tree. Separate observed issues from inferences."
+      : "",
+    capability.id === "bfci.screen-redesign"
+      ? "This is a redesign capability, not a clone capability. Prefer substantial layout, spacing, hierarchy, card/section and CTA changes. Use the available operation budget to make a cohesive alternative rather than a handful of cosmetic edits."
+      : "",
+  ].filter(Boolean).join("\n\n");
+  const systemPrompt = baseSystemPrompt + "\n\n" + capabilityGuardrails;
 
   const inputMessages: PluginChatMessage[] = [
     { role: "system", content: systemPrompt },
@@ -132,67 +154,32 @@ export async function POST(request: Request) {
     })),
   ];
 
-  let selectedForInference = selectedModel;
-  let fallbackReason = "";
-  if (visualIntent && !selectedModel.supportsImages) {
-    const visionModel = modelOptions.find((model) =>
-      model.tier === "free-tier" && model.available && model.supportsImages);
-    if (visionModel) {
-      selectedForInference = visionModel;
-      fallbackReason = "The selected model cannot accept screenshots; UX Direct routed the request to an approved vision model.";
-    } else {
-      const paidVision = modelOptions.find((model) =>
-        model.tier === "paid" && model.available && model.supportsImages);
-      if (paidVision) {
-        selectedForInference = paidVision;
-        fallbackReason = "Free vision routing was unavailable; used the explicitly enabled paid vision model.";
-      } else {
-        return json(request, { error: "No approved vision model is configured for frame analysis." }, 503);
-      }
-    }
-  }
+  const availableById = new Map(modelOptions.map((model) => [model.id, model]));
+  const configuredOrder = orderedModelIds(capability);
+  let orderedCandidates = configuredOrder
+    .map((id) => availableById.get(id))
+    .filter((model): model is (typeof modelOptions)[number] => Boolean(model && model.available && model.automaticRouting !== false));
 
-  const lastUserIndex = inputMessages.map((message) => message.role).lastIndexOf("user");
-  if (visualIntent && lastUserIndex >= 0) {
-    const lastUserMessage = inputMessages[lastUserIndex];
-    const text = String(lastUserMessage.content);
-    inputMessages[lastUserIndex] = {
-      role: "user",
-      content: [
-        { type: "text", text: text + "\n\nInspect the supplied screenshot and the layer metadata. Be concrete and cite visible details." },
-        { type: "image_url", image_url: { url: previewDataUrl } },
-      ],
-    };
-  }
-
-  const candidates: typeof modelOptions = [];
+  // For an incidental screenshot attached to a small edit, upgrade only to a
+  // low-cost vision model if the free text route cannot consume the image.
   if (visualIntent) {
-    // Image-bearing requests must use an image-capable model even when the
-    // user's dropdown preference is a paid text-only model.
-    candidates.push(selectedForInference);
-    if (selectedForInference.tier !== "paid") {
-      const paidVision = modelOptions.find((model) =>
-        model.tier === "paid" && model.available && model.supportsImages);
-      if (paidVision) candidates.push(paidVision);
-    } else {
-      // If the preferred paid vision model fails or exhausts its output budget,
-      // retry once on the approved free vision model rather than returning an empty plan.
-      const freeVision = modelOptions.find((model) =>
-        model.tier === "free-tier" && model.available && model.supportsImages);
-      if (freeVision) candidates.push(freeVision);
+    orderedCandidates = orderedCandidates.filter((model) => model.supportsImages);
+    if (!orderedCandidates.length && capability.id === "bfci.screen-edit") {
+      const safeVision = availableById.get("anthropic/claude-haiku-5.5");
+      if (safeVision?.available) orderedCandidates = [safeVision];
     }
-  } else if (selectedModel.tier === "paid") {
-    candidates.push(selectedModel);
-  } else {
-    candidates.push(selectedModel);
-    for (const model of modelOptions) {
-      if (model.tier === "free-tier" && model.available && model.id !== selectedModel.id && candidates.length < 2) {
-        candidates.push(model);
-      }
-    }
-    const paidFallback = modelOptions.find((model) =>
-      model.tier === "paid" && model.available && model.id === "deepseek/deepseek-v4-flash-0731");
-    if (paidFallback) candidates.push(paidFallback);
+  }
+  // The user-selected model remains a preference, but the capability router
+  // owns the final choice. An image request must never land on a text-only model.
+  const candidates = orderedCandidates.slice(0, Math.max(1, capability.maxModelAttempts));
+  if (!candidates.length) {
+    return json(request, {
+      error: capability.paidRequired
+        ? "No approved paid model is available for this high-compute BFCI task."
+        : "No approved model is currently available for this task.",
+      capability: capability.id,
+      paidRequired: capability.paidRequired,
+    }, 503);
   }
 
   let lastError: unknown = null;
@@ -200,10 +187,10 @@ export async function POST(request: Request) {
     const candidate = candidates[index];
     try {
       const result = await callOpenRouterChat(candidate.id, inputMessages, {
-        maxTokens: variationIntent ? 2400 : designIntent ? 1400 : 1100,
+        maxTokens: variationIntent ? Math.min(3600, capability.maxOutputTokens) : capability.maxOutputTokens,
         temperature: variationIntent ? 0.15 : designIntent ? 0.1 : 0.35,
         timeoutMs: 30000,
-        reasoningEffort: designIntent ? "low" : undefined,
+        reasoningEffort: capability.reasoningEffort,
       });
       if (variationIntent) {
         let plan: unknown;
@@ -225,6 +212,10 @@ export async function POST(request: Request) {
       const wasFallback = candidate.id !== selectedModel.id;
       return json(request, {
         content: result.content,
+        capability: capability.id,
+        capabilityLabel: capability.label,
+        qualityTarget: capability.targetQuality,
+        paidRequired: capability.paidRequired,
         provider: "openrouter",
         model: result.model,
         tier: candidate.tier,
@@ -240,14 +231,10 @@ export async function POST(request: Request) {
       lastError = error;
       const status = error instanceof PluginOpenRouterError ? error.status : 502;
       if (status === 401 || status === 403 || status === 400) break;
-      // A selected paid text-only model can be substituted with a free vision model.
-      // If that free vision call returns empty content or fails, continue to the approved
-      // paid vision fallback rather than stopping merely because the dropdown is paid.
-      if (selectedModel.tier === "paid" && !visualIntent) break;
     }
   }
 
   const reason = lastError instanceof Error ? lastError.message : "No configured model returned a usable response.";
   const status = lastError instanceof PluginOpenRouterError ? lastError.status : 502;
-  return json(request, { error: reason, provider: "openrouter", model: selectedModel.id }, status >= 400 && status <= 599 ? status : 502);
+  return json(request, { error: reason, capability: capability.id, provider: "openrouter", model: selectedModel.id }, status >= 400 && status <= 599 ? status : 502);
 }
