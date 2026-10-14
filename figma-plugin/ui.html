@@ -371,10 +371,12 @@
           setModelStatus("ok", "Cached explanation", "Loaded the explanation saved with this run. No model call or additional tokens were needed.");
         } else if (payload.usage) {
           const tokens = payload.usage.totalTokens;
-          const cost = Number(payload.observedCostUsd);
+          const hasObservedCost = payload.observedCostUsd !== null && payload.observedCostUsd !== undefined &&
+            Number.isFinite(Number(payload.observedCostUsd));
+          const cost = hasObservedCost ? Number(payload.observedCostUsd) : null;
           setModelStatus("ok", "Trace explained", (payload.model || "Approved model") +
             (Number.isFinite(Number(tokens)) ? " · " + Number(tokens).toLocaleString() + " tokens" : "") +
-            (Number.isFinite(cost) ? " · $" + cost.toFixed(5) : "") +
+            (cost !== null ? " · $" + cost.toFixed(5) : "") +
             (payload.explanationStored === true ? " · cached for next time" : ""));
         }
       } catch (error) {
