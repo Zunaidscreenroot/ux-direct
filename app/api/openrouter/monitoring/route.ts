@@ -23,12 +23,12 @@ export async function GET(request: Request) {
   const [openRouter, learning, dailyBudget] = await Promise.all([
     getOpenRouterSpendMonitoring(),
     getModelLearningOverview(),
-    getHourlyPaidModelBudgetStatus(),
+    getDailyPaidModelBudgetStatus(),
   ]);
   return NextResponse.json({
     openRouter,
     learning,
-    hourlyBudget,
+    dailyBudget,
     checkedAt: new Date().toISOString(),
   }, { headers: pluginCorsHeaders(request) });
 }
