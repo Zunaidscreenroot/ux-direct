@@ -5,7 +5,7 @@
  */
 export function scopedNetlifyStoreName(
   baseName: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: Record<string, string | undefined> = process.env,
 ): string {
   const context = (env.CONTEXT || "").trim();
   if (!context || context === "production") return baseName;
