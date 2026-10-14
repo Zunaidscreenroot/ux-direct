@@ -1,5 +1,6 @@
 import { getStore } from "@netlify/blobs";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
+import { scopedNetlifyStoreName } from "@/src/connections/netlify-store-scope";
 
 const REGION = "us-east-2";
 const ACTIVITY_STORE = "ux-direct-connection-status";
@@ -19,10 +20,10 @@ type PluginSession = {
 };
 
 function activityStore() {
-  return getStore(ACTIVITY_STORE, { region: REGION, consistency: "strong" });
+  return getStore(scopedNetlifyStoreName(ACTIVITY_STORE), { region: REGION, consistency: "strong" });
 }
 function bridgeStore() {
-  return getStore(BRIDGE_STORE, { region: REGION, consistency: "strong" });
+  return getStore(scopedNetlifyStoreName(BRIDGE_STORE), { region: REGION, consistency: "strong" });
 }
 
 export async function recordChatGPTActivity(): Promise<void> {

@@ -1,4 +1,5 @@
 import { getStore } from "@netlify/blobs";
+import { scopedNetlifyStoreName } from "@/src/connections/netlify-store-scope";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { recordOperationalEvent } from "@/src/observability/event-log";
@@ -63,7 +64,7 @@ function isPluginRequest(request: Request): boolean {
 const STORE_NAME = "ux-direct-plugin-bridge";
 function bridgeStore() {
   // Netlify Functions provide site identity and Blobs authorization automatically.
-  return getStore(STORE_NAME, { region: "us-east-2", consistency: "strong" });
+  return getStore(scopedNetlifyStoreName(STORE_NAME), { region: "us-east-2", consistency: "strong" });
 }
 async function readJson<T>(pathname: string): Promise<T | null> {
   const store = bridgeStore();

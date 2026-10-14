@@ -58,7 +58,7 @@
   <div id="result" class="result" hidden></div>
   <footer>Planning sends prompt text and selected-node metadata only. UXD API Test Lab and its test fixtures are created once and reused. Test nodes, components, variables, and the storage probe are intentionally preserved between runs; no per-run cleanup is performed. No Figma REST API or OAuth access is used.</footer>
 <script>
-  const API = "https://uxdirect.netlify.app";
+  const API = "https://deploy-preview-31--uxdirect.netlify.app";
   const $ = (id) => document.getElementById(id);
   const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
   let verifiedFileKey = null;
@@ -111,7 +111,7 @@
         parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: command.commandId } }, "*");
       }
       $("connectionDot").className = "dot ok";
-      $("connectionText").textContent = "Netlify production connected · plugin bridge online";
+      $("connectionText").textContent = "Netlify preview connected · plugin bridge online";
       return { ok: true, error: "" };
     } catch (error) {
       const detail = error && error.message ? error.message : "Unknown bridge error";
@@ -311,7 +311,7 @@
     void sendTelemetry("Plan CTA clicked", "info", "User clicked Plan with UX Direct.");
     const prompt = $("prompt").value.trim();
     if (prompt.length < 5) { status("Add a little more detail to your brief (at least 5 characters)."); return; }
-    $("submit").disabled = true; $("result").hidden = true; status("Sending task to Netlify production backend…");
+    $("submit").disabled = true; $("result").hidden = true; status("Sending task to Netlify Deploy Preview…");
     const startedAt = Date.now();
     await sendTelemetry("Task request started", "info", "A planning request was initiated from the Figma plugin.", { project: $("project").value });
     try {
