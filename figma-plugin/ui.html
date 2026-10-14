@@ -987,7 +987,6 @@
               Array.isArray(proposed[index] && proposed[index].operations) &&
               proposed[index].operations.length >= 6 && proposed[index].operations.length <= 16
             );
-            );
             if (!valid) {
               appendMessage("assistant", "I couldn’t turn the model response into a safe variation plan. No frames were created and your original remains unchanged. Try asking for two variations with clear directions, such as “one compact and one higher-contrast version.”");
               setActivity("No variations were created.");
