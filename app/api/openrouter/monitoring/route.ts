@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
-import { isAllowedPluginOrigin, pluginCorsHeaders, getHourlyPaidModelBudgetStatus } from "@/src/figma/plugin-ai-api";
+import { isAllowedPluginOrigin, pluginCorsHeaders, getDailyPaidModelBudgetStatus } from "@/src/figma/plugin-ai-api";
 import { getModelLearningOverview } from "@/src/figma/model-learning";
 import { getOpenRouterSpendMonitoring } from "@/src/figma/openrouter-monitoring";
 
@@ -20,15 +20,15 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Figma file is not allowlisted." }, { status: 403, headers: pluginCorsHeaders(request) });
   }
 
-  const [openRouter, learning, hourlyBudget] = await Promise.all([
+  const [openRouter, learning, dailyBudget] = await Promise.all([
     getOpenRouterSpendMonitoring(),
     getModelLearningOverview(),
-    getHourlyPaidModelBudgetStatus(),
+    getDailyPaidModelBudgetStatus(),
   ]);
   return NextResponse.json({
     openRouter,
     learning,
-    hourlyBudget,
+    dailyBudget,
     checkedAt: new Date().toISOString(),
   }, { headers: pluginCorsHeaders(request) });
 }
