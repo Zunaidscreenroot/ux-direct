@@ -6,6 +6,7 @@
 export type BfciCapabilityId =
   | "bfci.chat"
   | "bfci.copy"
+  | "bfci.screen-edit"
   | "bfci.screen-audit"
   | "bfci.screen-redesign"
   | "bfci.screen-generation"
@@ -73,6 +74,24 @@ export const BFCI_CAPABILITIES: Record<BfciCapabilityId, BfciCapability> = {
     targetQuality: 90,
     maxEstimatedCostUsd: 0,
     qualityChecks: ["plain language", "no invented financial terms", "preserve supplied amounts and dates"],
+  },
+  "bfci.screen-edit": {
+    id: "bfci.screen-edit",
+    label: "Small, scoped Figma edit",
+    description: "A bounded content or property edit using the existing layer tree; not a redesign.",
+    routingClass: "free-text",
+    primaryModels: ["nvidia/nemotron-3.5-lightning:free", "nvidia/nemotron-3-ultra-550b-a55b:free"],
+    fallbackModels: [],
+    requiresImage: false,
+    paidRequired: false,
+    structuredOutput: true,
+    reasoningEffort: "low",
+    maxOutputTokens: 1200,
+    maxModelAttempts: 2,
+    maxRepairPasses: 0,
+    targetQuality: 90,
+    maxEstimatedCostUsd: 0,
+    qualityChecks: ["targets selected nodes only", "safe operation schema", "no unrequested changes"],
   },
   "bfci.screen-audit": {
     id: "bfci.screen-audit",
@@ -247,36 +266,35 @@ export interface BfciTaskInput {
 export function classifyBfciCapability(input: BfciTaskInput): BfciCapability {
   const prompt = input.prompt.toLowerCase();
   const intent = input.intent || "chat";
+
+  // These are the execution paths supported by the current Figma bridge.
+  // Additional registry entries remain defined for staged implementation.
   if (intent === "design-variation") return BFCI_CAPABILITIES["bfci.screen-redesign"];
-  if (/\b(?:journey|user flow|flowchart|multi[- ]?screen|end[- ]to[- ]end flow|wireframes for|screen flow|vkyc flow|cpv flow)\b/.test(prompt)) {
-    return BFCI_CAPABILITIES["bfci.journey-design"];
+
+  if (input.hasScreenshot && /\b(?:scan|visually|visual|audit|review|critique|inspect|look at|evaluate|assess|usability)\b/.test(prompt) &&
+      !/\b(?:redesign|create|make|build|generate|variation|variant|restyle)\b/.test(prompt)) {
+    return BFCI_CAPABILITIES["bfci.screen-audit"];
   }
-  if (/\b(?:responsive|desktop version|mobile version|tablet|breakpoint|adapt(?:ation)? to|mobile to desktop|desktop to mobile)\b/.test(prompt)) {
-    return BFCI_CAPABILITIES["bfci.responsive-adaptation"];
-  }
-  if (/\b(?:design system|component library|tokens|variants|auto[- ]layout|design tokens)\b/.test(prompt)) {
-    return BFCI_CAPABILITIES["bfci.design-system"];
-  }
-  if (/\b(?:compliance|consent|credit bureau|fees|charges|interest rate|apr|eligibility disclosure|customer control|hidden charge|deceptive|misleading|banking risk|transparency review)\b/.test(prompt)) {
+  if (/\b(?:compliance|consent|credit bureau|fees|charges|interest rate|apr|eligibility disclosure|customer control|hidden charge|deceptive|misleading|banking risk|transparency review)\b/.test(prompt) &&
+      !/\b(?:change|edit|modify|update|create|redesign|apply)\b/.test(prompt)) {
     return BFCI_CAPABILITIES["bfci.banking-risk-review"];
   }
-  if (/\b(?:new screen|generate screen|create screen|build screen|design screen|make a screen|new flow screen)\b/.test(prompt)) {
-    return BFCI_CAPABILITIES["bfci.screen-generation"];
-  }
-  if (/\b(?:handoff|developer specs|implementation notes|dev notes)\b/.test(prompt)) {
+  if (/\b(?:handoff|developer specs|implementation notes|dev notes)\b/.test(prompt) && intent === "chat") {
     return BFCI_CAPABILITIES["bfci.handoff"];
   }
-  if (/\b(?:visual qa|quality gate|compare before and after|check the variation|validate the screen|evaluate the edited screen)\b/.test(prompt)) {
-    return BFCI_CAPABILITIES["bfci.visual-qa"];
+
+  if (intent === "design-operation") {
+    const substantial = /\b(?:redesign|rework|restructure|moderni[sz]e|substantial|layout|hierarchy|responsive|new screen|make.+(?:better|clearer|compact|modern|polished)|improve the (?:layout|hierarchy|screen))\b/.test(prompt);
+    return input.hasScreenshot && substantial
+      ? BFCI_CAPABILITIES["bfci.screen-redesign"]
+      : BFCI_CAPABILITIES["bfci.screen-edit"];
+  }
+
+  if (/\b(?:writeup|write[- ]?up|copy|microcopy|button label|error message|helper text|empty state|success message|toast|title|subtitle)\b/.test(prompt)) {
+    return BFCI_CAPABILITIES["bfci.copy"];
   }
   if (input.hasScreenshot && /\b(?:scan|visually|visual|audit|review|critique|inspect|look at|evaluate|assess|usability)\b/.test(prompt)) {
     return BFCI_CAPABILITIES["bfci.screen-audit"];
-  }
-  if (intent === "design-operation") return input.hasScreenshot
-    ? BFCI_CAPABILITIES["bfci.screen-redesign"]
-    : BFCI_CAPABILITIES["bfci.copy"];
-  if (/\b(?:writeup|write[- ]?up|copy|microcopy|button label|error message|helper text|empty state|success message|toast|title|subtitle)\b/.test(prompt)) {
-    return BFCI_CAPABILITIES["bfci.copy"];
   }
   return BFCI_CAPABILITIES["bfci.chat"];
 }
