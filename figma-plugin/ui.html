@@ -39,7 +39,7 @@
   <header><div class="brand"><span class="mark">ux</span> UX Direct</div><span class="pill">CONVERSATIONAL COPILOT · OPENROUTER</span></header>
   <div class="connection" aria-live="polite"><span id="connectionDot" class="dot"></span><strong id="connectionText">Checking backend connection…</strong></div>
   <h1>Conversational Copilot</h1>
-  <p class="sub">Describe your UX task in natural language. Powered by Gemini when the Gemini free-tier provider is configured. UX Direct prepares a structured plan; the native API self-test runs only inside the approved file's dedicated UXD API Test Lab page.</p>
+  <p class="sub">Describe your UX task in natural language. Select a model from the gateway catalog and check provider readiness. Real model inference requires server-side provider credentials; no API keys are stored in this plugin.</p>
   <section class="selection" aria-live="polite" style="margin:10px 0"><strong>Model gateway</strong><p id="gatewaySummary" class="muted" style="margin:7px 0">Loading provider and model status…</p><label for="modelSelect" style="margin-top:8px">Model</label><select id="modelSelect"><option value="">Loading models…</option></select><button id="testModel" class="secondary" type="button" style="width:100%;margin-top:8px">Test model availability</button><p id="modelTestResult" class="muted" style="margin:7px 0 0">Checks configuration only; no inference call is made.</p></section>
   <label for="project">Project</label>
   <select id="project"><option value="general">General UX</option><option value="express-computers">Express Computers</option><option value="dmi-finance">DMI Finance</option></select>
