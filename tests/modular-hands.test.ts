@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDirectorPlanningContext, validateDirectorPlan, type DirectorPlan } from "../src/core/director-controller";
-import { getHandDefinition, UX_HANDS } from "../src/core/hand-contracts";
+import { getHandDefinition, UX_HANDS, type HandTaskRequest } from "../src/core/hand-contracts";
 import {
   FixtureWorkspaceContextResolver,
   WORKSPACE_FIXTURES,
@@ -328,4 +328,17 @@ test("world-model relations are returned only when both endpoints are visible", 
   assert.deepEqual(world.getRelationsForFact("visible-dmi", query), []);
   assert.deepEqual(world.listRelations(query), []);
   assert.deepEqual(world.getRelationsForFact("hidden-ujjivan", query), []);
+});
+
+test("hand contract accepts a new hand and exploratory task without a fixed capability or workspace profile", () => {
+  const request: HandTaskRequest = {
+    contractVersion: "1.0",
+    requestId: "req-exploratory",
+    idempotencyKey: "idem-exploratory",
+    handId: "future-specialist-hand",
+    objective: "Discover how to improve this unfamiliar product",
+    userPrompt: "Inspect the available evidence and decide the next best action.",
+  };
+  assert.equal(request.workspaceId, undefined);
+  assert.equal(request.preferredToolIds, undefined);
 });
