@@ -183,8 +183,8 @@
       const spent = Number(budget.spentInr);
       const limit = Number(budget.limitInr);
       const remaining = Number(budget.remainingInr);
-      target.textContent = "AI budget · ₹" + spent.toFixed(2) + " / ₹" + limit.toFixed(0) + " used in " + Number(budget.windowMinutes || 1440) + " min · ₹" + remaining.toFixed(2) + " left";
-      target.title = "Rolling 24-hour reservations include a a conservative safety margin. Successful calls are reconciled to provider-reported cost; uncertain failed attempts remain reserved for 24 hours.";
+      target.textContent = "AI budget · ₹" + spent.toFixed(2) + " / ₹" + limit.toFixed(0) + " used in " + (Number(budget.windowMinutes || 1440) >= 1440 ? "24h" : "window") + " · ₹" + remaining.toFixed(2) + " left";
+      target.title = "Rolling 24-hour reservations include a conservative safety margin. Successful calls are reconciled to provider-reported cost; uncertain failed attempts remain reserved for 24 hours.";
     }
 
     function updateOpenRouterSpendStatus(monitoring) {
