@@ -954,6 +954,7 @@
       const text = String(prompt || "");
       const variation = Boolean(flags && flags.variationIntent);
       const visual = Boolean(flags && flags.visualIntent);
+      const audit = Boolean(flags && flags.auditIntent);
       const design = Boolean(flags && flags.designIntent);
       const highCompute = Boolean(flags && flags.highComputeIntent);
       const ids = modelOptions.map(model => model.id);
@@ -998,7 +999,7 @@
         modelOrder = [freeText, freeTextFallback];
       }
       const filtered = choose(modelOrder);
-      const uxdIrPipeline = variation ? {
+      const uxdIrPipeline = (variation || audit) ? {
         v: 1,
         visionModels: choose([freeVision, glmVision, kimiVision, haiku]),
         reasoningModels: choose([freeText, freeTextFallback, deepseekVision, haiku])
@@ -1047,6 +1048,7 @@
       const visualIntent = /\b(scan|look\s+at|inspect|review|audit|critique|improv(?:e|ement|ements)|better|redesign|layout|spacing|alignment|screen|screenshot|compare|design quality|hierarchy|analy[sz]e|evaluation|evaluate|assess|what\s+(?:is|looks)\s+wrong|find\s+(?:issues|problems)|feedback|visual design|usability|affordance|contrast|typography|white\s*space|overflow|clipping)\b/i.test(prompt) || variationIntent;
       // Compute this before visual preflight: its consent text reads designIntent.
       const designIntent = variationIntent || requestsFigmaEdit(prompt);
+      const auditIntent = visualIntent && !designIntent && /\\b(?:audit|review|critique|assess|evaluate|usability|accessibility|find\\s+(?:issues|problems)|what\\s+(?:is|looks)\\s+wrong|risk\\s+review)\\b/i.test(prompt);
       if (visualIntent && !currentSelection.previewDataUrl) {
         appendMessage("assistant", "I can’t scan this frame visually yet because its screenshot preview is not ready. Select the frame in Figma and wait until the cockpit says “Visual preview ready,” then retry. No inference or document changes were made.");
         return;
@@ -1116,7 +1118,7 @@
       const variationCount = variationMatch
         ? ({ one: 1, two: 2, three: 3, "1": 1, "2": 2, "3": 3 })[variationMatch[1].toLowerCase()] || 2
         : (variationIntent ? 2 : 0);
-      const clientRoute = resolveClientRoute(prompt, { variationIntent, visualIntent, designIntent, highComputeIntent });
+      const clientRoute = resolveClientRoute(prompt, { variationIntent, visualIntent, auditIntent, designIntent, highComputeIntent });
       const clientSystemPrompt = buildClientSystemPrompt(prompt, clientRoute.capabilityId, selectedNodes, variationCount);
       try {
         const response = await fetch(API + "/api/assistant/chat", {
@@ -1129,6 +1131,7 @@
             model: currentModel.id,
             intent: variationIntent ? "design-variation" : designIntent ? "design-operation" : "chat",
             responseMode: designIntent ? "action" : "explain",
+            auditIntent,
             clientRoute,
             systemPrompt: clientSystemPrompt,
             messages: chatHistory.slice(-6),
