@@ -69,7 +69,8 @@ begin
         or (p_project_key in ('DMI_HFC', 'UJJIVAN_SFB') and c.project_key = 'INDIA_BFCI_SHARED')
       )
       and (d.search_vector @@ v_query or c.search_vector @@ v_query)
-    order by similarity desc, d.updated_at desc, c.chunk_index asc
+    order by (ts_rank_cd(d.search_vector, v_query) + ts_rank_cd(c.search_vector, v_query)) desc,
+      d.updated_at desc, c.chunk_index asc
     limit greatest(1, least(coalesce(p_match_count, 6), 10));
 end;
 $function$;
