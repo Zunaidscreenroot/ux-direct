@@ -22,10 +22,6 @@ export type UXHandId = string;
  * registered in the workspace store without adding new Brain code paths.
  */
 export type WorkspaceId = string;
-/** @deprecated Use WorkspaceId. Kept temporarily for migration compatibility. */
-export type ProjectProfileId = WorkspaceId;
-
-export type ProjectLifecycle = "brownfield" | "greenfield";
 export type HandRole = "primary" | "specialist";
 export type HandInvocation = "default" | "on-demand";
 export type TaskRisk = "low" | "medium" | "high";
@@ -74,10 +70,12 @@ export interface HandTaskRequest {
   requestId: string;
   idempotencyKey: string;
   handId: UXHandId;
-  capabilityId: string;
-  workspaceId: WorkspaceId;
+  /** Optional scope hint; omit it for exploratory or cross-product reasoning. */
+  workspaceId?: WorkspaceId;
   objective: string;
   userPrompt: string;
+  /** Optional preference only; the Brain discovers and validates the actual tools. */
+  preferredToolIds?: string[];
   context?: HandTaskContext;
   constraints?: HandTaskConstraints;
 }
@@ -86,8 +84,9 @@ export interface HandTaskResult {
   contractVersion: "1.0";
   requestId: string;
   handId: UXHandId;
-  capabilityId: string;
-  workspaceId: WorkspaceId;
+  /** Runtime plan identity, not a project/capability-specific workflow ID. */
+  planId?: string;
+  workspaceId?: WorkspaceId;
   status: "completed" | "needs-review" | "blocked" | "failed";
   summary: string;
   outputs: Array<{
