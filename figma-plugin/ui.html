@@ -34,6 +34,7 @@
     #selectionPreview { flex:0 0 auto; width:132px; height:76px; object-fit:contain; border:1px solid var(--figma-color-border); border-radius:6px; background:var(--figma-color-bg); }
     .model-select { flex:1 1 auto; width:0; min-width:0; max-width:none; padding:5px 7px; border:1px solid var(--figma-color-border); border-radius:8px; background:var(--figma-color-bg); color:var(--figma-color-text); font:inherit; font-size:10px; }
     #modelStatus { flex:0 1 auto; max-width:34%; }
+    .budget-status { flex:0 0 auto; padding:3px 1px 5px; color:var(--figma-color-text-secondary); font-size:9px; line-height:1.3; overflow-wrap:anywhere; }
     .muted { color:var(--figma-color-text-secondary); }
     .chat { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; overflow:hidden; }
     .chatlog { display:flex; flex:1 1 auto; flex-direction:column; gap:12px; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px 2px 14px; scroll-behavior:smooth; }
@@ -94,6 +95,7 @@
     </div>
     <button id="testPaidModel" class="model-test" type="button" hidden disabled title="Run one explicit, budget-checked paid inference test. A small provider charge may apply.">Test</button>
   </div>
+  <div id="budgetStatus" class="budget-status" aria-live="polite" title="Shared rolling 60-minute budget. Paid inference is blocked if this budget cannot be verified.">AI budget · ₹50/hour · checking usage…</div>
 
   <section class="selection-panel" aria-label="Current Figma selection" aria-live="polite">
     <div class="selection-copy">
@@ -167,6 +169,21 @@
       $("healthStatusText").textContent = label;
       $("healthStatus").title = state === "ok" ? "All executed health checks passed. Click for details." : "Click to inspect Plugin API health-check details.";
     }
+    function updateHourlyBudgetStatus(budget) {
+      const target = $("budgetStatus");
+      if (!target) return;
+      if (!budget || !Number.isFinite(Number(budget.spentInr)) || !Number.isFinite(Number(budget.limitInr)) || !Number.isFinite(Number(budget.remainingInr))) {
+        target.textContent = "AI budget · ₹50/hour · live balance unavailable; paid calls fail closed";
+        target.title = "The server-side budget guard remains active. If the transactional ledger cannot be checked, paid inference is blocked.";
+        return;
+      }
+      const spent = Number(budget.spentInr);
+      const limit = Number(budget.limitInr);
+      const remaining = Number(budget.remainingInr);
+      target.textContent = "AI budget · ₹" + spent.toFixed(2) + " / ₹" + limit.toFixed(0) + " used in " + Number(budget.windowMinutes || 60) + " min · ₹" + remaining.toFixed(2) + " left";
+      target.title = "Rolling 60-minute reservations include a conservative safety margin and maximum token budget. Failed provider attempts remain reserved for safety until they age out.";
+    }
+
     function setModelStatus(state, label, detail) {
       $("modelStatus").className = "status-tag " + state;
       $("modelDot").className = "dot";
@@ -371,6 +388,7 @@
           || modelOptions.find(model => model.tier === "free-tier");
         selector.value = preferred.id;
         await checkSelectedModel();
+        updateHourlyBudgetStatus(payload.hourlyBudget);
       } catch (error) {
         const detail = error && error.message ? error.message : "Could not load models.";
         selector.disabled = true;
@@ -905,6 +923,7 @@
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
+        if (data.hourlyBudget) updateHourlyBudgetStatus(data.hourlyBudget);
         if (designIntent) {
           if (data.routingStrategy === "vision-direct") {
             const routeNote = data.fallbackReason ? data.fallbackReason + " " : "";
