@@ -52,7 +52,7 @@ export const WORKSPACE_FIXTURES: readonly UXWorkspaceContext[] = [
       sharedKnowledgeNamespaces: ["bfci-generic"],
       allowCrossProjectMemory: false,
     },
-    metadata: { operatingMode: "existing-product" },
+    metadata: { contextSource: "initial-seed" },
   },
   {
     id: "dmi-wealth",
