@@ -9,9 +9,9 @@
   ],
   "networkAccess": {
     "allowedDomains": [
-      "https://uxdirect.netlify.app"
+      "https://ux-direct-hiz39dxqn-screenroot.vercel.app"
     ],
-    "reasoning": "UX Direct sends the user's prompt and selected node metadata to its backend to create a task plan. It does not upload file contents or modify the design in this MVP."
+    "reasoning": "UX Direct sends the user's prompt and selected node metadata to the Vercel Preview backend for task planning and health telemetry. Provider-backed model execution is only available when the backend gateway is configured."
   },
   "enablePrivatePluginApi": true,
   "documentAccess": "dynamic-page"
