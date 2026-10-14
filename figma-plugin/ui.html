@@ -917,7 +917,7 @@
       }
       if (visualIntent || highComputeIntent) {
         const detail = variationIntent
-          ? "This is a high-compute screen redesign. UX Direct will route to a suitable paid visual-design model, with an estimated per-task ceiling of US$0.12 and a shared hard limit of ₹50 across any rolling 24 hours. It will propose exactly the requested number of new sibling frames. Your original remains unchanged until you approve the plan."
+          ? "This is a high-compute screen redesign. UX Direct will route to a suitable paid visual-design model, with an estimated per-task ceiling of US$0.08 and a shared hard limit of ₹50 across any rolling 24 hours. It will propose exactly the requested number of new sibling frames. Your original remains unchanged until you approve the plan."
           : designIntent
             ? "This request proposes Figma changes, so UX Direct will prepare a structured edit plan for your review."
             : currentModel.tier === "paid"
@@ -928,7 +928,7 @@
         const consentIntro = visualIntent
           ? "Visual review sends the selected screenshot and prompt to UX Direct."
           : "This request may require a paid model for high-compute BFCI design work.";
-        const consent = window.confirm(consentIntro + "\n\n" + detail + "\n\nThe backend reserves estimated spend against the shared ₹50 rolling 24-hour limit before every paid call. Reservations include a safety buffer; actual charges can differ with image and reasoning-token usage. Creating Figma frames requires a separate confirmation. Continue?");
+        const consent = window.confirm(consentIntro + "\n\n" + detail + "\n\nThe backend reserves estimated spend against the shared ₹50 daily limit before every paid call. Reservations include a safety buffer; actual charges can differ with image and reasoning-token usage. Creating Figma frames requires a separate confirmation. Continue?");
         if (!consent) return;
       }
 
