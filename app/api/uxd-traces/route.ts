@@ -51,6 +51,7 @@ export async function POST(request: Request) {
   if (!projectKey) return json(request, { error: "Select a valid project trace scope." }, 400);
   const result = await updateUxdIrTraceStatus({
     runId: record.runId,
+    projectKey,
     status: record.status,
     executionResult: {
       ...(typeof record.appliedOperations === "number" && Number.isFinite(record.appliedOperations) ? { appliedOperations: Math.max(0, Math.min(500, record.appliedOperations)) } : {}),
