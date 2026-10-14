@@ -395,7 +395,7 @@ export async function POST(request: Request) {
   const requestedHeaderVersion = request.headers.get("mcp-protocol-version") || "";
   const responseProtocolVersion = (MCP_PROTOCOLS as readonly string[]).includes(requestedHeaderVersion)
     ? requestedHeaderVersion
-    : MCP_PROTOCOLS[0];
+    : "2025-03-26";
 
   if (parsed.method.startsWith("notifications/") || requestId === null && parsed.method === "notifications/initialized") {
     return new Response(null, { status: 202, headers: { "Cache-Control": "no-store" } });
