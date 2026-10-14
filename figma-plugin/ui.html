@@ -246,19 +246,48 @@
       if (summary) summary.textContent = "₹" + spent.toFixed(2) + " reserved out of ₹" + limit.toFixed(2) + " in the rolling 24-hour window · ₹" + remaining.toFixed(2) + " remaining.";
     }
 
-    function updateDailyBudgetLedger(ledger) {
+    function updateDailyBudgetLedger(ledger, budget, checkedAtValue) {
       const meta = $("budgetLedgerMeta");
       const summary = $("budgetLedgerSummary");
       const list = $("budgetLedgerEntries");
       if (!meta || !summary || !list) return;
       list.replaceChildren();
       if (!ledger || ledger.available !== true || !Array.isArray(ledger.entries)) {
-        meta.textContent = "Live ledger unavailable";
-        summary.textContent = ledger && ledger.error ? String(ledger.error) : "The server returned no reservation ledger.";
-        const empty = document.createElement("div");
-        empty.className = "budget-ledger-empty";
-        empty.textContent = "Could not load live reservation rows. Paid inference remains fail-closed if the server cannot verify budget usage.";
-        list.appendChild(empty);
+        const aggregateAvailable = budget &&
+          Number.isFinite(Number(budget.spentInr)) &&
+          Number.isFinite(Number(budget.limitInr)) &&
+          Number.isFinite(Number(budget.remainingInr));
+        const checkedAt = checkedAtValue ? new Date(checkedAtValue) : new Date();
+        meta.textContent = aggregateAvailable
+          ? "Updated " + checkedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) + " · aggregate available"
+          : "Live ledger unavailable";
+        if (aggregateAvailable) {
+          summary.textContent = "Aggregate balance is live: ₹" + Number(budget.spentInr).toFixed(2) +
+            " reserved of ₹" + Number(budget.limitInr).toFixed(2) + " in 24h · ₹" +
+            Number(budget.remainingInr).toFixed(2) + " remaining. Individual rows are not exposed by the current backend build yet.";
+          const row = document.createElement("div");
+          row.className = "budget-ledger-row";
+          const time = document.createElement("span");
+          time.className = "budget-ledger-time";
+          time.textContent = "Last 24h";
+          const model = document.createElement("span");
+          model.className = "budget-ledger-model";
+          model.textContent = "Shared AI budget";
+          const state = document.createElement("span");
+          state.className = "budget-ledger-state";
+          state.textContent = "Aggregate";
+          const amount = document.createElement("span");
+          amount.className = "budget-ledger-amount";
+          amount.textContent = "₹" + Number(budget.spentInr).toFixed(3);
+          row.append(time, model, state, amount);
+          list.appendChild(row);
+        } else {
+          summary.textContent = ledger && ledger.error ? String(ledger.error) : "The server returned no reservation ledger.";
+          const empty = document.createElement("div");
+          empty.className = "budget-ledger-empty";
+          empty.textContent = "Could not verify live budget usage. Paid inference remains fail-closed if the server cannot verify the budget.";
+          list.appendChild(empty);
+        }
         return;
       }
       const checkedAt = ledger.checkedAt ? new Date(ledger.checkedAt) : new Date();
@@ -360,13 +389,13 @@
         updateOpenRouterSpendStatus(payload.openRouter);
         updateLearningStatus(payload.learning);
         updateDailyBudgetStatus(payload.dailyBudget || null);
-        updateDailyBudgetLedger(payload.dailyBudgetLedger || null);
+        updateDailyBudgetLedger(payload.dailyBudgetLedger || null, payload.dailyBudget || null, payload.checkedAt);
       } catch (error) {
         const detail = error && error.message ? error.message : "Monitoring request failed.";
         updateOpenRouterSpendStatus({ configured: true, available: false, error: detail });
         updateLearningStatus({ available: false });
         updateDailyBudgetStatus(null);
-        updateDailyBudgetLedger({ available: false, error: detail });
+        updateDailyBudgetLedger({ available: false, error: detail }, null);
       } finally {
         monitoringInFlight = false;
       }
