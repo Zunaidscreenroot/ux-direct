@@ -16,11 +16,11 @@ export const UX_HAND_IDS = [
 
 export type UXHandId = (typeof UX_HAND_IDS)[number];
 
-export type ProjectProfileId =
-  | "dmi-hfc"
-  | "dmi-finance"
-  | "dmi-wealth"
-  | "ujjivan-sfb";
+/**
+ * Workspace IDs are data, not a closed enum. A new client/project can be
+ * registered in the workspace store without adding new Brain code paths.
+ */
+export type ProjectProfileId = string;
 
 export type ProjectLifecycle = "brownfield" | "greenfield";
 export type HandRole = "primary" | "specialist";
