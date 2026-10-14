@@ -146,6 +146,30 @@ export async function retrieveProjectKnowledge(projectValue: string, query: stri
   if (!config) return { available: false, projectKey, hits: [], context: "" };
 
   try {
+    // Do not pay for a query embedding while the active project has no approved
+    // documents. The check is cheap and cached; the database is the source of truth.
+    const namespaces = projectKey === "INDIA_BFCI_SHARED"
+      ? "INDIA_BFCI_SHARED"
+      : projectKey + ",INDIA_BFCI_SHARED";
+    const readinessQuery = new URLSearchParams({
+      select: "id",
+      status: "eq.approved",
+      project_key: "in.(" + namespaces + ")",
+      limit: "1",
+    });
+    const readinessResponse = await fetch(config.url + "/rest/v1/uxd_knowledge_documents?" + readinessQuery.toString(), {
+      method: "GET",
+      headers: { apikey: config.key, Authorization: "Bearer " + config.key, Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!readinessResponse.ok) return { available: false, projectKey, hits: [], context: "" };
+    const approvedDocuments: unknown = await readinessResponse.json().catch(() => null);
+    if (!Array.isArray(approvedDocuments) || approvedDocuments.length === 0) {
+      const empty = { available: true, projectKey, hits: [], context: "" };
+      contextCache.set(cacheKey, { expiresAt: Date.now() + 60_000, result: empty });
+      return empty;
+    }
     const { embeddings } = await embedBatch([query.trim().slice(0, 4000)]);
     const response = await fetch(config.url + "/rest/v1/rpc/match_uxd_knowledge", {
       method: "POST",
