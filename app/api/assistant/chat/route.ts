@@ -40,6 +40,18 @@ function isUxdIrTrace(value: unknown): value is UxdIrTrace {
     typeof value.createdAt === "string" &&
     Array.isArray(value.stages);
 }
+
+type UxdIrPipelineResultShape = {
+  trace: UxdIrTrace;
+  estimatedCostUsd: number;
+  dailyBudgetInfo?: DailyPaidBudgetReservation | null;
+};
+
+function isUxdIrPipelineResult(value: unknown): value is UxdIrPipelineResultShape {
+  return isRecord(value) &&
+    isUxdIrTrace(value.trace) &&
+    typeof value.estimatedCostUsd === "number";
+}
 function isChatHistoryMessage(value: unknown): value is ChatHistoryMessage {
   if (!isRecord(value)) return false;
   return (value.role === "user" || value.role === "assistant") &&
@@ -423,7 +435,7 @@ export async function POST(request: Request) {
             }
             return value;
           })();
-      if ("trace" in result && isUxdIrTrace(result.trace)) {
+      if (isUxdIrPipelineResult(result)) {
         uxdIrTrace = result.trace;
         reservedEstimatedCostUsd += result.estimatedCostUsd;
         dailyBudgetInfo = result.dailyBudgetInfo || dailyBudgetInfo;
