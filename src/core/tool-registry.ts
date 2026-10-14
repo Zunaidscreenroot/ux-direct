@@ -115,13 +115,11 @@ export class UXToolRegistry {
       throw new Error(`Tool is not allowed for this execution: ${id}`);
     }
     if (!tool.available()) throw new Error(`Tool is currently unavailable: ${id}`);
-    const writeNeedsApproval = tool.operation === "write"
-      && (tool.requiresApproval || tool.risk === "high" || tool.risk === "critical");
-    if (writeNeedsApproval && !context.humanApproved) {
-      throw new Error(`Human approval is required before invoking write tool: ${id}`);
-    }
-    if (tool.risk === "critical" && !context.humanApproved) {
-      throw new Error(`Critical-risk tool requires explicit approval: ${id}`);
+    const requiresExplicitApproval = tool.requiresApproval
+      || tool.risk === "critical"
+      || (tool.operation === "write" && tool.risk === "high");
+    if (requiresExplicitApproval && !context.humanApproved) {
+      throw new Error(`Human approval is required before invoking tool: ${id}`);
     }
     if ((tool.costClass === "paid-model" || tool.costClass === "external-service")
       && !context.paidBudgetReserved) {
