@@ -10,7 +10,8 @@ export interface ToolExecutionContext {
   workspaceId?: string;
   humanApproved: boolean;
   paidBudgetReserved: boolean;
-  allowedToolIds?: readonly string[];
+  /** Server-approved tool IDs for this exact execution; required and fail-closed. */
+  allowedToolIds: readonly string[];
 }
 
 export interface UXToolDefinition {
@@ -110,7 +111,7 @@ export class UXToolRegistry {
   ): Promise<unknown> {
     const tool = this.tools.get(id);
     if (!tool) throw new Error(`Unknown tool: ${id}`);
-    if (context.allowedToolIds && !context.allowedToolIds.includes(id)) {
+    if (!context.allowedToolIds.includes(id)) {
       throw new Error(`Tool is not allowed for this execution: ${id}`);
     }
     if (!tool.available()) throw new Error(`Tool is currently unavailable: ${id}`);
