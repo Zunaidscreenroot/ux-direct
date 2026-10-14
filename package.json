@@ -14,8 +14,7 @@
     "next": "^15.5.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "zod": "^4.1.0",
-    "@netlify/blobs": "^11.1.4"
+    "zod": "^4.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
