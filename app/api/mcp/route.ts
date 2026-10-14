@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 const PROJECT_KEY = "website-revamp";
 const TABLE = "uxd_memory_items";
-const MCP_PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
+const MCP_PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 const MEMORY_TYPES = [
   "product_requirement",
   "approved_pattern",
@@ -387,6 +387,10 @@ export async function POST(request: Request) {
   }
   const requestId = hasId(parsed.id) ? parsed.id : null;
   const params = isRecord(parsed.params) ? parsed.params : {};
+  const requestedHeaderVersion = request.headers.get("mcp-protocol-version") || "";
+  const responseProtocolVersion = (MCP_PROTOCOLS as readonly string[]).includes(requestedHeaderVersion)
+    ? requestedHeaderVersion
+    : MCP_PROTOCOLS[0];
 
   if (parsed.method.startsWith("notifications/") || requestId === null && parsed.method === "notifications/initialized") {
     return new Response(null, { status: 202, headers: { "Cache-Control": "no-store" } });
@@ -394,7 +398,7 @@ export async function POST(request: Request) {
   if (requestId === null) return rpcError(null, -32600, "Requests must include a JSON-RPC id.");
   if (parsed.method === "initialize") {
     const requestedVersion = typeof params.protocolVersion === "string" ? params.protocolVersion : "";
-    const protocolVersion = (MCP_PROTOCOLS as readonly string[]).includes(requestedVersion) ? requestedVersion : MCP_PROTOCOLS[1];
+    const protocolVersion = (MCP_PROTOCOLS as readonly string[]).includes(requestedVersion) ? requestedVersion : MCP_PROTOCOLS[0];
     return rpc(requestId, {
       protocolVersion,
       capabilities: { tools: { listChanged: false } },
@@ -402,8 +406,8 @@ export async function POST(request: Request) {
       instructions: "UX Direct is a distinct participant in the current ChatGPT conversation. Use ux_direct_consult when asked to involve UX Direct or compare its position with ChatGPT. Only call ux_direct_teach on explicit user requests to remember a durable instruction. The brain's memory scope is website-revamp for Indian BFSI clients and excludes DMI-specific knowledge.",
     }, protocolVersion);
   }
-  if (parsed.method === "ping") return rpc(requestId, {});
-  if (parsed.method === "tools/list") return rpc(requestId, { tools: TOOLS });
+  if (parsed.method === "ping") return rpc(requestId, {}, responseProtocolVersion);
+  if (parsed.method === "tools/list") return rpc(requestId, { tools: TOOLS }, responseProtocolVersion);
 
   if (parsed.method === "tools/call") {
     const name = typeof params.name === "string" ? params.name : "";
@@ -413,8 +417,8 @@ export async function POST(request: Request) {
       if (name === "ux_direct_consult") result = await consultUxDirect(args);
       else if (name === "ux_direct_teach") result = await teachUxDirect(args);
       else if (name === "ux_direct_search_memory") result = await searchUxDirectMemory(args);
-      else return rpc(requestId, toolError("Unknown UX Direct tool: " + name));
-      return rpc(requestId, result);
+      else return rpc(requestId, toolError("Unknown UX Direct tool: " + name), responseProtocolVersion);
+      return rpc(requestId, result, responseProtocolVersion);
     } catch (error) {
       const message = error instanceof GatewayError
         ? error.message
