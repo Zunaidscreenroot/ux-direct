@@ -226,6 +226,11 @@ async function teachUxDirect(args: JsonRecord) {
   if (/(?:api[_ -]?key\s*[:=]\s*\S{8,}|password\s*[:=]\s*\S{4,}|secret[_ -]?key\s*[:=]\s*\S{8,})/i.test(rule)) {
     throw new Error("This looks like a credential or secret. Do not store credentials in UX Direct memory.");
   }
+  const mentionsDmi = /\bdmi\b/i.test(rule);
+  const isDmiIsolationRule = /\b(?:exclude|do not|don't|never|separate|keep out|avoid|not use)\b[\s\S]{0,100}\bdmi\b|\bdmi\b[\s\S]{0,100}\b(?:exclude|do not|don't|never|separate|keep out|avoid|not use)\b/i.test(rule);
+  if (mentionsDmi && !isDmiIsolationRule) {
+    throw new Error("This bridge is scoped to website-revamp. DMI-specific client knowledge must stay in its separate DMI repository.");
+  }
   const config = supabaseConfig();
   if (!config) throw new Error("Persistent memory is not configured. Set Supabase URL and server-side service-role key.");
   const existingQuery = new URLSearchParams({
