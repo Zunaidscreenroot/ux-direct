@@ -933,7 +933,7 @@
               if (Array.isArray(node.children)) node.children.forEach(collectVariationTree);
             }
             collectVariationTree(source.tree || source);
-            const allowedActions = new Set(["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle"]);
+            const allowedActions = new Set(["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-layout", "reorder-node"]);
             const proposed = Array.isArray(plan.variations) ? plan.variations.slice(0, 3) : [];
             function validOperation(op) {
               if (!op || typeof op !== "object" || !allowedActions.has(op.action)) return false;
@@ -941,6 +941,24 @@
                 if (!allowedIds.has(op.parentId) || nodeTypes.get(op.parentId) !== "FRAME") return false;
               } else if (!allowedIds.has(op.targetId)) return false;
               if (op.action === "update-text") return nodeTypes.get(op.targetId) === "TEXT" && typeof op.text === "string" && !!op.text.trim();
+              if (op.action === "set-text-style") return nodeTypes.get(op.targetId) === "TEXT" &&
+                (!("fontSize" in op) || (Number.isFinite(op.fontSize) && op.fontSize >= 8 && op.fontSize <= 48)) &&
+                (!("fontStyle" in op) || ["Regular", "Medium", "Semi Bold", "Bold"].includes(op.fontStyle)) &&
+                (!("color" in op) || /^#?[0-9a-fA-F]{6}$/.test(op.color));
+              if (op.action === "set-corner-radius") return Number.isFinite(op.radius) && op.radius >= 0 && op.radius <= 128;
+              if (op.action === "set-stroke") return typeof op.color === "string" && /^#?[0-9a-fA-F]{6}$/.test(op.color) &&
+                Number.isFinite(op.width) && op.width > 0 && op.width <= 16;
+              if (op.action === "set-opacity") return Number.isFinite(op.opacity) && op.opacity >= 0 && op.opacity <= 1;
+              if (op.action === "set-visible") return typeof op.visible === "boolean";
+              if (op.action === "set-layout") return nodeTypes.get(op.targetId) === "FRAME" &&
+                ["NONE", "HORIZONTAL", "VERTICAL"].includes(op.layoutMode) &&
+                (!("itemSpacing" in op) || (Number.isFinite(op.itemSpacing) && op.itemSpacing >= 0 && op.itemSpacing <= 128)) &&
+                ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"].every(key => !(key in op) || (Number.isFinite(op[key]) && op[key] >= 0 && op[key] <= 128)) &&
+                (!("primaryAxisAlignItems" in op) || ["MIN", "CENTER", "MAX", "SPACE_BETWEEN"].includes(op.primaryAxisAlignItems)) &&
+                (!("counterAxisAlignItems" in op) || ["MIN", "CENTER", "MAX", "BASELINE"].includes(op.counterAxisAlignItems)) &&
+                (!("primaryAxisSizingMode" in op) || ["AUTO", "FIXED"].includes(op.primaryAxisSizingMode)) &&
+                (!("counterAxisSizingMode" in op) || ["AUTO", "FIXED"].includes(op.counterAxisSizingMode));
+              if (op.action === "reorder-node") return Number.isInteger(op.index) && op.index >= 0 && op.index <= 60;
               if (op.action === "rename-node") return typeof op.name === "string" && !!op.name.trim();
               if (op.action === "set-fill") return typeof op.color === "string" && /^#?[0-9a-fA-F]{6}$/.test(op.color);
               if (op.action === "move-node") return Number.isFinite(op.x) && Number.isFinite(op.y);
@@ -952,14 +970,23 @@
             const variations = proposed.map((item) => ({
               name: String(item && item.name || "").trim().slice(0, 120),
               rationale: String(item && item.rationale || "").trim().slice(0, 240),
-              operations: Array.isArray(item && item.operations) ? item.operations.slice(0, 8) : []
+              operations: Array.isArray(item && item.operations) ? item.operations.slice(0, 16) : []
             }));
             const sourceIdsMatch = proposed.every((item) => item && (!item.targetId || item.targetId === source.id));
+            function operationCategory(action) {
+              if (["set-layout", "move-node", "resize-node", "reorder-node", "set-visible"].includes(action)) return "structure";
+              if (["set-fill", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity"].includes(action)) return "style";
+              if (["update-text", "create-text", "create-rectangle"].includes(action)) return "content";
+              return "other";
+            }
             const valid = variations.length >= 1 && sourceIdsMatch && variations.every((item, index) =>
-              item.name.length > 0 && item.operations.length > 0 &&
+              item.name.length > 0 && item.operations.length >= 6 && item.operations.length <= 16 &&
               item.operations.every(validOperation) &&
+              new Set(item.operations.map(op => operationCategory(op.action))).size >= 2 &&
+              item.operations.filter(op => ["set-layout", "move-node", "resize-node", "reorder-node"].includes(op.action)).length >= 2 &&
               Array.isArray(proposed[index] && proposed[index].operations) &&
-              proposed[index].operations.length <= 8
+              proposed[index].operations.length >= 6 && proposed[index].operations.length <= 16
+            );
             );
             if (!valid) {
               appendMessage("assistant", "I couldn’t turn the model response into a safe variation plan. No frames were created and your original remains unchanged. Try asking for two variations with clear directions, such as “one compact and one higher-contrast version.”");
@@ -976,6 +1003,13 @@
               if (op.action === "resize-node") return "Resize “" + label + "”";
               if (op.action === "create-text") return "Add text to “" + label + "”";
               if (op.action === "create-rectangle") return "Add shape to “" + label + "”";
+              if (op.action === "set-text-style") return "Restyle typography in “" + label + "”";
+              if (op.action === "set-corner-radius") return "Adjust corner radius of “" + label + "”";
+              if (op.action === "set-stroke") return "Add/adjust border on “" + label + "”";
+              if (op.action === "set-opacity") return "Adjust opacity of “" + label + "”";
+              if (op.action === "set-visible") return (op.visible ? "Show “" : "Hide “") + label + "”";
+              if (op.action === "set-layout") return "Change auto-layout/spacing of “" + label + "”";
+              if (op.action === "reorder-node") return "Reorder “" + label + "”";
               return op.action;
             }
             const summary = variations.map((item, index) =>
