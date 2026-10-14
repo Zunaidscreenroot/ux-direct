@@ -242,11 +242,11 @@ export async function runUxdVisionReasoningPipeline(input: UxdVisionReasoningPip
     } catch (error) {
       const message = error instanceof Error ? error.message : "Vision stage failed.";
       lastVisionError = message;
-      traceStages.push({ role: "vision", status: "failed", model: model.id, estimatedCostUsd: stageEstimate, note: /budget|pricing|ledger/i.test(message) ? "budget_or_pricing" : /json|UXD-IR|empty/i.test(message) ? "invalid_evidence" : "provider_error" });
+      traceStages.push({ role: "vision", status: "failed", model: model.id, estimatedCostUsd: stageEstimate, note: /budget|pricing|ledger/i.test(message) ? "budget_or_pricing" : /json|UXD-IR|empty|output-token|finish_reason=length/i.test(message) ? "invalid_evidence" : "provider_error" });
       await recordModelLearningEvent({
         requestId, capability: input.capability, modelId: model.id, modelTier: model.tier,
-        outcome: /budget|pricing|ledger/i.test(message) ? "budget_blocked" : /json|UXD-IR|empty/i.test(message) ? "validation_failure" : "provider_error",
-        validationPassed: false, estimatedCostUsd: stageEstimate, errorCategory: /budget|pricing|ledger/i.test(message) ? "budget" : /json|UXD-IR|empty/i.test(message) ? "validation" : "provider",
+        outcome: /budget|pricing|ledger/i.test(message) ? "budget_blocked" : /json|UXD-IR|empty|output-token|finish_reason=length/i.test(message) ? "validation_failure" : "provider_error",
+        validationPassed: false, estimatedCostUsd: stageEstimate, errorCategory: /budget|pricing|ledger/i.test(message) ? "budget" : /json|UXD-IR|empty|output-token|finish_reason=length/i.test(message) ? "validation" : "provider",
         operationProfile: { uxdIrVersion: UXD_IR_VERSION, stage: "vision" },
       });
       if (model.tier === "paid" && /daily AI budget|spend ledger|budget reached/i.test(message)) budgetBlocked = true;
