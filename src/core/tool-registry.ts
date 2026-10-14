@@ -121,8 +121,9 @@ export class UXToolRegistry {
     if (tool.risk === "critical" && !context.humanApproved) {
       throw new Error(`Critical-risk tool requires explicit approval: ${id}`);
     }
-    if (tool.costClass === "paid-model" && !context.paidBudgetReserved) {
-      throw new Error(`Paid budget must be reserved before invoking tool: ${id}`);
+    if ((tool.costClass === "paid-model" || tool.costClass === "external-service")
+      && !context.paidBudgetReserved) {
+      throw new Error(`Budget must be reserved before invoking paid/external tool: ${id}`);
     }
     const validation = tool.validateInput(input);
     if (!validation.valid) {
