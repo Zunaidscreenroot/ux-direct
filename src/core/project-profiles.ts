@@ -1,160 +1,102 @@
-import type { ProjectLifecycle, ProjectProfileId, UXHandId } from "./hand-contracts";
+import type { ProjectProfileId } from "./hand-contracts";
 
-export type FoundationStep =
-  | "requirements-intake"
-  | "benchmark-research"
-  | "journey-architecture"
-  | "wireframe-kit-generation"
-  | "human-approval"
-  | "cockpit-execution"
-  | "independent-ux-audit"
-  | "quality-handoff";
-
-export interface UXProjectProfile {
+/**
+ * Workspace metadata is configuration, not a project-specific brain or workflow.
+ * Runtime planning must be driven by the current world state, evidence, discovered
+ * tools and policy—not by a hardcoded DMI/Ujjivan step sequence.
+ */
+export interface UXWorkspaceContext {
   id: ProjectProfileId;
-  clientId: "dmi" | "ujjivan";
+  clientId: string;
   displayName: string;
-  lifecycle: ProjectLifecycle;
-  primaryHand: "cockpit";
-  defaultHands: readonly UXHandId[];
-  specialistHands: readonly UXHandId[];
-  initialFoundation: {
-    required: boolean;
-    sequence: readonly FoundationStep[];
-    hands: readonly UXHandId[];
-    completionArtifact?: string;
-  };
-  knowledge: {
+  knowledgeScope: {
+    /** Approved client-level material may be shared within this client. */
     clientNamespace: string;
+    /** Project-specific and confidential artifacts stay inside this namespace. */
     projectNamespace: string;
+    /** Generic, licensed/approved knowledge packs can be shared across clients. */
+    sharedKnowledgeNamespaces: readonly string[];
+    /** Cross-project retrieval is false unless a separate explicit policy says otherwise. */
     allowCrossProjectMemory: false;
-    sharedKnowledgePack: "bfci-generic";
   };
+  knownArtifactRefs?: readonly string[];
+  approvedFoundationRefs?: readonly string[];
+  metadata?: Readonly<Record<string, string>>;
 }
 
 /**
- * DMI stays brownfield and Cockpit-first. The specialist modules are available,
- * but they are never forced into a normal DMI task.
+ * Small seed fixtures for local development and tests.
+ * Production workspace context should be loaded from the workspace store; adding
+ * a client must not require adding a new planner branch or recompiling the Brain.
  */
-const DMI_PROFILES: readonly UXProjectProfile[] = [
+export const WORKSPACE_FIXTURES: readonly UXWorkspaceContext[] = [
   {
     id: "dmi-hfc",
     clientId: "dmi",
     displayName: "DMI Housing Finance",
-    lifecycle: "brownfield",
-    primaryHand: "cockpit",
-    defaultHands: ["cockpit"],
-    specialistHands: ["wireframe-foundry", "ux-auditor", "benchmark-lab", "journey-architect", "quality-handoff"],
-    initialFoundation: { required: false, sequence: [], hands: [] },
-    knowledge: {
+    knowledgeScope: {
       clientNamespace: "client:dmi",
       projectNamespace: "project:dmi-hfc",
+      sharedKnowledgeNamespaces: ["bfci-generic"],
       allowCrossProjectMemory: false,
-      sharedKnowledgePack: "bfci-generic",
     },
+    metadata: { operatingMode: "existing-product" },
   },
   {
     id: "dmi-finance",
     clientId: "dmi",
     displayName: "DMI Finance",
-    lifecycle: "brownfield",
-    primaryHand: "cockpit",
-    defaultHands: ["cockpit"],
-    specialistHands: ["wireframe-foundry", "ux-auditor", "benchmark-lab", "journey-architect", "quality-handoff"],
-    initialFoundation: { required: false, sequence: [], hands: [] },
-    knowledge: {
+    knowledgeScope: {
       clientNamespace: "client:dmi",
       projectNamespace: "project:dmi-finance",
+      sharedKnowledgeNamespaces: ["bfci-generic"],
       allowCrossProjectMemory: false,
-      sharedKnowledgePack: "bfci-generic",
     },
+    metadata: { operatingMode: "existing-product" },
   },
   {
     id: "dmi-wealth",
     clientId: "dmi",
     displayName: "DMI Wealth",
-    lifecycle: "brownfield",
-    primaryHand: "cockpit",
-    defaultHands: ["cockpit"],
-    specialistHands: ["wireframe-foundry", "ux-auditor", "benchmark-lab", "journey-architect", "quality-handoff"],
-    initialFoundation: { required: false, sequence: [], hands: [] },
-    knowledge: {
+    knowledgeScope: {
       clientNamespace: "client:dmi",
       projectNamespace: "project:dmi-wealth",
+      sharedKnowledgeNamespaces: ["bfci-generic"],
       allowCrossProjectMemory: false,
-      sharedKnowledgePack: "bfci-generic",
     },
+    metadata: { operatingMode: "existing-product" },
+  },
+  {
+    id: "ujjivan-sfb",
+    clientId: "ujjivan",
+    displayName: "Ujjivan Small Finance Bank",
+    knowledgeScope: {
+      clientNamespace: "client:ujjivan",
+      projectNamespace: "project:ujjivan-sfb",
+      sharedKnowledgeNamespaces: ["bfci-generic"],
+      allowCrossProjectMemory: false,
+    },
+    metadata: { operatingMode: "new-product-foundation" },
   },
 ] as const;
 
-const UJJIVAN_PROFILE: UXProjectProfile = {
-  id: "ujjivan-sfb",
-  clientId: "ujjivan",
-  displayName: "Ujjivan Small Finance Bank",
-  lifecycle: "greenfield",
-  primaryHand: "cockpit",
-  // Cockpit becomes the default daily hand from day one. The initial
-  // foundation hands run only when the foundation has not yet been approved.
-  defaultHands: ["cockpit"],
-  specialistHands: ["wireframe-foundry", "ux-auditor", "benchmark-lab", "journey-architect", "quality-handoff"],
-  initialFoundation: {
-    required: true,
-    sequence: [
-      "requirements-intake",
-      "benchmark-research",
-      "journey-architecture",
-      "wireframe-kit-generation",
-      "human-approval",
-      "cockpit-execution",
-      "independent-ux-audit",
-      "quality-handoff",
-    ],
-    hands: [
-      "benchmark-lab",
-      "journey-architect",
-      "wireframe-foundry",
-      "ux-auditor",
-      "quality-handoff",
-    ],
-    completionArtifact: "approved-wireframe-kit-manifest",
-  },
-  knowledge: {
-    clientNamespace: "client:ujjivan",
-    projectNamespace: "project:ujjivan-sfb",
-    allowCrossProjectMemory: false,
-    sharedKnowledgePack: "bfci-generic",
-  },
-};
-
-export const UX_PROJECT_PROFILES: readonly UXProjectProfile[] = [
-  ...DMI_PROFILES,
-  UJJIVAN_PROFILE,
-];
-
-export function getProjectProfile(id: ProjectProfileId): UXProjectProfile {
-  const profile = UX_PROJECT_PROFILES.find((candidate) => candidate.id === id);
-  if (!profile) throw new Error(`Unknown UX project profile: ${id}`);
-  return profile;
+export interface WorkspaceContextResolver {
+  resolve(id: ProjectProfileId): Promise<UXWorkspaceContext | undefined>;
 }
 
-/**
- * Only an uninitialised greenfield project enters its foundation workflow.
- * A brownfield project such as DMI remains Cockpit-first even if specialists
- * are available. Existing approved kits can be supplied through kitVersion.
- */
-export function shouldRunInitialFoundation(input: {
-  projectId: ProjectProfileId;
-  approvedKitVersion?: string;
-  foundationMarkedComplete?: boolean;
-}): boolean {
-  const profile = getProjectProfile(input.projectId);
-  if (!profile.initialFoundation.required) return false;
-  if (input.foundationMarkedComplete) return false;
-  if (input.approvedKitVersion?.trim()) return false;
-  return true;
+export class FixtureWorkspaceContextResolver implements WorkspaceContextResolver {
+  constructor(private readonly contexts: readonly UXWorkspaceContext[] = WORKSPACE_FIXTURES) {}
+
+  async resolve(id: ProjectProfileId): Promise<UXWorkspaceContext | undefined> {
+    return this.contexts.find((context) => context.id === id);
+  }
 }
 
-/** Default hands do not change after foundation completion: Cockpit stays primary. */
-export function getDefaultHands(projectId: ProjectProfileId): readonly UXHandId[] {
-  return getProjectProfile(projectId).defaultHands;
+export async function getWorkspaceContext(
+  id: ProjectProfileId,
+  resolver: WorkspaceContextResolver = new FixtureWorkspaceContextResolver(),
+): Promise<UXWorkspaceContext> {
+  const context = await resolver.resolve(id);
+  if (!context) throw new Error(`Unknown workspace context: ${id}`);
+  return context;
 }
