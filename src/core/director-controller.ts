@@ -186,8 +186,8 @@ export function validateDirectorPlan(
       errors.push(`Step ${step.id} uses a tool that was not discovered or is not permitted: ${step.toolId}`);
       continue;
     }
-    if ((tool.operation === "write" && (tool.requiresApproval || tool.risk === "high" || tool.risk === "critical"))
-      || tool.risk === "critical") {
+    if (tool.requiresApproval || tool.risk === "critical"
+      || (tool.operation === "write" && tool.risk === "high")) {
       if (!approvedTools.has(tool.id)) stepsRequiringApproval.push(step.id);
     }
     if (!step.objective.trim()) errors.push(`Step ${step.id} needs an objective.`);
