@@ -86,7 +86,7 @@
     </div>
   </header>
   <div class="modelbar" aria-label="UX Direct model selection">
-    <select id="modelSelect" class="model-select" aria-label="UX Direct model selection" title="Choose an available UX Direct model" disabled>
+    <select id="modelSelect" class="model-select" aria-label="UX Direct model selection" title="Model preference. UX Direct routes complex BFCI tasks to a suitable image-capable model." disabled>
       <option value="">Loading UX Direct models…</option>
     </select>
     <div id="modelStatus" class="status-tag warn" aria-live="polite" title="Shows catalogue status and the latest connection-test result.">
@@ -330,7 +330,12 @@
           "openai/gpt-oss-120b",
           "openai/gpt-6-luna",
           "deepseek/deepseek-v4-flash-0731",
-          "deepseek/deepseek-v4.1-flash"
+          "deepseek/deepseek-v4.1-flash",
+          "anthropic/claude-haiku-5.5",
+          "z-ai/glm-4.6v",
+          "moonshotai/kimi-k2.5",
+          "google/gemini-3.1-pro-preview",
+          "anthropic/claude-sonnet-5.5"
         ]);
         const tierRank = model => model.tier === "free-tier" ? 0 : model.tier === "paid" ? 1 : 2;
         modelOptions = payload.models
@@ -361,7 +366,7 @@
           (model.tier === "paid" ? paidGroup : freeGroup).appendChild(option);
         });
         selector.append(freeGroup, paidGroup);
-        selector.title = "Approved UX Direct pool: " + modelOptions.filter(model => model.tier === "free-tier").length + " free-first model(s), " + readyPaidModels + " of " + paidModels.length + " paid fallback model(s) verified. Unverified paid choices remain visible but cannot be used.";
+        selector.title = "UX Direct routes by task capability: free models for routine chat/copy; approved paid vision/reasoning models for complex banking design. " + readyPaidModels + " paid model(s) are configured. Use Test to verify a paid model before manual selection.";
         const preferred = modelOptions.find(model => model.id === payload.selectedModel && model.available !== false)
           || modelOptions.find(model => model.tier === "free-tier");
         selector.value = preferred.id;
