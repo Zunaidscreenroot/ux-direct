@@ -7,6 +7,7 @@ import {
   isAllowedPluginOrigin,
   pluginCorsHeaders,
   PluginOpenRouterError,
+  reserveHourlyPaidModelBudget,
 } from "@/src/figma/plugin-ai-api";
 
 type JsonRecord = Record<string, unknown>;
@@ -135,7 +136,29 @@ export async function POST(request: Request) {
       checkedAt: new Date().toISOString(),
     }, 429);
   }
+  if (model.inputUsdPerMillion === null || model.outputUsdPerMillion === null) {
+    return json(request, {
+      available: false,
+      responseReceived: false,
+      reason: "The model cannot be tested until its current pricing is verified; unknown-price models are blocked by the hourly budget guard.",
+      checkedAt: new Date().toISOString(),
+    }, 402);
+  }
   try {
+    const budget = await reserveHourlyPaidModelBudget({
+      estimatedCostUsd: ((50 * model.inputUsdPerMillion) + (64 * model.outputUsdPerMillion)) / 1_000_000,
+      model: modelId,
+    });
+    if (!budget.allowed) {
+      return json(request, {
+        available: false,
+        responseReceived: false,
+        reason: "Hourly AI budget reached: ₹" + budget.spentInr.toFixed(2) + " of ₹" + budget.limitInr.toFixed(2) +
+          " reserved in the last 60 minutes; approximately ₹" + budget.remainingInr.toFixed(2) + " remains.",
+        hourlyBudget: { limitInr: budget.limitInr, spentInr: budget.spentInr, remainingInr: budget.remainingInr, windowMinutes: 60 },
+        checkedAt: new Date().toISOString(),
+      }, 402);
+    }
     const result = await callOpenRouterChat(modelId, [{ role: "user", content: "Reply with exactly OK." }], {
       maxTokens: 64,
       temperature: 0,
@@ -148,6 +171,7 @@ export async function POST(request: Request) {
       provider: "openrouter",
       model: result.model,
       latencyMs: result.latencyMs,
+      hourlyBudget: { limitInr: budget.limitInr, spentInr: budget.projectedInr, reservedInr: budget.reservedInr, remainingInr: budget.remainingInr, windowMinutes: 60 },
       checkedAt: new Date().toISOString(),
     });
   } catch (error) {
