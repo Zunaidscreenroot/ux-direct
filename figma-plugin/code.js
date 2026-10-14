@@ -908,6 +908,43 @@ async function executeNativeApiHealthCheck() {
         throw new Error("getVariableCollectionByIdAsync did not resolve the persistent test collection.");
       }
     });
+    // 50 additional, non-mutating assertions against persistent fixtures on the
+    // isolated UXD API Test Lab page. Together with the existing functional
+    // suite, this targets 100 real checks; the UI reports only actual passes.
+    var extendedFixtureDescriptors = [
+      { name: "Fixture Frame", type: "FRAME" },
+      { name: "Fixture Rectangle", type: "RECTANGLE" },
+      { name: "Fixture Ellipse", type: "ELLIPSE" },
+      { name: "Fixture Text", type: "TEXT" },
+      { name: "Fixture Component", type: "COMPONENT" }
+    ];
+    var extendedPropertyChecks = [
+      { name: "stable non-empty node ID", test: function (node) { if (typeof node.id !== "string" || !node.id) throw new Error("Node ID is missing."); } },
+      { name: "expected node name", test: function (node, descriptor) { if (node.name !== descriptor.name) throw new Error("Expected " + descriptor.name + ", got " + node.name + "."); } },
+      { name: "expected node type", test: function (node, descriptor) { if (node.type !== descriptor.type) throw new Error("Expected " + descriptor.type + ", got " + node.type + "."); } },
+      { name: "parent frame containment", test: function (node) { if (!node.parent || node.parent.name !== "__UXD API TEST FIXTURES") throw new Error("Fixture is not contained in the isolated parent frame."); } },
+      { name: "visibility is readable", test: function (node) { if (typeof node.visible !== "boolean") throw new Error("Node visibility is not a boolean."); } },
+      { name: "lock state is readable", test: function (node) { if (typeof node.locked !== "boolean") throw new Error("Node lock state is not a boolean."); } },
+      { name: "opacity is within range", test: function (node) { if (!Number.isFinite(node.opacity) || node.opacity < 0 || node.opacity > 1) throw new Error("Node opacity is outside 0–1."); } },
+      { name: "rotation is finite", test: function (node) { if (!Number.isFinite(node.rotation)) throw new Error("Node rotation is not finite."); } },
+      { name: "horizontal position is finite", test: function (node) { if (!Number.isFinite(node.x)) throw new Error("Node x coordinate is not finite."); } },
+      { name: "vertical position is finite", test: function (node) { if (!Number.isFinite(node.y)) throw new Error("Node y coordinate is not finite."); } }
+    ];
+    for (var fixtureIndex = 0; fixtureIndex < extendedFixtureDescriptors.length; fixtureIndex++) {
+      for (var propertyIndex = 0; propertyIndex < extendedPropertyChecks.length; propertyIndex++) {
+        var fixtureDescriptor = extendedFixtureDescriptors[fixtureIndex];
+        var propertyDescriptor = extendedPropertyChecks[propertyIndex];
+        await runTest("Extended fixture assertions", fixtureDescriptor.name + " · " + propertyDescriptor.name, (function (descriptor, property) {
+          return async function () {
+            var node = findNodeByName(testPage, descriptor.name, descriptor.type);
+            if (!node) throw new Error("Persistent test fixture is missing: " + descriptor.name + ".");
+            assertLab("inspect extended fixture " + descriptor.name);
+            property.test(node, descriptor);
+          };
+        })(fixtureDescriptor, propertyDescriptor));
+      }
+    }
+
     add("Library", "Team Library", "not-tested", "not-tested",
       "Not tested intentionally: team-library APIs are out of scope; no teamlibrary permission, shared-library lookup, or import is enabled.");
   } catch (error) {
