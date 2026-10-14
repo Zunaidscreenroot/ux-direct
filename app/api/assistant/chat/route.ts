@@ -174,7 +174,7 @@ export async function POST(request: Request) {
   const variationCountMatch = variationIntent
     ? /\b(one|two|three|1|2|3)\s+(?:new\s+)?(?:screen\s+)?variations?\b/i.exec(lastUserPrompt)
     : null;
-  const singularVariationRequested = /\\b(?:a|one)\\s+(?:new\\s+)?(?:screen\\s+)?variation\\b/i.test(lastUserPrompt);
+  const singularVariationRequested = /\b(?:a|one)\s+(?:new\s+)?(?:screen\s+)?variation\b/i.test(lastUserPrompt);
   const variationCount = variationCountMatch
     ? ({ one: 1, two: 2, three: 3, "1": 1, "2": 2, "3": 3 } as Record<string, number>)[variationCountMatch[1].toLowerCase()] ?? 2
     : singularVariationRequested ? 1 : 2;
