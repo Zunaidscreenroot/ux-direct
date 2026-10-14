@@ -15,7 +15,7 @@ export function scopedNetlifyStoreName(
     const reviewId = (env.REVIEW_ID || "shared").replace(/[^a-zA-Z0-9-]/g, "").slice(0, 12) || "shared";
     suffix = "preview-" + reviewId;
   } else if (context === "branch-deploy") {
-    const branch = (env.BRANCH || "shared").replace(/[^a-zA-Z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 12) || "shared";
+    const branch = (env.BRANCH || "shared").replace(/[^a-zA-Z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "shared";
     suffix = "branch-" + branch;
   } else {
     suffix = context.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 18) || "nonprod";
