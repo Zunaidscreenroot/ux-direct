@@ -185,10 +185,27 @@ export async function POST(request: Request) {
     const candidate = candidates[index];
     try {
       const result = await callOpenRouterChat(candidate.id, inputMessages, {
-        maxTokens: variationIntent ? 1600 : designIntent ? 1400 : 1100,
+        maxTokens: variationIntent ? 2200 : designIntent ? 1400 : 1100,
         temperature: variationIntent ? 0.15 : designIntent ? 0.1 : 0.35,
         timeoutMs: 30000,
       });
+      if (variationIntent) {
+        let plan: unknown;
+        try {
+          const cleaned = result.content.trim().replace(/^\`\`\`(?:json)?\\s*/i, "").replace(/\\s*\`\`\`$/, "");
+          plan = JSON.parse(cleaned);
+        } catch {
+          throw new PluginOpenRouterError("Model " + candidate.id + " returned an invalid variation-plan JSON response.", 502);
+        }
+        const envelope = isRecord(plan) && Array.isArray(plan.variations) ? plan.variations : [];
+        const structurallyValid = envelope.length >= 1 && envelope.length <= 3 && envelope.every((item) =>
+          isRecord(item) && typeof item.name === "string" && item.name.trim().length > 0 &&
+          Array.isArray(item.operations) && item.operations.length >= 1 && item.operations.length <= 8
+        );
+        if (!structurallyValid) {
+          throw new PluginOpenRouterError("Model " + candidate.id + " returned an incomplete variation plan (expected named frames with 1–8 operations each).", 502);
+        }
+      }
       const wasFallback = candidate.id !== selectedModel.id;
       return json(request, {
         content: result.content,
