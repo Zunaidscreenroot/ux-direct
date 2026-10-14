@@ -277,7 +277,7 @@ export async function getDailyPaidModelBudgetStatus(): Promise<{
   remainingInr: number;
   windowMinutes: number;
 } | null> {
-  const limitInr = positiveEnvNumber("UXD_MODEL_BUDGET_INR_PER_DAY", 50, 500);
+  const limitInr = positiveEnvNumber("UXD_MODEL_BUDGET_INR_PER_DAY", 50, 50);
   const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
   if (!supabaseUrl || !serviceKey) return null;
