@@ -845,7 +845,7 @@
               ? (currentModel.supportsImages === true
                 ? "The explicitly selected paid vision model will be called directly."
                 : "The selected paid model cannot accept images, so UX Direct will use an approved image-capable model.")
-              : "UX Direct will try an approved free vision model first and may use one low-cost paid vision request if the free model fails.";
+              : "UX Direct routes screenshot work to an available image-capable model. The configured free vision model has been unreliable, so a low-cost paid vision model may be used within the task cost ceiling.";
         const consentIntro = visualIntent
           ? "Visual review sends the selected screenshot and prompt to UX Direct."
           : "This request may require a paid model for high-compute BFCI design work.";
