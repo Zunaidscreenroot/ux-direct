@@ -167,10 +167,12 @@ export async function cacheUxdIrExplanation(input: {
   if (!config || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.runId)) return false;
   const trace = await getUxdIrTrace(input.runId);
   if (!trace || trace.project_key !== input.projectKey) return false;
-  const artifacts = safeValue({
-    ...trace.artifacts,
+  const existingArtifacts = safeValue(trace.artifacts) as JsonRecord;
+  const artifacts: JsonRecord = {
+    ...existingArtifacts,
+    // Keep the on-demand summary bounded but longer than ordinary evidence fields.
     readableExplanation: input.explanation.trim().slice(0, 6000),
-  }) as JsonRecord;
+  };
   try {
     const query = new URLSearchParams({
       run_id: "eq." + input.runId,
