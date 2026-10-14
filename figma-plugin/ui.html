@@ -1303,11 +1303,13 @@
           const count = Number(data.contextAssembly.retrievedSources || 0);
           $("knowledgeStatus").textContent = count > 0
             ? "Knowledge · " + count + " approved passage(s) · " + String(data.contextAssembly.retrievalMode || "retrieval")
-            : data.contextAssembly.retrievalMode === "skipped"
-              ? "Knowledge · not needed for this short message"
-              : data.contextAssembly.knowledgeAvailable
-                ? "Knowledge · no approved matches"
-                : "Knowledge · search unavailable; task context only";
+            : data.contextAssembly.retrievalMode === "uxd-ir-memory"
+              ? "Knowledge · compact project memory passed to UXD-IR"
+              : data.contextAssembly.retrievalMode === "skipped"
+                ? "Knowledge · not needed for this short message"
+                : data.contextAssembly.knowledgeAvailable
+                  ? "Knowledge · no approved matches"
+                  : "Knowledge · search unavailable; task context only";
           $("knowledgeStatus").title = "Only the active client scope and explicitly shared Indian BFCI knowledge may be used.";
         }
         if (data.uxdIrTrace && typeof data.uxdIrTrace.runId === "string") {
