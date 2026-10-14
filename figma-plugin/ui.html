@@ -1658,11 +1658,18 @@
         pendingUxdRunId = null;
         if (completedRunId) void updateUxdTraceStatus(message.ok ? "completed" : "failed", results, completedRunId);
         if (results.length) {
-          appendMessage("assistant", message.ok ? "Done — variation frames created." : "Execution partially failed. Inspect the new frames before retrying.");
-          setActivity(message.ok ? "Variation frames created and selected for review." : "Some variation operations failed; inspect the new frames.");
+          if (!message.ok) {
+            appendMessage("assistant", "Some variation operations failed. Inspect the new frames before retrying.");
+          }
+          setActivity(message.ok ? "Variations created. Review the new frames on canvas." : "Some variation operations failed; inspect the new frames.");
+          setModelStatus(message.ok ? "ok" : "warn", message.ok ? "Variations complete" : "Review variation result",
+            message.ok
+              ? "Native Figma execution completed. The run trace is available from Runs → Explain; no chat summary was generated."
+              : "One or more native operations did not complete. The run trace records the execution result.");
         } else {
           appendMessage("assistant", "Execution failed. Inspect the canvas before retrying.");
           setActivity("Variation creation failed; inspect the canvas before retrying.");
+          setModelStatus("bad", "Variation failed", "No successful variation result was reported by the native plugin.");
           if (completedRunId) void updateUxdTraceStatus("failed", [], completedRunId);
         }
         return;
@@ -1671,11 +1678,19 @@
       if (message.type === "design-operation-result") {
         const results = Array.isArray(message.results) ? message.results : [];
         if (message.ok) {
-          appendMessage("assistant", "Done — Figma changes applied.");
           setActivity("Changes applied. Review the frame visually.");
+          setModelStatus("ok", "Figma action complete",
+            "Native Figma execution completed. No conversational response was generated for this action.");
+          void sendTelemetry("uxd_action_completed", "success", "Native Figma action completed without a chat response.", {
+            category: "design-operation",
+            action: "native-execution",
+            testType: "functional",
+            project: ACTIVE_PROJECT_KEY,
+          });
         } else {
           appendMessage("assistant", "Execution failed. Inspect the selected frame before retrying.");
           setActivity("Figma edit failed; inspect the frame before retrying.");
+          setModelStatus("bad", "Figma action failed", "The native executor reported a failure. Inspect the selected frame before retrying.");
         }
         return;
       }
