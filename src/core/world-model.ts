@@ -94,10 +94,13 @@ const BLOCKED_STATUSES = new Set<WorldFactStatus>(["disputed", "deprecated"]);
 
 function isVisibleToWorkspace(fact: WorldFact, query: WorldQuery): boolean {
   if (fact.scope.kind === "project") {
-    return fact.scope.projectId === query.projectId && fact.scope.clientId === query.clientId;
+    return fact.scope.projectId === query.projectId
+      && fact.scope.clientId === query.clientId
+      && fact.scope.namespace === query.projectNamespace;
   }
   if (fact.scope.kind === "client") {
-    return fact.scope.clientId === query.clientId;
+    return fact.scope.clientId === query.clientId
+      && fact.scope.namespace === query.clientNamespace;
   }
   return query.sharedKnowledgeNamespaces.includes(fact.scope.namespace)
     && fact.scope.licenceApproved;
