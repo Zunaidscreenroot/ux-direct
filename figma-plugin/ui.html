@@ -367,12 +367,15 @@
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || typeof payload.explanation !== "string") throw new Error(payload.error || "Trace explanation unavailable.");
         appendMessage("assistant", "Run explanation · " + runId + "\n\n" + payload.explanation);
-        if (payload.usage) {
+        if (payload.cached === true) {
+          setModelStatus("ok", "Cached explanation", "Loaded the explanation saved with this run. No model call or additional tokens were needed.");
+        } else if (payload.usage) {
           const tokens = payload.usage.totalTokens;
           const cost = Number(payload.observedCostUsd);
           setModelStatus("ok", "Trace explained", (payload.model || "Approved model") +
             (Number.isFinite(Number(tokens)) ? " · " + Number(tokens).toLocaleString() + " tokens" : "") +
-            (Number.isFinite(cost) ? " · $" + cost.toFixed(5) : ""));
+            (Number.isFinite(cost) ? " · $" + cost.toFixed(5) : "") +
+            (payload.explanationStored === true ? " · cached for next time" : ""));
         }
       } catch (error) {
         appendMessage("assistant", "Could not explain run " + runId + ": " + (error && error.message ? error.message : "Trace explanation failed."));
