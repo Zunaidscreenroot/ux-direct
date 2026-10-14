@@ -25,7 +25,6 @@ export async function GET(request: Request) {
     const fileKey = new URL(request.url).searchParams.get("fileKey");
     if (!isAllowedFigmaFileKey(fileKey)) return NextResponse.json({ status: "blocked", error: "Approved Figma file key required." }, { status: 403, headers: corsHeaders(origin) });
   }
-  const figmaOAuthConfigured = Boolean(process.env.FIGMA_CLIENT_ID && process.env.FIGMA_CLIENT_SECRET && process.env.FIGMA_REDIRECT_URI);
   const activeProviders = providersFromEnv().filter(provider => provider.kind !== "mock");
   return NextResponse.json({
     service: "ux-direct-backend", status: "ok", checkedAt: new Date().toISOString(),
@@ -33,10 +32,18 @@ export async function GET(request: Request) {
     mode: activeProviders.length ? activeProviders.map(provider => provider.name).join(", ") : "mock",
     modelProviderConfigured: activeProviders.length > 0,
     figma: {
-      oauthConfigured: figmaOAuthConfigured,
-      status: figmaOAuthConfigured ? "configured_not_verified" : "not_configured",
-      note: figmaOAuthConfigured ? "OAuth credentials are present; user authorization has not been verified by this endpoint." : "Figma account login is not configured yet. Plugin-to-backend reachability is checked separately."
+      mode: "plugin_native",
+      oauthRequired: false,
+      backendRestApi: "not_used",
+      status: "plugin_native_only",
+      note: "Selected-file reading and design edits are executed by the Figma plugin through the native Plugin API. This backend does not use Figma account OAuth or independently read/write files through the Figma REST API."
     },
-    capabilities: { taskPlanning: true, figmaRead: false, figmaWrite: false, operationalLog: "best_effort_runtime" }
+    capabilities: {
+      taskPlanning: true,
+      pluginNativeFigmaOperations: "executed_inside_plugin",
+      backendFigmaRestRead: false,
+      backendFigmaRestWrite: false,
+      operationalLog: "best_effort_runtime"
+    }
   }, { headers: corsHeaders(origin) });
 }
