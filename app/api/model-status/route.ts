@@ -118,8 +118,11 @@ export async function POST(request: Request) {
   }
   const provider = body.provider;
   const modelId = body.model;
+  if (provider !== "openrouter" || typeof modelId !== "string") {
+    return json(request, { available: false, responseReceived: false, reason: "Choose an approved OpenRouter paid model." }, 400);
+  }
   const model = getPluginModelList().find((entry) => entry.id === modelId);
-  if (provider !== "openrouter" || !model || model.tier !== "paid" || !model.available) {
+  if (!model || model.tier !== "paid" || !model.available) {
     return json(request, { available: false, responseReceived: false, reason: "The requested paid model is not enabled." }, 403);
   }
   const limit = checkPluginRateLimit(request);
