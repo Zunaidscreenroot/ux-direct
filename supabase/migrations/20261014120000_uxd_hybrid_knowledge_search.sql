@@ -37,15 +37,36 @@ set search_path to 'public', 'pg_temp'
 as $function$
 declare
   v_query tsquery;
+  v_terms_query tsquery;
+  v_query_text text;
 begin
   if p_project_key is null or p_project_key not in ('DMI_HFC', 'UJJIVAN_SFB', 'INDIA_BFCI_SHARED') then
     raise exception 'Invalid UX Direct knowledge project namespace';
   end if;
 
   v_query := websearch_to_tsquery('english'::regconfig, left(coalesce(p_query, ''), 4000));
-  if numnode(v_query) = 0 then
+  select string_agg(dedup.query_text, ' | ' order by dedup.first_ordinal)
+    into v_query_text
+    from (
+      select token_queries.query_text, min(token_queries.ordinality) as first_ordinal
+      from (
+        select
+          plainto_tsquery('english'::regconfig, tokens.term)::text as query_text,
+          tokens.ordinality
+        from regexp_split_to_table(left(coalesce(p_query, ''), 4000), '[^[:alnum:]]+')
+          with ordinality as tokens(term, ordinality)
+        where length(tokens.term) > 1
+        order by tokens.ordinality
+        limit 40
+      ) token_queries
+      where numnode(token_queries.query_text::tsquery) > 0
+      group by token_queries.query_text
+    ) dedup;
+
+  if v_query_text is null or length(trim(v_query_text)) = 0 then
     return;
   end if;
+  v_terms_query := v_query_text::tsquery;
 
   return query
     select
@@ -57,8 +78,10 @@ begin
       d.source_url,
       d.source_authority,
       (
-        ts_rank_cd(d.search_vector, v_query) +
-        ts_rank_cd(c.search_vector, v_query)
+        ts_rank_cd(d.search_vector, v_terms_query) +
+        ts_rank_cd(c.search_vector, v_terms_query) +
+        case when numnode(v_query) > 0 and d.search_vector @@ v_query then 0.25 else 0 end +
+        case when numnode(v_query) > 0 and c.search_vector @@ v_query then 0.25 else 0 end
       )::real as similarity,
       c.metadata || d.metadata as metadata
     from public.uxd_knowledge_chunks c
@@ -68,9 +91,15 @@ begin
         c.project_key = p_project_key
         or (p_project_key in ('DMI_HFC', 'UJJIVAN_SFB') and c.project_key = 'INDIA_BFCI_SHARED')
       )
-      and (d.search_vector @@ v_query or c.search_vector @@ v_query)
-    order by (ts_rank_cd(d.search_vector, v_query) + ts_rank_cd(c.search_vector, v_query)) desc,
-      d.updated_at desc, c.chunk_index asc
+      and (d.search_vector @@ v_terms_query or c.search_vector @@ v_terms_query)
+    order by (
+        ts_rank_cd(d.search_vector, v_terms_query) +
+        ts_rank_cd(c.search_vector, v_terms_query) +
+        case when numnode(v_query) > 0 and d.search_vector @@ v_query then 0.25 else 0 end +
+        case when numnode(v_query) > 0 and c.search_vector @@ v_query then 0.25 else 0 end
+      ) desc,
+      d.updated_at desc,
+      c.chunk_index asc
     limit greatest(1, least(coalesce(p_match_count, 6), 10));
 end;
 $function$;
