@@ -14,7 +14,8 @@ export const UX_HAND_IDS = [
   "quality-handoff",
 ] as const;
 
-export type UXHandId = (typeof UX_HAND_IDS)[number];
+/** Plugin/hand identity is data-driven; this union of seed IDs is not exhaustive. */
+export type UXHandId = string;
 
 /**
  * Workspace IDs are data, not a closed enum. A new client/project can be
@@ -24,7 +25,7 @@ export type ProjectProfileId = string;
 
 export type ProjectLifecycle = "brownfield" | "greenfield";
 export type HandRole = "primary" | "specialist";
-export type HandInvocation = "default" | "on-demand" | "foundation-only";
+export type HandInvocation = "default" | "on-demand";
 export type TaskRisk = "low" | "medium" | "high";
 export type OutputKind =
   | "text"
@@ -42,7 +43,6 @@ export interface UXHandDefinition {
   description: string;
   pluginPackage: string;
   invocation: HandInvocation;
-  capabilities: readonly string[];
   outputs: readonly OutputKind[];
 }
 
@@ -115,6 +115,11 @@ export interface HandTaskResult {
 }
 
 /** These definitions describe architecture/target plugin boundaries. */
+/**
+ * Seed catalogue for user-facing surfaces only. Runtime tool discovery is
+ * authoritative for what a plugin can currently execute. Additions are data,
+ * not new branches in the Brain's reasoning code.
+ */
 export const UX_HANDS: readonly UXHandDefinition[] = [
   {
     id: "cockpit",
@@ -123,15 +128,6 @@ export const UX_HANDS: readonly UXHandDefinition[] = [
     description: "Always-available daily hand for screen creation, redesign, routine audits and iteration.",
     pluginPackage: "plugins/cockpit",
     invocation: "default",
-    capabilities: [
-      "screen.generate",
-      "screen.redesign",
-      "screen.variations",
-      "screen.adapt-responsive",
-      "pattern.reuse",
-      "ux.audit-routine",
-      "design.iterate",
-    ],
     outputs: ["figma-mutations", "audit-report", "text"],
   },
   {
@@ -141,13 +137,6 @@ export const UX_HANDS: readonly UXHandDefinition[] = [
     description: "Generates a reusable high-fidelity UX wireframe kit; it is not the final production UI design system.",
     pluginPackage: "plugins/wireframe-foundry",
     invocation: "on-demand",
-    capabilities: [
-      "wireframe-foundry.analyse-references",
-      "wireframe-foundry.generate-foundations",
-      "wireframe-foundry.generate-components",
-      "wireframe-foundry.generate-bfci-patterns",
-      "wireframe-foundry.export-manifest",
-    ],
     outputs: ["design-system-manifest", "figma-mutations", "text"],
   },
   {
@@ -157,14 +146,6 @@ export const UX_HANDS: readonly UXHandDefinition[] = [
     description: "Runs deep and independent heuristic, visual, form, content, trust and edge-state audits.",
     pluginPackage: "plugins/ux-auditor",
     invocation: "on-demand",
-    capabilities: [
-      "ux.audit-heuristic",
-      "ux.audit-visual",
-      "ux.audit-forms",
-      "ux.audit-content",
-      "ux.audit-trust",
-      "ux.audit-journey-coverage",
-    ],
     outputs: ["audit-report", "text"],
   },
   {
@@ -174,12 +155,6 @@ export const UX_HANDS: readonly UXHandDefinition[] = [
     description: "Collects source-backed public/approved research and compares product flows and UX patterns.",
     pluginPackage: "plugins/benchmark-lab",
     invocation: "on-demand",
-    capabilities: [
-      "benchmark.research",
-      "benchmark.compare-flows",
-      "benchmark.compare-patterns",
-      "benchmark.identify-opportunities",
-    ],
     outputs: ["research-report", "text"],
   },
   {
@@ -189,13 +164,6 @@ export const UX_HANDS: readonly UXHandDefinition[] = [
     description: "Structures requirements, information architecture, end-to-end journeys, states and recovery branches.",
     pluginPackage: "plugins/journey-architect",
     invocation: "on-demand",
-    capabilities: [
-      "journey.decompose-requirements",
-      "journey.map",
-      "journey.model-states",
-      "journey.specify-screens",
-      "journey.validate-coverage",
-    ],
     outputs: ["journey-spec", "text"],
   },
   {
@@ -205,13 +173,6 @@ export const UX_HANDS: readonly UXHandDefinition[] = [
     description: "Runs final structural/visual/readiness checks and prepares implementation-facing handoff.",
     pluginPackage: "plugins/quality-handoff",
     invocation: "on-demand",
-    capabilities: [
-      "quality.visual-regression",
-      "quality.design-system-conformance",
-      "quality.accessibility",
-      "quality.responsive",
-      "handoff.prepare",
-    ],
     outputs: ["audit-report", "handoff-package", "text"],
   },
 ] as const;
