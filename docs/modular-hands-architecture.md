@@ -39,7 +39,7 @@ Workspace identity exists for information retrieval, access control, provenance 
 
 Each hand has its own Figma `manifest.json`, UI, plugin entry point and build target. Hands share the versioned request/result contracts in `src/core/hand-contracts.ts` and the same backend deployment.
 
-A task request includes the hand ID, capability/tool intent, workspace ID when known, request/idempotency IDs and verified local Figma context. It does not send provider keys or dictate a client-built system prompt. The Brain resolves evidence, discovers eligible tools and builds the plan server-side.
+A task request includes the hand ID, natural-language objective, optional workspace scope, request/idempotency IDs and verified local Figma context. Optional tool preferences are hints only; a fixed capability ID is not required. It does not send provider keys or dictate a client-built system prompt. The Brain resolves evidence, discovers eligible tools and builds the plan server-side.
 
 A tool definition describes:
 - Version, description, input validator and expected output/evidence.
