@@ -187,6 +187,7 @@
     let healthTimeout = null;
     let heartbeatTimer = null;
     let isSending = false;
+    let lastUxdRunId = null;
     let connectionDiagnosticRow = null;
     let modelProbeRow = null;
     let currentModel = null;
@@ -950,6 +951,7 @@
       const glmVision = "z-ai/glm-4.6v";
       const kimiVision = "moonshotai/kimi-k2.5";
       const deepseekVision = "deepseek/deepseek-v4.1-flash";
+      const deepseekText = "deepseek/deepseek-v4-flash-0731";
       const flowIntent = /\b(?:journey|user flow|multi[- ]?screen|vkyc|cpv flow|step[- ]by[- ]step flow|process flow)\b/i.test(text);
       const generationIntent = /\b(?:generate|create|build|new)\b[\s\S]{0,80}\b(?:screen|page|wireframe|journey|flow)\b/i.test(text);
       let capabilityId = "bfci.chat";
@@ -982,9 +984,20 @@
         modelOrder = [freeText, freeTextFallback];
       }
       const filtered = choose(modelOrder);
-      // The backend remains a secure provider relay and enforces the hard spend
-      // guard. Model ordering and task-to-capability routing originate here.
-      return { source: "cockpit", capabilityId, modelOrder: filtered.length ? filtered : choose([freeText, freeTextFallback]) };
+      const uxdIrPipeline = variation ? {
+        v: 1,
+        visionModels: choose([freeVision, glmVision, kimiVision, haiku]),
+        reasoningModels: choose([freeText, freeTextFallback, deepseekText, deepseekVision, haiku])
+      } : undefined;
+      // UXD-IR routes specialist stages separately: image-capable vision models
+      // produce compact evidence; text reasoning models produce native operations.
+      // The backend still validates every model against its approved catalogue.
+      return {
+        source: "cockpit",
+        capabilityId,
+        modelOrder: filtered.length ? filtered : choose([freeText, freeTextFallback]),
+        ...(uxdIrPipeline && uxdIrPipeline.visionModels.length && uxdIrPipeline.reasoningModels.length ? { pipeline: uxdIrPipeline } : {})
+      };
     }
 
     function buildClientSystemPrompt(prompt, capabilityId, selectedNodes, variationCount) {
@@ -1101,6 +1114,7 @@
             provider: currentModel.provider,
             model: currentModel.id,
             intent: variationIntent ? "design-variation" : designIntent ? "design-operation" : "chat",
+            responseMode: designIntent ? "action" : "explain",
             clientRoute,
             systemPrompt: clientSystemPrompt,
             messages: chatHistory.slice(-6),
@@ -1125,6 +1139,10 @@
                 ? "Knowledge · no approved matches"
                 : "Knowledge · search unavailable; task context only";
           $("knowledgeStatus").title = "Only the active client scope and explicitly shared Indian BFCI knowledge may be used.";
+        }
+        if (data.uxdIrTrace && typeof data.uxdIrTrace.runId === "string") {
+          lastUxdRunId = data.uxdIrTrace.runId;
+          setModelStatus("ok", "UXD-IR pipeline complete", "Vision evidence and structured operation plan are saved as run " + lastUxdRunId + ". Natural-language explanation is optional.");
         }
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
@@ -1302,12 +1320,10 @@
               return op.action;
             }
             const summary = variations.map((item, index) =>
-              (index + 1) + ". Create separate frame “" + item.name + "” to the right of “" + source.name + "”\n" +
-              "   Direction: " + (item.rationale || "Distinct layout/content treatment") + "\n" +
-              "   Planned changes: " + item.operations.map(describeVariationOperation).join("; ")
-            ).join("\n\n");
-            appendMessage("assistant", "Variation plan ready. Your selected frame will not be edited.\n\n" + summary);
-            const confirmed = window.confirm("Create " + variations.length + " new frame variation(s)?\n\n" + summary + "\n\nUX Direct will duplicate the selected frame and apply these changes only to the new copies. The original frame will remain unchanged.");
+              (index + 1) + ". " + item.name + " · " + item.operations.length + " validated operations"
+            ).join("\n");
+            setActivity("Vision evidence and operation plan validated. Waiting for confirmation.");
+            const confirmed = window.confirm("Create " + variations.length + " new frame variation(s)?\n\n" + summary + "\n\nThe source frame stays unchanged. The native Figma executor will apply operations only to new copies.");
             if (confirmed) {
               parent.postMessage({ pluginMessage: { type: "apply-design-variations", payload: {
                 sourceId: source.id,
@@ -1315,8 +1331,11 @@
               } } }, "*");
               setActivity("Creating frame variations…");
             } else {
-              appendMessage("assistant", "Cancelled. No variation frames were created, and your original design was not changed.");
-              setActivity("Variation plan cancelled.");
+              if (lastUxdRunId) void fetch(API + "/api/uxd-traces", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ fileKey: verifiedFileKey, runId: lastUxdRunId, status: "cancelled" })
+              }).catch(() => {});
+              setActivity("Variation plan cancelled. No frames were created.");
             }
             return;
           }
@@ -1336,14 +1355,17 @@
             if (op.action === "create-rectangle") return (index + 1) + ". Add a " + String(op.width || 0) + "×" + String(op.height || 0) + " shape to “" + targetLabel + "”";
             return (index + 1) + ". Unsupported operation: " + String(op.action || "unknown");
           }).join("\n");
-          appendMessage("assistant", "Proposed Figma changes:\n" + summary + "\n\nReview the plan in the confirmation prompt. Nothing has changed yet.");
+          setActivity("Operation plan validated. Waiting for confirmation.");
           const confirmed = window.confirm("Apply these changes to the selected frame/layers?\n\n" + summary + "\n\nOnly supported operations within the current selection are allowed. No deletion is supported.");
           if (confirmed) {
             parent.postMessage({ pluginMessage: { type: "apply-design-operations", payload: { operations } } }, "*");
             setActivity("Applying approved changes…");
           } else {
-            appendMessage("assistant", "Cancelled. Your Figma design was not changed.");
-            setActivity("Edit plan cancelled.");
+            if (lastUxdRunId) void fetch(API + "/api/uxd-traces", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ fileKey: verifiedFileKey, runId: lastUxdRunId, status: "cancelled" })
+            }).catch(() => {});
+            setActivity("Edit plan cancelled. No Figma changes were applied.");
           }
           return;
         }
