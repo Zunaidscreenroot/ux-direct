@@ -10,9 +10,10 @@ import {
   isAllowedPluginOrigin,
   pluginCorsHeaders,
   PluginOpenRouterError,
-  reserveHourlyPaidModelBudget,
-  getHourlyPaidModelBudgetStatus,
-  type HourlyPaidBudgetReservation,
+  reserveDailyPaidModelBudget,
+  getDailyPaidModelBudgetStatus,
+  settleDailyPaidModelBudget,
+  type DailyPaidBudgetReservation,
   type PluginChatMessage,
 } from "@/src/figma/plugin-ai-api";
 
@@ -90,13 +91,13 @@ export async function POST(request: Request) {
   if (!selectedModel || !selectedModel.available) {
     return json(request, { error: "The selected model is not available in this Vercel Preview." }, 503);
   }
-  const incomingMessages: unknown[] = Array.isArray(body.messages) ? body.messages.slice(-12) : [];
+  const incomingMessages: unknown[] = Array.isArray(body.messages) ? body.messages.slice(-6) : [];
   const rawMessages = incomingMessages.filter(isChatHistoryMessage);
   if (!rawMessages.length || rawMessages.length !== incomingMessages.length) {
     return json(request, { error: "Conversation messages are missing or invalid." }, 400);
   }
   const totalChars = rawMessages.reduce((total, message) => total + message.content.length, 0);
-  if (totalChars > 50000) return json(request, { error: "Conversation exceeds the safe input limit." }, 413);
+  if (totalChars > 22000) return json(request, { error: "Conversation exceeds the 22,000-character safe input limit." }, 413);
 
   const limit = checkPluginRateLimit(request);
   if (!limit.allowed) {
@@ -109,7 +110,7 @@ export async function POST(request: Request) {
     pageName: typeof selection.pageName === "string" ? selection.pageName.slice(0, 160) : "",
     totalCount: typeof selection.totalCount === "number" && Number.isFinite(selection.totalCount) ? selection.totalCount : items.length,
     items,
-  }).slice(0, 30000);
+  }).slice(0, 16000);
   const previewDataUrl = typeof selection.previewDataUrl === "string" ? selection.previewDataUrl : "";
   if (previewDataUrl && (!/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(previewDataUrl) || previewDataUrl.length > 2800000)) {
     return json(request, { error: "Selected-frame preview is not a valid bounded JPEG image." }, 400);
@@ -205,15 +206,15 @@ export async function POST(request: Request) {
 
   let lastError: unknown = null;
   let reservedEstimatedCostUsd = 0;
-  let hourlyBudgetInfo: HourlyPaidBudgetReservation | null = null;
+  let dailyBudgetInfo: DailyPaidBudgetReservation | null = null;
   const maxOutputTokens = variationIntent
-    ? Math.min(4200, capability.maxOutputTokens + 1000)
+    ? Math.min(3200, capability.maxOutputTokens)
     : capability.maxOutputTokens;
   // Conservative preflight estimate: text characters/4 plus a bounded image allowance.
   // Price metadata is per million tokens; unknown-price models are not auto-routed.
   const estimatedInputTokens = Math.ceil(
-    (selectionContext.length + systemPrompt.length + rawMessages.reduce((sum, message) => sum + message.content.length, 0)) / 4
-  ) + (visualIntent ? 12000 : 1600);
+    (systemPrompt.length + rawMessages.reduce((sum, message) => sum + message.content.length, 0)) / 4
+  ) + (visualIntent ? 6000 : 800);
 
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index];
@@ -230,7 +231,7 @@ export async function POST(request: Request) {
       lastError = new PluginOpenRouterError(
         "The per-task estimated cost ceiling for " + capability.label + " would be exceeded by the next retry (estimated task total $" +
           (reservedEstimatedCostUsd + estimatedCallCostUsd).toFixed(4) + " of $" + capability.maxEstimatedCostUsd.toFixed(2) +
-          "). This is separate from the shared ₹50 rolling-hour budget. UX Direct will not send another paid request.",
+          "). This is separate from the shared ₹50 rolling-day budget. UX Direct will not send another paid request.",
         402,
       );
       continue;
@@ -243,19 +244,19 @@ export async function POST(request: Request) {
     let operationProfile: Record<string, unknown> = {};
     try {
       if (candidate.tier === "paid") {
-        const reservation = await reserveHourlyPaidModelBudget({
+        const reservation = await reserveDailyPaidModelBudget({
           estimatedCostUsd: estimatedCallCostUsd,
           model: candidate.id,
         });
         if (!reservation.allowed) {
           throw new PluginOpenRouterError(
-            "Hourly AI budget reached: ₹" + reservation.spentInr.toFixed(2) + " of ₹" + reservation.limitInr.toFixed(2) +
-            " was reserved in the last 60 minutes. Estimated remaining budget: ₹" + reservation.remainingInr.toFixed(2) +
+            "Daily AI budget reached: ₹" + reservation.spentInr.toFixed(2) + " of ₹" + reservation.limitInr.toFixed(2) +
+            " was reserved in the last 24 hours. Estimated remaining budget: ₹" + reservation.remainingInr.toFixed(2) +
             ". No additional paid model call was made.",
             402,
           );
         }
-        hourlyBudgetInfo = reservation;
+        dailyBudgetInfo = reservation;
       }
       const result = await callOpenRouterChat(candidate.id, inputMessages, {
         maxTokens: maxOutputTokens,
@@ -266,6 +267,9 @@ export async function POST(request: Request) {
       attemptLatencyMs = result.latencyMs;
       attemptObservedCostUsd = result.observedCostUsd;
       attemptUsage = result.usage;
+      if (candidate.tier === "paid" && attemptObservedCostUsd !== null) {
+        await settleDailyPaidModelBudget({ requestId: learningRequestId + ":" + index, actualCostUsd: attemptObservedCostUsd });
+      }
       if (variationIntent) {
         let plan: unknown;
         try {
@@ -347,12 +351,12 @@ export async function POST(request: Request) {
         usage: result.usage,
         estimatedCostBudgetUsd: capability.maxEstimatedCostUsd,
         estimatedReservedCostUsd: reservedEstimatedCostUsd,
-        hourlyBudget: hourlyBudgetInfo ? {
-          limitInr: hourlyBudgetInfo.limitInr,
-          reservedInr: hourlyBudgetInfo.reservedInr,
-          spentInr: hourlyBudgetInfo.projectedInr,
-          remainingInr: hourlyBudgetInfo.remainingInr,
-          windowMinutes: 60,
+        dailyBudget: dailyBudgetInfo ? {
+          limitInr: dailyBudgetInfo.limitInr,
+          reservedInr: dailyBudgetInfo.reservedInr,
+          spentInr: dailyBudgetInfo.projectedInr,
+          remainingInr: dailyBudgetInfo.remainingInr,
+          windowMinutes: 1440,
         } : undefined,
         provider: "openrouter",
         model: result.model,
@@ -368,7 +372,7 @@ export async function POST(request: Request) {
     } catch (error) {
       lastError = error;
       const status = error instanceof PluginOpenRouterError ? error.status : 502;
-      const budgetGuardFailure = error instanceof PluginOpenRouterError && /hourly (?:AI )?budget reached|hourly spend ledger|hourly paid-model budget/i.test(error.message);
+      const budgetGuardFailure = error instanceof PluginOpenRouterError && /daily (?:AI )?budget reached|daily spend ledger|daily paid-model budget/i.test(error.message);
       const validationFailure = variationIntent && error instanceof Error && /invalid variation-plan JSON|quality gate/i.test(error.message);
       const budgetBlocked = (status === 402 || budgetGuardFailure) && /budget|pricing|price metadata|hourly|ledger/i.test(error instanceof Error ? error.message : "");
       await recordModelLearningEvent({
@@ -393,5 +397,5 @@ export async function POST(request: Request) {
 
   const reason = lastError instanceof Error ? lastError.message : "No configured model returned a usable response.";
   const status = lastError instanceof PluginOpenRouterError ? lastError.status : 502;
-  return json(request, { error: reason, capability: capability.id, estimatedCostBudgetUsd: capability.maxEstimatedCostUsd, estimatedReservedCostUsd: reservedEstimatedCostUsd, hourlyBudget: await getHourlyPaidModelBudgetStatus(), hourlyBudgetLimitInr: 50, provider: "openrouter", model: selectedModel.id }, status >= 400 && status <= 599 ? status : 502);
+  return json(request, { error: reason, capability: capability.id, estimatedCostBudgetUsd: capability.maxEstimatedCostUsd, estimatedReservedCostUsd: reservedEstimatedCostUsd, dailyBudget: await getDailyPaidModelBudgetStatus(), dailyBudgetLimitInr: 50, provider: "openrouter", model: selectedModel.id }, status >= 400 && status <= 599 ? status : 502);
 }
