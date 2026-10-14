@@ -27,7 +27,7 @@ jobs:
         run: node --check figma-plugin/code.js
       - name: Cockpit UI script syntax
         run: |
-          node -e 'const fs = require("node:fs"); const { spawnSync } = require("node:child_process"); const html = fs.readFileSync("figma-plugin/ui.html", "utf8"); const scripts = [...html.matchAll(/<script\\b[^>]*>([\\s\\S]*?)<\\/script>/gi)]; if (!scripts.length) throw new Error("No inline Cockpit UI script found"); for (let i = 0; i < scripts.length; i++) { const file = ".cockpit-ui-check-" + i + ".js"; fs.writeFileSync(file, scripts[i][1]); const result = spawnSync(process.execPath, ["--check", file], { encoding: "utf8" }); fs.unlinkSync(file); if (result.status !== 0) { process.stderr.write(result.stderr || result.stdout); process.exit(result.status || 1); } }'
+          node -e 'const fs = require("node:fs"); const { spawnSync } = require("node:child_process"); const html = fs.readFileSync("figma-plugin/ui.html", "utf8"); const start = html.indexOf("<script>"); const end = html.indexOf("</script>", start); if (start < 0 || end < 0) throw new Error("No inline Cockpit UI script found"); const script = html.slice(html.indexOf(">", start) + 1, end); const file = ".cockpit-ui-check.js"; fs.writeFileSync(file, script); const result = spawnSync(process.execPath, ["--check", file], { encoding: "utf8" }); fs.unlinkSync(file); if (result.status !== 0) { process.stderr.write(result.stderr || result.stdout); process.exit(result.status || 1); }'
       - name: Unit tests
         run: npm test
       - name: Build
