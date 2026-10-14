@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { buildHealthSmokeChecks, inspectHealthReport, type SmokeCheckResult } from "@/src/quality/health-report";
+import { FIGMA_ACTION_CATALOGUE, summarizeActionCatalogue } from "@/src/quality/figma-action-catalogue";
 
 type Health = {
   service: string; status: string; checkedAt: string; mode: string;
@@ -449,6 +450,27 @@ export default function Home() {
                 <h2>UX Direct backend</h2><p>Dashboard → Netlify production API</p>
                 <dl><div><dt>Health endpoint</dt><dd>{backendHealthy ? "Responding" : "Not verified"}</dd></div><div><dt>Task planning</dt><dd>{health?.capabilities.taskPlanning ? "Available" : "Unknown"}</dd></div><div><dt>Last checked</dt><dd>{lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : "—"}</dd></div></dl>
               </article>
+                <section className="connection-card" aria-labelledby="action-catalogue-heading">
+                  <div className="connection-card-top"><span className="service-icon">100+</span><span className={"status-chip " + (summarizeActionCatalogue().targetMet ? "status-success" : "status-warning")}>{summarizeActionCatalogue().targetMet ? "Catalogue target met" : "Catalogue target missing"}</span></div>
+                  <h2 id="action-catalogue-heading">Figma action catalogue</h2>
+                  <p>Capability inventory inspired by workflow automation tools. Catalogue entries are not counted as working actions until a native handler and functional test verify them.</p>
+                  <div className="health-counts">
+                    <span><strong>{summarizeActionCatalogue().total}</strong> CATALOGUED</span>
+                    <span><strong>{summarizeActionCatalogue().counts.implemented}</strong> IMPLEMENTED</span>
+                    <span><strong>{summarizeActionCatalogue().counts.partial}</strong> PARTIAL</span>
+                    <span><strong>{summarizeActionCatalogue().counts.planned}</strong> PLANNED</span>
+                  </div>
+                  <p className="health-count-legend">Target: at least {summarizeActionCatalogue().target} named operations. Current inventory is {summarizeActionCatalogue().total}; this is a roadmap and readiness register, not a claim that every operation executes today.</p>
+                  <details>
+                    <summary>Browse catalogue ({FIGMA_ACTION_CATALOGUE.length} operations)</summary>
+                    <div className="plugin-check-list">
+                      {FIGMA_ACTION_CATALOGUE.map((item) => <div className="plugin-check-row" key={item.id}>
+                        <span className={"plugin-check-badge " + (item.readiness === "implemented" ? "check-pass" : item.readiness === "partial" ? "check-available" : item.readiness === "unsupported" ? "check-fail" : "check-untested")}>{item.readiness.toUpperCase()}</span>
+                        <div><strong>{item.description}</strong><span>{item.category} · <code>{item.id}</code></span><p>Required API: {item.requiredApi}{item.destructive ? " · Destructive operation" : ""}{item.needsHumanApproval ? " · Human approval required" : ""}</p></div>
+                      </div>)}
+                    </div>
+                  </details>
+                </section>
               <article className="connection-card plugin-bridge-card">
                 <div className="connection-card-top"><span className="service-icon">FG</span><span className={"status-chip " + (pluginOnline ? "status-success" : "status-neutral")}>{pluginOnline ? "Online" : "Offline"}</span></div>
                 <h2>Figma plugin bridge</h2><p>Two-way control · Native Plugin API</p>
