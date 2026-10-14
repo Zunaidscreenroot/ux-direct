@@ -312,7 +312,7 @@
 
     async function loadModelOptions() {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
-      setModelStatus("warn", "Loading approved models…", "Approved free text and vision models are tried first. Automatic routing uses at most two free attempts before one paid fallback; UX Direct credit and key limits govern billed usage.");
+      setModelStatus("warn", "Loading approved models…", "Routine chat and copy use free Nemotron models. Visual audits and redesigns route by capability to image-capable models; paid calls stay within the estimated task budget and require consent.");
       const selector = $("modelSelect");
       selector.disabled = true;
       try {
@@ -389,7 +389,7 @@
       if (openRouterFreeQuotaExhausted && currentModel && currentModel.tier === "free-tier") {
         modelAvailable = true;
         $("modelSelect").disabled = !backendHealthy || isSending;
-        setModelStatus("warn", "Paid fallback armed", "UX Direct's account-level free quota is exhausted. Chat will choose one paid model by expertise; paid inference starts only when you send a message.");
+        setModelStatus("warn", "Paid fallback armed", "The free-model quota may be exhausted. Routine chat/copy can use available free alternatives; high-compute visual tasks route by capability and may require a paid model after consent.");
         updateSendAvailability();
         return;
       }
@@ -438,7 +438,7 @@
           modelAvailable = false;
           const detail = payload.reason || "UX Direct has exhausted this account's daily free-model request quota.";
           modelAvailable = true;
-          setModelStatus("warn", "Paid fallback armed", "HTTP 429: " + detail + " The server will stop redundant free retries and choose one paid model by expertise when you send a message.");
+          setModelStatus("warn", "Paid fallback armed", "HTTP 429: " + detail + " The capability router will use a suitable available model for the task. High-compute paid routing remains subject to confirmation and the estimated cost ceiling.");
           const message = "UX Direct's daily free-model quota is exhausted.\n\n" +
             detail + "\n\nI will not probe more free models on startup. When you send a message, the server will use its free-first strategy and then attempt exactly one approved paid model selected by task expertise. Paid inference is not triggered until you send that message.";
           if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
@@ -460,11 +460,11 @@
           }
         } else if (model.tier === "free-tier") {
           // A failed single-model probe does not end the session. The chat API will
-          // attempt at most two approved free models before one paid expertise fallback.
+          // The backend now routes each task by BFCI capability; this UI only probes the explicitly selected model.
           modelAvailable = true;
           const reason = payload.reason || payload.error || "The selected free model did not return a usable response.";
           setModelStatus("warn", "Free fallback ready", model.label + ": " + reason + " Chat will retry the approved free pool before considering paid inference.");
-          const message = model.label + " did not pass its probe.\n\n" + reason + "\n\nAutomatic routing remains available: on your next message, the server will try at most two approved free models, then choose exactly one paid model based on the task if neither free model works.";
+          const message = model.label + " did not pass its probe.\n\n" + reason + "\n\nAutomatic routing remains capability-based: routine chat/copy prefer free Nemotron models; screenshot audits and substantial redesigns use image-capable specialists with bounded fallbacks.";
           if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
           else {
             const bubble = modelProbeRow.querySelector(".bubble");
@@ -833,7 +833,7 @@
         return;
       }
       if (!currentModel || !modelAvailable) {
-        appendMessage("assistant", "Choose an UX Direct model and wait until its status says Connected or Paid model armed. Automatic paid fallback follows at most two approved free attempts; UX Direct credit and key limits govern billed usage.");
+        appendMessage("assistant", "Choose an UX Direct model preference and wait until its status says Connected or Paid model armed. The capability router selects the model for each task; high-compute paid requests require consent and stay within an estimated per-task budget.");
         return;
       }
       if (visualIntent || highComputeIntent) {
