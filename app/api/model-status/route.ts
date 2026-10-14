@@ -181,7 +181,7 @@ export async function POST(request: Request) {
       provider: "openrouter",
       model: result.model,
       latencyMs: result.latencyMs,
-      dailyBudget: { limitInr: budget.limitInr, spentInr: budget.projectedInr, reservedInr: budget.reservedInr, remainingInr: budget.remainingInr, windowMinutes: 1440 },
+      dailyBudget: await getDailyPaidModelBudgetStatus(),
       checkedAt: new Date().toISOString(),
     });
   } catch (error) {
