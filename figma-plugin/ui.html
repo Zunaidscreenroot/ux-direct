@@ -776,6 +776,74 @@
       }
     }
 
+    function resolveClientRoute(prompt, flags) {
+      const text = String(prompt || "");
+      const variation = Boolean(flags && flags.variationIntent);
+      const visual = Boolean(flags && flags.visualIntent);
+      const design = Boolean(flags && flags.designIntent);
+      const highCompute = Boolean(flags && flags.highComputeIntent);
+      const ids = modelOptions.map(model => model.id);
+      const choose = (requested) => requested.filter(id => ids.includes(id) &&
+        modelOptions.some(model => model.id === id && model.available !== false));
+      const freeVision = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
+      const freeText = "nvidia/nemotron-3.5-lightning:free";
+      const freeTextFallback = "nvidia/nemotron-3-ultra-550b-a55b:free";
+      const haiku = "anthropic/claude-haiku-5.5";
+      const deepseekVision = "deepseek/deepseek-v4.1-flash";
+      const flowIntent = /\b(?:journey|user flow|multi[- ]?screen|vkyc|cpv flow|step[- ]by[- ]step flow|process flow)\b/i.test(text);
+      const generationIntent = /\b(?:generate|create|build|new)\b[\s\S]{0,80}\b(?:screen|page|wireframe|journey|flow)\b/i.test(text);
+      let capabilityId = "bfci.chat";
+      let modelOrder = [freeText, freeTextFallback];
+      if (variation) {
+        capabilityId = "bfci.screen-redesign";
+        modelOrder = [freeVision, haiku];
+      } else if (visual && design) {
+        capabilityId = generationIntent ? "bfci.screen-generation" : "bfci.screen-redesign";
+        modelOrder = [freeVision, haiku];
+      } else if (visual) {
+        capabilityId = "bfci.screen-audit";
+        modelOrder = [freeVision, haiku];
+      } else if (flowIntent) {
+        capabilityId = "bfci.journey-design";
+        modelOrder = [freeText, deepseekVision];
+      } else if (generationIntent) {
+        capabilityId = "bfci.screen-generation";
+        modelOrder = [freeVision, haiku];
+      } else if (highCompute) {
+        capabilityId = "bfci.journey-design";
+        modelOrder = [freeText, deepseekVision];
+      } else if (design) {
+        capabilityId = "bfci.screen-edit";
+        modelOrder = [freeText, freeTextFallback];
+      } else if (/\b(?:writeup|write[- ]?up|microcopy|button label|helper text|error message|empty state|success message|toast|subtitle|copy)\b/i.test(text)) {
+        capabilityId = "bfci.copy";
+        modelOrder = [freeText, freeTextFallback];
+      }
+      const filtered = choose(modelOrder);
+      // The backend remains a secure provider relay and enforces the hard spend
+      // guard. Model ordering and task-to-capability routing originate here.
+      return { source: "cockpit", capabilityId, modelOrder: filtered.length ? filtered : choose([freeText, freeTextFallback]) };
+    }
+
+    function buildClientSystemPrompt(prompt, capabilityId, selectedNodes, variationCount) {
+      const selectionContext = JSON.stringify({
+        pageName: String(currentSelection.pageName || "").slice(0, 160),
+        totalCount: Array.isArray(currentSelection.selection) ? currentSelection.selection.length : 0,
+        items: selectedNodes
+      }).slice(0, 30000);
+      const core = "You are UX Direct, a senior product/UX designer embedded in Figma. Use the current selected-frame tree and screenshot only. Never invent banking rules, interest rates, fees, dates, financial values, eligibility criteria or consent meanings. Preserve all essential financial values unless explicitly asked otherwise. State uncertainty clearly. Do not claim any Figma changes were applied until the native plugin confirms.";
+      if (variationCount > 0) {
+        return core + "\n\nCreate exactly " + variationCount + " distinct screen variation(s) as sibling copies. The original must remain unchanged. Return ONLY JSON: {\"variations\":[{\"name\":\"...\",\"rationale\":\"...\",\"operations\":[...]}]}. Use 6–16 meaningful native Figma operations per variation, including structural/layout changes as well as style or content changes. Use only IDs in the selected tree; created nodes must be children of a frame. Prioritize hierarchy, spacing, legibility, payment action clarity and card grouping.\n\nCurrent Figma context: " + selectionContext;
+      }
+      if (capabilityId === "bfci.screen-audit") {
+        return core + "\n\nVisually inspect the attached screenshot, not just the layer names. Return 4–6 concise, actionable findings. For each, give observed evidence, why it matters, and the recommended change. Cover hierarchy, contrast/legibility, spacing/alignment, and CTA priority where relevant. Separate observation from inference. Do not return JSON unless requested.\n\nCurrent Figma context: " + selectionContext;
+      }
+      if (capabilityId === "bfci.screen-edit" || capabilityId === "bfci.screen-redesign" || capabilityId === "bfci.screen-generation") {
+        return core + "\n\nFor Figma changes, return ONLY JSON shaped like {\"operations\":[...]}. Allowed action types: update-text, rename-node, set-fill, set-stroke, set-opacity, set-visible, set-locked, set-blend-mode, move-node, resize-node, set-rotation, set-corner-radius, set-text-style, set-layout, set-layout-sizing, set-layout-positioning, set-constraints, set-clip-content, set-layout-grid, set-effects, set-description, create-component, detach-instance, reorder-node, clone-node, remove-node (explicitly requested child layers only), create-text, create-rectangle, create-ellipse, create-line, create-frame, create-svg. Use only IDs shown in the current frame tree, at most 32 operations. Never remove the source root or mutate pages. Use #RRGGBB colors.\n\nCurrent Figma context: " + selectionContext;
+      }
+      return core + "\n\nAnswer directly and concisely. When reviewing banking UX, ground claims in supplied evidence and identify questions requiring product-owner confirmation.\n\nCurrent Figma context: " + selectionContext;
+    }
+
     async function sendChatMessage(overrideText) {
       if (isSending) return;
       const prompt = (typeof overrideText === "string" ? overrideText : $("prompt").value).trim();
@@ -858,6 +926,10 @@
             provider: currentModel.provider,
             model: currentModel.id,
             intent: variationIntent ? "design-variation" : designIntent ? "design-operation" : "chat",
+            clientRoute: resolveClientRoute(prompt, { variationIntent, visualIntent, designIntent, highComputeIntent }),
+            systemPrompt: buildClientSystemPrompt(prompt,
+              resolveClientRoute(prompt, { variationIntent, visualIntent, designIntent, highComputeIntent }).capabilityId,
+              selectedNodes, variationIntent ? (Number((/\\b(?:one|two|three|1|2|3)\\s+(?:new\\s+)?(?:screen\\s+)?variations?\\b/i.exec(prompt) || [])[1] === "one" ? 1 : (/\\b(?:one|two|three|1|2|3)\\s+(?:new\\s+)?(?:screen\\s+)?variations?\\b/i.exec(prompt) || [])[1] === "three" ? 3 : 2)) : 0),
             messages: chatHistory.slice(-12),
             selection: {
               pageName: String(currentSelection.pageName || "").slice(0, 160),
