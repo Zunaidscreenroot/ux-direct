@@ -567,10 +567,10 @@ export async function callOpenRouterChat(
       const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : "unknown";
       // Do not return private reasoning as user-facing content. Let the chat route try
       // the next explicitly approved model and expose bounded diagnostics if all fail.
-      throw new PluginOpenRouterError(
-        "Model " + model + " returned empty message content (finish_reason=" + finishReason + ").",
-        502,
-      );
+      const emptyContentMessage = finishReason === "length"
+        ? "Model " + model + " exhausted its output-token budget before returning usable message content (finish_reason=length). UX Direct will try the next approved model when one is available."
+        : "Model " + model + " returned empty message content (finish_reason=" + finishReason + ").";
+      throw new PluginOpenRouterError(emptyContentMessage, 502);
     }
     const usage = asRecord(payload?.usage);
     const metric = (value: unknown): number | null => {
