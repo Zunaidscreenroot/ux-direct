@@ -810,9 +810,10 @@
       if (isSending) return;
       const prompt = (typeof overrideText === "string" ? overrideText : $("prompt").value).trim();
       if (prompt.length < 1) return;
-      const visualIntent = /\b(scan|look\s+at|inspect|review|audit|critique|improv(?:e|ement|ements)|better|redesign|layout|spacing|alignment|screen|screenshot|compare|design quality|hierarchy|analy[sz]e|evaluation|evaluate|assess|what\s+(?:is|looks)\s+wrong|find\s+(?:issues|problems)|feedback|visual design|usability|affordance|contrast|typography|white\s*space|overflow|clipping)\b/i.test(prompt);
+      const variationIntent = /\b(?:create|make|generate|build|produce|want|show|give)\b[\s\S]{0,100}\b(?:variation|variations|variant|variants|alternative|alternatives|options|new screen|new version)\b|\b(?:clone|duplicate)\b[\s\S]{0,60}\b(?:screen|frame|variation|version)\b/i.test(prompt);
+      const visualIntent = /\b(scan|look\s+at|inspect|review|audit|critique|improv(?:e|ement|ements)|better|redesign|layout|spacing|alignment|screen|screenshot|compare|design quality|hierarchy|analy[sz]e|evaluation|evaluate|assess|what\s+(?:is|looks)\s+wrong|find\s+(?:issues|problems)|feedback|visual design|usability|affordance|contrast|typography|white\s*space|overflow|clipping)\b/i.test(prompt) || variationIntent;
       // Compute this before visual preflight: its consent text reads designIntent.
-      const designIntent = requestsFigmaEdit(prompt);
+      const designIntent = variationIntent || requestsFigmaEdit(prompt);
       if (visualIntent && !currentSelection.previewDataUrl) {
         appendMessage("assistant", "I can’t scan this frame visually yet because its screenshot preview is not ready. Select the frame in Figma and wait until the cockpit says “Visual preview ready,” then retry. No inference or document changes were made.");
         return;
@@ -830,13 +831,15 @@
         return;
       }
       if (visualIntent) {
-        const detail = designIntent
-          ? "This request proposes Figma changes, so UX Direct will use the lowest-listed-cost approved paid vision model to produce a bounded structured edit plan."
-          : currentModel.tier === "paid"
-            ? (currentModel.supportsImages === true
-              ? "The explicitly selected paid vision model will be called directly."
-              : "The selected paid model cannot accept images, so UX Direct will substitute the lowest-listed-cost approved paid vision model.")
-            : "UX Direct will try up to two approved free vision models first, then may make one low-cost paid vision request if both free attempts fail.";
+        const detail = variationIntent
+          ? "UX Direct will inspect the selected screenshot and layer tree, then propose two new sibling-frame variations. Your original frame will remain unchanged; nothing is created until you approve the variation plan."
+          : designIntent
+            ? "This request proposes Figma changes, so UX Direct will prepare a structured edit plan for your review."
+            : currentModel.tier === "paid"
+              ? (currentModel.supportsImages === true
+                ? "The explicitly selected paid vision model will be called directly."
+                : "The selected paid model cannot accept images, so UX Direct will use an approved image-capable model.")
+              : "UX Direct will try an approved free vision model first and may use one low-cost paid vision request if the free model fails.";
         const consent = window.confirm("Visual review sends the selected frame screenshot and prompt to OpenRouter.\n\n" + detail + "\n\nOpenRouter free-model terms and rate limits apply; a paid fallback may consume account credits. No Figma edits happen without a separate confirmation. Continue?");
         if (!consent) return;
       }
@@ -880,7 +883,7 @@
             project: "general",
             provider: currentModel.provider,
             model: currentModel.id,
-            intent: designIntent ? "design-operation" : "chat",
+            intent: variationIntent ? "design-variation" : designIntent ? "design-operation" : "chat",
             messages: chatHistory.slice(-12),
             selection: {
               pageName: String(currentSelection.pageName || "").slice(0, 160),
@@ -904,6 +907,90 @@
             plan = JSON.parse(cleaned);
           } catch (_) {
             throw new Error("I couldn’t turn the model response into a safe, structured Figma edit plan. No changes were made.");
+          }
+          if (variationIntent) {
+            const source = selectedNodes[0];
+            if (!source || source.type !== "FRAME") {
+              appendMessage("assistant", "To create variations safely, select the whole source frame (not an individual text layer). Your original design has not been changed.");
+              setActivity("Select a frame to create separate variations.");
+              return;
+            }
+            const allowedIds = new Set();
+            const nodeTypes = new Map();
+            const nodeNames = new Map();
+            function collectVariationTree(node) {
+              if (!node || typeof node !== "object") return;
+              if (typeof node.id === "string") {
+                allowedIds.add(node.id);
+                nodeTypes.set(node.id, node.type);
+                nodeNames.set(node.id, node.name || node.type || "layer");
+              }
+              if (Array.isArray(node.children)) node.children.forEach(collectVariationTree);
+            }
+            collectVariationTree(source.tree || source);
+            const allowedActions = new Set(["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle"]);
+            const proposed = Array.isArray(plan.variations) ? plan.variations.slice(0, 3) : [];
+            function validOperation(op) {
+              if (!op || typeof op !== "object" || !allowedActions.has(op.action)) return false;
+              if (op.action === "create-text" || op.action === "create-rectangle") {
+                if (!allowedIds.has(op.parentId) || nodeTypes.get(op.parentId) !== "FRAME") return false;
+              } else if (!allowedIds.has(op.targetId)) return false;
+              if (op.action === "update-text") return nodeTypes.get(op.targetId) === "TEXT" && typeof op.text === "string" && !!op.text.trim();
+              if (op.action === "rename-node") return typeof op.name === "string" && !!op.name.trim();
+              if (op.action === "set-fill") return typeof op.color === "string" && /^#?[0-9a-fA-F]{6}$/.test(op.color);
+              if (op.action === "move-node") return Number.isFinite(op.x) && Number.isFinite(op.y);
+              if (op.action === "resize-node") return Number.isFinite(op.width) && Number.isFinite(op.height) && op.width > 0 && op.height > 0;
+              if (op.action === "create-text") return typeof op.text === "string" && !!op.text.trim() && Number.isFinite(op.x) && Number.isFinite(op.y) && (!("fontSize" in op) || Number.isFinite(op.fontSize)) && (!("color" in op) || /^#?[0-9a-fA-F]{6}$/.test(op.color));
+              if (op.action === "create-rectangle") return Number.isFinite(op.width) && Number.isFinite(op.height) && op.width > 0 && op.height > 0 && Number.isFinite(op.x) && Number.isFinite(op.y) && (!("color" in op) || /^#?[0-9a-fA-F]{6}$/.test(op.color));
+              return false;
+            }
+            const variations = proposed.map((item) => ({
+              name: String(item && item.name || "").trim().slice(0, 120),
+              rationale: String(item && item.rationale || "").trim().slice(0, 240),
+              operations: Array.isArray(item && item.operations) ? item.operations.slice(0, 8) : []
+            }));
+            const sourceIdsMatch = proposed.every((item) => item && (!item.targetId || item.targetId === source.id));
+            const valid = variations.length >= 1 && sourceIdsMatch && variations.every((item, index) =>
+              item.name.length > 0 && item.operations.length > 0 &&
+              item.operations.every(validOperation) &&
+              Array.isArray(proposed[index] && proposed[index].operations) &&
+              proposed[index].operations.length <= 8
+            );
+            if (!valid) {
+              appendMessage("assistant", "I couldn’t turn the model response into a safe variation plan. No frames were created and your original remains unchanged. Try asking for two variations with clear directions, such as “one compact and one higher-contrast version.”");
+              setActivity("No variations were created.");
+              return;
+            }
+            function describeVariationOperation(op) {
+              const nodeId = op.targetId || op.parentId;
+              const label = nodeNames.get(nodeId) || "selected frame";
+              if (op.action === "update-text") return "Change text in “" + label + "”";
+              if (op.action === "rename-node") return "Rename “" + label + "”";
+              if (op.action === "set-fill") return "Change fill of “" + label + "” to " + op.color;
+              if (op.action === "move-node") return "Reposition “" + label + "”";
+              if (op.action === "resize-node") return "Resize “" + label + "”";
+              if (op.action === "create-text") return "Add text to “" + label + "”";
+              if (op.action === "create-rectangle") return "Add shape to “" + label + "”";
+              return op.action;
+            }
+            const summary = variations.map((item, index) =>
+              (index + 1) + ". Create separate frame “" + item.name + "” to the right of “" + source.name + "”\n" +
+              "   Direction: " + (item.rationale || "Distinct layout/content treatment") + "\n" +
+              "   Planned changes: " + item.operations.map(describeVariationOperation).join("; ")
+            ).join("\n\n");
+            appendMessage("assistant", "Variation plan ready. Your selected frame will not be edited.\n\n" + summary);
+            const confirmed = window.confirm("Create " + variations.length + " new frame variation(s)?\n\n" + summary + "\n\nUX Direct will duplicate the selected frame and apply these changes only to the new copies. The original frame will remain unchanged.");
+            if (confirmed) {
+              parent.postMessage({ pluginMessage: { type: "apply-design-variations", payload: {
+                sourceId: source.id,
+                variations: variations.map((item) => ({ name: item.name, rationale: item.rationale, operations: item.operations }))
+              } } }, "*");
+              setActivity("Creating frame variations…");
+            } else {
+              appendMessage("assistant", "Cancelled. No variation frames were created, and your original design was not changed.");
+              setActivity("Variation plan cancelled.");
+            }
+            return;
           }
           const operations = Array.isArray(plan.operations) ? plan.operations.slice(0, 8) : [];
           if (!operations.length) {
@@ -1022,6 +1109,23 @@
         renderHealthReport(message);
         return;
       }
+
+      if (message.type === "design-variation-result") {
+        const results = Array.isArray(message.results) ? message.results : [];
+        if (message.ok && results.length) {
+          const labels = results.map((item, index) => (index + 1) + ". " + String(item.name || "Variation frame") +
+            " (" + String(item.operationsApplied || 0) + " changes applied)");
+          appendMessage("assistant", "Created " + results.length + " new variation frame(s). Your original frame was left unchanged.\n\n" + labels.join("\n") +
+            "\n\nThe new frame(s) are selected in Figma so you can compare and refine them.");
+          setActivity("Variation frames created. Review the new selected frames.");
+        } else {
+          appendMessage("assistant", "I couldn’t finish creating the variations: " + String(message.error || "Unknown plugin error") +
+            ". Your original frame was not intentionally edited. Check the canvas for any partially created clone before retrying.");
+          setActivity("Variation creation failed; inspect the canvas before retrying.");
+        }
+        return;
+      }
+
 
       if (message.type === "design-operation-result") {
         if (message.ok) {
