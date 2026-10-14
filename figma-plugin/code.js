@@ -1138,7 +1138,8 @@ async function applyOneVariationOperation(cloneRoot, nodeMap, operation) {
   }
 
   var target = nodeMap[operation.targetId];
-  if (!target || target === cloneRoot && action !== "rename-node" && action !== "set-fill" && action !== "move-node" && action !== "resize-node") {
+  var rootSafeActions = ["rename-node", "set-fill", "move-node", "resize-node", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-layout"];
+  if (!target || (target === cloneRoot && rootSafeActions.indexOf(action) === -1)) {
     throw new Error("Variation target is not inside the cloned frame.");
   }
   if (action === "rename-node") {
@@ -1160,6 +1161,46 @@ async function applyOneVariationOperation(cloneRoot, nodeMap, operation) {
     var resizeWidth = Number(operation.width), resizeHeight = Number(operation.height);
     if (!Number.isFinite(resizeWidth) || !Number.isFinite(resizeHeight)) throw new Error("Resize requires numeric width and height.");
     target.resize(Math.max(1, Math.min(2000, resizeWidth)), Math.max(1, Math.min(2000, resizeHeight)));
+  } else if (action === "set-text-style") {
+    if (target.type !== "TEXT") throw new Error("set-text-style must target a text layer.");
+    await loadFontsForTextNode(target);
+    if (Number.isFinite(operation.fontSize)) target.fontSize = Math.max(8, Math.min(48, operation.fontSize));
+    if (operation.fontStyle) {
+      var style = ["Regular", "Medium", "Semi Bold", "Bold"].indexOf(operation.fontStyle) >= 0 ? operation.fontStyle : "Regular";
+      var fontName = { family: "Inter", style: style };
+      await figma.loadFontAsync(fontName);
+      target.fontName = fontName;
+    }
+    if (operation.color) target.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color), opacity: 1 }];
+  } else if (action === "set-corner-radius") {
+    if (!("cornerRadius" in target)) throw new Error("The variation target does not support corner radius.");
+    target.cornerRadius = Math.max(0, Math.min(128, Number(operation.radius)));
+  } else if (action === "set-stroke") {
+    if (!("strokes" in target) || !("strokeWeight" in target)) throw new Error("The variation target does not support strokes.");
+    target.strokes = [{ type: "SOLID", color: parseUXDHexColor(operation.color), opacity: 1 }];
+    target.strokeWeight = Math.max(0.5, Math.min(16, Number(operation.width)));
+  } else if (action === "set-opacity") {
+    if (!("opacity" in target)) throw new Error("The variation target does not support opacity.");
+    target.opacity = Math.max(0, Math.min(1, Number(operation.opacity)));
+  } else if (action === "set-visible") {
+    if (!("visible" in target) || typeof operation.visible !== "boolean") throw new Error("Visibility operation is invalid for this target.");
+    target.visible = operation.visible;
+  } else if (action === "set-layout") {
+    if (target.type !== "FRAME") throw new Error("set-layout must target a frame.");
+    if (["NONE", "HORIZONTAL", "VERTICAL"].indexOf(operation.layoutMode) === -1) throw new Error("Unsupported auto-layout mode.");
+    target.layoutMode = operation.layoutMode;
+    if (Number.isFinite(operation.itemSpacing)) target.itemSpacing = Math.max(0, Math.min(128, operation.itemSpacing));
+    ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"].forEach(function (key) {
+      if (Number.isFinite(operation[key])) target[key] = Math.max(0, Math.min(128, operation[key]));
+    });
+    if (["MIN", "CENTER", "MAX", "SPACE_BETWEEN"].indexOf(operation.primaryAxisAlignItems) >= 0) target.primaryAxisAlignItems = operation.primaryAxisAlignItems;
+    if (["MIN", "CENTER", "MAX", "BASELINE"].indexOf(operation.counterAxisAlignItems) >= 0) target.counterAxisAlignItems = operation.counterAxisAlignItems;
+    if (operation.layoutMode !== "NONE" && ["AUTO", "FIXED"].indexOf(operation.primaryAxisSizingMode) >= 0) target.primaryAxisSizingMode = operation.primaryAxisSizingMode;
+    if (operation.layoutMode !== "NONE" && ["AUTO", "FIXED"].indexOf(operation.counterAxisSizingMode) >= 0) target.counterAxisSizingMode = operation.counterAxisSizingMode;
+  } else if (action === "reorder-node") {
+    var parent = target.parent;
+    if (!parent || !("children" in parent) || typeof parent.insertChild !== "function") throw new Error("The node cannot be reordered.");
+    parent.insertChild(Math.max(0, Math.min(parent.children.length - 1, Math.floor(operation.index))), target);
   } else {
     throw new Error("Unsupported variation operation: " + String(action || "unknown"));
   }
@@ -1192,12 +1233,12 @@ async function applyApprovedDesignVariations(payload) {
       var appliedCount = 0;
       try {
         if (!variation || typeof variation.name !== "string" || !variation.name.trim() ||
-            !Array.isArray(variation.operations) || variation.operations.length < 1 || variation.operations.length > 8) {
+            !Array.isArray(variation.operations) || variation.operations.length < 6 || variation.operations.length > 16) {
           throw new Error("Variation " + (i + 1) + " is missing a name or has an invalid operation count.");
         }
         // Recheck every target against the source frame before cloning. Native code never
         // accepts model-supplied page IDs or targets outside this selected frame.
-        var allowedActions = ["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle"];
+        var allowedActions = ["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-layout", "reorder-node"];
         for (var j = 0; j < variation.operations.length; j += 1) {
           var op = variation.operations[j];
           if (!op || allowedActions.indexOf(op.action) === -1) throw new Error("Unsupported operation in variation " + (i + 1) + ".");
@@ -1241,6 +1282,35 @@ async function applyApprovedDesignVariations(payload) {
           }
           if (op.action === "rename-node" && (typeof op.name !== "string" || !op.name.trim())) {
             throw new Error("Rename operations require a non-empty name.");
+          }
+          if (op.action === "set-text-style" &&
+              (sourceTarget.type !== "TEXT" ||
+                ("fontSize" in op && (!Number.isFinite(op.fontSize) || op.fontSize < 8 || op.fontSize > 48)) ||
+                ("fontStyle" in op && ["Regular", "Medium", "Semi Bold", "Bold"].indexOf(op.fontStyle) === -1) ||
+                ("color" in op && (typeof op.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(op.color))))) {
+            throw new Error("Text-style operation is invalid for this target.");
+          }
+          if (op.action === "set-corner-radius" && (!("cornerRadius" in sourceTarget) || !Number.isFinite(op.radius) || op.radius < 0 || op.radius > 128)) {
+            throw new Error("Corner-radius operation is invalid for this target.");
+          }
+          if (op.action === "set-stroke" && (!("strokes" in sourceTarget) || !("strokeWeight" in sourceTarget) ||
+              typeof op.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(op.color) || !Number.isFinite(op.width) || op.width <= 0 || op.width > 16)) {
+            throw new Error("Stroke operation is invalid for this target.");
+          }
+          if (op.action === "set-opacity" && (!("opacity" in sourceTarget) || !Number.isFinite(op.opacity) || op.opacity < 0 || op.opacity > 1)) {
+            throw new Error("Opacity operation is invalid for this target.");
+          }
+          if (op.action === "set-visible" && (!("visible" in sourceTarget) || typeof op.visible !== "boolean")) {
+            throw new Error("Visibility operation is invalid for this target.");
+          }
+          if (op.action === "set-layout" && (sourceTarget.type !== "FRAME" ||
+              ["NONE", "HORIZONTAL", "VERTICAL"].indexOf(op.layoutMode) === -1 ||
+              ("itemSpacing" in op && (!Number.isFinite(op.itemSpacing) || op.itemSpacing < 0 || op.itemSpacing > 128)))) {
+            throw new Error("Layout operation is invalid for this target.");
+          }
+          if (op.action === "reorder-node" && (!Number.isInteger(op.index) || op.index < 0 || op.index > 60 ||
+              !sourceTarget.parent || !("children" in sourceTarget.parent))) {
+            throw new Error("Reorder operation is invalid for this target.");
           }
         }
 
