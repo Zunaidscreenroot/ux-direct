@@ -48,8 +48,9 @@ test("tool list only exposes status and safe UX planning", async () => {
   try {
     const response = await POST(request({ jsonrpc: "2.0", id: 2, method: "tools/list" }, { key: validKey }));
     const body = await response.json();
-    assert.deepEqual(body.result.tools.map((tool: { name: string }) => tool.name), ["ux_direct_status", "ux_direct_plan_task"]);
-    assert.deepEqual(body.result.tools[1].inputSchema.properties.project.enum, ["general", "express-computers"]);
+    assert.deepEqual(body.result.tools.map((tool: { name: string }) => tool.name), ["ux_direct_status", "ux_direct_connection_status", "ux_direct_plan_task"]);
+    const planner = body.result.tools.find((tool: { name: string }) => tool.name === "ux_direct_plan_task");
+    assert.deepEqual(planner.inputSchema.properties.project.enum, ["general", "express-computers"]);
   } finally {
     if (original === undefined) delete process.env.UX_DIRECT_MCP_API_KEY;
     else process.env.UX_DIRECT_MCP_API_KEY = original;
@@ -74,6 +75,24 @@ test("MCP endpoint rejects invalid bearer keys", async () => {
   try {
     const response = await POST(request({ jsonrpc: "2.0", id: 1, method: "ping" }, { key: "wrong-key" }));
     assert.equal(response.status, 401);
+  } finally {
+    if (original === undefined) delete process.env.UX_DIRECT_MCP_API_KEY;
+    else process.env.UX_DIRECT_MCP_API_KEY = original;
+  }
+});
+
+test("connection-status tool reports ChatGPT and Figma connection semantics", async () => {
+  const original = process.env.UX_DIRECT_MCP_API_KEY;
+  process.env.UX_DIRECT_MCP_API_KEY = validKey;
+  try {
+    const response = await POST(request({
+      jsonrpc: "2.0", id: 3, method: "tools/list",
+    }, { key: validKey }));
+    const body = await response.json();
+    const connectionTool = body.result.tools.find((tool: { name: string }) => tool.name === "ux_direct_connection_status");
+    assert.ok(connectionTool);
+    assert.match(connectionTool.description, /five minutes/);
+    assert.match(connectionTool.description, /75 seconds/);
   } finally {
     if (original === undefined) delete process.env.UX_DIRECT_MCP_API_KEY;
     else process.env.UX_DIRECT_MCP_API_KEY = original;
