@@ -1069,6 +1069,213 @@ async function applyApprovedDesignOperations(operations) {
   }
 }
 
+
+function findNodeWithin(root, id) {
+  if (!root || typeof id !== "string" || !id) return null;
+  if (root.id === id) return root;
+  if ("children" in root && Array.isArray(root.children)) {
+    for (var i = 0; i < root.children.length; i += 1) {
+      var found = findNodeWithin(root.children[i], id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+function mapOriginalTreeToClone(original, clone, map) {
+  if (!original || !clone) return;
+  map[original.id] = clone;
+  var originalChildren = "children" in original ? original.children : [];
+  var cloneChildren = "children" in clone ? clone.children : [];
+  var count = Math.min(originalChildren.length, cloneChildren.length);
+  for (var i = 0; i < count; i += 1) {
+    mapOriginalTreeToClone(originalChildren[i], cloneChildren[i], map);
+  }
+}
+function applyVariationFill(node, color) {
+  if (!node || !("fills" in node)) throw new Error("The variation target does not support a fill.");
+  node.fills = [{ type: "SOLID", color: parseUXDHexColor(color), opacity: 1 }];
+}
+function setVariationPosition(node, x, y) {
+  if (!node || !Number.isFinite(x) || !Number.isFinite(y)) throw new Error("Move operation requires finite x and y coordinates.");
+  var parent = node.parent;
+  if (parent && parent.type === "FRAME" && parent.layoutMode && parent.layoutMode !== "NONE" &&
+      "layoutPositioning" in node) {
+    node.layoutPositioning = "ABSOLUTE";
+  }
+  var maxX = parent && typeof parent.width === "number" ? Math.max(0, parent.width - node.width) : Number.MAX_SAFE_INTEGER;
+  var maxY = parent && typeof parent.height === "number" ? Math.max(0, parent.height - node.height) : Number.MAX_SAFE_INTEGER;
+  node.x = Math.max(0, Math.min(maxX, x));
+  node.y = Math.max(0, Math.min(maxY, y));
+}
+async function applyOneVariationOperation(cloneRoot, nodeMap, operation) {
+  var action = operation && operation.action;
+  if (action === "create-text" || action === "create-rectangle") {
+    var parent = nodeMap[operation.parentId];
+    if (!parent || parent.type !== "FRAME") throw new Error("Variation create operations must target a frame inside the clone.");
+    if (action === "create-text") {
+      var textValue = String(operation.text || "").slice(0, 1000);
+      if (!textValue.trim()) throw new Error("New variation text cannot be empty.");
+      var font = { family: "Inter", style: "Regular" };
+      await figma.loadFontAsync(font);
+      var textNode = figma.createText();
+      parent.appendChild(textNode);
+      textNode.fontName = font;
+      textNode.characters = textValue;
+      var fontSize = Number(operation.fontSize);
+      textNode.fontSize = Number.isFinite(fontSize) ? Math.max(8, Math.min(48, fontSize)) : 14;
+      textNode.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color || "#202124"), opacity: 1 }];
+      setVariationPosition(textNode, Number(operation.x), Number(operation.y));
+      return { action: action, id: textNode.id, name: textNode.name };
+    }
+    var rect = figma.createRectangle();
+    parent.appendChild(rect);
+    var width = Number(operation.width), height = Number(operation.height);
+    rect.resize(Number.isFinite(width) ? Math.max(1, Math.min(2000, width)) : 120,
+      Number.isFinite(height) ? Math.max(1, Math.min(2000, height)) : 48);
+    rect.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color || "#2563EB"), opacity: 1 }];
+    setVariationPosition(rect, Number(operation.x), Number(operation.y));
+    return { action: action, id: rect.id, name: rect.name };
+  }
+
+  var target = nodeMap[operation.targetId];
+  if (!target || target === cloneRoot && action !== "rename-node" && action !== "set-fill" && action !== "move-node" && action !== "resize-node") {
+    throw new Error("Variation target is not inside the cloned frame.");
+  }
+  if (action === "rename-node") {
+    var name = String(operation.name || "").trim().slice(0, 120);
+    if (!name) throw new Error("Variation layer name cannot be empty.");
+    target.name = name;
+  } else if (action === "set-fill") {
+    applyVariationFill(target, operation.color);
+  } else if (action === "update-text") {
+    if (target.type !== "TEXT") throw new Error("update-text must target a text layer in the clone.");
+    await loadFontsForTextNode(target);
+    var replacement = String(operation.text || "").slice(0, 2000);
+    if (!replacement.trim()) throw new Error("Replacement text cannot be empty.");
+    target.characters = replacement;
+  } else if (action === "move-node") {
+    setVariationPosition(target, Number(operation.x), Number(operation.y));
+  } else if (action === "resize-node") {
+    if (typeof target.resize !== "function") throw new Error("The variation target cannot be resized.");
+    var resizeWidth = Number(operation.width), resizeHeight = Number(operation.height);
+    if (!Number.isFinite(resizeWidth) || !Number.isFinite(resizeHeight)) throw new Error("Resize requires numeric width and height.");
+    target.resize(Math.max(1, Math.min(2000, resizeWidth)), Math.max(1, Math.min(2000, resizeHeight)));
+  } else {
+    throw new Error("Unsupported variation operation: " + String(action || "unknown"));
+  }
+  return { action: action, id: target.id, name: target.name };
+}
+async function applyApprovedDesignVariations(payload) {
+  var results = [];
+  var failures = [];
+  var createdFrames = [];
+  try {
+    assertUxDirectFileScope("apply approved screen variations");
+    if (!payload || typeof payload.sourceId !== "string" || !Array.isArray(payload.variations) ||
+        payload.variations.length < 1 || payload.variations.length > 3) {
+      throw new Error("The variation plan must target one selected frame and contain one to three variations.");
+    }
+    var selected = figma.currentPage.selection.slice();
+    var source = selected.find(function (node) { return node.id === payload.sourceId; }) || null;
+    if (!source || source.type !== "FRAME") {
+      throw new Error("Select the whole source frame again before applying variations.");
+    }
+    if (!source.parent || typeof source.parent.appendChild !== "function") {
+      throw new Error("The selected frame cannot be cloned into a sibling frame.");
+    }
+    var parent = source.parent;
+    var nextX = source.x + source.width + 80;
+
+    for (var i = 0; i < payload.variations.length; i += 1) {
+      var variation = payload.variations[i];
+      var clone = null;
+      var appliedCount = 0;
+      try {
+        if (!variation || typeof variation.name !== "string" || !variation.name.trim() ||
+            !Array.isArray(variation.operations) || variation.operations.length < 1 || variation.operations.length > 8) {
+          throw new Error("Variation " + (i + 1) + " is missing a name or has an invalid operation count.");
+        }
+        // Recheck every target against the source frame before cloning. Native code never
+        // accepts model-supplied page IDs or targets outside this selected frame.
+        var allowedActions = ["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle"];
+        for (var j = 0; j < variation.operations.length; j += 1) {
+          var op = variation.operations[j];
+          if (!op || allowedActions.indexOf(op.action) === -1) throw new Error("Unsupported operation in variation " + (i + 1) + ".");
+          var expectedId = op.action === "create-text" || op.action === "create-rectangle" ? op.parentId : op.targetId;
+          var sourceTarget = findNodeWithin(source, expectedId);
+          if (!sourceTarget) throw new Error("A variation operation targets a node outside the selected source frame.");
+          if ((op.action === "create-text" || op.action === "create-rectangle") && sourceTarget.type !== "FRAME") {
+            throw new Error("New text and shape operations must target a frame.");
+          }
+          if (op.action === "update-text" && (sourceTarget.type !== "TEXT" || typeof op.text !== "string" || !op.text.trim())) {
+            throw new Error("Text variations must target an existing text layer and provide replacement text.");
+          }
+          if (op.action === "set-fill" && (typeof op.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(op.color))) {
+            throw new Error("Variation fill color must use #RRGGBB format.");
+          }
+          if (op.action === "move-node" && (!Number.isFinite(op.x) || !Number.isFinite(op.y))) {
+            throw new Error("Move operations require numeric x and y coordinates.");
+          }
+          if (op.action === "resize-node" && (!Number.isFinite(op.width) || !Number.isFinite(op.height) || op.width <= 0 || op.height <= 0)) {
+            throw new Error("Resize operations require positive numeric width and height.");
+          }
+          if (op.action === "rename-node" && (typeof op.name !== "string" || !op.name.trim())) {
+            throw new Error("Rename operations require a non-empty name.");
+          }
+        }
+
+        assertUxDirectFileScope("clone selected source frame");
+        clone = source.clone();
+        if (clone.parent !== parent) parent.appendChild(clone);
+        clone.name = variation.name.trim().slice(0, 120);
+        if (parent.type === "FRAME" && parent.layoutMode && parent.layoutMode !== "NONE" && "layoutPositioning" in clone) {
+          clone.layoutPositioning = "ABSOLUTE";
+        }
+        clone.x = nextX;
+        clone.y = source.y;
+        nextX = clone.x + clone.width + 80;
+
+        var nodeMap = Object.create(null);
+        mapOriginalTreeToClone(source, clone, nodeMap);
+        for (var k = 0; k < variation.operations.length; k += 1) {
+          assertUxDirectFileScope("apply variation operation");
+          var operationResult = await applyOneVariationOperation(clone, nodeMap, variation.operations[k]);
+          appliedCount += 1;
+          assertUxDirectFileScope("verify variation operation");
+        }
+        createdFrames.push(clone);
+        results.push({ id: clone.id, name: clone.name, operationsApplied: appliedCount, rationale: String(variation.rationale || "").slice(0, 240) });
+      } catch (error) {
+        if (clone && createdFrames.indexOf(clone) === -1) {
+          createdFrames.push(clone);
+          results.push({ id: clone.id, name: clone.name || "Partial variation", operationsApplied: appliedCount, partial: true });
+        }
+        failures.push("Variation " + (i + 1) + ": " + (error instanceof Error ? error.message : String(error)));
+      }
+    }
+
+    if (createdFrames.length) {
+      assertUxDirectFileScope("select newly created variations");
+      figma.currentPage.selection = createdFrames;
+    }
+    figma.ui.postMessage({
+      type: "design-variation-result",
+      ok: failures.length === 0 && results.length === payload.variations.length,
+      results: results,
+      error: failures.length ? failures.join(" ") : undefined
+    });
+    sendSelection();
+  } catch (error) {
+    figma.ui.postMessage({
+      type: "design-variation-result",
+      ok: false,
+      error: error instanceof Error ? error.message : "Unknown variation creation error.",
+      results: results
+    });
+    sendSelection();
+  }
+}
+
 figma.ui.onmessage = async function (message) {
   if (!message) return;
   if (message.type === "native-api-probe-ack" && message.probeId && UXD_NATIVE_API_PROBE_WAITERS[message.probeId]) {
@@ -1078,6 +1285,10 @@ figma.ui.onmessage = async function (message) {
     return;
   }
   if (message.type === "get-selection") { assertUxDirectFileScope("refresh selection"); sendSelection(); }
+  if (message.type === "apply-design-variations") {
+    assertUxDirectFileScope("apply approved screen variations");
+    await applyApprovedDesignVariations(message.payload);
+  }
   if (message.type === "apply-design-operations") {
     assertUxDirectFileScope("apply approved Figma design operations");
     await applyApprovedDesignOperations(message.payload && message.payload.operations);
