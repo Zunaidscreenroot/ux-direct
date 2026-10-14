@@ -141,7 +141,7 @@ export async function POST(request: Request) {
   const availableById = new Map(modelOptions.map((model) => [model.id, model]));
   let orderedCandidates = requestedClientModels
     .map((id) => availableById.get(id))
-    .filter((model): model is (typeof modelOptions)[number] => Boolean(model && model.available));
+    .filter((model): model is (typeof modelOptions)[number] => Boolean(model && model.available && (model.automaticRouting || model.id === selectedModel.id)));
 
   // For an incidental screenshot attached to a small edit, upgrade only to a
   // low-cost vision model if the free text route cannot consume the image.
