@@ -127,7 +127,7 @@ export async function POST(request: Request) {
   const activeProjectLabel = activeProjectKey === "UJJIVAN_SFB"
     ? "Ujjivan Small Finance Bank"
     : activeProjectKey === "DMI_HFC"
-      ? "DMI Housing Finance"
+      ? "DMI (DMI Finance, DMI Wealth, and DMI Housing Finance)"
       : "shared Indian BFCI";
   const inferredCapability = classifyBfciCapability({
     intent: typeof body.intent === "string" ? body.intent : "chat",
@@ -183,7 +183,7 @@ export async function POST(request: Request) {
   const learningProjectKey = activeProjectKey === "UJJIVAN_SFB"
     ? "ujjivan-sfb"
     : activeProjectKey === "DMI_HFC"
-      ? "dmi-housing-finance"
+      ? "dmi"
       : "general";
   const learning = await getModelLearningContext(capability.id, learningProjectKey);
   const retrievalQuery = [
