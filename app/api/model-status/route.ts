@@ -79,7 +79,7 @@ export async function GET(request: Request) {
       });
     }
     const result = await callOpenRouterChat(modelId, [{ role: "user", content: "Reply with exactly OK." }], {
-      maxTokens: 8,
+      maxTokens: 128,
       temperature: 0,
       timeoutMs: 15000,
     });
@@ -136,7 +136,7 @@ export async function POST(request: Request) {
   }
   try {
     const result = await callOpenRouterChat(modelId, [{ role: "user", content: "Reply with exactly OK." }], {
-      maxTokens: 8,
+      maxTokens: 64,
       temperature: 0,
       timeoutMs: 15000,
     });
