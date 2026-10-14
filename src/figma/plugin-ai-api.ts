@@ -330,7 +330,7 @@ export type DailyPaidModelBudgetLedger = {
  */
 export async function getDailyPaidModelBudgetLedger(limit = 8): Promise<DailyPaidModelBudgetLedger> {
   const checkedAt = new Date().toISOString();
-  const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\\/+$/, "");
+  const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
   if (!supabaseUrl || !serviceKey) {
     return { available: false, checkedAt, totalCount: 0, entries: [], error: "Supabase budget ledger configuration is unavailable." };
@@ -374,7 +374,7 @@ export async function getDailyPaidModelBudgetLedger(limit = 8): Promise<DailyPai
       return [{ reservedAt, amountInr, modelId, state }];
     });
     const contentRange = response.headers.get("content-range") || "";
-    const countMatch = /\\/(\\d+)$/.exec(contentRange);
+    const countMatch = /\/(\d+)$/.exec(contentRange);
     const totalCount = countMatch ? Number(countMatch[1]) : entries.length;
     return { available: true, checkedAt: new Date().toISOString(), totalCount, entries };
   } catch {
