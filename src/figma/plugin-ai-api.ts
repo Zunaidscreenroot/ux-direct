@@ -136,7 +136,7 @@ export function getPluginModelList() {
 export async function callOpenRouterChat(
   model: string,
   messages: PluginChatMessage[],
-  options: { maxTokens?: number; temperature?: number; timeoutMs?: number } = {},
+  options: { maxTokens?: number; temperature?: number; timeoutMs?: number; reasoningEffort?: "low" | "medium" | "high" } = {},
 ): Promise<{ content: string; model: string; latencyMs: number }> {
   const provider = getOpenRouterProvider();
   const apiKey = provider?.apiKey || process.env.OPENROUTER_API_KEY;
@@ -168,6 +168,7 @@ export async function callOpenRouterChat(
         messages,
         max_tokens: Math.max(8, Math.min(options.maxTokens ?? 1200, 2400)),
         temperature: Math.max(0, Math.min(options.temperature ?? 0.2, 1)),
+        ...(options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort } } : {}),
       }),
       signal: controller.signal,
       cache: "no-store",
