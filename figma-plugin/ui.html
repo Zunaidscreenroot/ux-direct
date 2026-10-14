@@ -1198,7 +1198,7 @@
       const visualIntent = /\b(scan|look\s+at|inspect|review|audit|critique|improv(?:e|ement|ements)|better|redesign|layout|spacing|alignment|screen|screenshot|compare|design quality|hierarchy|analy[sz]e|evaluation|evaluate|assess|what\s+(?:is|looks)\s+wrong|find\s+(?:issues|problems)|feedback|visual design|usability|affordance|contrast|typography|white\s*space|overflow|clipping)\b/i.test(prompt) || variationIntent;
       // Compute this before visual preflight: its consent text reads designIntent.
       const designIntent = variationIntent || requestsFigmaEdit(prompt);
-      const auditIntent = visualIntent && !designIntent && /\\b(?:audit|review|critique|assess|evaluate|usability|accessibility|find\\s+(?:issues|problems)|what\\s+(?:is|looks)\\s+wrong|risk\\s+review)\\b/i.test(prompt);
+            const auditIntent = visualIntent && !designIntent && /\b(?:audit|review|critique|assess|evaluate|usability|accessibility|find\s+(?:issues|problems)|what\s+(?:is|looks)\s+wrong|risk\s+review)\b/i.test(prompt);
       if (visualIntent && !currentSelection.previewDataUrl) {
         appendMessage("assistant", "I can’t scan this frame visually yet because its screenshot preview is not ready. Select the frame in Figma and wait until the cockpit says “Visual preview ready,” then retry. No inference or document changes were made.");
         return;
@@ -1265,9 +1265,10 @@
       const variationMatch = variationIntent
         ? /\b(one|two|three|1|2|3)\s+(?:new\s+)?(?:screen\s+)?variations?\b/i.exec(prompt)
         : null;
+      const singularVariationRequested = /\b(?:a|one)\s+(?:new\s+)?(?:screen\s+)?variation\b/i.test(prompt);
       const variationCount = variationMatch
         ? ({ one: 1, two: 2, three: 3, "1": 1, "2": 2, "3": 3 })[variationMatch[1].toLowerCase()] || 2
-        : (variationIntent ? 2 : 0);
+        : (singularVariationRequested ? 1 : variationIntent ? 2 : 0);
       const clientRoute = resolveClientRoute(prompt, { variationIntent, visualIntent, auditIntent, designIntent, highComputeIntent });
       const clientSystemPrompt = buildClientSystemPrompt(prompt, clientRoute.capabilityId, selectedNodes, variationCount);
       try {
