@@ -206,7 +206,7 @@ export async function runUxdVisionReasoningPipeline(input: UxdVisionReasoningPip
       imageUserMessage,
     ];
     let stageEstimate = 0;
-    let requestId = input.runId + ":vision:" + index;
+    const requestId = input.runId + ":vision:" + index;
     try {
       stageEstimate = priceEstimate(model, messages, 900);
       if (estimatedCostUsd + stageEstimate > input.maxEstimatedCostUsd) {
