@@ -27,6 +27,19 @@ type ChatHistoryMessage = { role: "user" | "assistant"; content: string };
 function isRecord(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
+
+function isUxdIrTrace(value: unknown): value is UxdIrTrace {
+  return isRecord(value) &&
+    value.v === UXD_IR_VERSION &&
+    typeof value.runId === "string" &&
+    typeof value.projectKey === "string" &&
+    typeof value.capability === "string" &&
+    (value.mode === "action" || value.mode === "explain") &&
+    (value.status === "running" || value.status === "awaiting_confirmation" || value.status === "completed" || value.status === "failed" || value.status === "cancelled") &&
+    typeof value.intentSummary === "string" &&
+    typeof value.createdAt === "string" &&
+    Array.isArray(value.stages);
+}
 function isChatHistoryMessage(value: unknown): value is ChatHistoryMessage {
   if (!isRecord(value)) return false;
   return (value.role === "user" || value.role === "assistant") &&
@@ -410,7 +423,7 @@ export async function POST(request: Request) {
             }
             return value;
           })();
-      if ("trace" in result) {
+      if ("trace" in result && isUxdIrTrace(result.trace)) {
         uxdIrTrace = result.trace;
         reservedEstimatedCostUsd += result.estimatedCostUsd;
         dailyBudgetInfo = result.dailyBudgetInfo || dailyBudgetInfo;
