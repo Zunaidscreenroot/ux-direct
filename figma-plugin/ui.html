@@ -947,6 +947,8 @@
       const freeText = "nvidia/nemotron-3.5-lightning:free";
       const freeTextFallback = "nvidia/nemotron-3-ultra-550b-a55b:free";
       const haiku = "anthropic/claude-haiku-5.5";
+      const glmVision = "z-ai/glm-4.6v";
+      const kimiVision = "moonshotai/kimi-k2.5";
       const deepseekVision = "deepseek/deepseek-v4.1-flash";
       const flowIntent = /\b(?:journey|user flow|multi[- ]?screen|vkyc|cpv flow|step[- ]by[- ]step flow|process flow)\b/i.test(text);
       const generationIntent = /\b(?:generate|create|build|new)\b[\s\S]{0,80}\b(?:screen|page|wireframe|journey|flow)\b/i.test(text);
@@ -954,10 +956,12 @@
       let modelOrder = [freeText, freeTextFallback];
       if (variation) {
         capabilityId = "bfci.screen-redesign";
-        modelOrder = [freeVision, haiku];
+        modelOrder = [freeVision, glmVision, kimiVision, haiku];
       } else if (visual && design) {
         capabilityId = generationIntent ? "bfci.screen-generation" : "bfci.screen-redesign";
-        modelOrder = [freeVision, haiku];
+        modelOrder = generationIntent
+          ? [freeVision, glmVision, haiku, kimiVision]
+          : [freeVision, glmVision, kimiVision, haiku];
       } else if (visual) {
         capabilityId = "bfci.screen-audit";
         modelOrder = [freeVision, haiku];
@@ -966,7 +970,7 @@
         modelOrder = [freeText, deepseekVision];
       } else if (generationIntent) {
         capabilityId = "bfci.screen-generation";
-        modelOrder = [freeVision, haiku];
+        modelOrder = [freeVision, glmVision, haiku, kimiVision];
       } else if (highCompute) {
         capabilityId = "bfci.journey-design";
         modelOrder = [freeText, deepseekVision];
