@@ -5,7 +5,7 @@ import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { getModelLearningContext, recordModelLearningEvent } from "@/src/figma/model-learning";
 import { resolveKnowledgeProjectKey, retrieveProjectKnowledge } from "@/src/figma/knowledge-rag";
 import { assembleAugmentedContext } from "@/src/figma/context-assembly";
-import { runUxdVariationPipeline } from "@/src/figma/uxd-orchestration";
+import { runUxdVisionReasoningPipeline } from "@/src/figma/uxd-orchestration";
 import { persistUxdIrTrace } from "@/src/figma/uxd-traces";
 import { UXD_IR_VERSION, type UxdIrTrace } from "@/src/figma/uxd-ir";
 import {
@@ -163,7 +163,7 @@ export async function POST(request: Request) {
   const pipelineReasoningModels = requestedReasoningIds
     .map((id) => modelOptions.find((model) => model.id === id))
     .filter((model): model is (typeof modelOptions)[number] => Boolean(model && model.available && model.automaticRouting !== false));
-  const useUxdIrVariationPipeline = variationIntent && pipelineVisionModels.length > 0 && pipelineReasoningModels.length > 0;
+  const hasUxdIrStages = pipelineVisionModels.length > 0 && pipelineReasoningModels.length > 0;
   const useClientRoute = clientRoute?.source === "cockpit" && Boolean(clientCapabilityId) && requestedClientModels.length > 0;
   const capability = useClientRoute && clientCapabilityId
     ? BFCI_CAPABILITIES[clientCapabilityId]
@@ -180,6 +180,9 @@ export async function POST(request: Request) {
     : singularVariationRequested ? 1 : 2;
   const designIntent = body.intent === "design-operation" || variationIntent;
   const visualIntent = Boolean(previewDataUrl);
+  const useUxdIrVariationPipeline = variationIntent && hasUxdIrStages;
+  const useUxdIrAuditPipeline = body.auditIntent === true && !variationIntent && !designIntent && visualIntent && hasUxdIrStages;
+  const useUxdIrPipeline = useUxdIrVariationPipeline || useUxdIrAuditPipeline;
   const baseSystemPrompt = variationIntent
     ? requestVariationSystemPrompt(selectionContext, variationCount)
     : designIntent
@@ -285,7 +288,7 @@ export async function POST(request: Request) {
     );
   }
   // An image request must never land on a text-only model, even after learning.
-  const candidates = useUxdIrVariationPipeline
+  const candidates = useUxdIrPipeline
     ? [pipelineVisionModels[0]]
     : orderedCandidates.slice(0, Math.max(1, capability.maxModelAttempts));
   if (!candidates.length) {
@@ -320,12 +323,12 @@ export async function POST(request: Request) {
       lastError = new PluginOpenRouterError("This model has no verified price metadata and is excluded from automatic routing.", 402);
       continue;
     }
-    const estimatedCallCostUsd = useUxdIrVariationPipeline
+    const estimatedCallCostUsd = useUxdIrPipeline
       ? 0
       : candidate.tier === "free-tier"
         ? 0
         : ((estimatedInputTokens * (inputRate ?? 0)) + (maxOutputTokens * (outputRate ?? 0))) / 1_000_000;
-    if (!useUxdIrVariationPipeline && candidate.tier === "paid" && reservedEstimatedCostUsd + estimatedCallCostUsd > capability.maxEstimatedCostUsd) {
+    if (!useUxdIrPipeline && candidate.tier === "paid" && reservedEstimatedCostUsd + estimatedCallCostUsd > capability.maxEstimatedCostUsd) {
       lastError = new PluginOpenRouterError(
         "The per-task estimated cost ceiling for " + capability.label + " would be exceeded by the next retry (estimated task total $" +
           (reservedEstimatedCostUsd + estimatedCallCostUsd).toFixed(4) + " of $" + capability.maxEstimatedCostUsd.toFixed(2) +
@@ -334,7 +337,7 @@ export async function POST(request: Request) {
       );
       continue;
     }
-    if (!useUxdIrVariationPipeline) reservedEstimatedCostUsd += estimatedCallCostUsd;
+    if (!useUxdIrPipeline) reservedEstimatedCostUsd += estimatedCallCostUsd;
     let attemptLatencyMs: number | undefined;
     let attemptObservedCostUsd: number | null = null;
     let attemptUsage = { promptTokens: null as number | null, completionTokens: null as number | null, totalTokens: null as number | null };
@@ -342,8 +345,9 @@ export async function POST(request: Request) {
     let operationProfile: Record<string, unknown> = {};
     try {
       let uxdIrTrace: UxdIrTrace | undefined;
-      const result = useUxdIrVariationPipeline
-        ? await runUxdVariationPipeline({
+      const result = useUxdIrPipeline
+        ? await runUxdVisionReasoningPipeline({
+            mode: useUxdIrAuditPipeline ? "audit" : "variation",
             runId: learningRequestId,
             projectKey: activeProjectKey,
             capability: capability.id,
@@ -447,7 +451,7 @@ export async function POST(request: Request) {
         };
         validationPassed = true;
       }
-      if (uxdIrTrace) {
+      if (uxdIrTrace && uxdIrTrace.mode === "action") {
         uxdIrTrace = {
           ...uxdIrTrace,
           status: "awaiting_confirmation",
@@ -547,5 +551,5 @@ export async function POST(request: Request) {
 
   const reason = lastError instanceof Error ? lastError.message : "No configured model returned a usable response.";
   const status = lastError instanceof PluginOpenRouterError ? lastError.status : 502;
-  return json(request, { error: reason, capability: capability.id, estimatedCostBudgetUsd: capability.maxEstimatedCostUsd, estimatedReservedCostUsd: reservedEstimatedCostUsd, dailyBudget: await getDailyPaidModelBudgetStatus(), dailyBudgetLimitInr: 50, provider: "openrouter", model: selectedModel.id, responseMode: body.responseMode === "action" ? "action" : "explain", ...(useUxdIrVariationPipeline ? { uxdIr: { v: UXD_IR_VERSION, status: "failed" } } : {}) }, status >= 400 && status <= 599 ? status : 502);
+  return json(request, { error: reason, capability: capability.id, estimatedCostBudgetUsd: capability.maxEstimatedCostUsd, estimatedReservedCostUsd: reservedEstimatedCostUsd, dailyBudget: await getDailyPaidModelBudgetStatus(), dailyBudgetLimitInr: 50, provider: "openrouter", model: selectedModel.id, responseMode: body.responseMode === "action" ? "action" : "explain", ...(useUxdIrPipeline ? { uxdIr: { v: UXD_IR_VERSION, status: "failed" } } : {}) }, status >= 400 && status <= 599 ? status : 502);
 }
