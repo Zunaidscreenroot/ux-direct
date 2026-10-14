@@ -96,6 +96,8 @@
     <button id="testPaidModel" class="model-test" type="button" hidden disabled title="Run one explicit, budget-checked paid inference test. A small provider charge may apply.">Test</button>
   </div>
   <div id="budgetStatus" class="budget-status" aria-live="polite" title="Shared rolling 60-minute budget. Paid inference is blocked if this budget cannot be verified.">AI budget · ₹50/hour · checking usage…</div>
+  <div id="providerSpendStatus" class="budget-status" aria-live="polite" title="Read-only OpenRouter spending data from the server-side management key.">OpenRouter spend · checking management API…</div>
+  <div id="learningStatus" class="budget-status" aria-live="polite" title="Persistent, anonymized model-performance memory. Raw prompts and screenshots are not stored.">Product memory · checking Supabase…</div>
 
   <section class="selection-panel" aria-label="Current Figma selection" aria-live="polite">
     <div class="selection-copy">
@@ -182,6 +184,62 @@
       const remaining = Number(budget.remainingInr);
       target.textContent = "AI budget · ₹" + spent.toFixed(2) + " / ₹" + limit.toFixed(0) + " used in " + Number(budget.windowMinutes || 60) + " min · ₹" + remaining.toFixed(2) + " left";
       target.title = "Rolling 60-minute reservations include a conservative safety margin and maximum token budget. Failed provider attempts remain reserved for safety until they age out.";
+    }
+
+    function updateOpenRouterSpendStatus(monitoring) {
+      const target = $("providerSpendStatus");
+      if (!target) return;
+      if (!monitoring || monitoring.configured !== true) {
+        target.textContent = "OpenRouter spend · management key not configured";
+        target.title = "Add OPENROUTER_MANAGEMENT_KEY to this Vercel environment. The value remains server-only.";
+        return;
+      }
+      if (monitoring.available !== true) {
+        target.textContent = "OpenRouter spend · monitoring API unavailable";
+        target.title = monitoring.error || "Could not retrieve account credits or recent activity.";
+        return;
+      }
+      const credits = monitoring.credits || {};
+      const activity = monitoring.activity30d || {};
+      const parts = ["OpenRouter"];
+      if (Number.isFinite(Number(credits.remainingUsd)) && credits.remainingUsd !== null) parts.push("$" + Number(credits.remainingUsd).toFixed(2) + " credit balance");
+      if (activity && Number.isFinite(Number(activity.spendUsd))) parts.push("$" + Number(activity.spendUsd).toFixed(3) + " spent in last 30 complete UTC days");
+      if (activity && Number.isFinite(Number(activity.requests))) parts.push(Number(activity.requests).toLocaleString() + " requests");
+      target.textContent = parts.join(" · ");
+      const modelLines = Array.isArray(activity.topModels) ? activity.topModels.map(item => item.model + ": $" + Number(item.spendUsd || 0).toFixed(4) + " (" + Number(item.requests || 0) + " requests)") : [];
+      target.title = "Live account-level OpenRouter data from the management API. Credits are account-wide; the activity feed covers the last 30 completed UTC days. " + (modelLines.length ? "Top models: " + modelLines.join("; ") : "No activity rows returned.");
+    }
+
+    function updateLearningStatus(learning) {
+      const target = $("learningStatus");
+      if (!target) return;
+      if (!learning || learning.available !== true) {
+        target.textContent = "Product memory · Supabase learning ledger unavailable";
+        target.title = "Model inference can continue, but new learning signals will not be persisted until Supabase is reachable.";
+        return;
+      }
+      const runs = Number(learning.runs || 0);
+      const validated = Number(learning.validated || 0);
+      const capabilities = Number(learning.capabilities || 0);
+      target.textContent = runs > 0
+        ? "Product memory · " + runs + " run attempts · " + validated + " validated · " + capabilities + " capabilities (90d)"
+        : "Product memory · persistent store ready; learning from first run";
+      target.title = "UX Direct learns routing reliability, token/cost metadata, latency and structural validation results. Raw prompts, screenshots, layer trees and generated text are not saved. Model ordering adapts only after at least three observations per model/capability.";
+    }
+
+    async function loadOpenRouterMonitoring() {
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
+      try {
+        const response = await fetch(API + "/api/openrouter/monitoring?fileKey=" + encodeURIComponent(verifiedFileKey), { method: "GET", cache: "no-store" });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || "Monitoring endpoint returned HTTP " + response.status + ".");
+        updateOpenRouterSpendStatus(payload.openRouter);
+        updateLearningStatus(payload.learning);
+        if (payload.hourlyBudget) updateHourlyBudgetStatus(payload.hourlyBudget);
+      } catch (error) {
+        updateOpenRouterSpendStatus({ configured: true, available: false, error: error && error.message ? error.message : "Monitoring request failed." });
+        updateLearningStatus({ available: false });
+      }
     }
 
     function setModelStatus(state, label, detail) {
@@ -389,6 +447,7 @@
         selector.value = preferred.id;
         await checkSelectedModel();
         updateHourlyBudgetStatus(payload.hourlyBudget);
+        void loadOpenRouterMonitoring();
       } catch (error) {
         const detail = error && error.message ? error.message : "Could not load models.";
         selector.disabled = true;
@@ -922,6 +981,7 @@
           })
         });
         const data = await response.json().catch(() => ({}));
+        void loadOpenRouterMonitoring();
         if (data.hourlyBudget) updateHourlyBudgetStatus(data.hourlyBudget);
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
