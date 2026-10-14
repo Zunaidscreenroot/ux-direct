@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { resolveKnowledgeProjectKey } from "../src/figma/knowledge-rag";
 
 test("maps DMI project aliases to the isolated DMI namespace", () => {
+  assert.equal(resolveKnowledgeProjectKey("DMI"), "DMI_HFC");
+  assert.equal(resolveKnowledgeProjectKey("DMI Finance"), "DMI_HFC");
+  assert.equal(resolveKnowledgeProjectKey("DMI Wealth"), "DMI_HFC");
+  assert.equal(resolveKnowledgeProjectKey("DMI Housing Finance"), "DMI_HFC");
   assert.equal(resolveKnowledgeProjectKey("dmi-housing-finance"), "DMI_HFC");
   assert.equal(resolveKnowledgeProjectKey("DMI HFC"), "DMI_HFC");
   assert.equal(resolveKnowledgeProjectKey("DMI_HFC"), "DMI_HFC");
