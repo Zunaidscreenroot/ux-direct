@@ -966,9 +966,11 @@
           const count = Number(data.contextAssembly.retrievedSources || 0);
           $("knowledgeStatus").textContent = count > 0
             ? "Knowledge · " + count + " approved passage(s) · " + String(data.contextAssembly.retrievalMode || "retrieval") + " · " + scopeLabel
-            : data.contextAssembly.knowledgeAvailable
-              ? "Knowledge · no approved matches · " + scopeLabel
-              : "Knowledge · search unavailable; task context only · " + scopeLabel;
+            : data.contextAssembly.retrievalMode === "skipped"
+              ? "Knowledge · not needed for this short message · " + scopeLabel
+              : data.contextAssembly.knowledgeAvailable
+                ? "Knowledge · no approved matches · " + scopeLabel
+                : "Knowledge · search unavailable; task context only · " + scopeLabel;
           $("knowledgeStatus").title = "Only the selected project namespace and explicitly shared Indian BFCI knowledge may be used.";
         }
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
