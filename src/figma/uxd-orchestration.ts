@@ -283,6 +283,7 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
       }
       if (model.tier === "paid") {
         const reservation = await reserveDailyPaidModelBudget({ estimatedCostUsd: stageEstimate, model: model.id, requestId });
+        latestReservation = reservation;
         if (!reservation.allowed) {
           paidPlanBudgetBlocked = true;
           lastPlanError = "Daily AI budget reached before a paid reasoning stage; no additional paid call was sent.";
