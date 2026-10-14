@@ -9,6 +9,7 @@ import {
   pluginCorsHeaders,
   PluginOpenRouterError,
   reserveHourlyPaidModelBudget,
+  getHourlyPaidModelBudgetStatus,
   type HourlyPaidBudgetReservation,
   type PluginChatMessage,
 } from "@/src/figma/plugin-ai-api";
@@ -312,5 +313,5 @@ export async function POST(request: Request) {
 
   const reason = lastError instanceof Error ? lastError.message : "No configured model returned a usable response.";
   const status = lastError instanceof PluginOpenRouterError ? lastError.status : 502;
-  return json(request, { error: reason, capability: capability.id, estimatedCostBudgetUsd: capability.maxEstimatedCostUsd, estimatedReservedCostUsd: reservedEstimatedCostUsd, hourlyBudgetLimitInr: 50, provider: "openrouter", model: selectedModel.id }, status >= 400 && status <= 599 ? status : 502);
+  return json(request, { error: reason, capability: capability.id, estimatedCostBudgetUsd: capability.maxEstimatedCostUsd, estimatedReservedCostUsd: reservedEstimatedCostUsd, hourlyBudget: await getHourlyPaidModelBudgetStatus(), hourlyBudgetLimitInr: 50, provider: "openrouter", model: selectedModel.id }, status >= 400 && status <= 599 ? status : 502);
 }
