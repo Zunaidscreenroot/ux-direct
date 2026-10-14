@@ -826,11 +826,42 @@
     }
 
     function buildClientSystemPrompt(prompt, capabilityId, selectedNodes, variationCount) {
+      function compactAuditTree(node, budget, depth) {
+        if (!node || typeof node !== "object" || budget.count >= 50 || depth > 5) return null;
+        budget.count += 1;
+        const result = {
+          id: String(node.id || "").slice(0, 100),
+          name: String(node.name || "").slice(0, 100),
+          type: String(node.type || "").slice(0, 30),
+          ...(Number.isFinite(node.width) ? { width: node.width } : {}),
+          ...(Number.isFinite(node.height) ? { height: node.height } : {}),
+          ...(Number.isFinite(node.x) ? { x: node.x } : {}),
+          ...(Number.isFinite(node.y) ? { y: node.y } : {}),
+          ...(typeof node.characters === "string" ? { characters: node.characters.slice(0, 120) } : {})
+        };
+        if (Array.isArray(node.children) && depth < 5 && budget.count < 50) {
+          result.children = [];
+          node.children.slice(0, 10).forEach(child => {
+            const summarized = compactAuditTree(child, budget, depth + 1);
+            if (summarized) result.children.push(summarized);
+          });
+        } else if (Array.isArray(node.children)) {
+          result.childCount = node.children.length;
+        }
+        return result;
+      }
+      const auditContext = capabilityId === "bfci.screen-audit";
+      const contextItems = auditContext
+        ? selectedNodes.slice(0, 12).map(node => ({
+            id: node.id, name: node.name, type: node.type, width: node.width, height: node.height,
+            tree: compactAuditTree(node.tree || node, { count: 0 }, 0)
+          }))
+        : selectedNodes;
       const selectionContext = JSON.stringify({
         pageName: String(currentSelection.pageName || "").slice(0, 160),
         totalCount: Array.isArray(currentSelection.selection) ? currentSelection.selection.length : 0,
-        items: selectedNodes
-      }).slice(0, 30000);
+        items: contextItems
+      }).slice(0, auditContext ? 12000 : 30000);
       const core = "You are UX Direct, a senior product/UX designer embedded in Figma. Use the current selected-frame tree and the attached screenshot when present. Never invent banking rules, interest rates, fees, due dates, financial values, eligibility criteria, disclosures, or consent meanings. Preserve all essential financial values unless explicitly asked otherwise. Mark uncertainty clearly. Never claim edits were applied until the native plugin confirms them.";
       const actions = "Supported native actions: update-text, rename-node, set-fill, set-stroke, set-opacity, set-visible, set-locked, set-blend-mode, move-node, resize-node, set-rotation, set-corner-radius, set-text-style, set-layout, set-layout-sizing, set-layout-positioning, set-constraints, set-clip-content, set-layout-grid, set-effects, set-description, create-component (child frames only), detach-instance, reorder-node, clone-node, remove-node (explicitly requested child layers only), create-text, create-rectangle, create-ellipse, create-line, create-frame, create-svg. Use only IDs in the supplied frame tree. Create actions require a FRAME parentId; update-text/set-text-style require TEXT target; set-layout requires FRAME target. Colors must be #RRGGBB. Text style supports fontFamily, fontStyle, fontSize, color, letterSpacing, lineHeight, paragraphSpacing, textAlignHorizontal, textAlignVertical, textAutoResize, textCase and textDecoration. set-layout accepts layoutMode NONE/HORIZONTAL/VERTICAL, itemSpacing, paddingTop/Right/Bottom/Left, primaryAxisAlignItems MIN/CENTER/MAX/SPACE_BETWEEN, counterAxisAlignItems MIN/CENTER/MAX/BASELINE, primaryAxisSizingMode AUTO/FIXED and counterAxisSizingMode AUTO/FIXED. set-layout-sizing accepts horizontal/vertical HUG/FILL/FIXED; set-layout-positioning accepts AUTO/ABSOLUTE. set-constraints uses horizontal MIN/CENTER/MAX/STRETCH/SCALE and vertical MIN/CENTER/MAX/STRETCH/SCALE. Effects and SVG are validated by the plugin. Never call arbitrary APIs or operate outside the selected frame.";
       const context = "\n\nCurrent Figma context: " + selectionContext;
@@ -929,6 +960,11 @@
         : (variationIntent ? 2 : 0);
       const clientRoute = resolveClientRoute(prompt, { variationIntent, visualIntent, designIntent, highComputeIntent });
       const clientSystemPrompt = buildClientSystemPrompt(prompt, clientRoute.capabilityId, selectedNodes, variationCount);
+      const outgoingMessages = chatHistory.slice(-6).map((message, index, all) => {
+        const isLatest = index === all.length - 1 && message.role === "user";
+        const limit = isLatest ? 5000 : message.role === "assistant" ? 1400 : 1800;
+        return { role: message.role, content: String(message.content || "").slice(-limit) };
+      });
       try {
         const response = await fetch(API + "/api/assistant/chat", {
           method: "POST",
@@ -941,7 +977,7 @@
             intent: variationIntent ? "design-variation" : designIntent ? "design-operation" : "chat",
             clientRoute,
             systemPrompt: clientSystemPrompt,
-            messages: chatHistory.slice(-12),
+            messages: outgoingMessages,
             selection: {
               pageName: String(currentSelection.pageName || "").slice(0, 160),
               totalCount: Array.isArray(currentSelection.selection) ? currentSelection.selection.length : 0,
@@ -1180,10 +1216,10 @@
           if (data.routingStrategy === "vision-direct") {
             setModelStatus("ok", "Visual scan complete", data.model + " analyzed the selected-frame screenshot through the budget-checked vision route.");
           } else if (data.tier === "paid" || actual?.tier === "paid") {
-            // Keep the dropdown preference intact. Report the paid model used for this turn separately.
+            // Report the model selected by the cockpit route for this task.
             modelAvailable = true;
             const directSelection = data.routingStrategy === "paid-direct";
-            setModelStatus("ok", directSelection ? "Selected paid model used" : "Paid fallback used",
+            setModelStatus("ok", directSelection ? "Automatic paid route" : "Automatic paid fallback",
               data.model + " returned this response. " + (data.fallbackReason || "Paid inference passed the gateway checks."));
           } else if (actual) {
             // Report the model that answered without overwriting the user's
