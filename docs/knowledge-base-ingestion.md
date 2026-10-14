@@ -21,11 +21,23 @@ The search function never retrieves one client's namespace for the other. Projec
 
 Do not ingest real customer identifiers, PAN/Aadhaar numbers, account details, secrets, or unredacted customer screenshots. Redact sensitive content before ingestion.
 
-## How embeddings work
+## Retrieval and context assembly
 
-The ingestion endpoint splits text into overlapping chunks, calls OpenRouter's **openai/text-embedding-3-small** embeddings endpoint, and stores 1,536-dimensional vectors in Supabase pgvector. The assistant embeds the user's current task, searches only the active project plus shared BFCI sources, and adds a small set of source-cited passages to the prompt.
+UX Direct uses **hybrid RAG + bounded context augmentation**. It keeps embeddings enabled, and it does not fine-tune a model.
 
-This is RAG, not model fine-tuning. We do not need to train an embedding model. Embeddings are generated automatically on ingestion and cached for repeated identical queries for five minutes within a server instance.
+1. The ingestion endpoint splits approved or draft source text into overlapping chunks, calls OpenRouter's **openai/text-embedding-3-small** embeddings endpoint, and stores 1,536-dimensional vectors in Supabase pgvector.
+2. For a task, UX Direct runs semantic vector search and indexed PostgreSQL full-text search in parallel. Reciprocal-rank fusion merges duplicate hits and promotes evidence found by both routes. If the embedding provider is unavailable or the embedding budget is blocked, keyword results can still be used.
+3. Retrieval is restricted to the explicitly selected client namespace plus approved shared BFCI knowledge. The prompt never selects a client from arbitrary prompt-text mentions.
+4. A context-assembly layer combines current task requirements, the selected Figma frame, approved source passages and secondary historical learning patterns. It deduplicates and bounds supplemental context so a large repository is not blindly copied into every model call.
+5. Retrieved source text is treated as evidence—not as instructions. Important claims should retain a title/URL; regulatory or product gaps must be flagged rather than invented.
+
+Embeddings are generated automatically; there is no manual embedding work. Identical queries can reuse a short-lived in-memory retrieval cache within each server instance.
+
+## Before importing the company knowledge base
+
+For web research, provide topic names, target websites or official source URLs. Research notes should be curated and attributed with source URL, publication/effective date, and last-checked date; do not copy entire websites. For company material, provide an approved export or authorized text from briefs, journeys, research, design decisions, and design-system guidance. Keep client-specific information in that client's namespace and mark reusable BFCI material explicitly as approved for sharing.
+
+Use **draft** status initially. Promote an item to **approved** only after an authorized owner confirms its accuracy, confidentiality, reuse permission, and date/version. Never upload customer PII, credentials, or unredacted customer screenshots.
 
 ## Configure ingestion
 
@@ -69,7 +81,8 @@ Use status "draft" while collecting/reviewing material. Use status "approved" on
 
 - The same rolling ₹50/24-hour server-side budget guard covers paid chat, explicit paid model tests and embedding calls.
 - Embedding batches are capped and costed before each provider call.
-- Retrieval returns at most four short passages to limit prompt-token growth.
+- Hybrid retrieval fuses up to six semantic and six keyword candidates, removes duplicates, and sends at most four short passages to the model.
+- Supplemental approved knowledge is capped at 6,400 characters and historical learning at 2,000 characters, in addition to the task/screen context.
 - Every chunk retains document provenance, project namespace, source authority, URL, version metadata and a content hash.
 - RAG retrieval is best-effort: if the vector store or embedding API is unavailable, free chat can continue without retrieved context.
 - Before using regulatory material, verify its current effective date and official source. RAG results are evidence, not compliance certification.
