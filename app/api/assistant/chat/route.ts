@@ -150,7 +150,10 @@ export async function POST(request: Request) {
       ? "This is a redesign capability, not a clone capability. Prefer substantial layout, spacing, hierarchy, card/section and CTA changes. Use the available operation budget to make a cohesive alternative rather than a handful of cosmetic edits."
       : "",
   ].filter(Boolean).join("\n\n");
-  const learning = await getModelLearningContext(capability.id);
+  const learningProjectKey = typeof body.project === "string" && /^[A-Za-z0-9:_-]{1,80}$/.test(body.project)
+    ? body.project
+    : "general";
+  const learning = await getModelLearningContext(capability.id, learningProjectKey);
   const systemPrompt = baseSystemPrompt + "\n\n" + capabilityGuardrails +
     (learning.promptContext ? "\n\n" + learning.promptContext : "");
 
