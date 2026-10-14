@@ -1,5 +1,6 @@
 type StoreOptions = { region?: string; consistency?: string };
 type GetOptions = { type?: "json" | "text" };
+type SetOptions = { metadata?: Record<string, string> };
 type ListResult = { blobs: Array<{ key: string }> };
 
 function config() {
@@ -23,18 +24,18 @@ async function request(path: string, init: RequestInit = {}) {
 export function getStore(storeName: string, _options: StoreOptions = {}) {
   const safeName = storeName.slice(0, 100);
   return {
-    async get(itemKey: string, options: GetOptions = {}) {
+    async get(itemKey: string, options: GetOptions = {}): Promise<any> {
       const q = "?store_name=eq." + encodeURIComponent(safeName) + "&item_key=eq." + encodeURIComponent(itemKey) + "&select=value&limit=1";
       const rows = await (await request(q)).json() as Array<{ value: unknown }>;
       if (!rows.length) return null;
       return options.type === "text" ? JSON.stringify(rows[0].value) : rows[0].value;
     },
-    async set(itemKey: string, value: string) {
+    async set(itemKey: string, value: string, _options?: SetOptions): Promise<void> {
       let parsed: unknown;
       try { parsed = JSON.parse(value); } catch { parsed = { value }; }
       await request("?on_conflict=store_name,item_key", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ store_name: safeName, item_key: itemKey, value: parsed, updated_at: new Date().toISOString() }) });
     },
-    async setJSON(itemKey: string, value: unknown) {
+    async setJSON(itemKey: string, value: unknown): Promise<void> {
       await request("?on_conflict=store_name,item_key", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ store_name: safeName, item_key: itemKey, value, updated_at: new Date().toISOString() }) });
     },
     async list(options: { prefix?: string } = {}): Promise<ListResult> {
