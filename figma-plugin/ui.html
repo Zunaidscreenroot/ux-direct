@@ -1115,7 +1115,7 @@
         if (results.length) {
           const labels = results.map((item, index) => (index + 1) + ". " + String(item.name || "Variation frame") +
             " (" + String(item.operationsApplied || 0) + " changes applied" + (item.partial ? ", partial)" : ")"));
-          appendMessage("assistant", "Created " + results.length + " new variation frame(s). Your original frame was left unchanged.\n\n" + labels.join("\n") +
+          appendMessage("assistant", (message.ok ? "Created " + results.length + " new variation frame(s). Your original frame was left unchanged." : "Created " + results.length + " variation frame(s), but some operations failed: " + String(message.error || "unknown error") + ". Your original frame was not targeted.") + "\n\n" + labels.join("\n") +
             "\n\nThe new frame(s) are selected in Figma so you can compare and refine them.");
           setActivity(message.ok ? "Variation frames created. Review the new selected frames." : "Some variation operations failed; inspect the new frames before retrying.");
         } else {
