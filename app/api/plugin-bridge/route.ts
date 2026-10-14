@@ -1,4 +1,4 @@
-import { getStore } from "@netlify/blobs";
+import { getStore } from "@/src/storage/vercel-blob-compat";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { recordOperationalEvent } from "@/src/observability/event-log";
@@ -62,8 +62,7 @@ function isPluginRequest(request: Request): boolean {
 }
 const STORE_NAME = "ux-direct-plugin-bridge";
 function bridgeStore() {
-  // Netlify Functions provide site identity and Blobs authorization automatically.
-  return getStore(STORE_NAME, { region: "us-east-2", consistency: "strong" });
+  return getStore(STORE_NAME, { consistency: "strong" });
 }
 async function readJson<T>(pathname: string): Promise<T | null> {
   const store = bridgeStore();
@@ -265,7 +264,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Unsupported bridge mode." }, { status: 400, headers });
   } catch (error) {
-    console.error("[ux-direct-bridge] Netlify Blobs request failed", error);
-    return NextResponse.json({ error: "Bridge request failed while reading or writing Netlify Blobs storage." }, { status: 500, headers });
+    console.error("[ux-direct-bridge] persistent storage request failed", error);
+    return NextResponse.json({ error: "Bridge request failed while reading or writing persistent storage." }, { status: 500, headers });
   }
 }
