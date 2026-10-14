@@ -1315,7 +1315,9 @@
         if (data.uxdIrTrace && typeof data.uxdIrTrace.runId === "string") {
           lastUxdRunId = data.uxdIrTrace.runId;
           requestUxdRunId = lastUxdRunId;
-          setModelStatus("ok", "UXD-IR pipeline complete", "Compact stage evidence and validated artifacts are saved as run " + lastUxdRunId + ". Natural-language explanation is optional.");
+          const tracePendingConfirmation = data.uxdIrTrace.status === "awaiting_confirmation";
+          setModelStatus("ok", tracePendingConfirmation ? "UXD-IR plan ready" : "UXD-IR audit complete",
+            "Compact stage evidence and validated artifacts are saved as run " + lastUxdRunId + ". Natural-language explanation is optional.");
         }
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
