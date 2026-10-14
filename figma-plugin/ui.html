@@ -98,7 +98,7 @@
   <div id="budgetStatus" class="budget-status" aria-live="polite" title="Shared rolling 60-minute budget. Paid inference is blocked if this budget cannot be verified.">AI budget · ₹50/hour · checking usage…</div>
   <div id="providerSpendStatus" class="budget-status" aria-live="polite" title="Read-only OpenRouter spending data from the server-side management key.">OpenRouter spend · checking management API…</div>
   <div id="learningStatus" class="budget-status" aria-live="polite" title="Persistent, anonymized model-performance memory. Raw prompts and screenshots are not stored.">Product memory · checking Supabase…</div>
-  <div id="actionCoverageStatus" class="budget-status" aria-live="polite" title="Native action support is separate from Plugin API health checks. Current UX Direct safe design operations cover text, styling, layout, structure and basic vector creation.">Figma actions · 27 native design operation types</div>
+  <div id="actionCoverageStatus" class="budget-status" aria-live="polite" title="Native action support is separate from Plugin API health checks. The current catalog includes editing, layout, vectors, effects, grids, components and instance operations; this is not yet literal one-to-one parity with Automator’s 100+ actions.">Figma actions · 32 native design operation types</div>
 
   <section class="selection-panel" aria-label="Current Figma selection" aria-live="polite">
     <div class="selection-copy">
@@ -790,7 +790,7 @@
       const checkedAt = message.checkedAt ? new Date(message.checkedAt).toLocaleTimeString() : "just now";
       const suiteInvalid = checks.length === 0;
       const healthFailed = failed > 0 || suiteInvalid;
-      const label = healthFailed ? ("API " + failed + " failed") : ("API " + passed + " passed");
+      const label = healthFailed ? ("Checks " + failed + " failed") : (passed + " checks passed");
       setHealth(healthFailed ? "bad" : "ok", label);
       $("healthSummary").textContent = passed + " native API checks passed · " + failed + " failed · " + available + " available · " + notTested + " not tested · " + checkedAt + ". This count is not the supported-action count. Team Library access remains intentionally not tested.";
       $("healthResults").replaceChildren();
@@ -1018,7 +1018,7 @@
               if (Array.isArray(node.children)) node.children.forEach(collectVariationTree);
             }
             collectVariationTree(source.tree || source);
-            const allowedActions = new Set(["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "set-clip-content", "set-locked", "set-blend-mode", "set-rotation", "clone-node", "remove-node", "reorder-node"]);
+            const allowedActions = new Set(["update-text", "rename-node", "set-fill", "move-node", "resize-node", "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "set-clip-content", "set-layout-grid", "set-effects", "set-description", "create-component", "detach-instance", "set-locked", "set-blend-mode", "set-rotation", "clone-node", "remove-node", "reorder-node"]);
             const proposed = Array.isArray(plan.variations) ? plan.variations.slice(0, 3) : [];
             function validOperation(op) {
               if (!op || typeof op !== "object" || !allowedActions.has(op.action)) return false;
@@ -1079,6 +1079,18 @@
                 (!("horizontal" in op) || ["LEFT", "CENTER", "RIGHT", "LEFT_RIGHT", "SCALE"].includes(op.horizontal)) &&
                 (!("vertical" in op) || ["TOP", "CENTER", "BOTTOM", "TOP_BOTTOM", "SCALE"].includes(op.vertical));
               if (op.action === "set-clip-content") return nodeTypes.get(op.targetId) === "FRAME" && typeof op.clipsContent === "boolean";
+              if (op.action === "set-layout-grid") return nodeTypes.get(op.targetId) === "FRAME" &&
+                (!("enabled" in op) || typeof op.enabled === "boolean") &&
+                (!("pattern" in op) || ["COLUMNS", "ROWS", "GRID"].includes(op.pattern)) &&
+                (!("count" in op) || (Number.isInteger(op.count) && op.count >= 1 && op.count <= 24)) &&
+                (!("gutterSize" in op) || (Number.isFinite(op.gutterSize) && op.gutterSize >= 0 && op.gutterSize <= 128));
+              if (op.action === "set-effects") return (!("enabled" in op) || typeof op.enabled === "boolean") &&
+                (!("color" in op) || /^#?[0-9a-fA-F]{6}$/.test(op.color)) &&
+                (!("opacity" in op) || (Number.isFinite(op.opacity) && op.opacity >= 0 && op.opacity <= 1)) &&
+                (!("blur" in op) || (Number.isFinite(op.blur) && op.blur >= 0 && op.blur <= 100));
+              if (op.action === "set-description") return typeof op.description === "string" && op.description.length <= 500;
+              if (op.action === "create-component") return nodeTypes.get(op.targetId) === "FRAME" && op.targetId !== source.id;
+              if (op.action === "detach-instance") return nodeTypes.get(op.targetId) === "INSTANCE";
               if (op.action === "set-locked") return typeof op.locked === "boolean";
               if (op.action === "set-blend-mode") return ["PASS_THROUGH", "NORMAL", "DARKEN", "MULTIPLY", "LINEAR_BURN", "COLOR_BURN", "LIGHTEN", "SCREEN", "LINEAR_DODGE", "COLOR_DODGE", "OVERLAY", "SOFT_LIGHT", "HARD_LIGHT", "DIFFERENCE", "EXCLUSION", "HUE", "SATURATION", "COLOR", "LUMINOSITY"].includes(op.mode);
               if (op.action === "clone-node") return op.targetId !== source.id;
@@ -1092,16 +1104,16 @@
             }));
             const sourceIdsMatch = proposed.every((item) => item && (!item.targetId || item.targetId === source.id));
             function operationCategory(action) {
-              if (["set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "move-node", "resize-node", "set-rotation", "reorder-node", "set-visible", "set-clip-content", "clone-node", "remove-node"].includes(action)) return "structure";
-              if (["set-fill", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-locked", "set-blend-mode"].includes(action)) return "style";
-              if (["update-text", "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg"].includes(action)) return "content";
+              if (["set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "set-layout-grid", "move-node", "resize-node", "set-rotation", "reorder-node", "set-visible", "set-clip-content", "clone-node", "remove-node", "create-component", "detach-instance"].includes(action)) return "structure";
+              if (["set-fill", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-effects", "set-locked", "set-blend-mode"].includes(action)) return "style";
+              if (["update-text", "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg", "set-description"].includes(action)) return "content";
               return "other";
             }
             const valid = variations.length >= 1 && sourceIdsMatch && variations.every((item, index) =>
               item.name.length > 0 && item.operations.length >= 6 && item.operations.length <= 16 &&
               item.operations.every(validOperation) &&
               new Set(item.operations.map(op => operationCategory(op.action))).size >= 2 &&
-              item.operations.filter(op => ["set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "move-node", "resize-node", "set-rotation", "reorder-node", "clone-node"].includes(op.action)).length >= 2 &&
+              item.operations.filter(op => ["set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "set-layout-grid", "move-node", "resize-node", "set-rotation", "reorder-node", "clone-node", "create-component", "detach-instance"].includes(op.action)).length >= 2 &&
               Array.isArray(proposed[index] && proposed[index].operations) &&
               proposed[index].operations.length >= 6 && proposed[index].operations.length <= 16
             );
@@ -1130,6 +1142,11 @@
               if (op.action === "set-opacity") return "Adjust opacity of “" + label + "”";
               if (op.action === "set-visible") return (op.visible ? "Show “" : "Hide “") + label + "”";
               if (op.action === "set-layout") return "Change auto-layout/spacing of “" + label + "”";
+              if (op.action === "set-layout-grid") return "Add/change layout grid on “" + label + "”";
+              if (op.action === "set-effects") return op.enabled === false ? "Clear effects on “" + label + "”" : "Add/change shadow effects on “" + label + "”";
+              if (op.action === "set-description") return "Set description on “" + label + "”";
+              if (op.action === "create-component") return "Convert frame “" + label + "” to a component";
+              if (op.action === "detach-instance") return "Detach component instance “" + label + "”";
               if (op.action === "set-layout-sizing") return "Change auto-layout sizing of “" + label + "”";
               if (op.action === "set-layout-positioning") return "Change auto-layout positioning of “" + label + "”";
               if (op.action === "set-constraints") return "Change responsive constraints of “" + label + "”";
