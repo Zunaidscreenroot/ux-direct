@@ -9,7 +9,8 @@
   ],
   "networkAccess": {
     "allowedDomains": [
-      "https://ux-direct-git-work-vercel-cockpit-preflight-screenroot.vercel.app"
+      "https://ux-direct-git-work-vercel-cockpit-preflight-screenroot.vercel.app",
+      "https://ux-direct-git-feat-hybrid-context-knowledge-screenroot.vercel.app"
     ],
     "reasoning": "UX Direct sends the user's prompt and selected node metadata to the Vercel backend for task planning and health telemetry. Provider-backed model execution is handled server-side; no API key is embedded in the plugin."
   },
