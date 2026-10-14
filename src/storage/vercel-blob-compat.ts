@@ -23,13 +23,16 @@ async function request(path: string, init: RequestInit = {}) {
 
 export function getStore(storeName: string, _options: StoreOptions = {}) {
   const safeName = storeName.slice(0, 100);
+  async function get(itemKey: string, options: { type: "text" }): Promise<string | null>;
+  async function get(itemKey: string, options?: { type?: "json" }): Promise<unknown | null>;
+  async function get(itemKey: string, options: GetOptions = {}): Promise<string | unknown | null> {
+    const q = "?store_name=eq." + encodeURIComponent(safeName) + "&item_key=eq." + encodeURIComponent(itemKey) + "&select=value&limit=1";
+    const rows = await (await request(q)).json() as Array<{ value: unknown }>;
+    if (!rows.length) return null;
+    return options.type === "text" ? JSON.stringify(rows[0].value) : rows[0].value;
+  }
   return {
-    async get(itemKey: string, options: GetOptions = {}): Promise<unknown | null> {
-      const q = "?store_name=eq." + encodeURIComponent(safeName) + "&item_key=eq." + encodeURIComponent(itemKey) + "&select=value&limit=1";
-      const rows = await (await request(q)).json() as Array<{ value: unknown }>;
-      if (!rows.length) return null;
-      return options.type === "text" ? JSON.stringify(rows[0].value) : rows[0].value;
-    },
+    get,
     async set(itemKey: string, value: string, _options?: SetOptions): Promise<void> {
       let parsed: unknown;
       try { parsed = JSON.parse(value); } catch { parsed = { value }; }
