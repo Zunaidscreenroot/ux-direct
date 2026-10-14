@@ -82,6 +82,7 @@ export async function GET(request: Request) {
       maxTokens: 128,
       temperature: 0,
       timeoutMs: 15000,
+      reasoningEffort: model.id.includes("reasoning") ? "low" : undefined,
     });
     return json(request, {
       available: true,
@@ -139,6 +140,7 @@ export async function POST(request: Request) {
       maxTokens: 64,
       temperature: 0,
       timeoutMs: 15000,
+      reasoningEffort: model.id === "deepseek/deepseek-v4.1-flash" ? "low" : undefined,
     });
     return json(request, {
       available: true,
