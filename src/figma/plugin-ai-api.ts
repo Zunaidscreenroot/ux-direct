@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { providersFromEnv } from "@/src/model-gateway";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 
@@ -181,6 +182,92 @@ export class PluginOpenRouterError extends Error {
     this.name = "PluginOpenRouterError";
     this.status = status;
   }
+}
+
+export type HourlyPaidBudgetReservation = {
+  allowed: boolean;
+  spentInr: number;
+  projectedInr: number;
+  limitInr: number;
+  remainingInr: number;
+  reservedInr: number;
+};
+
+function positiveEnvNumber(name: string, fallback: number, maximum: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isFinite(value) || value <= 0 || value > maximum) return fallback;
+  return value;
+}
+
+/**
+ * Reserve estimated maximum spend for one paid model attempt in a shared,
+ * transactionally serialized rolling 60-minute budget. Failed attempts remain
+ * reserved because providers may bill even when their response is unusable.
+ * Fails closed when the persistent database cannot verify the budget.
+ */
+export async function reserveHourlyPaidModelBudget(input: {
+  estimatedCostUsd: number;
+  model: string;
+  requestId?: string;
+}): Promise<HourlyPaidBudgetReservation> {
+  const hourlyLimitInr = positiveEnvNumber("UXD_MODEL_BUDGET_INR_PER_HOUR", 50, 500);
+  const usdToInr = positiveEnvNumber("UXD_USD_TO_INR_RATE", 100, 250);
+  const safetyMultiplier = positiveEnvNumber("UXD_MODEL_COST_SAFETY_MULTIPLIER", 1.5, 5);
+  if (!Number.isFinite(input.estimatedCostUsd) || input.estimatedCostUsd <= 0 || input.estimatedCostUsd > 1) {
+    throw new PluginOpenRouterError("Estimated paid-model cost is invalid; paid inference is blocked.", 402);
+  }
+
+  const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\\/+$/, "");
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
+  if (!supabaseUrl || !serviceKey) {
+    throw new PluginOpenRouterError("The shared hourly spend ledger is unavailable. Paid inference is blocked to protect the ₹" + hourlyLimitInr + "/hour budget.", 503);
+  }
+
+  const reservedInr = Math.max(0.0001, Number((input.estimatedCostUsd * usdToInr * safetyMultiplier).toFixed(6)));
+  const requestId = (input.requestId || randomUUID()).slice(0, 120);
+  let response: Response;
+  try {
+    response = await fetch(supabaseUrl + "/rest/v1/rpc/reserve_uxd_model_budget", {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: "Bearer " + serviceKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        p_scope: "ux-direct:shared-paid-inference",
+        p_amount_inr: reservedInr,
+        p_hourly_limit_inr: hourlyLimitInr,
+        p_model: input.model,
+        p_request_id: requestId,
+      }),
+      cache: "no-store",
+    });
+  } catch {
+    throw new PluginOpenRouterError("The shared hourly spend ledger could not be reached. Paid inference is blocked; free-model tasks remain available.", 503);
+  }
+
+  if (!response.ok) {
+    throw new PluginOpenRouterError("The shared hourly spend ledger could not verify the limit (HTTP " + response.status + "). Paid inference is blocked.", 503);
+  }
+  const payload: unknown = await response.json().catch(() => null);
+  const row = Array.isArray(payload) && payload.length ? payload[0] : null;
+  if (!row || typeof row !== "object") {
+    throw new PluginOpenRouterError("The shared hourly spend ledger returned an invalid result. Paid inference is blocked.", 503);
+  }
+  const result = row as Record<string, unknown>;
+  const reservation: HourlyPaidBudgetReservation = {
+    allowed: result.allowed === true,
+    spentInr: Number(result.spent_inr ?? 0),
+    projectedInr: Number(result.projected_inr ?? 0),
+    limitInr: Number(result.limit_inr ?? hourlyLimitInr),
+    remainingInr: Number(result.remaining_inr ?? 0),
+    reservedInr,
+  };
+  if (![reservation.spentInr, reservation.projectedInr, reservation.limitInr, reservation.remainingInr].every(Number.isFinite)) {
+    throw new PluginOpenRouterError("The shared hourly spend ledger returned invalid amounts. Paid inference is blocked.", 503);
+  }
+  return reservation;
 }
 
 export function pluginCorsHeaders(request: Request): Record<string, string> {
