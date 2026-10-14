@@ -177,7 +177,6 @@
     // Project picker is intentionally hidden for now. DMI is the temporary active scope;
     // Ujjivan remains a separate server-side namespace for its rollout.
     const ACTIVE_PROJECT_KEY = "DMI";
-    const ACTIVE_PROJECT_LABEL = "DMI";
     const $ = (id) => document.getElementById(id);
     let verifiedFileKey = null;
     let pluginSessionStarted = false;
@@ -1113,16 +1112,15 @@
         void loadOpenRouterMonitoring();
         if (data.dailyBudget) updateDailyBudgetStatus(data.dailyBudget);
         if (data.contextAssembly && $("knowledgeStatus")) {
-          const scopeLabel = ACTIVE_PROJECT_LABEL;
           const count = Number(data.contextAssembly.retrievedSources || 0);
           $("knowledgeStatus").textContent = count > 0
-            ? "Knowledge · " + count + " approved passage(s) · " + String(data.contextAssembly.retrievalMode || "retrieval") + " · " + scopeLabel
+            ? "Knowledge · " + count + " approved passage(s) · " + String(data.contextAssembly.retrievalMode || "retrieval")
             : data.contextAssembly.retrievalMode === "skipped"
-              ? "Knowledge · not needed for this short message · " + scopeLabel
+              ? "Knowledge · not needed for this short message"
               : data.contextAssembly.knowledgeAvailable
-                ? "Knowledge · no approved matches · " + scopeLabel
-                : "Knowledge · search unavailable; task context only · " + scopeLabel;
-          $("knowledgeStatus").title = "Only the selected project namespace and explicitly shared Indian BFCI knowledge may be used.";
+                ? "Knowledge · no approved matches"
+                : "Knowledge · search unavailable; task context only";
+          $("knowledgeStatus").title = "Only the active client scope and explicitly shared Indian BFCI knowledge may be used.";
         }
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
