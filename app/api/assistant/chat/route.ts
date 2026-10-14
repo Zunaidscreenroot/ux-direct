@@ -5,6 +5,7 @@ import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { getModelLearningContext, recordModelLearningEvent } from "@/src/figma/model-learning";
 import { resolveKnowledgeProjectKey, retrieveProjectKnowledge } from "@/src/figma/knowledge-rag";
 import { assembleAugmentedContext } from "@/src/figma/context-assembly";
+import { INDIA_BFCI_WEBSITE_REVAMP_PROMPT } from "@/src/figma/website-revamp-brain";
 import {
   callOpenRouterChat,
   checkPluginRateLimit,
@@ -147,6 +148,10 @@ export async function POST(request: Request) {
     : designIntent
       ? requestFigmaEditSystemPrompt(selectionContext)
       : conversationSystemPrompt(selectionContext);
+  // Shared Indian BFCI/website-revamp tasks use the specialist profile; DMI remains user-trained.
+  const websiteRevampContext = activeProjectKey === "INDIA_BFCI_SHARED"
+    ? INDIA_BFCI_WEBSITE_REVAMP_PROMPT
+    : "";
   const capabilityGuardrails = [
     "Active UX Direct capability: " + capability.id + " — " + capability.label + ".",
     "Active project: " + activeProjectLabel + ". Use only financial values, due dates, policies and product rules supplied in the prompt, screenshot, selected frame or approved reference context. Never invent an APR, fee, eligibility criterion, disclosure, consent requirement or regulatory claim.",
@@ -176,7 +181,7 @@ export async function POST(request: Request) {
   ].filter(Boolean).join("\n").slice(0, 4000);
   const knowledge = await retrieveProjectKnowledge(activeProjectKey, retrievalQuery);
   const assembledContext = assembleAugmentedContext({
-    basePrompt: baseSystemPrompt + "\n\n" + capabilityGuardrails,
+    basePrompt: baseSystemPrompt + "\n\n" + capabilityGuardrails + (websiteRevampContext ? "\n\n" + websiteRevampContext : ""),
     projectKey: activeProjectKey,
     projectLabel: activeProjectLabel,
     capabilityLabel: capability.label,
