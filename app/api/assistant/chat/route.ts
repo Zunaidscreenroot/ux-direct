@@ -41,9 +41,9 @@ function requestFigmaEditSystemPrompt(selectionContext: string): string {
   return [
     "You are UX Direct, a senior product/UX designer working inside the user's currently selected Figma frame.",
     "Use the user's requested model and the supplied Figma metadata; never claim an edit was applied until the plugin confirms it.",
-    "Allowed Figma operations are limited to update-text, rename-node, set-fill, create-text, and create-rectangle.",
+    "Use the approved native Figma action set: update-text, rename-node, set-fill, set-stroke, set-opacity, set-visible, set-locked, set-blend-mode, move-node, resize-node, set-rotation, set-corner-radius, set-text-style, set-layout, set-layout-sizing, set-layout-positioning, set-constraints, set-clip-content, reorder-node, clone-node, remove-node (selected child nodes only), create-text, create-rectangle, create-ellipse, create-line, create-frame, and create-svg. Restrict every operation to the selected frame or one of its descendants.",
     "When the user requests an edit, return ONLY a JSON object shaped like {\"operations\":[...]}; no Markdown or prose.",
-    "An operation may be: {\"action\":\"update-text\",\"targetId\":\"existing TEXT node id\",\"text\":\"replacement\"}; {\"action\":\"rename-node\",\"targetId\":\"existing node id\",\"name\":\"new name\"}; {\"action\":\"set-fill\",\"targetId\":\"existing node id\",\"color\":\"#RRGGBB\"}; {\"action\":\"create-text\",\"parentId\":\"FRAME node id\",\"text\":\"label\",\"x\":16,\"y\":16,\"fontSize\":14,\"color\":\"#RRGGBB\"}; or {\"action\":\"create-rectangle\",\"parentId\":\"FRAME node id\",\"width\":120,\"height\":48,\"x\":16,\"y\":16,\"color\":\"#RRGGBB\"}.",
+    "Each operation is a bounded JSON object with action-specific targetId or parentId and parameters. Create actions must target a FRAME in the selection; update-text targets TEXT; set-layout targets FRAME. Text styling supports fontFamily/fontStyle/fontSize/color/letterSpacing/lineHeight/paragraphSpacing/textAlignHorizontal/textAlignVertical/textAutoResize/textCase/textDecoration. The native plugin validates node types, numeric bounds, SVG safety and frame scope before applying.",",
     "Use only IDs shown in the Figma context. Limit the proposal to eight operations. Never delete nodes, mutate pages, call arbitrary APIs, or create outside the selected frame. Use #RRGGBB colors. If safe supported edits cannot meet the request, return {\"operations\":[]}.",
     "Current Figma context: " + selectionContext,
   ].join("\n\n");
@@ -56,7 +56,7 @@ function requestVariationSystemPrompt(selectionContext: string, variationCount: 
     "Return ONLY JSON shaped like {\"variations\":[{\"name\":\"Frame name\",\"rationale\":\"Short design direction\",\"operations\":[...]}]}; no Markdown or prose.",
     `Return exactly ${variationCount} clearly distinct variation(s), with no extra variations. Use 8–14 high-impact operations per variation (maximum 16). Do not satisfy a redesign by only changing copy or renaming the frame: materially improve hierarchy, auto-layout/spacing, typography, card treatment, contrast, CTA priority and grouping.`,
     "Use only node IDs in the supplied selected-frame tree. targetId is for an existing node to update; parentId is for a FRAME that will receive a new child. IDs refer to the original tree and the plugin maps them onto the cloned tree.",
-    "Supported operations: {\"action\":\"update-text\",\"targetId\":\"TEXT node id\",\"text\":\"replacement\"}; {\"action\":\"rename-node\",\"targetId\":\"node id\",\"name\":\"new name\"}; {\"action\":\"set-fill\",\"targetId\":\"node id\",\"color\":\"#RRGGBB\"}; {\"action\":\"move-node\",\"targetId\":\"node id\",\"x\":16,\"y\":16}; {\"action\":\"resize-node\",\"targetId\":\"node id\",\"width\":320,\"height\":80}; {\"action\":\"set-text-style\",\"targetId\":\"TEXT node id\",\"fontSize\":16,\"fontStyle\":\"Semi Bold\"}; {\"action\":\"set-corner-radius\",\"targetId\":\"node id\",\"radius\":12}; {\"action\":\"set-stroke\",\"targetId\":\"node id\",\"color\":\"#RRGGBB\",\"width\":1}; {\"action\":\"set-opacity\",\"targetId\":\"node id\",\"opacity\":1}; {\"action\":\"set-visible\",\"targetId\":\"node id\",\"visible\":true}; {\"action\":\"set-layout\",\"targetId\":\"FRAME node id\",\"layoutMode\":\"VERTICAL\",\"itemSpacing\":12,\"paddingTop\":16,\"paddingRight\":16,\"paddingBottom\":16,\"paddingLeft\":16}; {\"action\":\"reorder-node\",\"targetId\":\"node id\",\"index\":0}; {\"action\":\"create-text\",\"parentId\":\"FRAME node id\",\"text\":\"label\",\"x\":16,\"y\":16,\"fontSize\":14,\"color\":\"#RRGGBB\"}; or {\"action\":\"create-rectangle\",\"parentId\":\"FRAME node id\",\"width\":120,\"height\":48,\"x\":16,\"y\":16,\"color\":\"#RRGGBB\"}. Use only values supported by the target node type; keep edits inside the source frame tree.",
+    "Supported design actions (use only node IDs in the supplied frame tree): update-text, rename-node, set-fill, set-stroke, set-opacity, set-visible, set-locked, set-blend-mode, move-node, resize-node, set-rotation, set-corner-radius, set-text-style, set-layout, set-layout-sizing, set-layout-positioning, set-constraints, set-clip-content, reorder-node, clone-node, remove-node (child layers only), create-text, create-rectangle, create-ellipse, create-line, create-frame, and create-svg. Create actions use parentId referencing a FRAME inside the clone. SVG markup must be bounded (under 10,000 characters) and contain no script, foreignObject, external href, or javascript URL. set-text-style can set fontFamily, fontStyle, fontSize, color, letterSpacing, lineHeight, paragraphSpacing, textAlignHorizontal, textAlignVertical, textAutoResize, textCase, and textDecoration. set-layout accepts layoutMode NONE/HORIZONTAL/VERTICAL, itemSpacing, padding, alignment and sizing fields. set-layout-sizing accepts horizontal/vertical HUG/FILL/FIXED; set-layout-positioning accepts AUTO/ABSOLUTE. set-constraints accepts horizontal LEFT/CENTER/RIGHT/LEFT_RIGHT/SCALE and vertical TOP/CENTER/BOTTOM/TOP_BOTTOM/SCALE. Keep every mutation inside the cloned frame tree; the original must remain unchanged.",
     "Each variation must be a meaningful visual alternative, not just a renamed duplicate. Prioritize the most important improvements across hierarchy, spacing, card treatment, contrast, copy, or CTA emphasis. Keep the existing product purpose and essential information. Never delete nodes, call arbitrary APIs, or use IDs outside the selected frame. Use #RRGGBB colors. Do not output empty operations arrays.",
     "Current Figma context: " + selectionContext,
   ].join("\n\n");
@@ -228,7 +228,9 @@ export async function POST(request: Request) {
       : ((estimatedInputTokens * (inputRate ?? 0)) + (maxOutputTokens * (outputRate ?? 0))) / 1_000_000;
     if (candidate.tier === "paid" && reservedEstimatedCostUsd + estimatedCallCostUsd > capability.maxEstimatedCostUsd) {
       lastError = new PluginOpenRouterError(
-        "The remaining estimated cost budget for " + capability.label + " is too low for the next model. No additional paid call was made.",
+        "The per-task estimated cost ceiling for " + capability.label + " would be exceeded by the next retry (estimated task total $" +
+          (reservedEstimatedCostUsd + estimatedCallCostUsd).toFixed(4) + " of $" + capability.maxEstimatedCostUsd.toFixed(2) +
+          "). This is separate from the shared ₹50 rolling-hour budget. UX Direct will not send another paid request.",
         402,
       );
       continue;
@@ -277,19 +279,21 @@ export async function POST(request: Request) {
           if (!isRecord(item) || !Array.isArray(item.operations) || item.operations.length < 6 || item.operations.length > 16) return false;
           const allowedActions = new Set([
             "update-text", "rename-node", "set-fill", "move-node", "resize-node",
-            "create-text", "create-rectangle", "set-text-style", "set-corner-radius",
-            "set-stroke", "set-opacity", "set-visible", "set-layout", "reorder-node",
+            "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg",
+            "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible",
+            "set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "set-clip-content",
+            "set-locked", "set-blend-mode", "set-rotation", "clone-node", "remove-node", "reorder-node",
           ]);
           if (!item.operations.every((op) => isRecord(op) && typeof op.action === "string" && allowedActions.has(op.action))) return false;
           const categories = new Set(item.operations.map((op) => {
             const action = isRecord(op) ? op.action : "";
-            if (["set-layout", "move-node", "resize-node", "reorder-node", "set-visible"].includes(String(action))) return "structure";
-            if (["set-fill", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity"].includes(String(action))) return "style";
-            if (["update-text", "create-text", "create-rectangle"].includes(String(action))) return "content";
+            if (["set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "move-node", "resize-node", "set-rotation", "reorder-node", "set-visible", "set-clip-content", "clone-node", "remove-node"].includes(String(action))) return "structure";
+            if (["set-fill", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-blend-mode", "set-locked"].includes(String(action))) return "style";
+            if (["update-text", "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg"].includes(String(action))) return "content";
             return "other";
           }));
           const structuralCount = item.operations.filter((op) =>
-            isRecord(op) && ["set-layout", "move-node", "resize-node", "reorder-node"].includes(String(op.action))
+            isRecord(op) && ["set-layout", "set-layout-sizing", "set-layout-positioning", "move-node", "resize-node", "set-rotation", "reorder-node", "clone-node"].includes(String(op.action))
           ).length;
           return categories.size >= 2 && structuralCount >= 2;
         };
@@ -302,9 +306,9 @@ export async function POST(request: Request) {
         }
         const operations = envelope.flatMap((item) => isRecord(item) && Array.isArray(item.operations) ? item.operations : []);
         const isAction = (operation: unknown, actions: string[]) => isRecord(operation) && actions.includes(String(operation.action));
-        const structuralOperations = operations.filter((op) => isAction(op, ["set-layout", "move-node", "resize-node", "reorder-node"])).length;
-        const styleOperations = operations.filter((op) => isAction(op, ["set-fill", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible"])).length;
-        const contentOperations = operations.filter((op) => isAction(op, ["update-text", "create-text", "create-rectangle", "rename-node"])).length;
+        const structuralOperations = operations.filter((op) => isAction(op, ["set-layout", "set-layout-sizing", "set-layout-positioning", "set-constraints", "move-node", "resize-node", "set-rotation", "reorder-node", "clone-node"])).length;
+        const styleOperations = operations.filter((op) => isAction(op, ["set-fill", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity", "set-visible", "set-locked", "set-blend-mode"])).length;
+        const contentOperations = operations.filter((op) => isAction(op, ["update-text", "create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg", "rename-node"])).length;
         operationProfile = {
           variations: envelope.length,
           totalOperations: operations.length,
