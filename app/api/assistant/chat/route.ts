@@ -390,6 +390,7 @@ export async function POST(request: Request) {
           projectKey: assembledContext.projectKey,
           retrievedSources: knowledge.hits.length,
           retrievalMode: knowledge.retrievalMode || "none",
+          knowledgeAvailable: knowledge.available,
           addedChars: assembledContext.addedChars,
         },
         provider: "openrouter",
