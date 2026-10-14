@@ -172,6 +172,14 @@ Every tool/capability declares cost class, modality, estimated bound, maximum at
 
 The Wireframe Foundry may use a per-run ceiling such as INR 50, but that cap is an execution policy rather than a client profile or reasoning rule. Reserve budget for verification/repair and fail early if the expected request will not fit. Local deterministic checks should be preferred whenever they answer the question.
 
+## Capability growth and the learning feedback loop
+
+Treat new domains as additions to the capability surface, not new brains. A website or application capability declares its version, tags, modality, input/result contract, availability, cost/risk and required approvals; the planner discovers it at runtime and composes it with other available tools. A registered capability does not imply its adapter is connected or authorized.
+
+Execution feedback is recorded as compact evidence (outcome, validation, human correction, cost/latency where available and scope). Repeated success can influence advisory capability/strategy ranking. Failed outcomes and human corrections also count as evidence. Recommendations require a minimum sample and quality/verification thresholds; they can never expand allowlists, grant write permission, bypass approvals or spend controls. Project and client signals remain scoped, while cross-client learning needs explicit approved generic licensing. Do not store raw prompts, screenshots, design payloads or private chain-of-thought in the learning ledger.
+
+Implementation: `src/core/capability-registry.ts` provides dynamic discovery and gated execution, `src/core/capability-learning.ts` exposes the evidence loop and injectable repository contract, and `director-controller.ts` can pass scoped preferences to the planner. The initial learning repository is in-memory only; persistent authenticated storage and real execution-evidence wiring remain production tasks.
+
 ## 12. Current implementation scaffold
 
 This branch introduces:
