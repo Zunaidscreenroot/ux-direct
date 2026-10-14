@@ -277,7 +277,7 @@ export async function callOpenRouterChat(
       body: JSON.stringify({
         model,
         messages,
-        max_tokens: Math.max(8, Math.min(options.maxTokens ?? 1200, 2400)),
+        max_tokens: Math.max(8, Math.min(options.maxTokens ?? 1200, 4500)),
         temperature: Math.max(0, Math.min(options.temperature ?? 0.2, 1)),
         ...(options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort } } : {}),
       }),
