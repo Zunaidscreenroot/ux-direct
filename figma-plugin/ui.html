@@ -95,7 +95,7 @@
     </div>
     <button id="testPaidModel" class="model-test" type="button" hidden disabled title="Run one explicit, budget-checked paid inference test. A small provider charge may apply.">Test</button>
   </div>
-  <div id="budgetStatus" class="budget-status" aria-live="polite" title="Shared rolling 60-minute budget. Paid inference is blocked if this budget cannot be verified.">AI budget · ₹50/hour · checking usage…</div>
+  <div id="budgetStatus" class="budget-status" aria-live="polite" title="Shared rolling 24-hour budget. Paid inference is blocked if this budget cannot be verified.">AI budget · ₹50/day · checking usage…</div>
   <div id="providerSpendStatus" class="budget-status" aria-live="polite" title="Read-only OpenRouter spending data from the server-side management key.">OpenRouter spend · checking management API…</div>
   <div id="learningStatus" class="budget-status" aria-live="polite" title="Persistent, anonymized model-performance memory. Raw prompts and screenshots are not stored.">Product memory · checking Supabase…</div>
   <div id="actionCoverageStatus" class="budget-status" aria-live="polite" title="Native action support is separate from Plugin API health checks. The current catalog includes editing, layout, vectors, effects, grids, components and instance operations; this is not yet literal one-to-one parity with Automator’s 100+ actions.">Figma actions · 32 native design operation types</div>
@@ -172,19 +172,19 @@
       $("healthStatusText").textContent = label;
       $("healthStatus").title = state === "ok" ? "Native Figma Plugin API health checks passed. This count is not the number of UX Direct design actions." : "Inspect native Figma Plugin API health checks. Health-check count is separate from the UX Direct action catalog.";
     }
-    function updateHourlyBudgetStatus(budget) {
+    function updateDailyBudgetStatus(budget) {
       const target = $("budgetStatus");
       if (!target) return;
       if (!budget || !Number.isFinite(Number(budget.spentInr)) || !Number.isFinite(Number(budget.limitInr)) || !Number.isFinite(Number(budget.remainingInr))) {
-        target.textContent = "AI budget · ₹50/hour · live balance unavailable; paid calls fail closed";
+        target.textContent = "AI budget · ₹50/day · live balance unavailable; paid calls fail closed";
         target.title = "The server-side budget guard remains active. If the transactional ledger cannot be checked, paid inference is blocked.";
         return;
       }
       const spent = Number(budget.spentInr);
       const limit = Number(budget.limitInr);
       const remaining = Number(budget.remainingInr);
-      target.textContent = "AI budget · ₹" + spent.toFixed(2) + " / ₹" + limit.toFixed(0) + " used in " + Number(budget.windowMinutes || 60) + " min · ₹" + remaining.toFixed(2) + " left";
-      target.title = "Rolling 60-minute reservations include a conservative safety margin and maximum token budget. Failed provider attempts remain reserved for safety until they age out.";
+      target.textContent = "AI budget · ₹" + spent.toFixed(2) + " / ₹" + limit.toFixed(0) + " used in " + Number(budget.windowMinutes || 1440) + " min · ₹" + remaining.toFixed(2) + " left";
+      target.title = "Rolling 24-hour reservations include a a conservative safety margin. Successful calls are reconciled to provider-reported cost; uncertain failed attempts remain reserved for 24 hours.";
     }
 
     function updateOpenRouterSpendStatus(monitoring) {
@@ -236,7 +236,7 @@
         if (!response.ok) throw new Error(payload.error || "Monitoring endpoint returned HTTP " + response.status + ".");
         updateOpenRouterSpendStatus(payload.openRouter);
         updateLearningStatus(payload.learning);
-        if (payload.hourlyBudget) updateHourlyBudgetStatus(payload.hourlyBudget);
+        if (payload.dailyBudget) updateDailyBudgetStatus(payload.dailyBudget);
       } catch (error) {
         updateOpenRouterSpendStatus({ configured: true, available: false, error: error && error.message ? error.message : "Monitoring request failed." });
         updateLearningStatus({ available: false });
@@ -447,7 +447,7 @@
           || modelOptions.find(model => model.tier === "free-tier");
         selector.value = preferred.id;
         await checkSelectedModel();
-        updateHourlyBudgetStatus(payload.hourlyBudget);
+        updateDailyBudgetStatus(payload.dailyBudget);
         void loadOpenRouterMonitoring();
       } catch (error) {
         const detail = error && error.message ? error.message : "Could not load models.";
@@ -601,7 +601,7 @@
           body: JSON.stringify({ provider: model.provider, model: model.id, fileKey: verifiedFileKey })
         });
         const payload = await response.json().catch(() => ({}));
-        if (payload.hourlyBudget) updateHourlyBudgetStatus(payload.hourlyBudget);
+        if (payload.dailyBudget) updateDailyBudgetStatus(payload.dailyBudget);
         if (currentModel?.id !== testedModelId) return;
         if (!response.ok) {
           throw new Error(payload.reason || payload.error || ("Paid model test returned HTTP " + response.status + "."));
@@ -917,7 +917,7 @@
       }
       if (visualIntent || highComputeIntent) {
         const detail = variationIntent
-          ? "This is a high-compute screen redesign. UX Direct will route to a suitable paid visual-design model, with an estimated per-task ceiling of US$0.12 and a shared hard limit of ₹50 across any rolling 60 minutes. It will propose exactly the requested number of new sibling frames. Your original remains unchanged until you approve the plan."
+          ? "This is a high-compute screen redesign. UX Direct will route to a suitable paid visual-design model, with an estimated per-task ceiling of US$0.12 and a shared hard limit of ₹50 across any rolling 24 hours. It will propose exactly the requested number of new sibling frames. Your original remains unchanged until you approve the plan."
           : designIntent
             ? "This request proposes Figma changes, so UX Direct will prepare a structured edit plan for your review."
             : currentModel.tier === "paid"
@@ -928,7 +928,7 @@
         const consentIntro = visualIntent
           ? "Visual review sends the selected screenshot and prompt to UX Direct."
           : "This request may require a paid model for high-compute BFCI design work.";
-        const consent = window.confirm(consentIntro + "\n\n" + detail + "\n\nThe backend reserves estimated spend against the shared ₹50 rolling-hour limit before every paid call. Reservations include a safety buffer; actual charges can differ with image and reasoning-token usage. Creating Figma frames requires a separate confirmation. Continue?");
+        const consent = window.confirm(consentIntro + "\n\n" + detail + "\n\nThe backend reserves estimated spend against the shared ₹50 rolling 24-hour limit before every paid call. Reservations include a safety buffer; actual charges can differ with image and reasoning-token usage. Creating Figma frames requires a separate confirmation. Continue?");
         if (!consent) return;
       }
 
@@ -972,7 +972,7 @@
             provider: currentModel.provider,
             model: currentModel.id,
             intent: variationIntent ? "design-variation" : designIntent ? "design-operation" : "chat",
-            messages: chatHistory.slice(-12),
+            messages: chatHistory.slice(-6),
             selection: {
               pageName: String(currentSelection.pageName || "").slice(0, 160),
               totalCount: Array.isArray(currentSelection.selection) ? currentSelection.selection.length : 0,
@@ -983,7 +983,7 @@
         });
         const data = await response.json().catch(() => ({}));
         void loadOpenRouterMonitoring();
-        if (data.hourlyBudget) updateHourlyBudgetStatus(data.hourlyBudget);
+        if (data.dailyBudget) updateDailyBudgetStatus(data.dailyBudget);
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
         if (designIntent) {
