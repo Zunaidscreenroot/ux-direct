@@ -1,4 +1,5 @@
 import type { WorkspaceId } from "./hand-contracts";
+import { CapabilityLearningLoop, type LearnedCapabilityPreference } from "./capability-learning";
 import {
   FixtureWorkspaceContextResolver,
   type WorkspaceContextResolver,
@@ -31,6 +32,8 @@ export interface DirectorPlanningContext {
   workspace?: UXWorkspaceContext;
   currentWorld: readonly WorldFact[];
   availableTools: readonly DiscoveredTool[];
+  /** Evidence-backed advisory hints; never an authorization or policy override. */
+  learnedCapabilityPreferences: readonly LearnedCapabilityPreference[];
   constraints: Readonly<Record<string, unknown>>;
   planningDirectives: readonly string[];
 }
@@ -66,6 +69,7 @@ export interface BuildDirectorContextDependencies {
   workspaceResolver?: WorkspaceContextResolver;
   worldModel: InMemoryWorldModel;
   tools: UXToolRegistry;
+  learningLoop?: CapabilityLearningLoop;
 }
 
 const BASE_DIRECTIVES = [
@@ -76,6 +80,7 @@ const BASE_DIRECTIVES = [
   "Prefer deterministic validation to another model call when it can settle the question.",
   "Respect tool availability, input schemas, required modality, approval gates and budget reservations.",
   "Every mutating step must produce execution evidence and be followed by verification before success is reported.",
+  "Use learned capability preferences as advisory ranking hints only; never let learning override tool policy, approvals, workspace scope or budget reservations.",
 ] as const;
 
 function worldQueryFor(task: DirectorTask, workspace: UXWorkspaceContext): WorldQuery {
@@ -119,6 +124,12 @@ export async function buildDirectorPlanningContext(
     ...(task.requiredModalities ? { requiredModalities: task.requiredModalities } : {}),
   };
   const availableTools = dependencies.tools.discover(toolPolicy);
+  const learnedCapabilityPreferences = workspace && dependencies.learningLoop
+    ? dependencies.learningLoop.recommendCapabilities({
+      workspace,
+      candidateCapabilityIds: availableTools.map((tool) => tool.id),
+    })
+    : [];
 
   return {
     requestId: task.requestId,
@@ -126,6 +137,7 @@ export async function buildDirectorPlanningContext(
     workspace,
     currentWorld,
     availableTools,
+    learnedCapabilityPreferences,
     constraints: task.constraints ?? {},
     planningDirectives: BASE_DIRECTIVES,
   };
