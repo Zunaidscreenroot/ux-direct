@@ -42,7 +42,7 @@ export interface DirectorPlanStep {
   input: unknown;
   dependsOn: readonly string[];
   expectedEvidence: readonly string[];
-  /** The validator sets this true when tool policy requires explicit approval. */
+  /** Optional planner annotation; the server validator recomputes approval requirements. */
   approvalGate?: boolean;
 }
 
@@ -186,7 +186,8 @@ export function validateDirectorPlan(
       errors.push(`Step ${step.id} uses a tool that was not discovered or is not permitted: ${step.toolId}`);
       continue;
     }
-    if ((tool.operation === "write" && tool.requiresApproval) || tool.risk === "critical") {
+    if ((tool.operation === "write" && (tool.requiresApproval || tool.risk === "high" || tool.risk === "critical"))
+      || tool.risk === "critical") {
       if (!approvedTools.has(tool.id)) stepsRequiringApproval.push(step.id);
     }
     if (!step.objective.trim()) errors.push(`Step ${step.id} needs an objective.`);
