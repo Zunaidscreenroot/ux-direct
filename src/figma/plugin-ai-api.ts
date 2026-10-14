@@ -365,11 +365,12 @@ export async function getDailyPaidModelBudgetLedger(limit = 8): Promise<DailyPai
     }
 
     const entries: DailyPaidModelBudgetLedgerEntry[] = payload.flatMap((item) => {
-      if (!isRecord(item)) return [];
-      const reservedAt = typeof item.reserved_at === "string" ? item.reserved_at : "";
-      const amountInr = Number(item.amount_inr);
-      const modelId = typeof item.model_id === "string" ? item.model_id.slice(0, 160) : "";
-      const state = typeof item.state === "string" ? item.state.slice(0, 40) : "unknown";
+      const row = asRecord(item);
+      if (!row) return [];
+      const reservedAt = typeof row.reserved_at === "string" ? row.reserved_at : "";
+      const amountInr = Number(row.amount_inr);
+      const modelId = typeof row.model_id === "string" ? row.model_id.slice(0, 160) : "";
+      const state = typeof row.state === "string" ? row.state.slice(0, 40) : "unknown";
       if (!reservedAt || !Number.isFinite(Date.parse(reservedAt)) || !Number.isFinite(amountInr) || amountInr < 0 || !modelId) return [];
       return [{ reservedAt, amountInr, modelId, state }];
     });
