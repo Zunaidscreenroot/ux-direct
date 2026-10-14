@@ -209,6 +209,23 @@ export async function POST(request: Request) {
       ? "dmi"
       : "general";
   const learning = await getModelLearningContext(capability.id, learningProjectKey);
+  const orderByLearnedPerformance = <T extends { id: string; tier: "free-tier" | "paid" }>(models: T[]): T[] => {
+    const ordered = [...models];
+    // Reorder only mature observations, and only inside the same free/paid tier.
+    // This preserves free-first routing while letting validated outcomes improve choices.
+    for (const tier of ["free-tier", "paid"] as const) {
+      const indices = ordered.map((model, index) => ({ model, index }))
+        .filter(({ model }) => model.tier === tier && (learning.modelScores[model.id]?.attempts ?? 0) >= 3)
+        .map(({ index }) => index);
+      if (indices.length < 2) continue;
+      const matureModels = indices.map((index) => ordered[index])
+        .sort((a, b) => (learning.modelScores[b.id]?.routingScore ?? -Infinity) - (learning.modelScores[a.id]?.routingScore ?? -Infinity));
+      indices.forEach((index, rank) => { ordered[index] = matureModels[rank]; });
+    }
+    return ordered;
+  };
+  const pipelineVisionModelOrder = orderByLearnedPerformance(pipelineVisionModels);
+  const pipelineReasoningModelOrder = orderByLearnedPerformance(pipelineReasoningModels);
   const retrievalQuery = [
     lastUserPrompt,
     "Active capability: " + capability.label,
@@ -216,9 +233,11 @@ export async function POST(request: Request) {
     "Selected layers: " + selectedLayerNames,
   ].filter(Boolean).join("\n").slice(0, 4000);
   const shortGreeting = /^(hi|hello|hey|thanks|thank you|ok|okay|good morning|good afternoon)[.!\\s]*$/i.test(lastUserPrompt.trim());
-  const knowledge = lastUserPrompt.trim().length >= 12 && !shortGreeting
-    ? await retrieveProjectKnowledge(activeProjectKey, retrievalQuery)
-    : { available: true, projectKey: activeProjectKey, hits: [], context: "", retrievalMode: "skipped" as const };
+  const knowledge = useUxdIrPipeline
+    ? { available: true, projectKey: activeProjectKey, hits: [], context: "", retrievalMode: "uxd-ir-memory" as const }
+    : lastUserPrompt.trim().length >= 12 && !shortGreeting
+      ? await retrieveProjectKnowledge(activeProjectKey, retrievalQuery)
+      : { available: true, projectKey: activeProjectKey, hits: [], context: "", retrievalMode: "skipped" as const };
   const baseAugmentedPrompt = useClientRoute && clientSystemPrompt
     ? clientSystemPrompt + "\n\n" + capabilityGuardrails
     : baseSystemPrompt + "\n\n" + capabilityGuardrails;
@@ -356,8 +375,9 @@ export async function POST(request: Request) {
             frameItems: items,
             screenshotDataUrl: previewDataUrl,
             variationCount,
-            visionModels: pipelineVisionModels,
-            reasoningModels: pipelineReasoningModels,
+            visionModels: pipelineVisionModelOrder,
+            reasoningModels: pipelineReasoningModelOrder,
+            learnedGuidance: learning.promptContext.slice(0, 1800),
             maxEstimatedCostUsd: capability.maxEstimatedCostUsd,
           })
         : await (async () => {
