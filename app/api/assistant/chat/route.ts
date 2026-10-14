@@ -157,12 +157,31 @@ export async function POST(request: Request) {
   const systemPrompt = baseSystemPrompt + "\n\n" + capabilityGuardrails +
     (learning.promptContext ? "\n\n" + learning.promptContext : "");
 
+  // Attach the exported JPEG to the latest user turn. Previously the screenshot
+  // was used only for model selection and cost estimation, while OpenRouter
+  // received text-only messages; that made the "visual scan complete" status
+  // misleading. Only the current visual request carries the image, not history.
+  const latestUserMessageIndex = rawMessages.map((message) => message.role).lastIndexOf("user");
+  const messagesWithVisualEvidence: PluginChatMessage[] = rawMessages.map((message, index): PluginChatMessage => {
+    let content: PluginChatMessage["content"] = message.content;
+    if (visualIntent && previewDataUrl && message.role === "user" && index === latestUserMessageIndex) {
+      content = [
+        {
+          type: "text",
+          text: message.content +
+            "\n\nThe selected Figma frame screenshot is attached as image evidence. Inspect the rendered pixels directly. Ground visual findings in the image, and distinguish visible observations from inferences. Do not claim you cannot see rendered pixels when this image is attached.",
+        },
+        { type: "image_url", image_url: { url: previewDataUrl } },
+      ];
+    }
+    return {
+      role: message.role as "user" | "assistant",
+      content,
+    };
+  });
   const inputMessages: PluginChatMessage[] = [
     { role: "system", content: systemPrompt },
-    ...rawMessages.map((message) => ({
-      role: message.role as "user" | "assistant",
-      content: message.content,
-    })),
+    ...messagesWithVisualEvidence,
   ];
 
   const availableById = new Map(modelOptions.map((model) => [model.id, model]));
