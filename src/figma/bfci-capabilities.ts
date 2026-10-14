@@ -117,7 +117,10 @@ export const BFCI_CAPABILITIES: Record<BfciCapabilityId, BfciCapability> = {
     description: "Substantial layout, hierarchy and component changes applied to a separate clone.",
     routingClass: "paid-visual",
     primaryModels: ["z-ai/glm-4.6v"],
-    fallbackModels: ["moonshotai/kimi-k2.5", "anthropic/claude-sonnet-5.5", "google/gemini-3.1-pro-preview"],
+    // Keep the same high-quality visual route, but try materially cheaper,
+    // image-capable retries before expensive premium models. This reduces the
+    // chance that cumulative retry estimates consume the per-task ceiling.
+    fallbackModels: ["deepseek/deepseek-v4.1-flash", "anthropic/claude-haiku-5.5", "moonshotai/kimi-k2.5"],
     requiresImage: true,
     paidRequired: true,
     structuredOutput: true,
@@ -170,8 +173,8 @@ export const BFCI_CAPABILITIES: Record<BfciCapabilityId, BfciCapability> = {
     label: "Responsive adaptation",
     description: "Adapt the information architecture and layout to the target viewport and device.",
     routingClass: "paid-visual",
-    primaryModels: ["z-ai/glm-4.6v", "moonshotai/kimi-k2.5", "anthropic/claude-haiku-5.5"],
-    fallbackModels: ["google/gemini-3.1-pro-preview", "anthropic/claude-sonnet-5.5"],
+    primaryModels: ["z-ai/glm-4.6v", "deepseek/deepseek-v4.1-flash", "anthropic/claude-haiku-5.5"],
+    fallbackModels: ["moonshotai/kimi-k2.5"],
     requiresImage: true,
     paidRequired: true,
     structuredOutput: true,
