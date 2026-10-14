@@ -810,7 +810,7 @@
       if (isSending) return;
       const prompt = (typeof overrideText === "string" ? overrideText : $("prompt").value).trim();
       if (prompt.length < 1) return;
-      const visualIntent = /\b(visual(?:ly)?|scan|look\s+at|inspect|review|audit|critique|improv(?:e|ement|ements)|better|redesign|layout|spacing|alignment|screen|screenshot|compare|design quality|hierarchy|analy[sz]e|evaluation|evaluate|assess|what\s+(?:is|looks)\s+wrong|find\s+(?:issues|problems)|feedback|visual design|usability|affordance|contrast|typography|white\s*space|overflow|clipping)\b/i.test(prompt);
+      const visualIntent = /\b(scan|look\s+at|inspect|review|audit|critique|improv(?:e|ement|ements)|better|redesign|layout|spacing|alignment|screen|screenshot|compare|design quality|hierarchy|analy[sz]e|evaluation|evaluate|assess|what\s+(?:is|looks)\s+wrong|find\s+(?:issues|problems)|feedback|visual design|usability|affordance|contrast|typography|white\s*space|overflow|clipping)\b/i.test(prompt);
       // Compute this before visual preflight: its consent text reads designIntent.
       const designIntent = requestsFigmaEdit(prompt);
       if (visualIntent && !currentSelection.previewDataUrl) {
