@@ -5,6 +5,7 @@ import {
   PluginOpenRouterError,
   type PluginChatMessage,
   type PluginModelDefinition,
+  type DailyPaidBudgetReservation,
 } from "@/src/figma/plugin-ai-api";
 import { recordModelLearningEvent } from "@/src/figma/model-learning";
 import {
@@ -56,6 +57,7 @@ export type UxdVariationPipelineResult = {
   estimatedCostUsd: number;
   observedCostUsd: number | null;
   trace: UxdIrTrace;
+  dailyBudgetInfo: DailyPaidBudgetReservation | null;
 };
 
 function cleanIntent(value: string): string {
@@ -153,9 +155,7 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
   let observedCostUsd: number | null = null;
   let latencyMs = 0;
   let usage: NumericUsage = { promptTokens: null, completionTokens: null, totalTokens: null };
-  let latestReservation: { spentInr: number; limitInr: number; remainingInr: number } | null = null;
   let visionEvidence: ReturnType<typeof normalizeVisionEvidence> = null;
-  let visionModelId = "";
   let budgetBlocked = false;
   let lastVisionError = "No approved vision model returned usable UXD-IR evidence.";
 
@@ -185,7 +185,6 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
       if (model.tier === "paid") {
         if (budgetBlocked) continue;
         const reservation = await reserveDailyPaidModelBudget({ estimatedCostUsd: stageEstimate, model: model.id, requestId });
-        latestReservation = reservation;
         if (!reservation.allowed) {
           budgetBlocked = true;
           lastVisionError = "Daily AI budget reached before a paid vision stage; no additional paid call was sent.";
@@ -205,7 +204,6 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
       const normalized = normalizeVisionEvidence(parsed, allowedNodeIds, getNodeSize(input.frameItems, input.frameWidth, input.frameHeight));
       if (!normalized) throw new PluginOpenRouterError("Vision model returned invalid UXD-IR v1 evidence.", 502);
       visionEvidence = normalized;
-      visionModelId = result.model;
       traceStages.push({
         role: "vision", status: "completed", model: result.model, latencyMs: result.latencyMs,
         ...(result.usage.promptTokens !== null ? { promptTokens: result.usage.promptTokens } : {}),
@@ -267,7 +265,6 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
   const reasoningModels = input.reasoningModels.filter((model) => model.available).slice(0, 5);
   let finalPlan: Record<string, unknown> | null = null;
   let finalModel: AvailableModel | null = null;
-  let finalLatency = 0;
   let lastPlanError = "No approved reasoning model returned a valid operation plan.";
   let paidPlanBudgetBlocked = false;
 
@@ -284,7 +281,6 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
       }
       if (model.tier === "paid") {
         const reservation = await reserveDailyPaidModelBudget({ estimatedCostUsd: stageEstimate, model: model.id, requestId });
-        latestReservation = reservation;
         if (!reservation.allowed) {
           paidPlanBudgetBlocked = true;
           lastPlanError = "Daily AI budget reached before a paid reasoning stage; no additional paid call was sent.";
@@ -294,7 +290,6 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
       estimatedCostUsd += stageEstimate;
       const started = Date.now();
       const result = await callOpenRouterChat(model.id, plannerMessages, { maxTokens: 3000, temperature: 0.1, timeoutMs: 30000, reasoningEffort: "low" });
-      finalLatency = result.latencyMs;
       latencyMs += Date.now() - started;
       usage = sumUsage(usage, result.usage);
       observedCostUsd = addObservedCost(observedCostUsd, result.observedCostUsd);
@@ -365,5 +360,6 @@ export async function runUxdVariationPipeline(input: UxdVariationPipelineInput):
     estimatedCostUsd,
     observedCostUsd,
     trace,
+    dailyBudgetInfo: null,
   };
 }
