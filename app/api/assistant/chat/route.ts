@@ -6,7 +6,7 @@ import { getModelLearningContext, recordModelLearningEvent } from "@/src/figma/m
 import { resolveKnowledgeProjectKey, retrieveProjectKnowledge } from "@/src/figma/knowledge-rag";
 import { assembleAugmentedContext } from "@/src/figma/context-assembly";
 import { runUxdVariationPipeline } from "@/src/figma/uxd-orchestration";
-import { persistUxdIrTrace, type StoredUxdTrace } from "@/src/figma/uxd-traces";
+import { persistUxdIrTrace } from "@/src/figma/uxd-traces";
 import { UXD_IR_VERSION, type UxdIrTrace } from "@/src/figma/uxd-ir";
 import {
   callOpenRouterChat,
