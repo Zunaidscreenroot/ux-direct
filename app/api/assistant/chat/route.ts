@@ -201,9 +201,29 @@ export async function POST(request: Request) {
           throw new PluginOpenRouterError("Model " + candidate.id + " returned an invalid variation-plan JSON response.", 502);
         }
         const envelope = isRecord(plan) && Array.isArray(plan.variations) ? plan.variations : [];
+        const variationOperationsValid = (item: unknown) => {
+          if (!isRecord(item) || !Array.isArray(item.operations) || item.operations.length < 6 || item.operations.length > 16) return false;
+          const allowedActions = new Set([
+            "update-text", "rename-node", "set-fill", "move-node", "resize-node",
+            "create-text", "create-rectangle", "set-text-style", "set-corner-radius",
+            "set-stroke", "set-opacity", "set-visible", "set-layout", "reorder-node",
+          ]);
+          if (!item.operations.every((op) => isRecord(op) && typeof op.action === "string" && allowedActions.has(op.action))) return false;
+          const categories = new Set(item.operations.map((op) => {
+            const action = isRecord(op) ? op.action : "";
+            if (["set-layout", "move-node", "resize-node", "reorder-node", "set-visible"].includes(String(action))) return "structure";
+            if (["set-fill", "set-text-style", "set-corner-radius", "set-stroke", "set-opacity"].includes(String(action))) return "style";
+            if (["update-text", "create-text", "create-rectangle"].includes(String(action))) return "content";
+            return "other";
+          }));
+          const structuralCount = item.operations.filter((op) =>
+            isRecord(op) && ["set-layout", "move-node", "resize-node", "reorder-node"].includes(String(op.action))
+          ).length;
+          return categories.size >= 2 && structuralCount >= 2;
+        };
         const structurallyValid = envelope.length === variationCount && envelope.every((item) =>
           isRecord(item) && typeof item.name === "string" && item.name.trim().length > 0 &&
-          Array.isArray(item.operations) && item.operations.length >= 6 && item.operations.length <= 16
+          variationOperationsValid(item)
         );
         if (!structurallyValid) {
           throw new PluginOpenRouterError("Model " + candidate.id + " returned an incomplete variation plan (expected named frames with 1–8 operations each).", 502);
