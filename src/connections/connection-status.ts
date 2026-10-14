@@ -1,11 +1,12 @@
 import { getStore } from "@netlify/blobs";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
+import { netlifyDeploymentScope } from "@/src/netlify/deployment-scope";
 
 const REGION = "us-east-2";
 const ACTIVITY_STORE = "ux-direct-connection-status";
-const ACTIVITY_KEY = "chatgpt/last-activity.json";
+const activityKey = () => `${netlifyDeploymentScope()}/chatgpt/last-activity.json`;
 const BRIDGE_STORE = "ux-direct-plugin-bridge";
-const BRIDGE_PREFIX = "ux-direct-bridge/sessions/";
+const bridgePrefix = () => `ux-direct-bridge/${netlifyDeploymentScope()}/sessions/`;
 export const CHATGPT_ACTIVE_WINDOW_MS = 5 * 60 * 1000;
 const FIGMA_ACTIVE_WINDOW_MS = 75 * 1000;
 
@@ -27,18 +28,19 @@ function bridgeStore() {
 
 export async function recordChatGPTActivity(): Promise<void> {
   const activity: ChatGPTActivity = { lastActivityAt: new Date().toISOString() };
-  await activityStore().set(ACTIVITY_KEY, JSON.stringify(activity), {
+  await activityStore().set(activityKey(), JSON.stringify(activity), {
     metadata: { contentType: "application/json" },
   });
 }
 
 export async function getChatGPTConnectionStatus(now = Date.now()) {
   const store = activityStore();
-  const index = await store.list({ prefix: ACTIVITY_KEY });
-  if (!index.blobs.some((blob) => blob.key === ACTIVITY_KEY)) {
+  const key = activityKey();
+  const index = await store.list({ prefix: key });
+  if (!index.blobs.some((blob) => blob.key === key)) {
     return { state: "not_seen" as const, connected: false, lastActivityAt: null, ageMs: null };
   }
-  const raw = await store.get(ACTIVITY_KEY, { type: "text" });
+  const raw = await store.get(key, { type: "text" });
   let activity: ChatGPTActivity | null = null;
   try { activity = raw ? JSON.parse(raw) as ChatGPTActivity : null; } catch { activity = null; }
   const timestamp = activity?.lastActivityAt ? Date.parse(activity.lastActivityAt) : NaN;
@@ -57,7 +59,7 @@ export async function getChatGPTConnectionStatus(now = Date.now()) {
 
 export async function getFigmaPluginConnectionStatus(clientId?: string, now = Date.now()) {
   const store = bridgeStore();
-  const index = await store.list({ prefix: BRIDGE_PREFIX });
+  const index = await store.list({ prefix: bridgePrefix() });
   const keys = index.blobs
     .map((blob) => blob.key)
     .filter((key) => key.endsWith("/session.json"))
