@@ -34,7 +34,8 @@ export interface ToolDiscoveryRequest {
   requiredModalities?: readonly ToolModality[];
   allowedOperations?: readonly ToolOperation[];
   allowedRisk?: ToolRisk;
-  allowWrites?: boolean;
+  /** Include write tools in candidate plans; execution remains separately gated. */
+  includeWriteTools?: boolean;
   allowExternalServices?: boolean;
   includeUnavailable?: boolean;
 }
@@ -94,7 +95,7 @@ export class UXToolRegistry {
         if (!request.includeUnavailable && !tool.available) return false;
         if (allowedOperations && !allowedOperations.has(tool.operation)) return false;
         if (RISK_RANK[tool.risk] > maxRisk) return false;
-        if (tool.operation === "write" && !request.allowWrites) return false;
+        if (tool.operation === "write" && request.includeWriteTools === false) return false;
         if (tool.costClass === "external-service" && !request.allowExternalServices) return false;
         if (!requiredModalities.every((modality) => tool.modalities.includes(modality))) return false;
         return true;
