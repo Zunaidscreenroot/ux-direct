@@ -1199,9 +1199,6 @@ async function applyUXDNodeOperation(target, operation, protectedRoot) {
   } else if (action === "set-rotation") {
     if (!("rotation" in target) || !Number.isFinite(Number(operation.rotation))) throw new Error("Rotation must be numeric and supported by this target.");
     target.rotation = Math.max(-360, Math.min(360, Number(operation.rotation)));
-  } else if (action === "set-clip-content") {
-    if (target.type !== "FRAME" || typeof operation.clipsContent !== "boolean") throw new Error("Clip-content must target a FRAME and provide a boolean.");
-    target.clipsContent = operation.clipsContent;
   } else if (action === "reorder-node") {
     var parent = target.parent;
     if (!parent || typeof parent.insertChild !== "function" || !("children" in parent)) throw new Error("The target cannot be reordered.");
@@ -1462,7 +1459,7 @@ async function applyApprovedDesignVariations(payload) {
           if (op.action === "set-effects" && (("enabled" in op && typeof op.enabled !== "boolean") ||
               ("opacity" in op && (!Number.isFinite(op.opacity) || op.opacity < 0 || op.opacity > 1)) ||
               ("blur" in op && (!Number.isFinite(op.blur) || op.blur < 0 || op.blur > 100)) ||
-              ("color" in op && (typeof op.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(op.color)))) throw new Error("Effects operation is invalid.");
+              ("color" in op && (typeof op.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(op.color))))) throw new Error("Effects operation is invalid.");
           if (op.action === "set-layout-grid" && (sourceTarget.type !== "FRAME" ||
               ("pattern" in op && ["COLUMNS", "ROWS", "GRID"].indexOf(op.pattern) === -1) ||
               ("count" in op && (!Number.isInteger(op.count) || op.count < 1 || op.count > 24)) ||
