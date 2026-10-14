@@ -234,8 +234,13 @@ export async function POST(request: Request) {
     (selectionContext.length + systemPrompt.length + rawMessages.reduce((sum, message) => sum + message.content.length, 0)) / 4
   ) + (visualIntent ? 12000 : 1600);
 
+  let paidAuditAttempts = 0;
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index];
+    if (capability.id === "bfci.screen-audit" && candidate.tier === "paid" && paidAuditAttempts >= 1) {
+      lastError = new PluginOpenRouterError("Visual audit stopped after one paid attempt; no additional paid retry was sent.", 402);
+      break;
+    }
     const inputRate = candidate.inputUsdPerMillion;
     const outputRate = candidate.outputUsdPerMillion;
     if (candidate.tier === "paid" && (inputRate === null || outputRate === null)) {
@@ -275,6 +280,7 @@ export async function POST(request: Request) {
           );
         }
         hourlyBudgetInfo = reservation;
+        if (capability.id === "bfci.screen-audit") paidAuditAttempts += 1;
       }
       const result = await callOpenRouterChat(candidate.id, inputMessages, {
         maxTokens: maxOutputTokens,
