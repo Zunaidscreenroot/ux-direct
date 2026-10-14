@@ -166,6 +166,7 @@ export const PLUGIN_PAID_MODELS: PluginModelDefinition[] = [
 
 type OpenRouterResponsePayload = {
   model?: unknown;
+  usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown; cost?: unknown };
   error?: { message?: unknown };
   choices?: Array<{ message?: { content?: unknown; reasoning?: unknown }; finish_reason?: unknown }>;
 };
@@ -373,7 +374,13 @@ export async function callOpenRouterChat(
   model: string,
   messages: PluginChatMessage[],
   options: { maxTokens?: number; temperature?: number; timeoutMs?: number; reasoningEffort?: "low" | "medium" | "high" } = {},
-): Promise<{ content: string; model: string; latencyMs: number }> {
+): Promise<{
+  content: string;
+  model: string;
+  latencyMs: number;
+  usage: { promptTokens: number | null; completionTokens: number | null; totalTokens: number | null };
+  observedCostUsd: number | null;
+}> {
   const provider = getOpenRouterProvider();
   const apiKey = provider?.apiKey || process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -452,10 +459,21 @@ export async function callOpenRouterChat(
         502,
       );
     }
+    const usage = asRecord(payload?.usage);
+    const metric = (value: unknown): number | null => {
+      const number = typeof value === "number" ? value : Number(value);
+      return Number.isFinite(number) && number >= 0 ? number : null;
+    };
     return {
       content,
       model: typeof payload?.model === "string" ? payload.model : model,
       latencyMs: Date.now() - startedAt,
+      usage: {
+        promptTokens: metric(usage?.prompt_tokens),
+        completionTokens: metric(usage?.completion_tokens),
+        totalTokens: metric(usage?.total_tokens),
+      },
+      observedCostUsd: metric(usage?.cost),
     };
   } catch (error) {
     if (error instanceof PluginOpenRouterError) throw error;
