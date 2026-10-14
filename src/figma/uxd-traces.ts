@@ -164,19 +164,21 @@ export async function updateUxdIrTraceStatus(input: {
   const payload: JsonRecord = { status: input.status, updated_at: new Date().toISOString() };
   if (input.executionResult) payload.execution_result = safeValue(input.executionResult);
   try {
-    const response = await fetch(config.url + "/rest/v1/uxd_run_traces?run_id=eq." + encodeURIComponent(input.runId) + "&project_key=eq." + encodeURIComponent(input.projectKey.slice(0, 80)), {
+    const response = await fetch(config.url + "/rest/v1/uxd_run_traces?run_id=eq." + encodeURIComponent(input.runId) + "&project_key=eq." + encodeURIComponent(input.projectKey.slice(0, 80)) + "&select=run_id", {
       method: "PATCH",
       headers: {
         apikey: config.key,
         Authorization: "Bearer " + config.key,
         "Content-Type": "application/json",
-        Prefer: "return=minimal",
+        Prefer: "return=representation",
       },
       body: JSON.stringify(payload),
       cache: "no-store",
       signal: AbortSignal.timeout(2200),
     });
-    return response.ok;
+    if (!response.ok) return false;
+    const updated: unknown = await response.json().catch(() => null);
+    return Array.isArray(updated) && updated.some((row) => isRecord(row) && row.run_id === input.runId);
   } catch {
     return false;
   }
