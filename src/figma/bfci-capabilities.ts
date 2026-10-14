@@ -4,6 +4,7 @@
  * resolver rather than maintaining product-specific if/else logic.
  */
 export type BfciCapabilityId =
+  | "bfci.website-revamp"
   | "bfci.chat"
   | "bfci.copy"
   | "bfci.screen-edit"
@@ -39,6 +40,24 @@ export interface BfciCapability {
 }
 
 export const BFCI_CAPABILITIES: Record<BfciCapabilityId, BfciCapability> = {
+  "bfci.website-revamp": {
+    id: "bfci.website-revamp",
+    label: "Indian BFCI website revamp",
+    description: "Evidence-led website audit, end-to-end acquisition journey research, information architecture, responsive UX and revamp planning for Indian banks, NBFCs, small finance banks and insurers.",
+    routingClass: "paid-reasoning",
+    primaryModels: ["nvidia/nemotron-3.5-lightning:free", "deepseek/deepseek-v4.1-flash", "z-ai/glm-4.6v"],
+    fallbackModels: ["anthropic/claude-haiku-5.5", "moonshotai/kimi-k2.5"],
+    requiresImage: false,
+    paidRequired: false,
+    structuredOutput: true,
+    reasoningEffort: "medium",
+    maxOutputTokens: 2200,
+    maxModelAttempts: 2,
+    maxRepairPasses: 2,
+    targetQuality: 90,
+    maxEstimatedCostUsd: 0.05,
+    qualityChecks: ["India-only BFCI scope", "evidence/provenance per company finding", "end-to-end customer journey", "mobile and desktop hierarchy", "conversion and trust", "no invented product or compliance facts", "DMI corpus isolation"],
+  },
   "bfci.chat": {
     id: "bfci.chat",
     label: "Banking product chat",
@@ -269,6 +288,13 @@ export interface BfciTaskInput {
 export function classifyBfciCapability(input: BfciTaskInput): BfciCapability {
   const prompt = input.prompt.toLowerCase();
   const intent = input.intent || "chat";
+
+  // Route explicit public-site research and revamp work to the specialist brain profile.
+  // DMI-specific requests remain on the normal project path and are not seeded by shared-site research.
+  if (/\\b(?:website revamp|revamp (?:the )?website|website redesign|redesign (?:the )?website|website audit|audit (?:the )?website|website journey|website information architecture|banking website|nbfc website|small finance bank website|bfci website)\\b/.test(prompt) &&
+      !/\\b(?:dmi|dmi hfc|dmi housing finance)\\b/.test(prompt)) {
+    return BFCI_CAPABILITIES["bfci.website-revamp"];
+  }
 
   // These are the execution paths supported by the current Figma bridge.
   // Additional registry entries remain defined for staged implementation.
