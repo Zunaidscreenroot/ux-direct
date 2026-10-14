@@ -1210,6 +1210,26 @@ async function applyApprovedDesignVariations(payload) {
           if (op.action === "update-text" && (sourceTarget.type !== "TEXT" || typeof op.text !== "string" || !op.text.trim())) {
             throw new Error("Text variations must target an existing text layer and provide replacement text.");
           }
+          if (op.action === "create-text") {
+            if (typeof op.text !== "string" || !op.text.trim() || !Number.isFinite(op.x) || !Number.isFinite(op.y)) {
+              throw new Error("New variation text requires non-empty content and numeric x/y coordinates.");
+            }
+            if (op.color !== undefined && (typeof op.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(op.color))) {
+              throw new Error("New variation text color must use #RRGGBB format.");
+            }
+            if (op.fontSize !== undefined && (!Number.isFinite(op.fontSize) || op.fontSize <= 0)) {
+              throw new Error("New variation text font size must be positive.");
+            }
+          }
+          if (op.action === "create-rectangle") {
+            if (!Number.isFinite(op.width) || !Number.isFinite(op.height) || op.width <= 0 || op.height <= 0 ||
+                !Number.isFinite(op.x) || !Number.isFinite(op.y)) {
+              throw new Error("New variation shapes require positive size and numeric x/y coordinates.");
+            }
+            if (op.color !== undefined && (typeof op.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(op.color))) {
+              throw new Error("New variation shape color must use #RRGGBB format.");
+            }
+          }
           if (op.action === "set-fill" && (typeof op.color !== "string" || !/^#?[0-9a-fA-F]{6}$/.test(op.color))) {
             throw new Error("Variation fill color must use #RRGGBB format.");
           }
