@@ -45,7 +45,7 @@ function getSupabaseConfig() {
 export function resolveKnowledgeProjectKey(value: string): "DMI_HFC" | "UJJIVAN_SFB" | "INDIA_BFCI_SHARED" | null {
   // DMI_HFC is the existing storage namespace for the umbrella DMI project.
   // DMI Finance, DMI Wealth, and DMI Housing Finance all share this scope.
-  const normalized = value.trim().toLowerCase().replace(/[\\s_-]+/g, "");
+  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, "");
   if (["dmi", "dmifinance", "dmiwealth", "dmihfc", "dmihousingfinance"].includes(normalized)) return "DMI_HFC";
   if (["ujjivansfb", "ujjivansmallfinancebank", "ujjivan"].includes(normalized)) return "UJJIVAN_SFB";
   if (["indiabfcishared", "bfci", "sharedbfci"].includes(normalized)) return "INDIA_BFCI_SHARED";
