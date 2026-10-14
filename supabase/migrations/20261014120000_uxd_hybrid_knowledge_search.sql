@@ -87,6 +87,7 @@ begin
     from public.uxd_knowledge_chunks c
     join public.uxd_knowledge_documents d on d.id = c.document_id
     where d.status = 'approved'
+      and c.project_key = d.project_key
       and (
         c.project_key = p_project_key
         or (p_project_key in ('DMI_HFC', 'UJJIVAN_SFB') and c.project_key = 'INDIA_BFCI_SHARED')
