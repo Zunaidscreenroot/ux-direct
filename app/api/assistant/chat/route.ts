@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { BFCI_CAPABILITIES, classifyBfciCapability, orderedModelIds, type BfciCapabilityId } from "@/src/figma/bfci-capabilities";
+import { BFCI_CAPABILITIES, type BfciCapabilityId } from "@/src/figma/bfci-capabilities";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
-import { getModelLearningContext, recordModelLearningEvent } from "@/src/figma/model-learning";
+import { recordModelLearningEvent } from "@/src/figma/model-learning";
 import {
   callOpenRouterChat,
   checkPluginRateLimit,
@@ -35,40 +35,6 @@ function json(request: Request, value: unknown, status = 200) {
 }
 export async function OPTIONS(request: Request) {
   return new Response(null, { status: 204, headers: pluginCorsHeaders(request) });
-}
-
-function requestFigmaEditSystemPrompt(selectionContext: string): string {
-  return [
-    "You are UX Direct, a senior product/UX designer working inside the user's currently selected Figma frame.",
-    "Use the user's requested model and the supplied Figma metadata; never claim an edit was applied until the plugin confirms it.",
-    "Use the approved native Figma action set: update-text, rename-node, set-fill, set-stroke, set-opacity, set-visible, set-locked, set-blend-mode, move-node, resize-node, set-rotation, set-corner-radius, set-text-style, set-layout, set-layout-sizing, set-layout-positioning, set-constraints, set-clip-content, set-layout-grid, set-effects, set-description, create-component, detach-instance, reorder-node, clone-node, remove-node (selected child nodes only), create-text, create-rectangle, create-ellipse, create-line, create-frame, and create-svg. Restrict every operation to the selected frame or one of its descendants.",
-    "When the user requests an edit, return ONLY a JSON object shaped like {\"operations\":[...]}; no Markdown or prose.",
-    "Each operation is a bounded JSON object with action-specific targetId or parentId and parameters. Create actions must target a FRAME in the selection; update-text targets TEXT; set-layout targets FRAME. Text styling supports fontFamily/fontStyle/fontSize/color/letterSpacing/lineHeight/paragraphSpacing/textAlignHorizontal/textAlignVertical/textAutoResize/textCase/textDecoration. The native plugin validates node types, numeric bounds, SVG safety and frame scope before applying.",
-    "Use only IDs shown in the Figma context. Limit the proposal to 32 operations. Never remove the selected root frame or mutate pages. Use remove-node only for an explicitly requested child-layer removal. Never call arbitrary APIs or create outside the selected frame. Use #RRGGBB colors. If safe supported edits cannot meet the request, return {\"operations\":[]}.",
-    "Current Figma context: " + selectionContext,
-  ].join("\n\n");
-}
-
-function requestVariationSystemPrompt(selectionContext: string, variationCount: number): string {
-  return [
-    "You are UX Direct, a senior product/UX designer creating new screen variations inside Figma.",
-    "The selected frame is the source reference. The original must remain unchanged. The native plugin will clone it into sibling frames and apply your operations only to each clone.",
-    "Return ONLY JSON shaped like {\"variations\":[{\"name\":\"Frame name\",\"rationale\":\"Short design direction\",\"operations\":[...]}]}; no Markdown or prose.",
-    `Return exactly ${variationCount} clearly distinct variation(s), with no extra variations. Use 8–14 high-impact operations per variation (maximum 16). Do not satisfy a redesign by only changing copy or renaming the frame: materially improve hierarchy, auto-layout/spacing, typography, card treatment, contrast, CTA priority and grouping.`,
-    "Use only node IDs in the supplied selected-frame tree. targetId is for an existing node to update; parentId is for a FRAME that will receive a new child. IDs refer to the original tree and the plugin maps them onto the cloned tree.",
-    "Supported design actions (use only node IDs in the supplied frame tree): update-text, rename-node, set-fill, set-stroke, set-opacity, set-visible, set-locked, set-blend-mode, move-node, resize-node, set-rotation, set-corner-radius, set-text-style, set-layout, set-layout-sizing, set-layout-positioning, set-constraints, set-clip-content, set-layout-grid, set-effects, set-description, create-component (child frames only), detach-instance, reorder-node, clone-node, remove-node (child layers only), create-text, create-rectangle, create-ellipse, create-line, create-frame, and create-svg. Create actions use parentId referencing a FRAME inside the clone. SVG markup must be bounded (under 10,000 characters) and contain no script, foreignObject, external href, or javascript URL. set-text-style can set fontFamily, fontStyle, fontSize, color, letterSpacing, lineHeight, paragraphSpacing, textAlignHorizontal, textAlignVertical, textAutoResize, textCase, and textDecoration. set-layout accepts layoutMode NONE/HORIZONTAL/VERTICAL, itemSpacing, padding, alignment and sizing fields. set-layout-sizing accepts horizontal/vertical HUG/FILL/FIXED; set-layout-positioning accepts AUTO/ABSOLUTE. set-constraints accepts horizontal LEFT/CENTER/RIGHT/LEFT_RIGHT/SCALE and vertical TOP/CENTER/BOTTOM/TOP_BOTTOM/SCALE. Keep every mutation inside the cloned frame tree; the original must remain unchanged.",
-    "Each variation must be a meaningful visual alternative, not just a renamed duplicate. Prioritize the most important improvements across hierarchy, spacing, card treatment, contrast, copy, or CTA emphasis. Keep the existing product purpose and essential information. Use remove-node only when the user explicitly requests removing a child from the new clone; never remove the root or mutate the original. Never call arbitrary APIs or use IDs outside the selected frame. Use #RRGGBB colors. Do not output empty operations arrays.",
-    "Current Figma context: " + selectionContext,
-  ].join("\n\n");
-}
-
-function conversationSystemPrompt(selectionContext: string): string {
-  return [
-    "You are UX Direct, a conversational senior UX/UI design assistant embedded in Figma.",
-    "Be direct, specific, and collaborative. Use the selected frame/layer context to answer audits, UX questions, content questions, and design critique. Keep the user's project conventions in mind.",
-    "Do not claim you changed Figma unless the request was explicitly routed as a design operation and the native plugin later confirms the operation result.",
-    "Current Figma context: " + selectionContext,
-  ].join("\n\n");
 }
 
 export async function POST(request: Request) {
@@ -117,14 +83,8 @@ export async function POST(request: Request) {
 
   const variationIntent = body.intent === "design-variation";
   const lastUserPrompt = [...rawMessages].reverse().find((message) => message.role === "user")?.content ?? "";
-  const inferredCapability = classifyBfciCapability({
-    intent: typeof body.intent === "string" ? body.intent : "chat",
-    prompt: lastUserPrompt,
-    hasScreenshot: Boolean(previewDataUrl),
-  });
-  // Routing policy originates in the Figma cockpit. The server validates its
-  // capability/model allowlists and enforces budgets, but does not reorder a
-  // cockpit-supplied route using a second intelligence policy.
+  // Task classification, model order and prompt construction run in the cockpit.
+  // Vercel validates the client route, enforces spend controls and proxies inference.
   const clientRoute = isRecord(body.clientRoute) ? body.clientRoute : null;
   const clientCapabilityId = typeof clientRoute?.capabilityId === "string" &&
     Object.prototype.hasOwnProperty.call(BFCI_CAPABILITIES, clientRoute.capabilityId)
@@ -133,13 +93,13 @@ export async function POST(request: Request) {
   const requestedClientModels = Array.isArray(clientRoute?.modelOrder)
     ? [...new Set(clientRoute.modelOrder.filter((id): id is string => typeof id === "string").slice(0, 5))]
     : [];
-  const useClientRoute = clientRoute?.source === "cockpit" && Boolean(clientCapabilityId) && requestedClientModels.length > 0;
-  const capability = useClientRoute && clientCapabilityId
-    ? BFCI_CAPABILITIES[clientCapabilityId]
-    : inferredCapability;
-  const clientSystemPrompt = typeof body.systemPrompt === "string" && body.systemPrompt.length <= 32000
+  const clientSystemPrompt = typeof body.systemPrompt === "string" && body.systemPrompt.trim().length > 0 && body.systemPrompt.length <= 32000
     ? body.systemPrompt.trim()
     : "";
+  if (clientRoute?.source !== "cockpit" || !clientCapabilityId || requestedClientModels.length === 0 || !clientSystemPrompt) {
+    return json(request, { error: "The Figma cockpit did not provide a valid local routing plan. Update/reload the plugin; no model call was made." }, 400);
+  }
+  const capability = BFCI_CAPABILITIES[clientCapabilityId];
   const variationCountMatch = variationIntent
     ? /\b(one|two|three|1|2|3)\s+(?:new\s+)?(?:screen\s+)?variations?\b/i.exec(lastUserPrompt)
     : null;
@@ -148,34 +108,8 @@ export async function POST(request: Request) {
     : 2;
   const designIntent = body.intent === "design-operation" || variationIntent;
   const visualIntent = Boolean(previewDataUrl);
-  const baseSystemPrompt = variationIntent
-    ? requestVariationSystemPrompt(selectionContext, variationCount)
-    : designIntent
-      ? requestFigmaEditSystemPrompt(selectionContext)
-      : conversationSystemPrompt(selectionContext);
-  const capabilityGuardrails = [
-    "Active UX Direct capability: " + capability.id + " — " + capability.label + ".",
-    "BFCI profile: DMI Housing Finance. Use only financial values, due dates, policies and product rules supplied in the prompt, screenshot, selected frame or approved reference context. Never invent an APR, fee, eligibility criterion, disclosure, consent requirement or regulatory claim.",
-    "Preserve every essential customer-facing financial amount, due date, account detail, status and consent meaning unless the user explicitly asks to change it.",
-    "Quality target: " + capability.targetQuality + "/100. Check: " + capability.qualityChecks.join("; ") + ".",
-    capability.id === "bfci.banking-risk-review"
-      ? "Provide potential UX risks and recommended mitigations, not legal/compliance certification. Clearly mark missing product-owner or compliance confirmation."
-      : "",
-    capability.id === "bfci.screen-audit"
-      ? "The selected-frame screenshot is attached to the latest user message as image content. Inspect the rendered screenshot. Provide 4–6 actionable findings covering hierarchy, text legibility, contrast, spacing/alignment and primary CTA as relevant. For each finding, state the visible evidence, why it matters and a recommended change. Separate visual observations from assumptions. Do not invent measurements or details."
-      : "",
-    capability.id === "bfci.screen-redesign"
-      ? "This is a redesign capability, not a clone capability. Prefer substantial layout, spacing, hierarchy, card/section and CTA changes. Use the available operation budget to make a cohesive alternative rather than a handful of cosmetic edits."
-      : "",
-  ].filter(Boolean).join("\n\n");
-  const learningProjectKey = typeof body.project === "string" && /^[A-Za-z0-9:_-]{1,80}$/.test(body.project)
-    ? body.project
-    : "general";
-  const learning = await getModelLearningContext(capability.id, learningProjectKey);
-  const systemPrompt = useClientRoute && clientSystemPrompt
-    ? clientSystemPrompt
-    : baseSystemPrompt + "\n\n" + capabilityGuardrails +
-      (learning.promptContext ? "\n\n" + learning.promptContext : "");
+  const systemPrompt = clientSystemPrompt + "\n\n" +
+    "Server safety policy: preserve supplied financial amounts, due dates, consent meanings and account statuses; do not invent policies, fees, APRs or eligibility rules. Treat missing banking facts as open questions. Do not claim Figma edits were applied until native execution confirms them.";
 
   // Attach the exported JPEG to the latest user turn. Previously the screenshot
   // was used only for model selection and cost estimation, while OpenRouter
@@ -205,12 +139,9 @@ export async function POST(request: Request) {
   ];
 
   const availableById = new Map(modelOptions.map((model) => [model.id, model]));
-  const configuredOrder = orderedModelIds(capability);
-  const routeOrder = useClientRoute ? requestedClientModels : configuredOrder;
-  let orderedCandidates = routeOrder
+  let orderedCandidates = requestedClientModels
     .map((id) => availableById.get(id))
-    .filter((model): model is (typeof modelOptions)[number] => Boolean(model && model.available &&
-      (useClientRoute || model.automaticRouting !== false)));
+    .filter((model): model is (typeof modelOptions)[number] => Boolean(model && model.available));
 
   // For an incidental screenshot attached to a small edit, upgrade only to a
   // low-cost vision model if the free text route cannot consume the image.
@@ -221,18 +152,6 @@ export async function POST(request: Request) {
       if (safeVision?.available) orderedCandidates = [safeVision];
     }
   }
-  // The capability registry remains the hard constraint: memory can reorder only
-  // already-approved candidates, and only where at least three prior attempts exist.
-  const matureLearnedCandidates = orderedCandidates
-    .filter((model) => (learning.modelScores[model.id]?.attempts ?? 0) >= 3)
-    .sort((a, b) => (learning.modelScores[b.id]?.routingScore ?? -Infinity) - (learning.modelScores[a.id]?.routingScore ?? -Infinity));
-  if (!useClientRoute && matureLearnedCandidates.length > 1) {
-    let learnedIndex = 0;
-    orderedCandidates = orderedCandidates.map((model) =>
-      (learning.modelScores[model.id]?.attempts ?? 0) >= 3 ? matureLearnedCandidates[learnedIndex++] : model
-    );
-  }
-  // An image request must never land on a text-only model, even after learning.
   const candidates = orderedCandidates.slice(0, Math.max(1, capability.maxModelAttempts));
   if (!candidates.length) {
     return json(request, {
