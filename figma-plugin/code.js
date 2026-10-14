@@ -91,7 +91,7 @@ function getSelectionSummary() {
 async function sendSelectionPreview(node, revision) {
   try {
     if (!node || typeof node.exportAsync !== "function") throw new Error("The selected node cannot be exported as a preview.");
-    var bytes = await node.exportAsync({ format: "JPG", constraint: { type: "SCALE", value: 0.65 } });
+    var bytes = await node.exportAsync({ format: "JPG", constraint: { type: "SCALE", value: 1 } });
     if (revision !== UXD_SELECTION_REVISION || !bytes || !bytes.length) return;
     figma.ui.postMessage({
       type: "selection-preview", fileKey: figma.fileKey, revision: revision,
