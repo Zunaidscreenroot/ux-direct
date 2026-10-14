@@ -11,7 +11,7 @@ UX Direct is the sole product repository for this product. The existing `figma-d
 - **Specialist hands:** separate, independently installable Figma plugins that share the same Brain. Initial specialist hands are Wireframe Foundry, UX Auditor, Benchmark Lab, Journey Architect, and UX Quality & Handoff.
 - **One repository:** shared contracts, service logic, tests and docs live here. Each hand has its own plugin UI/manifest/entry point and its own build target, but not a separate copy of the model gateway or knowledge system.
 
-See [Modular Hands Architecture](docs/modular-hands-architecture.md), the [Architecture](docs/architecture.md), and the [BFCI capability scope](docs/bfci-capability-scope.md).
+See the [Universal UX Brain Architecture](docs/universal-ux-brain-architecture.md), [Modular Hands](docs/modular-hands-architecture.md), the [Architecture](docs/architecture.md), and the [BFCI capability scope](docs/bfci-capability-scope.md).
 
 ## Project workflows
 
