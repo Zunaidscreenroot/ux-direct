@@ -98,6 +98,7 @@
   <div id="budgetStatus" class="budget-status" aria-live="polite" title="Shared rolling 60-minute budget. Paid inference is blocked if this budget cannot be verified.">AI budget · ₹50/hour · checking usage…</div>
   <div id="providerSpendStatus" class="budget-status" aria-live="polite" title="Read-only OpenRouter spending data from the server-side management key.">OpenRouter spend · checking management API…</div>
   <div id="learningStatus" class="budget-status" aria-live="polite" title="Persistent, anonymized model-performance memory. Raw prompts and screenshots are not stored.">Product memory · checking Supabase…</div>
+  <div id="actionCoverageStatus" class="budget-status" aria-live="polite" title="Native action support is separate from Plugin API health checks. Current UX Direct safe design operations cover text, styling, layout, structure and basic vector creation.">Figma actions · 27 native design operation types</div>
 
   <section class="selection-panel" aria-label="Current Figma selection" aria-live="polite">
     <div class="selection-copy">
@@ -169,7 +170,7 @@
       $("healthStatus").className = "status-tag " + state;
       $("healthDot").className = "dot";
       $("healthStatusText").textContent = label;
-      $("healthStatus").title = state === "ok" ? "Native Figma Plugin API health checks passed. These checks measure API availability/behavior, not the number of design actions supported by UX Direct." : "Inspect native Figma Plugin API health checks. Health-check count is separate from the UX Direct action catalog.";
+      $("healthStatus").title = state === "ok" ? "Native Figma Plugin API health checks passed. This count is not the number of UX Direct design actions." : "Inspect native Figma Plugin API health checks. Health-check count is separate from the UX Direct action catalog.";
     }
     function updateHourlyBudgetStatus(budget) {
       const target = $("budgetStatus");
