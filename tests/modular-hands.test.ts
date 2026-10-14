@@ -189,12 +189,15 @@ test("tool discovery composes runtime tools by intent, modality and execution po
   assert.deepEqual(visualTools.map((item) => item.id), ["figma.capture"]);
 
   const defaultTools = registry.discover({ intentTags: ["create"] });
-  assert.ok(!defaultTools.some((item) => item.id === "figma.create-frame"));
+  // A write tool can be discovered for planning without authorising execution.
+  assert.ok(defaultTools.some((item) => item.id === "figma.create-frame"));
   assert.ok(!defaultTools.some((item) => item.id === "research.search"));
+  assert.ok(!registry.discover({ intentTags: ["create"], includeWriteTools: false })
+    .some((item) => item.id === "figma.create-frame"));
 
   const writeTools = registry.discover({
     intentTags: ["create"],
-    allowWrites: true,
+    includeWriteTools: true,
     allowedOperations: ["write"],
   });
   assert.deepEqual(writeTools.map((item) => item.id), ["figma.create-frame"]);
@@ -256,7 +259,7 @@ test("plan validator permits adaptive plans but blocks unknown tools, cycles and
   const context = await buildDirectorPlanningContext({
     requestId: "req-plan",
     objective: "Create and verify a screen",
-    toolPolicy: { allowWrites: true },
+    toolPolicy: { includeWriteTools: true },
   }, { worldModel: new InMemoryWorldModel(), tools });
 
   const validPlan: DirectorPlan = {
