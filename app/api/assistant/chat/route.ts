@@ -365,7 +365,7 @@ export async function POST(request: Request) {
       const status = error instanceof PluginOpenRouterError ? error.status : 502;
       const budgetGuardFailure = error instanceof PluginOpenRouterError && /hourly (?:AI )?budget reached|hourly spend ledger|hourly paid-model budget/i.test(error.message);
       const validationFailure = variationIntent && error instanceof Error && /invalid variation-plan JSON|quality gate/i.test(error.message);
-      const budgetBlocked = status === 402 && /budget|pricing|price metadata|hourly/i.test(error instanceof Error ? error.message : "");
+      const budgetBlocked = (status === 402 || budgetGuardFailure) && /budget|pricing|price metadata|hourly|ledger/i.test(error instanceof Error ? error.message : "");
       await recordModelLearningEvent({
         requestId: learningRequestId,
         capability: capability.id,
