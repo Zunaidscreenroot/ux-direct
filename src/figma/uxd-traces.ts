@@ -173,6 +173,7 @@ export async function cacheUxdIrExplanation(input: {
     // Keep the on-demand summary bounded but longer than ordinary evidence fields.
     readableExplanation: input.explanation.trim().slice(0, 6000),
   };
+  if (JSON.stringify(artifacts).length > 28000) return false;
   try {
     const query = new URLSearchParams({
       run_id: "eq." + input.runId,
