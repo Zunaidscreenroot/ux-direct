@@ -296,9 +296,6 @@ export function classifyBfciCapability(input: BfciTaskInput): BfciCapability {
     return BFCI_CAPABILITIES["bfci.website-revamp"];
   }
 
-    return BFCI_CAPABILITIES["bfci.website-revamp"];
-  }
-
   // These are the execution paths supported by the current Figma bridge.
   // Additional registry entries remain defined for staged implementation.
   if (intent === "design-variation") return BFCI_CAPABILITIES["bfci.screen-redesign"];
