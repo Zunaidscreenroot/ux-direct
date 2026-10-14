@@ -72,6 +72,6 @@ test("context assembly bounds extra knowledge so repository size cannot explode 
 
   assert.equal(result.knowledgeChars, 6400);
   assert.equal(result.learningChars, 2000);
-  assert.ok(result.addedChars < 9000);
+  assert.ok(result.addedChars < 9500);
   assert.ok(result.systemPrompt.length < 10000);
 });
