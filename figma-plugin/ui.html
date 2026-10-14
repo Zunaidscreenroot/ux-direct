@@ -1066,8 +1066,8 @@
                 (!("height" in op) || (Number.isFinite(op.height) && op.height >= 0)) &&
                 Number.isFinite(op.x) && Number.isFinite(op.y) && (!("color" in op) || /^#?[0-9a-fA-F]{6}$/.test(op.color));
               if (op.action === "create-svg") return typeof op.svg === "string" && op.svg.length > 0 && op.svg.length <= 10000 &&
-                /<svg[\\s>]/i.test(op.svg) && !/<\\s*(script|foreignObject)\\b/i.test(op.svg) &&
-                !/\\bon[a-z]+\\s*=/i.test(op.svg) && !/(?:href|src)\\s*=\\s*["']\\s*(?:https?:|\\/\\/|javascript:|data:)/i.test(op.svg) &&
+                /<svg[\s>]/i.test(op.svg) && !/<\s*(script|foreignObject)\b/i.test(op.svg) &&
+                !/\bon[a-z]+\s*=/i.test(op.svg) && !/(?:href|src)\s*=\s*["']\s*(?:https?:|\/\/|javascript:|data:)/i.test(op.svg) &&
                 Number.isFinite(op.x) && Number.isFinite(op.y);
               if (op.action === "set-rotation") return Number.isFinite(op.rotation) && Math.abs(op.rotation) <= 360;
               if (op.action === "set-layout-sizing") return
