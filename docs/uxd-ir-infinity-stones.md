@@ -8,12 +8,12 @@ UX Direct uses specialist model stages instead of asking one model to inspect a 
 
 ## Flow
 
-### Variation / action task
+### Variation and visual-edit action tasks
 
-1. The cockpit sends the user intent, selected frame node data, screenshot, allowed model candidate IDs, project namespace and the UXD-IR version.
+1. The cockpit sends the user intent, selected frame node data, screenshot, allowed model candidate IDs, project namespace and the UXD-IR version. Visual redesigns and variations use specialist stages; small non-visual edits keep the direct route to avoid unnecessary model calls.
 2. The Vision Stone receives the screenshot and a bounded index of Figma node IDs. It returns compact facts, existing element IDs, visible observations and explicit uncertainties. The server drops IDs that are not in the selected node index.
-3. The Reasoning Stone receives the compact evidence and user intent, not a second long visual description. It proposes an operation envelope.
-4. UXD-IR validates the envelope, supported operation names, operation count, layout/structural minimum and distinct operation categories. The existing server route and native plugin still apply their own checks.
+3. The Reasoning Stone receives the compact evidence and user intent, not a second long visual description. For variations it proposes a structurally distinct variation envelope; for a bounded visual edit it proposes only the minimum required operations.
+4. UXD-IR validates the envelope, supported operation names, known node IDs, frame-only creation parents and operation limits. Variations also require structural/layout changes and distinct operation categories. The existing server route and native plugin still apply their own checks.
 5. The cockpit shows a small confirmation prompt. The native Figma plugin executes only after approval and only within the cloned frame for variations. The source frame remains unchanged.
 6. The backend stores bounded stage metadata, compact evidence and the operation plan. It does not store screenshots, provider credentials or hidden model chain-of-thought. On successful/failed execution, the native plugin updates the trace status.
 
