@@ -3,357 +3,1044 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>UX Direct</title>
+  <title>UX Direct · Conversational Cockpit</title>
   <style>
     :root { color-scheme: light dark; font: 12px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 16px; color: var(--figma-color-text, #202124); background: var(--figma-color-bg, #fff); }
-    header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:16px; }
-    .brand { display:flex; gap:9px; align-items:center; font-size:15px; font-weight:700; }
-    .mark { display:grid; place-items:center; width:28px; height:28px; border-radius:9px; background:#242424; color:#fff; font-weight:800; }
-    .pill { border:1px solid var(--figma-color-border); border-radius:999px; padding:5px 8px; color:var(--figma-color-text-secondary); font-size:10px; white-space:nowrap; }
-    .connection { display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px solid var(--figma-color-border); border-radius:9px; margin-bottom:12px; font-size:11px; }
-    .dot { width:7px; height:7px; border-radius:50%; background:#d6a23e; }
-    .dot.ok { background:#26966b; }
-    h1 { font-size:20px; line-height:1.2; margin:8px 0; letter-spacing:-.5px; }
-    .sub { color:var(--figma-color-text-secondary); line-height:1.5; margin:0 0 16px; }
-    label { display:block; font-weight:600; margin:14px 0 7px; }
-    select, textarea, button { font:inherit; }
-    select, textarea { width:100%; border:1px solid var(--figma-color-border); border-radius:9px; padding:10px; background:var(--figma-color-bg); color:var(--figma-color-text); }
-    textarea { min-height:130px; resize:vertical; line-height:1.45; }
-    button { cursor:pointer; border:0; border-radius:9px; padding:11px 13px; font-weight:650; }
-    .primary { width:100%; background:var(--figma-color-bg-brand, #2563eb); color:var(--figma-color-text-onbrand, white); margin-top:10px; }
-    .secondary { background:var(--figma-color-bg-secondary); color:var(--figma-color-text); border:1px solid var(--figma-color-border); }
-    .selection { padding:10px; border:1px solid var(--figma-color-border); border-radius:10px; margin-top:8px; }
+    [hidden] { display: none !important; }
+    body { height: 100vh; min-height: 0; margin: 0; padding: 10px 12px 0; display:flex; flex-direction:column; overflow:hidden; color:var(--figma-color-text,#202124); background:var(--figma-color-bg,#fff); }
+    header { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:30px; margin-bottom:7px; }
+    .brand { display:flex; align-items:center; font-size:16px; font-weight:800; letter-spacing:-.35px; white-space:nowrap; }
+    .statusbar { display:flex; align-items:center; justify-content:flex-end; gap:4px; min-width:0; }
+    .status-tag { display:inline-flex; align-items:center; gap:5px; max-width:142px; min-width:0; border:1px solid var(--figma-color-border); border-radius:999px; padding:4px 6px; background:var(--figma-color-bg-secondary); color:var(--figma-color-text-secondary); font-family:inherit; font-size:9px; font-weight:600; line-height:1.15; cursor:default; white-space:nowrap; }
+    button.status-tag { cursor:pointer; }
+    .status-tag:focus-visible, button:focus-visible, textarea:focus-visible, select:focus-visible { outline:2px solid var(--figma-color-bg-brand,#2563eb); outline-offset:2px; }
+    .status-tag .tagtext { overflow:hidden; text-overflow:ellipsis; }
+    .dot { flex:0 0 auto; width:6px; height:6px; border-radius:50%; background:#b8a16a; }
+    .status-tag.ok { color:#22845d; border-color:rgba(34,132,93,.28); background:rgba(34,132,93,.08); }
+    .status-tag.ok .dot { background:#26966b; }
+    .status-tag.bad { color:#c53f45; border-color:rgba(197,63,69,.3); background:rgba(197,63,69,.08); }
+    .status-tag.bad .dot { background:#d14343; }
+    .status-tag.warn .dot { background:#c18a24; }
+    .modelbar { display:flex; align-items:center; gap:6px; min-width:0; flex:0 0 auto; margin:0 0 5px; }
+    .model-test { flex:0 0 auto; border:1px solid var(--figma-color-border); border-radius:7px; padding:5px 7px; background:var(--figma-color-bg-secondary); color:var(--figma-color-text); font:inherit; font-size:9px; font-weight:650; white-space:nowrap; }
+    .model-test:disabled { opacity:.45; cursor:not-allowed; }
+    .selection-panel { display:flex; align-items:center; gap:10px; flex:0 0 auto; min-height:60px; margin:0 0 5px; padding:7px 8px; border:1px solid var(--figma-color-border); border-radius:10px; background:var(--figma-color-bg-secondary); overflow:hidden; }
+    .selection-copy { display:flex; flex:1 1 auto; flex-direction:column; gap:3px; min-width:0; }
+    .selection-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:750; }
+    .selection-details, .selection-preview-status { color:var(--figma-color-text-secondary); font-size:9px; line-height:1.35; overflow-wrap:anywhere; }
+    .selection-preview-status.ready { color:#22845d; }
+    .selection-preview-status.error { color:#c53f45; }
+    #selectionPreview { flex:0 0 auto; width:132px; height:76px; object-fit:contain; border:1px solid var(--figma-color-border); border-radius:6px; background:var(--figma-color-bg); }
+    .model-select { flex:1 1 auto; width:0; min-width:0; max-width:none; padding:5px 7px; border:1px solid var(--figma-color-border); border-radius:8px; background:var(--figma-color-bg); color:var(--figma-color-text); font:inherit; font-size:10px; }
+    #modelStatus { flex:0 1 auto; max-width:34%; }
     .muted { color:var(--figma-color-text-secondary); }
-    .node { display:flex; gap:8px; margin-top:7px; align-items:flex-start; }
-    .node strong { overflow-wrap:anywhere; }
-    .status { margin-top:12px; border-radius:9px; padding:10px; background:var(--figma-color-bg-secondary); line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .result { margin-top:12px; border-top:1px solid var(--figma-color-border); padding-top:12px; }
-    .step { padding:9px 0; border-bottom:1px solid var(--figma-color-border); }
-    .step small { display:block; margin-top:4px; color:var(--figma-color-text-secondary); }
-    footer { color:var(--figma-color-text-tertiary); font-size:10px; margin-top:15px; line-height:1.45; }
+    .chat { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; overflow:hidden; }
+    .chatlog { display:flex; flex:1 1 auto; flex-direction:column; gap:12px; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px 2px 14px; scroll-behavior:smooth; }
+    .message { display:flex; flex-direction:column; gap:4px; width:100%; }
+    .message.user { align-items:flex-end; }
+    .message.assistant { align-items:flex-start; }
+    .bubble { max-width:94%; border-radius:12px; padding:9px 11px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .assistant .bubble { background:var(--figma-color-bg-secondary,#f3f4f6); border:1px solid var(--figma-color-border, #e6e6e6); border-top-left-radius:4px; }
+    .user .bubble { color:var(--figma-color-text-onbrand,#fff); background:var(--figma-color-bg-brand,#2563eb); border-top-right-radius:4px; }
+    .typing { display:flex; align-items:center; gap:5px; color:var(--figma-color-text-secondary); font-size:10px; padding:7px 10px; }
+    .typing-dot { width:4px; height:4px; border-radius:50%; background:currentColor; animation:pulse 1s infinite alternate; }
+    .typing-dot:nth-child(2) { animation-delay:.2s; }
+    .typing-dot:nth-child(3) { animation-delay:.4s; }
+    @keyframes pulse { from { opacity:.25; } to { opacity:1; } }
+    .composer { flex:0 0 auto; border-top:1px solid var(--figma-color-border); padding:8px 0 10px; background:var(--figma-color-bg); }
+    #contextText { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .input-shell { display:flex; align-items:flex-end; gap:7px; padding:6px; border:1px solid var(--figma-color-border); border-radius:12px; background:var(--figma-color-bg); }
+    textarea { display:block; flex:1 1 auto; width:100%; min-width:0; min-height:54px; max-height:132px; resize:vertical; border:0; outline:0; padding:6px 4px; background:transparent; color:var(--figma-color-text); font:inherit; line-height:1.5; }
+    textarea:focus-visible { outline:none; }
+    textarea::placeholder { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary)); }
+    .send { display:grid; place-items:center; flex:0 0 34px; width:34px; height:34px; padding:0; border-radius:9px; background:var(--figma-color-bg-brand,#2563eb); color:var(--figma-color-text-onbrand,#fff); font-size:17px; font-weight:700; }
+    .send:disabled { cursor:not-allowed; opacity:.4; }
+    .health-panel { position:fixed; z-index:20; top:47px; left:10px; right:10px; max-height:calc(100vh - 58px); overflow:hidden; display:flex; flex-direction:column; border:1px solid var(--figma-color-border); border-radius:12px; background:var(--figma-color-bg); box-shadow:0 8px 32px rgba(0,0,0,.18); }
+    .health-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:11px 12px 8px; border-bottom:1px solid var(--figma-color-border); }
+    .health-head strong { font-size:12px; }
+    .close-health { width:26px; height:26px; padding:0; border-radius:7px; background:var(--figma-color-bg-secondary); color:var(--figma-color-text); }
+    .health-summary { margin:0; padding:9px 12px; color:var(--figma-color-text-secondary); font-size:10px; line-height:1.45; }
+    .health-results { overflow-y:auto; min-height:60px; padding:0 12px 10px; }
+    .health-row { display:grid; grid-template-columns:72px minmax(0,1fr); gap:7px; align-items:start; padding:7px 0; border-top:1px solid var(--figma-color-border); line-height:1.4; }
+    .health-badge { font-size:9px; font-weight:750; letter-spacing:.15px; }
+    .health-badge.pass { color:#26966b; }
+    .health-badge.fail { color:#d14343; }
+    .health-badge.na { color:#b07b24; }
+    .health-name { font-weight:650; overflow-wrap:anywhere; }
+    .health-reason { margin-top:3px; color:var(--figma-color-text-secondary); font-size:10px; overflow-wrap:anywhere; }
+    @media (max-width:340px) {
+      body { padding-left:8px; padding-right:8px; }
+      .brand { font-size:14px; }
+      .status-tag { padding:4px 5px; max-width:112px; font-size:8px; }
+      .model-select { font-size:9px; padding:5px; }
+    }
   </style>
 </head>
 <body>
-  <header><div class="brand"><span class="mark">ux</span> UX Direct</div><span class="pill">CONVERSATIONAL COPILOT · OPENROUTER</span></header>
-  <div class="connection" aria-live="polite"><span id="connectionDot" class="dot"></span><strong id="connectionText">Checking backend connection…</strong></div>
-  <h1>Conversational Copilot</h1>
-  <p class="sub">Describe your UX task in natural language. Select a model from the gateway catalog and check provider readiness. Real model inference requires server-side provider credentials; no API keys are stored in this plugin.</p>
-  <section class="selection" aria-live="polite" style="margin:10px 0"><strong>Model gateway</strong><p id="gatewaySummary" class="muted" style="margin:7px 0">Loading provider and model status…</p><label for="modelSelect" style="margin-top:8px">Model</label><select id="modelSelect"><option value="">Loading models…</option></select><button id="testModel" class="secondary" type="button" style="width:100%;margin-top:8px">Test model availability</button><p id="modelTestResult" class="muted" style="margin:7px 0 0">Checks configuration only; no inference call is made.</p></section>
-  <label for="project">Project</label>
-  <select id="project"><option value="general">General UX</option><option value="express-computers">Express Computers</option><option value="dmi-finance">DMI Finance</option></select>
-  <label for="prompt">Your brief</label>
-  <textarea id="prompt" maxlength="8000" placeholder="Example: Analyse the selected DMI screen and plan a VKYC entry point. Reuse approved patterns and cover consent, loading, error and retry states."></textarea>
-  <section class="selection" aria-live="polite" style="margin-top:10px">
-    <strong>Native Plugin API health</strong>
-    <p id="healthSummary" class="muted" style="margin:7px 0">Not tested yet. Run a check to verify available plugin APIs.</p>
-    <button id="runHealth" class="secondary" type="button">Run native API self-test</button>
-    <div id="healthResults" style="margin-top:8px"></div>
+  <header>
+    <div class="brand" aria-label="UX">UX</div>
+    <div class="statusbar" aria-label="System status">
+      <div id="connectionStatus" class="status-tag warn" aria-live="polite"><span id="connectionDot" class="dot"></span><span id="connectionText" class="tagtext">Vercel backend connecting</span></div>
+      <button id="healthStatus" class="status-tag warn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="healthPanel" title="Automatic native API checks; click for details"><span id="healthDot" class="dot"></span><span id="healthStatusText" class="tagtext">API checks pending</span></button>
+    </div>
+  </header>
+  <div class="modelbar" aria-label="OpenRouter model selection">
+    <select id="modelSelect" class="model-select" aria-label="OpenRouter model selection" title="Choose an available OpenRouter model" disabled>
+      <option value="">Loading OpenRouter models…</option>
+    </select>
+    <div id="modelStatus" class="status-tag warn" aria-live="polite" title="Shows catalogue status and the latest connection-test result.">
+      <span id="modelDot" class="dot"></span><span id="modelStatusText" class="tagtext">Model pending</span>
+    </div>
+    <button id="testPaidModel" class="model-test" type="button" hidden disabled title="Run one explicit, budget-checked paid inference test. A small provider charge may apply.">Test</button>
+  </div>
+
+  <section class="selection-panel" aria-label="Current Figma selection" aria-live="polite">
+    <div class="selection-copy">
+      <strong id="selectionName" class="selection-name">No frame selected</strong>
+      <span id="selectionDetails" class="selection-details">Select a frame or layer in Figma.</span>
+      <span id="selectionPreviewStatus" class="selection-preview-status">Waiting for Figma selection…</span>
+    </div>
+    <img id="selectionPreview" alt="Visual preview of the selected Figma frame" hidden />
   </section>
-  <div class="selection" aria-live="polite"><strong>Selected Figma context</strong><div id="selection" class="muted" style="margin-top:6px">Reading current selection…</div><button id="refresh" class="secondary" style="margin-top:9px">Refresh selection</button></div>
-  <button id="submit" class="primary">Ask UX Direct ↗</button>
-  <div id="status" class="status" role="status">Ready. No Figma changes will be made.</div>
-  <div id="result" class="result" hidden></div>
-  <footer>Planning sends prompt text and selected-node metadata only. UXD API Test Lab and its test fixtures are created once and reused. Test nodes, components, variables, and the storage probe are intentionally preserved between runs; no per-run cleanup is performed. No Figma REST API or OAuth access is used.</footer>
-<script>
-  const API = "https://ux-direct-l42fp2nru-screenroot.vercel.app";
-  const $ = (id) => document.getElementById(id);
-  let gatewayModels = [];
-  async function loadGatewayModels() {
-    const summary = $("gatewaySummary"), select = $("modelSelect");
-    try {
-      const response = await fetch(API + "/api/model-gateway/dashboard", { method: "GET", cache: "no-store" });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || "Gateway status returned " + response.status);
-      gatewayModels = Array.isArray(data.models) ? data.models : [];
-      select.replaceChildren();
-      if (!gatewayModels.length) {
-        const option = document.createElement("option"); option.value = ""; option.textContent = "No provider models configured"; select.appendChild(option);
-      }
-      gatewayModels.forEach((model) => {
-        const option = document.createElement("option");
-        option.value = model.selectionKey || (model.provider + "/" + model.id);
-        option.textContent = (model.name || model.id) + " · " + (model.tier || "unknown tier");
-        select.appendChild(option);
-      });
-      const configured = data.gateway && data.gateway.status === "provider-configured";
-      summary.textContent = (configured ? "Provider configured" : "Awaiting provider credentials") + " · " + gatewayModels.length + " catalog model(s) · gateway fee ₹0 · paid routing " + (data.gateway && data.gateway.paidModelsEnabled ? "enabled" : "disabled");
-      $("testModel").disabled = !gatewayModels.length;
-    } catch (error) {
-      summary.textContent = "Could not load gateway catalog: " + (error && error.message ? error.message : "Unknown error");
-      select.replaceChildren();
-      const option = document.createElement("option"); option.value = ""; option.textContent = "Gateway unavailable"; select.appendChild(option);
-      $("testModel").disabled = true;
+
+  <main class="chat">
+    <div id="chatLog" class="chatlog" role="log" aria-live="polite" aria-relevant="additions text"></div>
+    <div class="composer">
+      <form id="chatForm">
+        <div class="input-shell">
+          <textarea id="prompt" maxlength="5000" rows="2" aria-label="Message UX Direct" placeholder="Message UX…" required></textarea>
+          <button id="send" class="send" type="submit" aria-label="Send message" title="Send message" disabled>↑</button>
+        </div>
+      </form>
+    </div>
+  </main>
+
+  <section id="healthPanel" class="health-panel" aria-label="Plugin API health-check details" hidden>
+    <div class="health-head"><strong>Native API checks</strong><button id="closeHealth" class="close-health" type="button" aria-label="Close health details">×</button></div>
+    <p id="healthSummary" class="health-summary">Checks run automatically when the Preview connection is established.</p>
+    <div id="healthResults" class="health-results"><div class="muted">Waiting for the first report…</div></div>
+  </section>
+
+  <script>
+    const API = "https://ux-direct-l42fp2nru-screenroot.vercel.app"; // Keep plugin requests on the same PR preview as the visual-analysis backend.
+    const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
+    const $ = (id) => document.getElementById(id);
+    let verifiedFileKey = null;
+    let pluginSessionStarted = false;
+    let backendHealthy = false;
+    let bridgeReady = false;
+    let autoHealthStarted = false;
+    let healthCheckRunning = false;
+    let healthTimeout = null;
+    let heartbeatTimer = null;
+    let isSending = false;
+    let connectionDiagnosticRow = null;
+    let modelProbeRow = null;
+    let currentModel = null;
+    let modelAvailable = false;
+    let modelOptions = [];
+    let modelProbeVersion = 0;
+    let openRouterFreeQuotaExhausted = false;
+    let currentSelection = { fileKey: null, pageName: "", selection: [], revision: 0, previewDataUrl: null, previewNodeId: null };
+    const chatHistory = [];
+    const handledBridgeCommands = new Set();
+
+    function makeId() {
+      if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+      return "uxd-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
     }
-  }
-  $("testModel").addEventListener("click", async () => {
-    const button = $("testModel"); button.disabled = true;
-    $("modelTestResult").textContent = "Refreshing provider configuration…";
-    await loadGatewayModels();
-    const selected = gatewayModels.find(model => (model.selectionKey || (model.provider + "/" + model.id)) === $("modelSelect").value);
-    if (!selected) $("modelTestResult").textContent = "No selectable provider model is configured; real inference cannot be tested.";
-    else if (selected.provider === "mock" || selected.tier === "mock") $("modelTestResult").textContent = "Selected model is a deterministic mock, not a real model availability test.";
-    else $("modelTestResult").textContent = "Model is listed in the configured catalog. Real inference is not run by this configuration check.";
-    button.disabled = gatewayModels.length === 0;
-  });
-  const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
-  let verifiedFileKey = null;
-  let pluginSessionStarted = false;
-  let currentSelection = { fileKey: null, pageName: "", selection: [] };
-  const status = (message) => { $("status").textContent = message; };
-  void loadGatewayModels();
-  $("runHealth").disabled = true;
-  $("submit").disabled = true;
-  async function sendTelemetry(event, result, summary, details = {}) {
-    const fileKey = verifiedFileKey || currentSelection.fileKey;
-    if (!fileKey || fileKey !== ALLOWED_FILE_KEY) return false;
-    try {
-      const response = await fetch(API + "/api/telemetry", {
+    const pluginClientId = makeId();
+    const pluginSessionToken = makeId() + makeId();
+
+    // Keep all transient feedback inside chat bubbles or the two compact status chips.
+    function setActivity(_message) {}
+    function setConnection(state, label) {
+      $("connectionStatus").className = "status-tag " + state;
+      $("connectionDot").className = "dot";
+      $("connectionText").textContent = label;
+      $("connectionStatus").title = state === "ok" ? "Vercel deployment is reachable" : label;
+    }
+    function setHealth(state, label) {
+      $("healthStatus").className = "status-tag " + state;
+      $("healthDot").className = "dot";
+      $("healthStatusText").textContent = label;
+      $("healthStatus").title = state === "ok" ? "All executed health checks passed. Click for details." : "Click to inspect Plugin API health-check details.";
+    }
+    function setModelStatus(state, label, detail) {
+      $("modelStatus").className = "status-tag " + state;
+      $("modelDot").className = "dot";
+      $("modelStatusText").textContent = label;
+      $("modelStatus").title = detail || label;
+    }
+    function modelLabel(model) {
+      return model ? model.label : "No model selected";
+    }
+        function updateSendAvailability() {
+      $("send").disabled = isSending || !backendHealthy || !modelAvailable || !currentModel;
+      const testButton = $("testPaidModel");
+      const canTestPaid = Boolean(currentModel && currentModel.tier === "paid" && currentModel.available === true && backendHealthy && verifiedFileKey === ALLOWED_FILE_KEY);
+      testButton.hidden = !canTestPaid;
+      testButton.disabled = !canTestPaid || isSending;
+    }
+    function toggleHealthPanel(open) {
+      const show = typeof open === "boolean" ? open : $("healthPanel").hidden;
+      $("healthPanel").hidden = !show;
+      $("healthStatus").setAttribute("aria-expanded", String(show));
+    }
+    function appendMessage(role, content, meta) {
+      const row = document.createElement("article");
+      row.className = "message " + role;
+      row.setAttribute("aria-label", role === "user" ? "Your message" : "UX response");
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = String(content || "");
+      row.appendChild(bubble);
+      $("chatLog").appendChild(row);
+      $("chatLog").scrollTop = $("chatLog").scrollHeight;
+      return row;
+    }
+    function showTyping() {
+      const row = document.createElement("div");
+      row.id = "typing";
+      row.className = "typing";
+      row.setAttribute("aria-label", "UX Direct is thinking");
+      row.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+      $("chatLog").appendChild(row);
+      $("chatLog").scrollTop = $("chatLog").scrollHeight;
+    }
+    function hideTyping() { const typing = $("typing"); if (typing) typing.remove(); }
+    appendMessage("assistant", "Hi! What are we working on?");
+    async function sendTelemetry(eventName, result, summary, details) {
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return false;
+      try {
+        const response = await fetch(API + "/api/telemetry", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(Object.assign({
+            source: "figma-plugin", fileKey: verifiedFileKey,
+            event: eventName, status: result, summary
+          }, details || {}))
+        });
+        return response.ok;
+      } catch (error) {
+        console.warn("[UX Direct telemetry]", eventName, error);
+        return false;
+      }
+    }
+
+    async function bridgeRequest(payload) {
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) {
+        throw new Error("Approved Figma file scope is not verified.");
+      }
+      const response = await fetch(API + "/api/plugin-bridge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: "figma-plugin", fileKey, event, status: result, summary, ...details })
+        body: JSON.stringify(Object.assign({}, payload, {
+          fileKey: verifiedFileKey, clientId: pluginClientId, sessionToken: pluginSessionToken
+        }))
       });
-      if (!response.ok) throw new Error("Telemetry returned " + response.status);
-      return true;
-    } catch (error) { console.warn("[UX Direct telemetry]", event, error); return false; }
-  }
-  function makeId() {
-    if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
-    return "uxd-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-  }
-  const pluginClientId = makeId();
-  const pluginSessionToken = makeId() + makeId();
-  const handledBridgeCommands = new Set();
-  async function bridgeRequest(payload) {
-    const fileKey = verifiedFileKey || currentSelection.fileKey;
-    if (!fileKey || fileKey !== ALLOWED_FILE_KEY) throw new Error("Plugin bridge blocked: approved file scope is not verified.");
-    const response = await fetch(API + "/api/plugin-bridge", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, fileKey, clientId: pluginClientId, sessionToken: pluginSessionToken })
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || "Bridge returned " + response.status);
-    return data;
-  }
-  async function syncPluginBridge() {
-    // Heartbeat requests use the same Vercel Preview origin as the health check.
-    // Native API checks remain local/manual and never start automatically on open.
-    try {
-      const heartbeat = await bridgeRequest({ mode: "heartbeat" });
-      const command = heartbeat && heartbeat.command;
-      if (command && command.action === "native-api-health-check" && command.commandId && !handledBridgeCommands.has(command.commandId)) {
-        handledBridgeCommands.add(command.commandId);
-        status("Dashboard requested a native API health check. Running inside Figma…");
-        parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: command.commandId } }, "*");
-      }
-      $("connectionDot").className = "dot ok";
-      $("connectionText").textContent = "Vercel Preview connected · plugin bridge online";
-      return { ok: true, error: "" };
-    } catch (error) {
-      const detail = error && error.message ? error.message : "Unknown bridge error";
-      console.warn("[UX Direct Vercel Preview bridge]", error);
-      $("connectionDot").className = "dot";
-      $("connectionText").textContent = "Vercel Preview reachable · plugin bridge unavailable";
-      return { ok: false, error: detail };
-    }
-  }
-  let heartbeatTimer = null;
-  async function startPluginSession() {
-    await sendTelemetry("Plugin opened", "success", "UX Direct plugin UI initialized in Figma.");
-    const connection = await checkConnection();
-    const bridge = connection
-      ? await syncPluginBridge()
-      : { ok: false, error: "Vercel Preview health check failed." };
-    $("runHealth").disabled = false;
-    $("healthSummary").textContent = connection && bridge.ok
-      ? "Vercel Preview and persistent plugin bridge connected. Run the native API self-test when ready."
-      : connection
-        ? "Vercel Preview health check passed, but plugin bridge is unavailable: " + bridge.error
-        : "Could not verify the Vercel Preview backend. Check the connection before proceeding.";
-    // Bridge heartbeat is sufficient for liveness; do not emit a separate telemetry POST each interval.
-    heartbeatTimer = window.setInterval(() => {
-      void syncPluginBridge();
-    }, 30000);
-  }
-  window.addEventListener("pagehide", () => {
-    if (heartbeatTimer) window.clearInterval(heartbeatTimer);
-    const fileKey = verifiedFileKey || currentSelection.fileKey;
-    if (!fileKey || fileKey !== ALLOWED_FILE_KEY) return;
-    const body = JSON.stringify({ mode: "disconnect", fileKey, clientId: pluginClientId, sessionToken: pluginSessionToken });
-    try {
-      if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/plugin-bridge", new Blob([body], { type: "application/json" }));
-      else fetch(API + "/api/plugin-bridge", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
-    } catch (_) {}
-    const telemetryBody = JSON.stringify({ source: "figma-plugin", fileKey, event: "Plugin close attempted", status: "info", summary: "Plugin UI is unloading; close event delivery is best-effort." });
-    try {
-      if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/telemetry", new Blob([telemetryBody], { type: "application/json" }));
-      else fetch(API + "/api/telemetry", { method: "POST", headers: { "Content-Type": "application/json" }, body: telemetryBody, keepalive: true }).catch(() => {});
-    } catch (_) {}
-  });
-  async function checkConnection() {
-    await sendTelemetry("Backend connection check started", "info", "Plugin is checking whether the UX Direct backend is reachable.");
-    try {
-      const fileKey = verifiedFileKey || currentSelection.fileKey;
-      if (!fileKey || fileKey !== ALLOWED_FILE_KEY) throw new Error("Approved Figma file scope is not verified.");
-      const response = await fetch(API + "/api/health?fileKey=" + encodeURIComponent(fileKey), { method: "GET" });
-      if (!response.ok) throw new Error("Vercel Preview backend returned " + response.status);
-      const data = await response.json();
-      if (!data || data.status !== "ok" || !data.deployment || data.deployment.platform !== "vercel") {
-        throw new Error("The endpoint did not identify itself as the Vercel Preview backend.");
-      }
-      $("connectionDot").className = "dot ok";
-      $("connectionText").textContent = "Vercel Preview reachable · " + data.deployment.host;
-      await sendTelemetry("Vercel Preview backend connection check completed", "success", "Plugin reached the Vercel Preview health endpoint.");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Plugin bridge returned " + response.status);
       return data;
-    } catch (error) {
-      $("connectionDot").className = "dot";
-      $("connectionText").textContent = "Vercel Preview not verified";
-      await sendTelemetry("Vercel Preview backend connection check failed", "error", "Vercel Preview request failed: " + (error && error.message ? error.message : "Unknown connection error"));
-      return null;
     }
-  }
-  parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
-  $("refresh").addEventListener("click", () => {
-    void sendTelemetry("Selection refresh clicked", "info", "User requested a fresh selected-layer snapshot.");
-    parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
-  });
-  $("runHealth").addEventListener("click", async () => {
-    $("runHealth").disabled = true;
-    $("healthSummary").textContent = "Running native Plugin API checks…";
-    $("healthResults").replaceChildren();
-    await sendTelemetry("Plugin API health check started", "info", "User started native Figma Plugin API self-test.");
-    parent.postMessage({ pluginMessage: { type: "run-native-health-check" } }, "*");
-  });
-  window.onmessage = (event) => {
-    const message = event.data && event.data.pluginMessage;
-    if (!message) return;
-    if (message.type === "native-health-progress") {
-      if (message.text) $("healthSummary").textContent = message.text;
-      if (message.text) status(message.text);
-      return;
+
+    function isExpectedPreviewHost(expectedHost, actualHost) {
+      if (actualHost === expectedHost) return true;
+      // Netlify may serve the same deploy through its unique <deploy-id> permalink.
+      // Accept that only when it is the same exact Netlify site as the expected preview alias.
+      const expectedAlias = /^deploy-preview-\\d+--([a-z0-9-]+)\\.netlify\\.app$/i.exec(expectedHost);
+      const actualPermalink = /^[0-9a-f]{24}--([a-z0-9-]+)\\.netlify\\.app$/i.exec(actualHost || "");
+      return Boolean(expectedAlias && actualPermalink && expectedAlias[1].toLowerCase() === actualPermalink[1].toLowerCase());
     }
-    if (message.type === "scope-approved") {
-      if (message.fileKey !== ALLOWED_FILE_KEY) {
-        status("Plugin UI blocked: this file is not the allowlisted Figma document.");
+
+    function connectionDiagnostic(error) {
+      const detail = error && error.message ? error.message : String(error || "Unknown network error");
+      if (/failed to fetch|networkerror|load failed|fetch failed/i.test(detail)) {
+        return "I can’t reach the Vercel backend health endpoint. The request was blocked before a readable API response arrived, so OpenRouter has not been tested yet. Check that the Preview URL opens without a Netlify login/protection page, then reload this plugin from the latest manifest with the Preview domain allowed. If it still fails, the Figma plugin console will distinguish a CORS/CSP block from a server error.\n\nTechnical detail: " + detail;
+      }
+      return "The Vercel backend health check failed before OpenRouter was called.\n\nTechnical detail: " + detail;
+    }
+
+    async function checkConnection() {
+      try {
+        if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) throw new Error("Approved Figma file scope is not verified.");
+        const response = await fetch(API + "/api/health?fileKey=" + encodeURIComponent(verifiedFileKey), { method: "GET", cache: "no-store" });
+        const contentType = response.headers.get("content-type") || "unknown content type";
+        const isJson = contentType.includes("application/json") || contentType.includes("+json");
+        if (!response.ok) {
+          if (!isJson) throw new Error("Preview returned HTTP " + response.status + " with " + contentType + "; a Vercel deployment protection page may be intercepting the API request.");
+          throw new Error("Preview health endpoint returned HTTP " + response.status + " (" + contentType + ").");
+        }
+        if (!isJson) {
+          throw new Error("Preview returned " + contentType + " instead of JSON. A private-preview/login page may be intercepting the API request.");
+        }
+        let data;
+        try { data = await response.json(); }
+        catch { throw new Error("Preview health endpoint returned invalid JSON."); }
+        const expectedPreviewHost = new URL(API).host;
+        const deployment = data && data.deployment ? data.deployment : {};
+        const actualHost = deployment.host || "missing";
+        const actualPlatform = deployment.platform || "missing";
+        const actualContext = deployment.context || "missing";
+        const actualBranch = deployment.branch || "missing";
+        const hostMatches = actualHost === expectedPreviewHost ||
+          (/\.vercel\.app$/i.test(actualHost) && /\.vercel\.app$/i.test(expectedPreviewHost));
+        if (!data || data.status !== "ok" || actualPlatform !== "vercel" || !hostMatches) {
+          throw new Error("Expected UX Direct Vercel backend; received platform=" + actualPlatform + ", host=" + actualHost + ", context=" + actualContext + ", branch=" + actualBranch + ", status=" + (data && data.status ? data.status : "missing") + ".");
+        }
+        backendHealthy = true;
+        setConnection("ok", "Vercel backend connected");
+        $("connectionStatus").title = "Verified Vercel deployment · " + actualHost + " · branch " + actualBranch;
+        if (connectionDiagnosticRow) {
+          connectionDiagnosticRow.remove();
+          connectionDiagnosticRow = null;
+        }
+        updateSendAvailability();
+        return data;
+      } catch (error) {
+        backendHealthy = false;
+        modelAvailable = false;
+        setConnection("bad", "Vercel backend offline");
+        setModelStatus("bad", "Model blocked", "The Preview backend must connect before checking a model.");
+        updateSendAvailability();
+        if (!connectionDiagnosticRow) connectionDiagnosticRow = appendMessage("assistant", connectionDiagnostic(error));
+        console.warn("[UX Direct backend health]", error);
+        return null;
+      }
+    }
+
+    async function loadModelOptions() {
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
+      setModelStatus("warn", "Loading approved models…", "Approved free text and vision models are tried first. Automatic routing uses at most two free attempts before one paid fallback; OpenRouter credit and key limits govern billed usage.");
+      const selector = $("modelSelect");
+      selector.disabled = true;
+      try {
+        const response = await fetch(API + "/api/model-status?fileKey=" + encodeURIComponent(verifiedFileKey), { method: "GET", cache: "no-store" });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !Array.isArray(payload.models)) {
+          throw new Error(payload.error || "Model list endpoint returned HTTP " + response.status + ".");
+        }
+        const approvedIds = new Set([
+          "nvidia/nemotron-3.5-lightning:free",
+          "nvidia/nemotron-3-ultra-550b-a55b:free",
+          "qwen/qwen3.8-27b:free",
+          "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+          "openai/gpt-oss-20b",
+          "openai/gpt-oss-120b",
+          "openai/gpt-6-luna",
+          "deepseek/deepseek-v4-flash-0731",
+          "deepseek/deepseek-v4.1-flash"
+        ]);
+        const tierRank = model => model.tier === "free-tier" ? 0 : model.tier === "paid" ? 1 : 2;
+        modelOptions = payload.models
+          .filter(model => model && model.provider === "openrouter" &&
+            typeof model.id === "string" && approvedIds.has(model.id) &&
+            typeof model.label === "string" &&
+            (model.tier === "free-tier" || model.tier === "paid"))
+          .sort((a, b) => tierRank(a) - tierRank(b) || a.label.localeCompare(b.label));
+        if (!modelOptions.some(model => model.tier === "free-tier")) {
+          throw new Error(payload.reason || "The approved free-model entries are missing from the model catalogue.");
+        }
+        selector.replaceChildren();
+        const freeGroup = document.createElement("optgroup");
+        freeGroup.label = "Free · tried first (" + modelOptions.filter(model => model.tier === "free-tier").length + ")";
+        const paidGroup = document.createElement("optgroup");
+        const paidModels = modelOptions.filter(model => model.tier === "paid");
+        const readyPaidModels = paidModels.filter(model => model.available === true).length;
+        paidGroup.label = "Paid · fallback (" + readyPaidModels + "/" + paidModels.length + " ready)";
+        modelOptions.forEach(model => {
+          const option = document.createElement("option");
+          option.value = model.id;
+          option.textContent = model.label;
+          if (model.tier === "paid" && model.available !== true) {
+            option.disabled = true;
+            option.textContent += " · not verified";
+            option.title = model.reason || "The live model catalogue/pricing did not verify this option. Paid calls remain blocked.";
+          }
+          (model.tier === "paid" ? paidGroup : freeGroup).appendChild(option);
+        });
+        selector.append(freeGroup, paidGroup);
+        selector.title = "Approved OpenRouter pool: " + modelOptions.filter(model => model.tier === "free-tier").length + " free-first model(s), " + readyPaidModels + " of " + paidModels.length + " paid fallback model(s) verified. Unverified paid choices remain visible but cannot be used.";
+        const preferred = modelOptions.find(model => model.id === payload.selectedModel && model.available !== false)
+          || modelOptions.find(model => model.tier === "free-tier");
+        selector.value = preferred.id;
+        await checkSelectedModel();
+      } catch (error) {
+        const detail = error && error.message ? error.message : "Could not load models.";
+        selector.disabled = true;
+        setModelStatus("bad", "Model list failed", detail);
+        if (!modelProbeRow) modelProbeRow = appendMessage("assistant", "I couldn’t load the approved model list from Vercel backend.\n\n" + detail);
+        console.warn("[UX Direct free model list]", error);
+      }
+    }
+
+    async function checkSelectedModel() {
+      const version = ++modelProbeVersion;
+      const selectedId = $("modelSelect").value;
+      currentModel = modelOptions.find(model => model.id === selectedId) || modelOptions[0] || null;
+      modelAvailable = false;
+      updateSendAvailability();
+      if (openRouterFreeQuotaExhausted && currentModel && currentModel.tier === "free-tier") {
+        modelAvailable = true;
+        $("modelSelect").disabled = !backendHealthy || isSending;
+        setModelStatus("warn", "Paid fallback armed", "OpenRouter's account-level free quota is exhausted. Chat will choose one paid model by expertise; paid inference starts only when you send a message.");
+        updateSendAvailability();
         return;
       }
-      verifiedFileKey = message.fileKey;
-      currentSelection.fileKey = message.fileKey;
-      $("submit").disabled = false;
-      if (!pluginSessionStarted) {
-        pluginSessionStarted = true;
-        void startPluginSession();
+      if (!currentModel) {
+        $("modelSelect").disabled = true;
+        setModelStatus("warn", "Choose a model", "No free model is available to probe.");
+        return;
       }
-      return;
+      if (!backendHealthy || !verifiedFileKey) {
+        setModelStatus("bad", "Preview offline", "Reconnect Vercel backend before checking models.");
+        return;
+      }
+
+      const model = currentModel;
+      const isPaidModel = currentModel.tier === "paid";
+      if (isPaidModel) {
+        if (model.available !== true) {
+          modelAvailable = false;
+          $("modelSelect").disabled = false;
+          setModelStatus("bad", "Paid model unverified", model.reason || "The exact model and positive live pricing were not verified; no inference will be called.");
+          updateSendAvailability();
+          return;
+        }
+        // Selecting a paid model is not a probe and must not spend money.
+        // The server only calls it after an explicit message, using budget checks.
+        modelAvailable = true;
+        $("modelSelect").disabled = !backendHealthy || isSending;
+        setModelStatus("warn", "Paid model armed", model.label + " is your preferred paid model. No paid probe is sent on selection; OpenRouter credit and configured key limits apply to billed inference. Visual scans use this model if it accepts images, otherwise UX Direct substitutes the lowest-listed-cost approved paid vision model.");
+        updateSendAvailability();
+        return;
+      }
+      $("modelSelect").disabled = true;
+      setModelStatus("warn", "Checking free model…", "Sending one small test prompt to the selected free model.");
+      try {
+        const probeUrl = new URL(API + "/api/model-status");
+        probeUrl.searchParams.set("fileKey", verifiedFileKey);
+        probeUrl.searchParams.set("provider", model.provider);
+        probeUrl.searchParams.set("model", model.id);
+        const response = await fetch(probeUrl.toString(), { method: "GET", cache: "no-store" });
+        const payload = await response.json().catch(() => ({}));
+        if (version !== modelProbeVersion) return;
+        if (!response.ok) throw new Error(payload.error || "Model check returned HTTP " + response.status + ".");
+        if (payload.quotaExhausted === true ||
+            (payload.status === 429 && /free-models-per-day|free model requests per day/i.test(String(payload.reason || "")))) {
+          openRouterFreeQuotaExhausted = true;
+          modelAvailable = false;
+          const detail = payload.reason || "OpenRouter has exhausted this account's daily free-model request quota.";
+          modelAvailable = true;
+          setModelStatus("warn", "Paid fallback armed", "HTTP 429: " + detail + " The server will stop redundant free retries and choose one paid model by expertise when you send a message.");
+          const message = "OpenRouter's daily free-model quota is exhausted.\n\n" +
+            detail + "\n\nI will not probe more free models on startup. When you send a message, the server will use its free-first strategy and then attempt exactly one approved paid model selected by task expertise. Paid inference is not triggered until you send that message.";
+          if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
+          else {
+            const bubble = modelProbeRow.querySelector(".bubble");
+            if (bubble) bubble.textContent = message;
+          }
+          $("modelSelect").disabled = !backendHealthy || isSending;
+          updateSendAvailability();
+          return;
+        }
+        if (payload.available === true && payload.responseReceived === true) {
+          modelAvailable = true;
+          const providerLabel = isPaidModel ? "Paid model connected" : "OpenRouter connected";
+          setModelStatus("ok", providerLabel, model.label + " returned a response in " + Math.max(0, Number(payload.latencyMs || 0)) + " ms.");
+          if (modelProbeRow) {
+            modelProbeRow.remove();
+            modelProbeRow = null;
+          }
+        } else if (model.tier === "free-tier") {
+          // A failed single-model probe does not end the session. The chat API will
+          // attempt at most two approved free models before one paid expertise fallback.
+          modelAvailable = true;
+          const reason = payload.reason || payload.error || "The selected free model did not return a usable response.";
+          setModelStatus("warn", "Free fallback ready", model.label + ": " + reason + " Chat will retry the approved free pool before considering paid inference.");
+          const message = model.label + " did not pass its probe.\n\n" + reason + "\n\nAutomatic routing remains available: on your next message, the server will try at most two approved free models, then choose exactly one paid model based on the task if neither free model works.";
+          if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
+          else {
+            const bubble = modelProbeRow.querySelector(".bubble");
+            if (bubble) bubble.textContent = message;
+          }
+        } else {
+          modelAvailable = false;
+          const reason = payload.reason || payload.error || "The provider did not return a usable response.";
+          setModelStatus("bad", "Not available", model.label + ": " + reason);
+          const message = model.label + " is not available in this Preview.\n\n" + reason + "\n\nSelect another model to retry.";
+          if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
+          else {
+            const bubble = modelProbeRow.querySelector(".bubble");
+            if (bubble) bubble.textContent = message;
+          }
+        }
+      } catch (error) {
+        if (version !== modelProbeVersion) return;
+        modelAvailable = false;
+        const detail = error && error.message ? error.message : String(error || "Unknown model check failure.");
+        setModelStatus("bad", "Model check failed", detail);
+        const message = "I couldn’t verify " + model.label + " from the Preview.\n\n" + detail + "\n\nSelect another model to retry. Chat stays disabled until a real model response is confirmed.";
+        if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
+        else {
+          const bubble = modelProbeRow.querySelector(".bubble");
+          if (bubble) bubble.textContent = message;
+        }
+        console.warn("[UX Direct model probe]", detail);
+      }
+      $("modelSelect").disabled = !backendHealthy || modelOptions.length === 0 || isSending;
+      updateSendAvailability();
     }
-    if (message.type === "native-api-probe") {
-      parent.postMessage({ pluginMessage: { type: "native-api-probe-ack", probeId: message.probeId } }, "*");
-      return;
+
+    async function testPaidModelConnection() {
+      if (isSending || !backendHealthy || !verifiedFileKey || !currentModel ||
+          currentModel.tier !== "paid" || currentModel.available !== true) return;
+      const model = currentModel;
+      const approved = window.confirm(
+        "Test " + model.label + " with one minimal paid inference request?\n\n" +
+        "This test uses the shared gateway and its budget checks. If the request reaches the provider, a small API charge may apply. " +
+        "If gateway settings cannot be read, the request will stop before model inference. No Figma changes will be made.\n\nContinue?"
+      );
+      if (!approved) return;
+
+      const testedModelId = model.id;
+      isSending = true;
+      $("modelSelect").disabled = true;
+      $("prompt").disabled = true;
+      $("testPaidModel").disabled = true;
+      setModelStatus("warn", "Testing paid model…", "Running one explicitly requested, budget-checked connection test. A small provider charge may apply.");
+      try {
+        const response = await fetch(API + "/api/model-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ provider: model.provider, model: model.id, fileKey: verifiedFileKey })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (currentModel?.id !== testedModelId) return;
+        if (!response.ok) {
+          throw new Error(payload.reason || payload.error || ("Paid model test returned HTTP " + response.status + "."));
+        }
+        if (payload.available === true && payload.responseReceived === true) {
+          model.inferenceVerifiedAt = payload.checkedAt || new Date().toISOString();
+          model.inferenceLatencyMs = Number(payload.latencyMs || 0);
+          modelAvailable = true;
+          setModelStatus("ok", "Paid model connected", model.label + " returned a real response in " + model.inferenceLatencyMs + " ms. The explicit test may incur a small provider charge.");
+          if (modelProbeRow) { modelProbeRow.remove(); modelProbeRow = null; }
+        } else {
+          const reason = payload.reason || payload.error || "The model did not return usable response text.";
+          const gatewayBlocked = /gateway settings|persistent backend storage|budget|blocked request/i.test(reason);
+          setModelStatus(gatewayBlocked ? "warn" : "bad",
+            gatewayBlocked ? "Gateway blocked test" : "Paid test failed",
+            gatewayBlocked
+              ? "The paid model itself was not confirmed: the gateway stopped the test before a successful inference. " + reason
+              : model.label + " did not return a usable test response. " + reason);
+          const message = gatewayBlocked
+            ? "I couldn’t confirm " + model.label + " because the gateway blocked the test before a successful model response.\n\n" + reason + "\n\nThis is a gateway/settings or budget failure, not proof that the provider model is down. No Figma changes were made."
+            : model.label + " did not pass the paid connection test.\n\n" + reason + "\n\nNo Figma changes were made.";
+          if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
+          else {
+            const bubble = modelProbeRow.querySelector(".bubble");
+            if (bubble) bubble.textContent = message;
+          }
+        }
+      } catch (error) {
+        if (currentModel?.id !== testedModelId) return;
+        const detail = error && error.message ? error.message : String(error || "Unknown paid model connection error.");
+        const gatewayBlocked = /gateway settings|persistent backend storage|budget|blocked request/i.test(detail);
+        setModelStatus(gatewayBlocked ? "warn" : "bad",
+          gatewayBlocked ? "Gateway blocked test" : "Paid test failed",
+          gatewayBlocked
+            ? "The gateway did not complete a paid inference test: " + detail
+            : "Paid connection test could not complete: " + detail);
+        if (/failed to fetch|networkerror|load failed/i.test(detail)) {
+          setConnection("warn", "Preview request interrupted");
+        }
+        const message = gatewayBlocked
+          ? "I couldn’t confirm " + model.label + " because the gateway did not complete its preflight checks.\n\n" + detail + "\n\nThe provider model’s runtime availability remains unverified; this error does not prove the model is down."
+          : "I couldn’t confirm " + model.label + " from the Preview.\n\n" + detail + "\n\nNo Figma changes were made.";
+        if (!modelProbeRow) modelProbeRow = appendMessage("assistant", message);
+        else {
+          const bubble = modelProbeRow.querySelector(".bubble");
+          if (bubble) bubble.textContent = message;
+        }
+        console.warn("[UX Direct paid connection test]", detail);
+      } finally {
+        isSending = false;
+        $("prompt").disabled = false;
+        $("modelSelect").disabled = !backendHealthy || modelOptions.length === 0;
+        updateSendAvailability();
+      }
     }
-    if (message.type === "native-health-result") {
-      const passed = message.passed || 0, available = message.available || 0, failed = message.failed || 0, notTested = message.notTested || 0;
-      $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + available + " available · " + notTested + " not tested · " + new Date(message.checkedAt).toLocaleTimeString();
-      const list = document.createElement("div");
-      message.checks.forEach((item) => {
-        const row = document.createElement("div");
-        row.style.cssText = "display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-top:1px solid var(--figma-color-border)";
-        const labelText = item.level === "not-tested" ? (/team library/i.test(item.name) ? "NOT TESTED INTENTIONALLY" : "NOT TESTED") : item.status === "success" ? (item.level === "availability" ? "AVAILABLE" : "PASS") : "FAIL";
-        const badge = document.createElement("strong"); badge.textContent = labelText;
-        badge.style.color = item.level === "not-tested" ? "#a07827" : item.status === "success" ? "#26966b" : "#d14343";
-        badge.style.minWidth = "78px";
-        const label = document.createElement("span"); label.textContent = "[" + item.category + " · " + item.level + "] " + item.name + " — " + item.reason;
-        row.append(badge, label); list.appendChild(row);
+
+    $("testPaidModel").addEventListener("click", () => {
+      void testPaidModelConnection();
+    });
+
+    $("modelSelect").addEventListener("change", () => {
+      if (isSending) return;
+      void checkSelectedModel();
+    });
+
+    function queueAutoHealthCheck() {
+      if (autoHealthStarted || healthCheckRunning || !backendHealthy || !bridgeReady || verifiedFileKey !== ALLOWED_FILE_KEY) return;
+      autoHealthStarted = true;
+      healthCheckRunning = true;
+      setHealth("warn", "Checking APIs…");
+      $("healthSummary").textContent = "Running the native Plugin API suite in the dedicated UXD API Test Lab page. The active design page and selected frames are not used as test fixtures.";
+      $("healthResults").replaceChildren();
+      setActivity("Connected. Running automatic Plugin API checks…");
+      window.setTimeout(() => {
+        if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
+        parent.postMessage({ pluginMessage: { type: "run-native-health-check" } }, "*");
+        healthTimeout = window.setTimeout(() => {
+          if (!healthCheckRunning) return;
+          healthCheckRunning = false;
+          setHealth("bad", "API check failed");
+          $("healthSummary").textContent = "The health suite did not return a complete report within 90 seconds.";
+          $("healthResults").replaceChildren();
+          appendHealthRow("FAIL", "Health suite response", "No complete report was returned within 90 seconds.", "fail");
+          setActivity("Automatic health check timed out. Restart the plugin to try again.");
+        }, 90000);
+      }, 1600);
+    }
+
+    async function syncPluginBridge() {
+      try {
+        const heartbeat = await bridgeRequest({ mode: "heartbeat" });
+        bridgeReady = true;
+        if (!backendHealthy) await checkConnection();
+        const command = heartbeat && heartbeat.command;
+        if (command && command.action === "native-api-health-check" && command.commandId && !handledBridgeCommands.has(command.commandId)) {
+          handledBridgeCommands.add(command.commandId);
+          if (!healthCheckRunning) {
+            autoHealthStarted = true;
+            healthCheckRunning = true;
+            setHealth("warn", "Checking APIs…");
+            parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: command.commandId } }, "*");
+          }
+        }
+        if (backendHealthy) queueAutoHealthCheck();
+        return { ok: true };
+      } catch (error) {
+        bridgeReady = false;
+        console.warn("[UX Direct plugin bridge]", error);
+        if (!backendHealthy) setConnection("bad", "Vercel backend offline");
+        return { ok: false, error: error && error.message ? error.message : "Unknown bridge error" };
+      }
+    }
+
+    async function startPluginSession() {
+      void sendTelemetry("Plugin opened", "success", "UX Direct conversational cockpit initialized in the approved Figma file.");
+      const connection = await checkConnection();
+      if (connection) {
+        void loadModelOptions();
+        const bridge = await syncPluginBridge();
+        if (!bridge.ok) {
+          setActivity("Backend is connected; the plugin bridge is reconnecting. Health checks will start once it is ready.");
+          setHealth("warn", "APIs queued");
+        } else {
+          setActivity("Connected. Running health checks automatically, then you can start chatting.");
+          queueAutoHealthCheck();
+        }
+      } else {
+        setHealth("bad", "APIs blocked");
+      }
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      heartbeatTimer = window.setInterval(async () => {
+        if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
+        if (!backendHealthy) {
+          const health = await checkConnection();
+          if (health) {
+            if (!modelOptions.length) void loadModelOptions();
+            await syncPluginBridge();
+          }
+        } else {
+          if (!modelOptions.length) void loadModelOptions();
+          await syncPluginBridge();
+        }
+      }, 90000);
+    }
+
+    window.addEventListener("pagehide", () => {
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      if (healthTimeout) window.clearTimeout(healthTimeout);
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
+      const body = JSON.stringify({
+        mode: "disconnect", fileKey: verifiedFileKey,
+        clientId: pluginClientId, sessionToken: pluginSessionToken
       });
-      $("healthResults").replaceChildren(list);
-      $("runHealth").disabled = false;
-      void sendTelemetry("Plugin API health check completed", failed ? "warning" : "success", "Native Plugin API self-test: " + passed + " passed, " + failed + " failed, " + available + " available, " + notTested + " not tested.");
+      try {
+        if (navigator.sendBeacon) navigator.sendBeacon(API + "/api/plugin-bridge", new Blob([body], { type: "application/json" }));
+      } catch (_) {}
+    });
+
+    function appendHealthRow(label, name, reason, level) {
+      const row = document.createElement("div");
+      row.className = "health-row";
+      const badge = document.createElement("div");
+      badge.className = "health-badge " + level;
+      badge.textContent = label;
+      const detail = document.createElement("div");
+      const title = document.createElement("div");
+      title.className = "health-name";
+      title.textContent = name;
+      const why = document.createElement("div");
+      why.className = "health-reason";
+      why.textContent = reason || "No additional details provided.";
+      detail.append(title, why);
+      row.append(badge, detail);
+      $("healthResults").appendChild(row);
+    }
+
+    function renderHealthReport(message) {
+      if (healthTimeout) window.clearTimeout(healthTimeout);
+      healthCheckRunning = false;
+      const checks = Array.isArray(message.checks) ? message.checks : [];
+      const passed = Number(message.passed || 0);
+      const available = Number(message.available || 0);
+      const reportedFailures = Number(message.failed || 0);
+      const failed = Math.max(reportedFailures, checks.filter((item) => item && item.status === "error" && item.level !== "availability").length);
+      const notTested = Number(message.notTested || 0);
+      const checkedAt = message.checkedAt ? new Date(message.checkedAt).toLocaleTimeString() : "just now";
+      const suiteInvalid = checks.length === 0;
+      const healthFailed = failed > 0 || suiteInvalid;
+      const label = healthFailed ? ("API " + failed + " failed") : ("API " + passed + " passed");
+      setHealth(healthFailed ? "bad" : "ok", label);
+      $("healthSummary").textContent = passed + " passed · " + failed + " failed · " + available + " available · " + notTested + " not tested · " + checkedAt + ". Team Library access remains intentionally not tested.";
+      $("healthResults").replaceChildren();
+      if (suiteInvalid) appendHealthRow("FAIL", "Health report", "The plugin returned no individual check results; the suite cannot be considered passed.", "fail");
+      checks.forEach((item) => {
+        const isNotTested = item.status === "not-tested" || item.level === "not-tested";
+        const ok = item.status === "success";
+        const labelText = isNotTested
+          ? (/team library/i.test(item.name || "") ? "NOT TESTED INTENTIONALLY" : "NOT TESTED")
+          : ok ? (item.level === "availability" ? "AVAILABLE" : "PASS") : "FAIL";
+        appendHealthRow(labelText, "[" + (item.category || "General") + " · " + (item.level || "functional") + "] " + (item.name || "Unnamed check"), item.reason || "", isNotTested ? "na" : ok ? "pass" : "fail");
+      });
+      void sendTelemetry("Plugin API health check completed", failed > 0 ? "warning" : "success",
+        "Native Plugin API self-test: " + passed + " passed, " + failed + " failed, " + available + " available, " + notTested + " not tested.");
       void bridgeRequest({
         mode: "result",
         commandId: message.commandId || undefined,
-        healthReport: {
-          passed, available, failed, notTested, checkedAt: message.checkedAt,
-          checks: message.checks
-        }
+        healthReport: { passed, available, failed, notTested, checkedAt: message.checkedAt, checks }
       }).then(() => {
-        if (message.commandId) status("Dashboard-requested health check completed. Results synced to Vercel.");
-        else status("Native API health check completed. Results synced to UX Direct.");
+        setActivity(healthFailed ? "Health check finished with failures or an incomplete report. Click the red tag to inspect it." : "Health check passed. Ask me what you want to work on.");
       }).catch((error) => {
-        console.warn("[UX Direct Vercel Preview health-report sync]", error);
-        status("Native API test finished, but its report could not be saved to Vercel: " + (error && error.message ? error.message : "Unknown bridge error"));
+        console.warn("[UX Direct health report sync]", error);
+        setActivity("Health result is available here, but syncing it to the backend failed.");
       });
-      return;
     }
-    if (message.type !== "selection") return;
-    currentSelection = message;
-    void sendTelemetry("Selection changed", "info", "Figma selection changed; " + message.selection.length + " top-level node(s) selected.");
-    const target = $("selection"); target.replaceChildren();
-    if (!message.selection.length) {
-      target.textContent = "No layers selected. Select one or more frames/layers in Figma."; target.className = "muted"; return;
+
+    function setSelectionPreviewStatus(message, state) {
+      const status = $("selectionPreviewStatus");
+      status.textContent = message;
+      status.className = "selection-preview-status" + (state ? " " + state : "");
     }
-    target.className = "";
-    const meta = document.createElement("div"); meta.className = "muted";
-    meta.textContent = "Page: " + message.pageName + " · " + message.selection.length + " selected"; target.appendChild(meta);
-    message.selection.slice(0, 8).forEach((node) => {
-      const row = document.createElement("div"); row.className = "node";
-      const icon = document.createElement("span"); icon.textContent = node.type === "FRAME" ? "▣" : "◇";
-      const title = document.createElement("strong"); title.textContent = node.name;
-      const detail = document.createElement("span"); detail.className = "muted"; detail.textContent = " · " + node.type + " · " + node.id;
-      row.append(icon, title, detail); target.appendChild(row);
-    });
-    if (message.selection.length > 8) { const more = document.createElement("div"); more.className = "muted"; more.textContent = "+" + (message.selection.length - 8) + " more"; target.appendChild(more); }
-  };
-  $("submit").addEventListener("click", async () => {
-    void sendTelemetry("Plan CTA clicked", "info", "User clicked Plan with UX Direct.");
-    const prompt = $("prompt").value.trim();
-    if (prompt.length < 5) { status("Add a little more detail to your brief (at least 5 characters)."); return; }
-    $("submit").disabled = true; $("result").hidden = true; status("Sending task to Vercel Preview backend…");
-    const startedAt = Date.now();
-    await sendTelemetry("Task request started", "info", "A planning request was initiated from the Figma plugin.", { project: $("project").value });
-    try {
-      const response = await fetch(API + "/api/tasks/plan", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: prompt.split(/[.!?\n]/)[0].slice(0, 160) || "UX task",
-          request: prompt + (currentSelection.selection.length ? "\n\nSelected Figma context (metadata only): " + JSON.stringify({ pageName: currentSelection.pageName, selection: currentSelection.selection }) : "\n\nNo Figma layers were selected."),
-          project: $("project").value,
-          source: "figma-plugin",
-          fileKey: verifiedFileKey || currentSelection.fileKey
-        })
-      });
-      const data = await response.json();
-      const durationMs = Date.now() - startedAt;
-      if (!response.ok) {
-        await sendTelemetry("Task request failed", "error", "Vercel Preview backend rejected request: " + (data.error || "HTTP " + response.status), { requestId: data.requestId, project: $("project").value, durationMs });
-        throw new Error((data.error || "Backend returned " + response.status) + (data.requestId ? " · Request ID " + data.requestId : ""));
+
+    function bytesToDataUrl(bytes, mimeType) {
+      const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+      if (!input.length) throw new Error("Figma returned an empty preview image.");
+      let binary = "";
+      for (let offset = 0; offset < input.length; offset += 0x8000) {
+        binary += String.fromCharCode.apply(null, input.subarray(offset, Math.min(input.length, offset + 0x8000)));
       }
-      renderPlan(data);
-      status("Response received · " + (data.mode || "unknown") + " mode · ₹" + (data.cost && data.cost.amount != null ? data.cost.amount : "?") + " API cost · Request " + (data.requestId || "recorded") + ". No Figma changes made.");
-      await sendTelemetry("Task response received", "success", "Planning response returned to the plugin UI.", { requestId: data.requestId, project: $("project").value, durationMs, mode: data.mode });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      status("Vercel Preview request could not be completed. " + message);
-      await sendTelemetry("Task request failed", "error", "Request failed: " + message);
-    } finally { $("submit").disabled = false; }
-  });
-  function renderPlan(data) {
-    const root = $("result"); root.replaceChildren(); root.hidden = false;
-    const heading = document.createElement("h2"); heading.textContent = "Plan & rationale"; heading.style.fontSize = "15px"; root.appendChild(heading);
-    const summary = document.createElement("p"); summary.textContent = data.plan && data.plan.summary || "Plan generated."; root.appendChild(summary);
-    (data.plan && data.plan.steps || []).forEach((step, index) => {
-      const item = document.createElement("div"); item.className = "step";
-      const title = document.createElement("strong"); title.textContent = String(index + 1).padStart(2, "0") + " · " + step.label;
-      const detail = document.createElement("small"); detail.textContent = step.capabilityId || "Planned capability";
-      item.append(title, detail); root.appendChild(item);
+      return "data:" + (mimeType || "image/jpeg") + ";base64," + btoa(binary);
+    }
+
+    function updateSelectionContext(message) {
+      const revision = Number.isInteger(message.revision) ? message.revision : (currentSelection.revision + 1);
+      const selection = Array.isArray(message.selection) ? message.selection : [];
+      currentSelection = Object.assign({}, message, {
+        revision,
+        previewDataUrl: null,
+        previewNodeId: null
+      });
+      const first = selection[0];
+      $("selectionName").textContent = first ? String(first.name || "Selected frame") : "No frame selected";
+      $("selectionDetails").textContent = first
+        ? [message.pageName || "Current page",
+           first.type || "Layer",
+           Number.isFinite(first.width) && Number.isFinite(first.height) ? Math.round(first.width) + " × " + Math.round(first.height) + " px" : "",
+           selection.length > 1 ? selection.length + " selected" : "1 selected"].filter(Boolean).join(" · ")
+        : "Select a frame or layer in Figma.";
+      $("selectionPreview").hidden = true;
+      $("selectionPreview").removeAttribute("src");
+      if (!first) {
+        setSelectionPreviewStatus("No selection to scan.");
+      } else {
+        setSelectionPreviewStatus("Preparing visual preview…");
+      }
+    }
+
+    function updateSelectionPreview(message) {
+      if (!message || message.fileKey !== ALLOWED_FILE_KEY ||
+          !Number.isInteger(message.revision) ||
+          message.revision !== currentSelection.revision) return;
+      const first = Array.isArray(currentSelection.selection) ? currentSelection.selection[0] : null;
+      if (!first || (message.nodeId && message.nodeId !== first.id)) return;
+      if (message.error) {
+        currentSelection.previewDataUrl = null;
+        currentSelection.previewNodeId = null;
+        $("selectionPreview").hidden = true;
+        setSelectionPreviewStatus("Preview unavailable: " + String(message.error).slice(0, 160), "error");
+        return;
+      }
+      try {
+        const dataUrl = bytesToDataUrl(message.bytes, message.mimeType);
+        if (!/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(dataUrl) || dataUrl.length > 2800000) {
+          throw new Error("The selected-frame preview exceeds the safe image limit.");
+        }
+        currentSelection.previewDataUrl = dataUrl;
+        currentSelection.previewNodeId = message.nodeId;
+        const image = $("selectionPreview");
+        image.src = dataUrl;
+        image.alt = "Visual preview of " + String(message.name || first.name || "selected frame");
+        image.hidden = false;
+        setSelectionPreviewStatus("Visual preview ready · included in visual scans", "ready");
+      } catch (error) {
+        currentSelection.previewDataUrl = null;
+        currentSelection.previewNodeId = null;
+        setSelectionPreviewStatus(error && error.message ? error.message : "Could not display preview.", "error");
+      }
+    }
+
+    async function sendChatMessage(overrideText) {
+      if (isSending) return;
+      const prompt = (typeof overrideText === "string" ? overrideText : $("prompt").value).trim();
+      if (prompt.length < 1) return;
+      const visualIntent = /\b(visual(?:ly)?|scan|look\s+at|inspect|review|audit|critique|improv(?:e|ement|ements)|better|redesign|layout|spacing|alignment|screen|screenshot|compare|design quality|hierarchy|analy[sz]e|evaluation|evaluate|assess|what\s+(?:is|looks)\s+wrong|find\s+(?:issues|problems)|feedback|visual design|usability|affordance|contrast|typography|white\s*space|overflow|clipping)\b/i.test(prompt);
+      if (visualIntent && !currentSelection.previewDataUrl) {
+        appendMessage("assistant", "I can’t scan this frame visually yet because its screenshot preview is not ready. Select the frame in Figma and wait until the cockpit says “Visual preview ready,” then retry. No inference or document changes were made.");
+        return;
+      }
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) {
+        appendMessage("assistant", "I can’t start a conversation until this Figma document passes the approved-file check.");
+        return;
+      }
+      if (!backendHealthy) {
+        appendMessage("assistant", "The UX Direct backend is offline right now. I’ll reconnect automatically—please send your message again once the top status returns to Connected.");
+        return;
+      }
+      if (!currentModel || !modelAvailable) {
+        appendMessage("assistant", "Choose an OpenRouter model and wait until its status says Connected or Paid model armed. Automatic paid fallback follows at most two approved free attempts; OpenRouter credit and key limits govern billed usage.");
+        return;
+      }
+      if (visualIntent) {
+        const detail = designIntent
+          ? "This request proposes Figma changes, so UX Direct will use the lowest-listed-cost approved paid vision model to produce a bounded structured edit plan."
+          : currentModel.tier === "paid"
+            ? (currentModel.supportsImages === true
+              ? "The explicitly selected paid vision model will be called directly."
+              : "The selected paid model cannot accept images, so UX Direct will substitute the lowest-listed-cost approved paid vision model.")
+            : "UX Direct will try up to two approved free vision models first, then may make one low-cost paid vision request if both free attempts fail.";
+        const consent = window.confirm("Visual review sends the selected frame screenshot and prompt to OpenRouter.\n\n" + detail + "\n\nOpenRouter free-model terms and rate limits apply; a paid fallback may consume account credits. No Figma edits happen without a separate confirmation. Continue?");
+        if (!consent) return;
+      }
+
+      chatHistory.push({ role: "user", content: prompt });
+      appendMessage("user", prompt);
+      $("prompt").value = "";
+      $("send").disabled = true;
+      $("modelSelect").disabled = true;
+      $("prompt").disabled = true;
+      isSending = true;
+      showTyping();
+      setActivity("Thinking…");
+
+      const selectedNodes = Array.isArray(currentSelection.selection) ? currentSelection.selection.slice(0, 12).map((node) => ({
+        name: String(node.name || "").slice(0, 160),
+        type: String(node.type || "").slice(0, 60),
+        id: String(node.id || "").slice(0, 200),
+        ...(Number.isFinite(node.width) ? { width: node.width } : {}),
+        ...(Number.isFinite(node.height) ? { height: node.height } : {}),
+        ...(node.tree ? { tree: node.tree } : {})
+      })) : [];
+      // Explicit no-edit language must win over action words mentioned in a sentence like
+      // "Do not modify Figma". Otherwise a planning request can be misrouted to JSON edit mode.
+      function requestsFigmaEdit(text) {
+        const readOnlyPatterns = [
+          /\b(?:do not|don't|dont|never)\s+(?:make|apply|perform|execute|commit|write|change|edit|modify|update|alter|touch|mutate)\b/i,
+          /\b(?:no|without)\s+(?:any\s+)?(?:figma\s+)?(?:changes?|edits?|writes?|mutations?)\b/i,
+          /\b(?:read[- ]only|planning only|plan only|proposal only)\b/i
+        ];
+        if (readOnlyPatterns.some((pattern) => pattern.test(text))) return false;
+        return /\b(add|create|insert|change|update|edit|modify|rename|replace|set|remove|delete|redesign|apply|adjust|fix|implement|build|improv(?:e|ement|ements)|restyle|recolor|move|resize|polish|polished|optimize|optimise|clean\s+up)\b/i.test(text) ||
+          /\bmake\b.*\b(better|clearer|more|less|consistent|accessible|modern|polished)\b/i.test(text);
+      }
+      const designIntent = requestsFigmaEdit(prompt);
+      try {
+        const response = await fetch(API + "/api/assistant/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileKey: verifiedFileKey,
+            project: "general",
+            provider: currentModel.provider,
+            model: currentModel.id,
+            intent: designIntent ? "design-operation" : "chat",
+            messages: chatHistory.slice(-12),
+            selection: {
+              pageName: String(currentSelection.pageName || "").slice(0, 160),
+              totalCount: Array.isArray(currentSelection.selection) ? currentSelection.selection.length : 0,
+              items: selectedNodes,
+              ...(visualIntent && currentSelection.previewDataUrl ? { previewDataUrl: currentSelection.previewDataUrl } : {})
+            }
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
+        if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
+        if (designIntent) {
+          if (data.routingStrategy === "vision-direct") {
+            const routeNote = data.fallbackReason ? data.fallbackReason + " " : "";
+            setModelStatus("ok", "Visual scan complete", data.model + " inspected the screenshot and prepared a proposal. " + routeNote + "No Figma changes have been applied; review the proposed plan before confirming.");
+          }
+          let plan;
+          try {
+            const cleaned = data.content.trim().replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
+            plan = JSON.parse(cleaned);
+          } catch (_) {
+            throw new Error("I couldn’t turn the model response into a safe, structured Figma edit plan. No changes were made.");
+          }
+          const operations = Array.isArray(plan.operations) ? plan.operations.slice(0, 8) : [];
+          if (!operations.length) {
+            appendMessage("assistant", "I analyzed the selected layers, but I couldn’t produce a supported edit plan. No changes were made. Try selecting the exact frame or text layer and describing the specific change.");
+            setActivity("No Figma edits applied.");
+            return;
+          }
+          const summary = operations.map((op, index) => {
+            const target = selectedNodes.find(n => n.id === op.targetId);
+            const targetLabel = target ? target.name : (op.parentId ? (selectedNodes.find(n => n.id === op.parentId)?.name || "selected frame") : "selected frame");
+            if (op.action === "update-text") return (index + 1) + ". Update text in “" + targetLabel + "” to: " + String(op.text || "").slice(0, 100);
+            if (op.action === "rename-node") return (index + 1) + ". Rename “" + targetLabel + "” to “" + String(op.name || "") + "”";
+            if (op.action === "set-fill") return (index + 1) + ". Set fill of “" + targetLabel + "” to " + String(op.color || "");
+            if (op.action === "create-text") return (index + 1) + ". Add text “" + String(op.text || "").slice(0, 100) + "” to “" + targetLabel + "”";
+            if (op.action === "create-rectangle") return (index + 1) + ". Add a " + String(op.width || 0) + "×" + String(op.height || 0) + " shape to “" + targetLabel + "”";
+            return (index + 1) + ". Unsupported operation: " + String(op.action || "unknown");
+          }).join("\n");
+          appendMessage("assistant", "Proposed Figma changes:\n" + summary + "\n\nReview the plan in the confirmation prompt. Nothing has changed yet.");
+          const confirmed = window.confirm("Apply these changes to the selected frame/layers?\n\n" + summary + "\n\nOnly supported operations within the current selection are allowed. No deletion is supported.");
+          if (confirmed) {
+            parent.postMessage({ pluginMessage: { type: "apply-design-operations", payload: { operations } } }, "*");
+            setActivity("Applying approved changes…");
+          } else {
+            appendMessage("assistant", "Cancelled. Your Figma design was not changed.");
+            setActivity("Edit plan cancelled.");
+          }
+          return;
+        }
+        chatHistory.push({ role: "assistant", content: data.content });
+        if (data.provider && data.model) {
+          const actual = modelOptions.find(model => model.provider === data.provider && model.id === data.model);
+          if (data.routingStrategy === "vision-direct") {
+            setModelStatus("ok", "Visual scan complete", data.model + " analyzed the selected-frame screenshot through the budget-checked vision route.");
+          } else if (data.tier === "paid" || actual?.tier === "paid") {
+            // Keep the dropdown preference intact. Report the paid model used for this turn separately.
+            modelAvailable = true;
+            const directSelection = data.routingStrategy === "paid-direct";
+            setModelStatus("ok", directSelection ? "Selected paid model used" : "Paid fallback used",
+              data.model + " returned this response. " + (data.fallbackReason || "Paid inference passed the gateway checks."));
+          } else if (actual) {
+            // Report the model that answered without overwriting the user's
+            // selected free preference or paid-fallback preference for later turns.
+            modelAvailable = true;
+            const usedFallback = !currentModel || actual.id !== currentModel.id;
+            setModelStatus("ok", usedFallback ? "Free-first response" : "Free model connected",
+              actual.label + " returned the response. The dropdown preference remains " + (currentModel ? currentModel.label : actual.label) + ".");
+          }
+        }
+        appendMessage("assistant", data.content);
+        setActivity("Response received. Continue the conversation or give me the next task.");
+      } catch (error) {
+        const message = error && error.message ? error.message : "Unknown chat error";
+        appendMessage("assistant", "I couldn’t complete that response: " + message + "\n\nYour message is still in this session’s conversation context. You can retry or continue with a smaller request.");
+        setActivity("Response failed. Your Figma document was not changed by this chat request.");
+      } finally {
+        hideTyping();
+        isSending = false;
+        $("prompt").disabled = false;
+        $("modelSelect").disabled = !backendHealthy || modelOptions.length === 0;
+        updateSendAvailability();
+        $("prompt").focus();
+      }
+    }
+
+    $("chatForm").addEventListener("submit", (event) => {
+      event.preventDefault();
+      void sendChatMessage();
     });
-    const rationale = document.createElement("p"); rationale.textContent = "Why this plan: the current mock planner creates a deterministic task breakdown. Model-based reasoning and Figma edits are not enabled yet."; root.appendChild(rationale);
-    const checksTitle = document.createElement("strong"); checksTitle.textContent = "Quality checks"; root.appendChild(checksTitle);
-    const checks = document.createElement("ul");
-    (data.plan && data.plan.qualityChecks || []).forEach((check) => { const li = document.createElement("li"); li.textContent = check; checks.appendChild(li); });
-    root.appendChild(checks);
-  }
-  // Plugin session startup and automatic API tests wait for the native runtime's exact file-key approval.
-</script>
+    $("prompt").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        void sendChatMessage();
+      }
+    });
+    $("healthStatus").addEventListener("click", () => toggleHealthPanel());
+    $("closeHealth").addEventListener("click", () => toggleHealthPanel(false));
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") toggleHealthPanel(false);
+    });
+
+    parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
+    window.onmessage = (event) => {
+      const message = event.data && event.data.pluginMessage;
+      if (!message) return;
+
+      if (message.type === "scope-approved") {
+        if (message.fileKey !== ALLOWED_FILE_KEY) {
+          setConnection("bad", "File blocked");
+          setHealth("bad", "APIs blocked");
+          setActivity("UX Direct is restricted to the approved Figma document.");
+          appendMessage("assistant", "This file is not allowlisted for UX Direct. No backend connection, health suite or task request will run.");
+          return;
+        }
+        verifiedFileKey = message.fileKey;
+        currentSelection.fileKey = message.fileKey;
+        if (!pluginSessionStarted) {
+          pluginSessionStarted = true;
+          void startPluginSession();
+        }
+        return;
+      }
+
+      if (message.type === "native-api-probe") {
+        parent.postMessage({ pluginMessage: { type: "native-api-probe-ack", probeId: message.probeId } }, "*");
+        return;
+      }
+
+      if (message.type === "native-health-progress") {
+        healthCheckRunning = true;
+        setHealth("warn", "Checking APIs…");
+        if (message.text) $("healthSummary").textContent = message.text;
+        return;
+      }
+
+      if (message.type === "native-health-result") {
+        renderHealthReport(message);
+        return;
+      }
+
+      if (message.type === "design-operation-result") {
+        if (message.ok) {
+          appendMessage("assistant", "Figma changes applied and the plugin returned success for " + message.results.length + " operation(s). I refreshed the selected-layer context. Please visually inspect the frame to confirm the final layout.");
+          setActivity("Figma operations reported successful; visual review is still required.");
+        } else {
+          appendMessage("assistant", "Figma edit failed: " + String(message.error || "Unknown plugin error") + ". Some earlier operations may already have applied; inspect the selected frame before retrying.");
+          setActivity("Figma edit failed; inspect the frame before retrying.");
+        }
+        return;
+      }
+
+      if (message.type === "selection-preview") {
+        updateSelectionPreview(message);
+        return;
+      }
+      if (message.type !== "selection") return;
+      if (message.fileKey !== ALLOWED_FILE_KEY) return;
+      updateSelectionContext(message);
+    };
+  </script>
 </body>
 </html>
