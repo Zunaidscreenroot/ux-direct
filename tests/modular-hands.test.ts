@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDirectorPlanningContext, validateDirectorPlan, type DirectorPlan } from "../src/core/director-controller";
-import { getHandDefinition, UX_HANDS, type UXHandId } from "../src/core/hand-contracts";
+import { getHandDefinition, UX_HANDS } from "../src/core/hand-contracts";
 import {
   FixtureWorkspaceContextResolver,
   WORKSPACE_FIXTURES,
   type UXWorkspaceContext,
-} from "../src/core/project-profiles";
+} from "../src/core/workspace-context";
 import { InMemoryWorldModel, type WorldFact } from "../src/core/world-model";
 import { UXToolRegistry, type UXToolDefinition } from "../src/core/tool-registry";
 
