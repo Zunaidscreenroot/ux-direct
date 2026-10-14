@@ -3,11 +3,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { ALLOWED_FIGMA_FILE_KEY, isAllowedFigmaFileKey } from "@/src/security/figma-access";
+import { netlifyDeploymentScope } from "@/src/netlify/deployment-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const PREFIX = "ux-direct-bridge";
+const prefix = () => `ux-direct-bridge/${netlifyDeploymentScope()}`;
 const PLUGIN_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 const ID = z.string().trim().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/);
 const CHECK = z.object({
@@ -35,9 +36,9 @@ type Session = {
   connectedAt: string; lastHeartbeatAt: string; disconnectedAt?: string; lastTestAt?: string;
   latestCommand?: BridgeCommand; healthReport?: HealthReport;
 };
-const sessionPath = (id: string) => `${PREFIX}/sessions/${id}/session.json`;
-const commandPath = (id: string) => `${PREFIX}/sessions/${id}/command.json`;
-const latestReportPath = `${PREFIX}/reports/latest.json`;
+const sessionPath = (id: string) => `${prefix()}/sessions/${id}/session.json`;
+const commandPath = (id: string) => `${prefix()}/sessions/${id}/command.json`;
+const latestReportPath = () => `${prefix()}/reports/latest.json`;
 type PersistedHealthReport = { clientId: string; commandId?: string; savedAt: string; healthReport: HealthReport };
 
 function corsHeaders(request: Request): Record<string, string> {
@@ -85,7 +86,7 @@ function publicSession(session: Session) {
   return safe;
 }
 async function listSessions() {
-  const result = await bridgeStore().list({ prefix: `${PREFIX}/sessions/` });
+  const result = await bridgeStore().list({ prefix: `${prefix()}/sessions/` });
   const sessionBlobs = result.blobs.filter((blob) => blob.key.endsWith("/session.json"));
   const sessions = await Promise.all(sessionBlobs.map(async (blob) => {
     try { return await readJson<Session>(blob.key); } catch { return null; }
@@ -111,7 +112,7 @@ export async function GET(request: Request) {
   try {
     if (mode === "sessions") {
       const [sessions, latestReport] = await Promise.all([
-        listSessions(), readJson<PersistedHealthReport>(latestReportPath),
+        listSessions(), readJson<PersistedHealthReport>(latestReportPath()),
       ]);
       return NextResponse.json({ sessions, latestReport }, { headers });
     }
@@ -121,7 +122,7 @@ export async function GET(request: Request) {
       const session = await readJson<Session>(sessionPath(parsedId.data));
       if (!session || !isAllowedFigmaFileKey(session.fileKey)) return NextResponse.json({ error: "Allowlisted plugin session not found." }, { status: 404, headers });
       const now = Date.now();
-      const latestReport = await readJson<PersistedHealthReport>(latestReportPath);
+      const latestReport = await readJson<PersistedHealthReport>(latestReportPath());
       return NextResponse.json({
         session: { ...publicSession(session), isOnline: session.status === "online" && now - Date.parse(session.lastHeartbeatAt) < 75000 },
         latestReport,
@@ -215,7 +216,7 @@ export async function POST(request: Request) {
       current.lastHeartbeatAt = new Date().toISOString();
       current.status = "online";
       await writeJson(path, current);
-      await writeJson(latestReportPath, {
+      await writeJson(latestReportPath(), {
         clientId, commandId, savedAt: new Date().toISOString(), healthReport: parsedReport.data,
       } satisfies PersistedHealthReport);
       recordOperationalEvent({
