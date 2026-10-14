@@ -37,18 +37,84 @@ function getUxDirectScopeDecision() {
 function startScopedPlugin() {
   // Create the UI only after the file allowlist succeeds, before any UI messages.
   figma.showUI(__html__, { width: 380, height: 720, themeColors: true });
+var UXD_SELECTION_REVISION = 0;
+function summarizeNodeForAI(node, depth, budget) {
+  budget.count += 1;
+  var item = {
+    id: node.id, name: node.name, type: node.type, visible: node.visible,
+    width: typeof node.width === "number" ? node.width : undefined,
+    height: typeof node.height === "number" ? node.height : undefined,
+    x: typeof node.x === "number" ? node.x : undefined,
+    y: typeof node.y === "number" ? node.y : undefined
+  };
+  if (node.type === "TEXT") {
+    try { item.characters = String(node.characters || "").slice(0, 1200); } catch (_) {}
+    try { item.fontSize = typeof node.fontSize === "number" ? node.fontSize : undefined; } catch (_) {}
+  }
+  try {
+    if ("fills" in node && Array.isArray(node.fills)) {
+      item.fills = node.fills.slice(0, 3).map(function (paint) {
+        if (paint && paint.type === "SOLID" && paint.color) {
+          return { type: "SOLID", color: "#" + [paint.color.r, paint.color.g, paint.color.b].map(function (v) {
+            return Math.round(v * 255).toString(16).padStart(2, "0");
+          }).join("").toUpperCase(), opacity: paint.opacity };
+        }
+        return { type: paint && paint.type ? paint.type : "UNKNOWN" };
+      });
+    }
+  } catch (_) {}
+  if (depth < 6 && budget.count < 180 && "children" in node && Array.isArray(node.children)) {
+    item.childCount = node.children.length;
+    item.children = [];
+    node.children.slice(0, 60).forEach(function (child) {
+      if (budget.count < 180) item.children.push(summarizeNodeForAI(child, depth + 1, budget));
+    });
+  } else if ("children" in node) {
+    item.childCount = node.children.length;
+  }
+  return item;
+}
 function getSelectionSummary() {
   assertUxDirectFileScope("reading selection metadata");
-  return figma.currentPage.selection.map(function (node) {
-    return { id: node.id, name: node.name, type: node.type, visible: node.visible,
-      childCount: "children" in node ? node.children.length : undefined };
+  var budget = { count: 0 };
+  return figma.currentPage.selection.slice(0, 12).map(function (node) {
+    var item = summarizeNodeForAI(node, 0, budget);
+    var tree = {
+      id: item.id, name: item.name, type: item.type, width: item.width, height: item.height,
+      x: item.x, y: item.y, characters: item.characters, children: item.children || []
+    };
+    delete item.children;
+    item.tree = tree;
+    return item;
   });
+}
+async function sendSelectionPreview(node, revision) {
+  try {
+    if (!node || typeof node.exportAsync !== "function") throw new Error("The selected node cannot be exported as a preview.");
+    var bytes = await node.exportAsync({ format: "JPG", constraint: { type: "SCALE", value: 0.65 } });
+    if (revision !== UXD_SELECTION_REVISION || !bytes || !bytes.length) return;
+    figma.ui.postMessage({
+      type: "selection-preview", fileKey: figma.fileKey, revision: revision,
+      nodeId: node.id, name: node.name, bytes: bytes, mimeType: "image/jpeg"
+    });
+  } catch (error) {
+    if (revision !== UXD_SELECTION_REVISION) return;
+    figma.ui.postMessage({
+      type: "selection-preview", fileKey: figma.fileKey, revision: revision,
+      nodeId: node && node.id, error: error instanceof Error ? error.message : "Preview export failed."
+    });
+  }
 }
 function sendSelection() {
   assertUxDirectFileScope("sending Figma context");
+  var revision = ++UXD_SELECTION_REVISION;
+  var selection = getSelectionSummary();
   figma.ui.postMessage({ type: "scope-approved", fileKey: figma.fileKey });
   figma.ui.postMessage({ type: "selection", fileKey: figma.fileKey,
-    pageName: figma.currentPage.name, selection: getSelectionSummary() });
+    pageName: figma.currentPage.name, revision: revision, selection: selection });
+  if (figma.currentPage.selection.length) {
+    void sendSelectionPreview(figma.currentPage.selection[0], revision);
+  }
 }
 var selectionChangeListenerRegistered = false;
 figma.on("selectionchange", sendSelection);
@@ -883,6 +949,126 @@ async function runNativeApiHealthCheck(commandId) {
     }
   }
 }
+function findSelectedNodeById(id) {
+  if (typeof id !== "string" || !id) return null;
+  function walk(node) {
+    if (node.id === id) return node;
+    if ("children" in node && Array.isArray(node.children)) {
+      for (var i = 0; i < node.children.length; i += 1) {
+        var match = walk(node.children[i]);
+        if (match) return match;
+      }
+    }
+    return null;
+  }
+  var currentSelection = figma.currentPage.selection;
+  for (var i = 0; i < currentSelection.length; i += 1) {
+    var match = walk(currentSelection[i]);
+    if (match) return match;
+  }
+  return null;
+}
+function parseUXDHexColor(value) {
+  if (typeof value !== "string") throw new Error("Color must use #RRGGBB format.");
+  var hex = value.trim().replace(/^#/, "");
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) throw new Error("Color must use #RRGGBB format.");
+  return {
+    r: parseInt(hex.slice(0, 2), 16) / 255,
+    g: parseInt(hex.slice(2, 4), 16) / 255,
+    b: parseInt(hex.slice(4, 6), 16) / 255
+  };
+}
+function applyUXDFill(node, color) {
+  if (!("fills" in node)) throw new Error("The target layer does not support fills.");
+  node.fills = [{ type: "SOLID", color: parseUXDHexColor(color), opacity: 1 }];
+}
+async function loadFontsForTextNode(node) {
+  if (!node || node.type !== "TEXT") throw new Error("Text operation target is not a text layer.");
+  if (node.fontName !== figma.mixed) {
+    await figma.loadFontAsync(node.fontName);
+    return;
+  }
+  var fonts = node.getRangeAllFontNames(0, node.characters.length);
+  var unique = [];
+  fonts.forEach(function (font) {
+    if (!unique.some(function (item) { return item.family === font.family && item.style === font.style; })) unique.push(font);
+  });
+  for (var i = 0; i < unique.length; i += 1) await figma.loadFontAsync(unique[i]);
+}
+async function applyApprovedDesignOperations(operations) {
+  var results = [];
+  try {
+    if (!Array.isArray(operations) || operations.length < 1 || operations.length > 8) {
+      throw new Error("The design plan must contain between one and eight supported operations.");
+    }
+    for (var i = 0; i < operations.length; i += 1) {
+      var operation = operations[i];
+      if (!operation || typeof operation !== "object") throw new Error("Operation " + (i + 1) + " is invalid.");
+      var action = operation.action;
+      if (action === "create-text" || action === "create-rectangle") {
+        var parent = findSelectedNodeById(operation.parentId);
+        if (!parent || parent.type !== "FRAME") throw new Error("Create operations must target a FRAME inside the current selection.");
+        if (action === "create-text") {
+          var text = String(operation.text || "").slice(0, 1000);
+          if (!text.trim()) throw new Error("New text cannot be empty.");
+          var font = { family: "Inter", style: "Regular" };
+          await figma.loadFontAsync(font);
+          var textNode = figma.createText();
+          parent.appendChild(textNode);
+          textNode.fontName = font;
+          textNode.characters = text;
+          var size = Number(operation.fontSize);
+          textNode.fontSize = Number.isFinite(size) ? Math.max(8, Math.min(48, size)) : 14;
+          textNode.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color || "#202124"), opacity: 1 }];
+          textNode.x = Number.isFinite(Number(operation.x)) ? Math.max(0, Math.min(parent.width - 1, Number(operation.x))) : 16;
+          textNode.y = Number.isFinite(Number(operation.y)) ? Math.max(0, Math.min(parent.height - 1, Number(operation.y))) : 16;
+          results.push({ action: action, id: textNode.id, name: textNode.name });
+        } else {
+          var rect = figma.createRectangle();
+          parent.appendChild(rect);
+          var width = Number(operation.width), height = Number(operation.height);
+          rect.resize(Number.isFinite(width) ? Math.max(1, Math.min(2000, width)) : 120,
+            Number.isFinite(height) ? Math.max(1, Math.min(2000, height)) : 48);
+          rect.fills = [{ type: "SOLID", color: parseUXDHexColor(operation.color || "#2563EB"), opacity: 1 }];
+          rect.x = Number.isFinite(Number(operation.x)) ? Math.max(0, Math.min(parent.width - rect.width, Number(operation.x))) : 16;
+          rect.y = Number.isFinite(Number(operation.y)) ? Math.max(0, Math.min(parent.height - rect.height, Number(operation.y))) : 16;
+          results.push({ action: action, id: rect.id, name: rect.name });
+        }
+        continue;
+      }
+
+      var target = findSelectedNodeById(operation.targetId);
+      if (!target) throw new Error("Target node is not inside the current Figma selection.");
+      if (action === "rename-node") {
+        var newName = String(operation.name || "").trim().slice(0, 120);
+        if (!newName) throw new Error("Layer name cannot be empty.");
+        target.name = newName;
+      } else if (action === "set-fill") {
+        applyUXDFill(target, operation.color);
+      } else if (action === "update-text") {
+        if (target.type !== "TEXT") throw new Error("update-text must target a TEXT node.");
+        await loadFontsForTextNode(target);
+        var replacement = String(operation.text || "").slice(0, 2000);
+        if (!replacement.trim()) throw new Error("Replacement text cannot be empty.");
+        target.characters = replacement;
+      } else {
+        throw new Error("Unsupported design operation: " + String(action || "unknown"));
+      }
+      results.push({ action: action, id: target.id, name: target.name });
+    }
+    figma.ui.postMessage({ type: "design-operation-result", ok: true, results: results });
+    sendSelection();
+  } catch (error) {
+    figma.ui.postMessage({
+      type: "design-operation-result",
+      ok: false,
+      error: error instanceof Error ? error.message : "Unknown design operation error.",
+      results: results
+    });
+    sendSelection();
+  }
+}
+
 figma.ui.onmessage = async function (message) {
   if (!message) return;
   if (message.type === "native-api-probe-ack" && message.probeId && UXD_NATIVE_API_PROBE_WAITERS[message.probeId]) {
@@ -892,6 +1078,10 @@ figma.ui.onmessage = async function (message) {
     return;
   }
   if (message.type === "get-selection") { assertUxDirectFileScope("refresh selection"); sendSelection(); }
+  if (message.type === "apply-design-operations") {
+    assertUxDirectFileScope("apply approved Figma design operations");
+    await applyApprovedDesignOperations(message.payload && message.payload.operations);
+  }
   if (message.type === "run-native-health-check") { assertUxDirectFileScope("start health-check command"); await runNativeApiHealthCheck(message.commandId); }
   if (message.type === "close") { assertUxDirectFileScope("close plugin"); figma.closePlugin(); }
 };
