@@ -44,8 +44,16 @@ export type OpenRouterSpendMonitoring = {
  * Uses the server-only OpenRouter Management API key for read-only spending
  * telemetry. The key is never returned to the client and is not used for
  * completions. The regular OPENROUTER_API_KEY remains the inference credential.
+ * Cache account telemetry briefly so every chat request does not make another
+ * administrative API call. The cache is per serverless instance, not a ledger.
  */
+let cachedMonitoring: { fetchedAt: number; value: OpenRouterSpendMonitoring } | null = null;
+const MONITORING_CACHE_MS = 60_000;
+
 export async function getOpenRouterSpendMonitoring(): Promise<OpenRouterSpendMonitoring> {
+  if (cachedMonitoring && Date.now() - cachedMonitoring.fetchedAt < MONITORING_CACHE_MS) {
+    return cachedMonitoring.value;
+  }
   const checkedAt = new Date().toISOString();
   const managementKey = process.env.OPENROUTER_MANAGEMENT_KEY;
   if (!managementKey) {
@@ -110,7 +118,7 @@ export async function getOpenRouterSpendMonitoring(): Promise<OpenRouterSpendMon
   }
 
   const available = (creditsResponse.ok && totalCreditsUsd !== null) || Boolean(activityRoot);
-  return {
+  const result: OpenRouterSpendMonitoring = {
     configured: true,
     available,
     checkedAt,
@@ -122,4 +130,6 @@ export async function getOpenRouterSpendMonitoring(): Promise<OpenRouterSpendMon
       : null,
     activity30d,
   };
+  if (result.available) cachedMonitoring = { fetchedAt: Date.now(), value: result };
+  return result;
 }
