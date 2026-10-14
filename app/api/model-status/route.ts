@@ -44,7 +44,7 @@ export async function GET(request: Request) {
     });
   }
   if (provider !== "openrouter" || !modelId) {
-    return json(request, { available: false, responseReceived: false, reason: "Choose an approved OpenRouter model." }, 400);
+    return json(request, { available: false, responseReceived: false, reason: "Choose an approved UX Direct model." }, 400);
   }
 
   const model = getPluginModelList().find((entry) => entry.id === modelId);
@@ -52,7 +52,7 @@ export async function GET(request: Request) {
     return json(request, {
       available: false,
       responseReceived: false,
-      reason: "The selected OpenRouter model is not configured in this deployment.",
+      reason: "The selected model is not configured in this deployment.",
       checkedAt: new Date().toISOString(),
     });
   }
@@ -94,7 +94,7 @@ export async function GET(request: Request) {
     });
   } catch (error) {
     const status = error instanceof PluginOpenRouterError ? error.status : 502;
-    const reason = error instanceof Error ? error.message : "OpenRouter check failed.";
+    const reason = error instanceof Error ? error.message : "Model service check failed.";
     return json(request, {
       available: false,
       responseReceived: false,
@@ -119,7 +119,7 @@ export async function POST(request: Request) {
   const provider = body.provider;
   const modelId = body.model;
   if (provider !== "openrouter" || typeof modelId !== "string") {
-    return json(request, { available: false, responseReceived: false, reason: "Choose an approved OpenRouter paid model." }, 400);
+    return json(request, { available: false, responseReceived: false, reason: "Choose an approved UX Direct paid model." }, 400);
   }
   const model = getPluginModelList().find((entry) => entry.id === modelId);
   if (!model || model.tier !== "paid" || !model.available) {
