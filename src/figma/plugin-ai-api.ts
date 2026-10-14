@@ -57,7 +57,7 @@ export const PLUGIN_PAID_MODELS = [
 type OpenRouterResponsePayload = {
   model?: unknown;
   error?: { message?: unknown };
-  choices?: Array<{ message?: { content?: unknown } }>;
+  choices?: Array<{ message?: { content?: unknown; reasoning?: unknown }; finish_reason?: unknown }>;
 };
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -166,7 +166,7 @@ export async function callOpenRouterChat(
       body: JSON.stringify({
         model,
         messages,
-        max_tokens: Math.max(8, Math.min(options.maxTokens ?? 1200, 1600)),
+        max_tokens: Math.max(8, Math.min(options.maxTokens ?? 1200, 2400)),
         temperature: Math.max(0, Math.min(options.temperature ?? 0.2, 1)),
       }),
       signal: controller.signal,
@@ -196,7 +196,8 @@ export async function callOpenRouterChat(
     }
 
     const choices = Array.isArray(payload?.choices) ? payload.choices : [];
-    const rawContent = choices[0]?.message?.content;
+    const choice = choices[0];
+    const rawContent = choice?.message?.content;
     const content = typeof rawContent === "string"
       ? rawContent
       : Array.isArray(rawContent)
@@ -206,7 +207,13 @@ export async function callOpenRouterChat(
           }).join("\n").trim()
         : "";
     if (!content.trim()) {
-      throw new PluginOpenRouterError("OpenRouter returned a response without usable message text.", 502);
+      const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : "unknown";
+      // Do not return private reasoning as user-facing content. Let the chat route try
+      // the next explicitly approved model and expose bounded diagnostics if all fail.
+      throw new PluginOpenRouterError(
+        "OpenRouter model " + model + " returned empty message content (finish_reason=" + finishReason + ").",
+        502,
+      );
     }
     return {
       content,
