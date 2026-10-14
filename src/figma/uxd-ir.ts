@@ -206,6 +206,55 @@ export function normalizeVisionEvidence(
 }
 
 /** Validate only the compact variation envelope and its structural minimum. */
+export function validateUxdirEditPlan(
+  value: unknown,
+  nodes: UxdIrNode[],
+): { valid: boolean; reason?: string; operationCount: number } {
+  if (!isRecord(value) || !Array.isArray(value.operations)) {
+    return { valid: false, reason: "missing_operations", operationCount: 0 };
+  }
+  const operations = value.operations;
+  if (operations.length < 1 || operations.length > 8) {
+    return { valid: false, reason: "operation_count", operationCount: operations.length };
+  }
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const allowedActions = new Set([
+    "update-text", "rename-node", "set-fill", "set-stroke", "set-opacity", "set-visible",
+    "set-locked", "set-blend-mode", "move-node", "resize-node", "set-rotation",
+    "set-corner-radius", "set-text-style", "set-layout", "set-layout-sizing",
+    "set-layout-positioning", "set-constraints", "set-clip-content", "set-layout-grid",
+    "set-effects", "set-description", "create-component", "detach-instance", "reorder-node",
+    "clone-node", "remove-node", "create-text", "create-rectangle", "create-ellipse",
+    "create-line", "create-frame", "create-svg",
+  ]);
+  for (const operation of operations) {
+    if (!isRecord(operation) || typeof operation.action !== "string" || !allowedActions.has(operation.action)) {
+      return { valid: false, reason: "unsupported_action", operationCount: operations.length };
+    }
+    const createActions = new Set(["create-text", "create-rectangle", "create-ellipse", "create-line", "create-frame", "create-svg"]);
+    if (createActions.has(operation.action)) {
+      if (typeof operation.parentId !== "string" || byId.get(operation.parentId)?.type !== "FRAME") {
+        return { valid: false, reason: "invalid_parent", operationCount: operations.length };
+      }
+    } else {
+      if (typeof operation.targetId !== "string" || !byId.has(operation.targetId)) {
+        return { valid: false, reason: "unknown_target", operationCount: operations.length };
+      }
+      const target = byId.get(operation.targetId)!;
+      if (operation.action === "update-text" && (target.type !== "TEXT" || typeof operation.text !== "string" || !operation.text.trim())) {
+        return { valid: false, reason: "invalid_text_update", operationCount: operations.length };
+      }
+      if (operation.action === "set-layout" && target.type !== "FRAME") {
+        return { valid: false, reason: "layout_target_not_frame", operationCount: operations.length };
+      }
+      if ((operation.action === "remove-node" || operation.action === "clone-node") && target.type === "DOCUMENT") {
+        return { valid: false, reason: "root_mutation", operationCount: operations.length };
+      }
+    }
+  }
+  return { valid: true, operationCount: operations.length };
+}
+
 export function validateUxdirVariationPlan(value: unknown, expectedCount: number): { valid: boolean; reason?: string; variationCount: number; operationCount: number } {
   if (!isRecord(value) || !Array.isArray(value.variations)) {
     return { valid: false, reason: "missing_variations", variationCount: 0, operationCount: 0 };
