@@ -296,3 +296,33 @@ test("plan validator permits adaptive plans but blocks unknown tools, cycles and
   };
   assert.ok(validateDirectorPlan(unverifiedPlan, context).errors.some((error) => error.includes("evidence")));
 });
+
+test("world-model relations are returned only when both endpoints are visible", () => {
+  const world = new InMemoryWorldModel();
+  world.upsertFact(fact({
+    id: "visible-dmi",
+    scope: { kind: "project", namespace: "project:dmi-hfc", clientId: "dmi", projectId: "dmi-hfc" },
+  }));
+  world.upsertFact(fact({
+    id: "hidden-ujjivan",
+    scope: { kind: "project", namespace: "project:ujjivan-sfb", clientId: "ujjivan", projectId: "ujjivan-sfb" },
+  }));
+  world.upsertRelation({
+    id: "cross-client-edge",
+    fromFactId: "visible-dmi",
+    relation: "depends-on",
+    toFactId: "hidden-ujjivan",
+    evidenceIds: [],
+  });
+
+  const query = {
+    clientId: "dmi",
+    projectId: "dmi-hfc",
+    clientNamespace: "client:dmi",
+    projectNamespace: "project:dmi-hfc",
+    sharedKnowledgeNamespaces: ["bfci-generic"],
+  };
+  assert.deepEqual(world.getRelationsForFact("visible-dmi", query), []);
+  assert.deepEqual(world.listRelations(query), []);
+  assert.deepEqual(world.getRelationsForFact("hidden-ujjivan", query), []);
+});
