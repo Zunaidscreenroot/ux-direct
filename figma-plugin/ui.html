@@ -445,6 +445,21 @@
     }
     function hideTyping() { const typing = $("typing"); if (typing) typing.remove(); }
     appendMessage("assistant", "Hi! What are we working on?");
+    async function updateUxdTraceStatus(status, results) {
+      if (!lastUxdRunId || !verifiedFileKey) return;
+      const resultItems = Array.isArray(results) ? results : [];
+      const appliedOperations = resultItems.reduce((sum, item) => sum + Math.max(0, Number(item && item.operationsApplied) || 0), 0);
+      const failedOperations = resultItems.reduce((sum, item) => sum + Math.max(0, Number(item && item.operationsFailed) || 0), 0);
+      const runId = lastUxdRunId;
+      try {
+        await fetch(API + "/api/uxd-traces", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileKey: verifiedFileKey, project: ACTIVE_PROJECT_KEY, runId, status, appliedOperations, failedOperations })
+        });
+      } catch (_) { /* Trace status is best-effort; execution must not be blocked by logging. */ }
+    }
+
     async function sendTelemetry(eventName, result, summary, details) {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return false;
       try {
@@ -951,7 +966,6 @@
       const glmVision = "z-ai/glm-4.6v";
       const kimiVision = "moonshotai/kimi-k2.5";
       const deepseekVision = "deepseek/deepseek-v4.1-flash";
-      const deepseekText = "deepseek/deepseek-v4-flash-0731";
       const flowIntent = /\b(?:journey|user flow|multi[- ]?screen|vkyc|cpv flow|step[- ]by[- ]step flow|process flow)\b/i.test(text);
       const generationIntent = /\b(?:generate|create|build|new)\b[\s\S]{0,80}\b(?:screen|page|wireframe|journey|flow)\b/i.test(text);
       let capabilityId = "bfci.chat";
@@ -987,7 +1001,7 @@
       const uxdIrPipeline = variation ? {
         v: 1,
         visionModels: choose([freeVision, glmVision, kimiVision, haiku]),
-        reasoningModels: choose([freeText, freeTextFallback, deepseekText, deepseekVision, haiku])
+        reasoningModels: choose([freeText, freeTextFallback, deepseekVision, haiku])
       } : undefined;
       // UXD-IR routes specialist stages separately: image-capable vision models
       // produce compact evidence; text reasoning models produce native operations.
@@ -1333,7 +1347,7 @@
             } else {
               if (lastUxdRunId) void fetch(API + "/api/uxd-traces", {
                 method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ fileKey: verifiedFileKey, runId: lastUxdRunId, status: "cancelled" })
+                body: JSON.stringify({ fileKey: verifiedFileKey, project: ACTIVE_PROJECT_KEY, runId: lastUxdRunId, status: "cancelled" })
               }).catch(() => {});
               setActivity("Variation plan cancelled. No frames were created.");
             }
@@ -1476,27 +1490,26 @@
 
       if (message.type === "design-variation-result") {
         const results = Array.isArray(message.results) ? message.results : [];
+        if (lastUxdRunId) void updateUxdTraceStatus(message.ok ? "completed" : "failed", results);
         if (results.length) {
-          const labels = results.map((item, index) => (index + 1) + ". " + String(item.name || "Variation frame") +
-            " (" + String(item.operationsApplied || 0) + " changes applied" + (item.partial ? ", partial)" : ")"));
-          appendMessage("assistant", (message.ok ? "Created " + results.length + " new variation frame(s). Your original frame was left unchanged." : "Created " + results.length + " variation frame(s), but some operations failed: " + String(message.error || "unknown error") + ". Your original frame was not targeted.") + "\n\n" + labels.join("\n") +
-            "\n\nThe new frame(s) are selected in Figma so you can compare and refine them.");
-          setActivity(message.ok ? "Variation frames created. Review the new selected frames." : "Some variation operations failed; inspect the new frames before retrying.");
+          appendMessage("assistant", message.ok ? "Done — variation frames created." : "Execution partially failed. Inspect the new frames before retrying.");
+          setActivity(message.ok ? "Variation frames created and selected for review." : "Some variation operations failed; inspect the new frames.");
         } else {
-          appendMessage("assistant", "I couldn’t finish creating the variations: " + String(message.error || "Unknown plugin error") +
-            ". Your original frame was not intentionally edited. Check the canvas for any partially created clone before retrying.");
+          appendMessage("assistant", "Execution failed. Inspect the canvas before retrying.");
           setActivity("Variation creation failed; inspect the canvas before retrying.");
+          if (lastUxdRunId) void updateUxdTraceStatus("failed", []);
         }
         return;
       }
 
-
       if (message.type === "design-operation-result") {
+        const results = Array.isArray(message.results) ? message.results : [];
+        if (lastUxdRunId) void updateUxdTraceStatus(message.ok ? "completed" : "failed", results);
         if (message.ok) {
-          appendMessage("assistant", "Figma changes applied and the plugin returned success for " + message.results.length + " operation(s). I refreshed the selected-layer context. Please visually inspect the frame to confirm the final layout.");
-          setActivity("Figma operations reported successful; visual review is still required.");
+          appendMessage("assistant", "Done — Figma changes applied.");
+          setActivity("Changes applied. Review the frame visually.");
         } else {
-          appendMessage("assistant", "Figma edit failed: " + String(message.error || "Unknown plugin error") + ". Some earlier operations may already have applied; inspect the selected frame before retrying.");
+          appendMessage("assistant", "Execution failed. Inspect the selected frame before retrying.");
           setActivity("Figma edit failed; inspect the frame before retrying.");
         }
         return;
