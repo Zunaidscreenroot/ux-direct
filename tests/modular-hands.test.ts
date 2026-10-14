@@ -222,6 +222,7 @@ test("tool invocation enforces approval, allowlists and paid budget reservations
     requestId: "req-safe",
     humanApproved: false,
     paidBudgetReserved: false,
+    allowedToolIds: ["figma.write", "model.premium-review"],
   };
   await assert.rejects(registry.invoke("figma.write", {}, base), /Human approval/);
   await assert.rejects(registry.invoke("figma.write", {}, { ...base, humanApproved: true, allowedToolIds: [] }), /not allowed/);
