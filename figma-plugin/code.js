@@ -3,6 +3,7 @@
 var UXD_ALLOWED_FILE_NAME = "Zunaid_Workspace";
 var UXD_ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
 var UXD_API_TEST_LAB_PAGE = "UXD API Test Lab";
+var UXD_API_TEST_FIXTURE_FRAME = "__UXD API Test Fixtures";
 var UXD_NATIVE_API_PROBE_WAITERS = Object.create(null);
 var UXD_HEALTH_CHECK_RUNNING = false;
 var UXD_HEALTH_CHECK_PENDING_COMMAND_IDS = [];
@@ -307,7 +308,7 @@ async function executeNativeApiHealthCheck() {
 
   // Keep a small visible fixture set on the lab page so the owner and future agents have known nodes to inspect.
   await runTest("Test isolation", "Prepare reusable shape/text/component fixtures", async function () {
-    var fixtureName = "__UXD API Test Fixtures";
+    var fixtureName = UXD_API_TEST_FIXTURE_FRAME;
     var fixture = testPage.children.find(function (node) { return node.type === "FRAME" && node.name === fixtureName; }) || null;
     var fixtureNames = [
       ["FRAME", "Fixture Frame"], ["RECTANGLE", "Fixture Rectangle"],
@@ -922,7 +923,7 @@ async function executeNativeApiHealthCheck() {
       { name: "stable non-empty node ID", test: function (node) { if (typeof node.id !== "string" || !node.id) throw new Error("Node ID is missing."); } },
       { name: "expected node name", test: function (node, descriptor) { if (node.name !== descriptor.name) throw new Error("Expected " + descriptor.name + ", got " + node.name + "."); } },
       { name: "expected node type", test: function (node, descriptor) { if (node.type !== descriptor.type) throw new Error("Expected " + descriptor.type + ", got " + node.type + "."); } },
-      { name: "parent frame containment", test: function (node) { if (!node.parent || node.parent.name !== "__UXD API Test Fixtures") throw new Error("Fixture is not contained in the isolated parent frame."); } },
+      { name: "parent frame containment", test: function (node) { if (!node.parent || node.parent.name !== UXD_API_TEST_FIXTURE_FRAME) throw new Error("Fixture is not contained in the isolated parent frame."); } },
       { name: "visibility is readable", test: function (node) { if (typeof node.visible !== "boolean") throw new Error("Node visibility is not a boolean."); } },
       { name: "lock state is readable", test: function (node) { if (typeof node.locked !== "boolean") throw new Error("Node lock state is not a boolean."); } },
       { name: "opacity is within range", test: function (node) { if (!Number.isFinite(node.opacity) || node.opacity < 0 || node.opacity > 1) throw new Error("Node opacity is outside 0–1."); } },
