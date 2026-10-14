@@ -172,7 +172,7 @@ export async function POST(request: Request) {
     candidates.push(selectedForInference);
     if (selectedForInference.tier !== "paid") {
       const paidVision = modelOptions.find((model) =>
-        model.tier === "paid" && model.available && model.supportsImages && model.id !== selectedForInference.id);
+        model.tier === "paid" && model.available && model.supportsImages);
       if (paidVision) candidates.push(paidVision);
     } else {
       // If the preferred paid vision model fails or exhausts its output budget,
