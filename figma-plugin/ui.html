@@ -659,6 +659,7 @@
       } finally {
         isSending = false;
         $("prompt").disabled = false;
+        $("projectSelect").disabled = false;
         $("modelSelect").disabled = !backendHealthy || modelOptions.length === 0;
         updateSendAvailability();
       }
@@ -945,6 +946,7 @@
       $("modelSelect").disabled = true;
       $("prompt").disabled = true;
       isSending = true;
+      $("projectSelect").disabled = true;
       showTyping();
       setActivity("Thinking…");
 
@@ -1257,6 +1259,13 @@
     $("chatForm").addEventListener("submit", (event) => {
       event.preventDefault();
       void sendChatMessage();
+    });
+    $("projectSelect").addEventListener("change", () => {
+      const projectLabel = $("projectSelect").options[$("projectSelect").selectedIndex].textContent || "selected project";
+      chatHistory.length = 0;
+      $("chatLog").replaceChildren();
+      appendMessage("assistant", "Project scope changed to " + projectLabel + ". I cleared the visible conversation and request history so client-specific context is not carried into the new scope.");
+      setActivity("Knowledge scope: " + projectLabel + ". Conversation context reset.");
     });
     $("prompt").addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
