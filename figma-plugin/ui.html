@@ -883,7 +883,7 @@
       }
       if (visualIntent || highComputeIntent) {
         const detail = variationIntent
-          ? "The cockpit will try an approved free vision model first, then at most one low-cost paid fallback if needed. Paid inference is limited by a US$0.12 task ceiling and the shared ₹50 rolling-hour budget. Your source frame remains unchanged."
+          ? "The cockpit will try an approved free vision model first, then at most one low-cost paid fallback if needed. Paid inference is limited by a US$0.12 task ceiling and the shared ₹50 rolling 24-hour budget. Your source frame remains unchanged."
           : designIntent
             ? "This request proposes Figma changes, so UX Direct will prepare a structured edit plan for your review."
             : currentModel.tier === "paid"
