@@ -192,7 +192,7 @@ export async function POST(request: Request) {
       if (variationIntent) {
         let plan: unknown;
         try {
-          const cleaned = result.content.trim().replace(/^\`\`\`(?:json)?\\s*/i, "").replace(/\\s*\`\`\`$/, "");
+          const cleaned = result.content.trim().replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
           plan = JSON.parse(cleaned);
         } catch {
           throw new PluginOpenRouterError("Model " + candidate.id + " returned an invalid variation-plan JSON response.", 502);
