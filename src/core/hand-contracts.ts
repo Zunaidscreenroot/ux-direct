@@ -21,7 +21,9 @@ export type UXHandId = string;
  * Workspace IDs are data, not a closed enum. A new client/project can be
  * registered in the workspace store without adding new Brain code paths.
  */
-export type ProjectProfileId = string;
+export type WorkspaceId = string;
+/** @deprecated Use WorkspaceId. Kept temporarily for migration compatibility. */
+export type ProjectProfileId = WorkspaceId;
 
 export type ProjectLifecycle = "brownfield" | "greenfield";
 export type HandRole = "primary" | "specialist";
@@ -73,7 +75,7 @@ export interface HandTaskRequest {
   idempotencyKey: string;
   handId: UXHandId;
   capabilityId: string;
-  projectId: ProjectProfileId;
+  workspaceId: WorkspaceId;
   objective: string;
   userPrompt: string;
   context?: HandTaskContext;
@@ -85,7 +87,7 @@ export interface HandTaskResult {
   requestId: string;
   handId: UXHandId;
   capabilityId: string;
-  projectId: ProjectProfileId;
+  workspaceId: WorkspaceId;
   status: "completed" | "needs-review" | "blocked" | "failed";
   summary: string;
   outputs: Array<{
