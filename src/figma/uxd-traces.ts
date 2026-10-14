@@ -49,6 +49,7 @@ export type StoredUxdTrace = {
 };
 
 export type UxdTraceStatus = "running" | "awaiting_confirmation" | "completed" | "failed" | "cancelled";
+export type UxdTraceListItem = Omit<StoredUxdTrace, "artifacts" | "execution_result">;
 
 export async function persistUxdIrTrace(
   trace: UxdIrTrace,
@@ -107,11 +108,11 @@ function metric(value: unknown): number | null {
   return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
-export async function listUxdIrTraces(projectKey: string, limit = 20): Promise<StoredUxdTrace[] | null> {
+export async function listUxdIrTraces(projectKey: string, limit = 20): Promise<UxdTraceListItem[] | null> {
   const config = supabaseConfig();
   if (!config) return null;
   const query = new URLSearchParams({
-    select: "run_id,created_at,project_key,capability,mode,status,intent_summary,protocol_version,stages,artifacts,total_prompt_tokens,total_completion_tokens,estimated_cost_usd,observed_cost_usd,execution_result",
+    select: "run_id,created_at,project_key,capability,mode,status,intent_summary,protocol_version,stages,total_prompt_tokens,total_completion_tokens,estimated_cost_usd,observed_cost_usd",
     project_key: "eq." + projectKey.slice(0, 80),
     order: "created_at.desc",
     limit: String(Math.max(1, Math.min(50, Math.floor(limit)))),
@@ -124,7 +125,7 @@ export async function listUxdIrTraces(projectKey: string, limit = 20): Promise<S
     });
     if (!response.ok) return null;
     const value: unknown = await response.json().catch(() => null);
-    return Array.isArray(value) ? value.filter(isRecord) as unknown as StoredUxdTrace[] : null;
+    return Array.isArray(value) ? value.filter(isRecord) as unknown as UxdTraceListItem[] : null;
   } catch {
     return null;
   }
