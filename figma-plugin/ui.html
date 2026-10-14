@@ -816,6 +816,7 @@
       const prompt = (typeof overrideText === "string" ? overrideText : $("prompt").value).trim();
       if (prompt.length < 1) return;
       const variationIntent = /\b(?:create|make|generate|build|produce|want|show|give)\b[\s\S]{0,100}\b(?:variation|variations|variant|variants|alternative|alternatives|options|new screen|new version)\b|\b(?:clone|duplicate)\b[\s\S]{0,60}\b(?:screen|frame|variation|version)\b/i.test(prompt);
+      const highComputeIntent = variationIntent || /\b(?:redesign|rework|restructure|responsive|desktop version|mobile version|multi[- ]?screen|journey design|user flow|vkyc flow|cpv flow|new screen|generate screen|design system|auto[- ]layout)\b/i.test(prompt);
       const visualIntent = /\b(scan|look\s+at|inspect|review|audit|critique|improv(?:e|ement|ements)|better|redesign|layout|spacing|alignment|screen|screenshot|compare|design quality|hierarchy|analy[sz]e|evaluation|evaluate|assess|what\s+(?:is|looks)\s+wrong|find\s+(?:issues|problems)|feedback|visual design|usability|affordance|contrast|typography|white\s*space|overflow|clipping)\b/i.test(prompt) || variationIntent;
       // Compute this before visual preflight: its consent text reads designIntent.
       const designIntent = variationIntent || requestsFigmaEdit(prompt);
@@ -835,9 +836,9 @@
         appendMessage("assistant", "Choose an UX Direct model and wait until its status says Connected or Paid model armed. Automatic paid fallback follows at most two approved free attempts; UX Direct credit and key limits govern billed usage.");
         return;
       }
-      if (visualIntent) {
+      if (visualIntent || highComputeIntent) {
         const detail = variationIntent
-          ? "UX Direct will inspect the selected screenshot and layer tree, then propose two new sibling-frame variations. Your original frame will remain unchanged; nothing is created until you approve the variation plan."
+          ? "This is a high-compute screen redesign. UX Direct will route to a suitable paid visual-design model, with an estimated per-task ceiling of US$0.12. It will propose exactly the requested number of new sibling frames. Your original remains unchanged until you approve the plan."
           : designIntent
             ? "This request proposes Figma changes, so UX Direct will prepare a structured edit plan for your review."
             : currentModel.tier === "paid"
@@ -845,7 +846,10 @@
                 ? "The explicitly selected paid vision model will be called directly."
                 : "The selected paid model cannot accept images, so UX Direct will use an approved image-capable model.")
               : "UX Direct will try an approved free vision model first and may use one low-cost paid vision request if the free model fails.";
-        const consent = window.confirm("Visual review sends the selected frame screenshot and prompt to UX Direct.\n\n" + detail + "\n\nUX Direct free-model terms and rate limits apply; a paid fallback may consume account credits. No Figma edits happen without a separate confirmation. Continue?");
+        const consentIntro = visualIntent
+          ? "Visual review sends the selected screenshot and prompt to UX Direct."
+          : "This request may require a paid model for high-compute BFCI design work.";
+        const consent = window.confirm(consentIntro + "\n\n" + detail + "\n\nThe router enforces the per-task estimated cost ceiling. Actual charges can vary with image and reasoning-token usage. Creating Figma frames requires a separate confirmation. Continue?");
         if (!consent) return;
       }
 
