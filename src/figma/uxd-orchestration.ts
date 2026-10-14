@@ -140,7 +140,7 @@ function auditReasoningSystemPrompt(): string {
     "Consider hierarchy, legibility, spacing/alignment, CTA clarity, financial-content clarity, accessibility and recovery where the supplied evidence supports them.",
     "Preserve every supplied financial amount, due date, rate and term. Distinguish observations from assumptions. Do not claim regulatory compliance or invent policy rules.",
     "Do not reveal or claim access to hidden private chain-of-thought. Do not create Figma operations and do not claim edits were applied.",
-  ].join("\\n");
+  ].join("\n");
 }
 
 function getNodeSize(items: unknown[], width?: number, height?: number) {
@@ -360,8 +360,8 @@ export async function runUxdVisionReasoningPipeline(input: UxdVariationPipelineI
   if (!finalModel || (input.mode === "variation" && !finalPlan)) {
     const failedTrace: UxdIrTrace = {
       v: UXD_IR_VERSION, runId: input.runId, projectKey: input.projectKey, capability: input.capability,
-      mode: "action", status: "failed", intentSummary: cleanIntent(input.userIntent), createdAt: new Date().toISOString(),
-      stages: [...traceStages, { role: "execution", status: "skipped", note: "operation_plan_unavailable" }],
+      mode: input.mode === "audit" ? "explain" : "action", status: "failed", intentSummary: cleanIntent(input.userIntent), createdAt: new Date().toISOString(),
+      stages: [...traceStages, { role: "execution", status: "skipped", note: input.mode === "audit" ? "audit_failed_before_summary" : "operation_plan_unavailable" }],
       artifacts: { visionEvidence },
     };
     await persistUxdIrTrace(failedTrace, { totalPromptTokens: usage.promptTokens, totalCompletionTokens: usage.completionTokens, estimatedCostUsd, observedCostUsd });
