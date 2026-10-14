@@ -117,7 +117,7 @@ export async function POST(request: Request) {
     hasScreenshot: Boolean(previewDataUrl),
   });
   const variationCountMatch = variationIntent
-    ? /\\b(one|two|three|1|2|3)\\s+(?:new\\s+)?(?:screen\\s+)?variations?\\b/i.exec(lastUserPrompt)
+    ? /\b(one|two|three|1|2|3)\s+(?:new\s+)?(?:screen\s+)?variations?\b/i.exec(lastUserPrompt)
     : null;
   const variationCount = variationCountMatch
     ? ({ one: 1, two: 2, three: 3, "1": 1, "2": 2, "3": 3 } as Record<string, number>)[variationCountMatch[1].toLowerCase()] ?? 2
@@ -245,7 +245,7 @@ export async function POST(request: Request) {
           : wasFallback
             ? candidate.tier === "paid" ? "paid-fallback" : "free-first-fallback"
             : candidate.tier === "paid" ? "paid-direct" : "direct",
-        fallbackReason: fallbackReason || (wasFallback ? "The selected model did not complete the request; a configured fallback model responded." : undefined),
+        fallbackReason: wasFallback ? "UX Direct selected an alternate model based on this capability and model health." : undefined,
       });
     } catch (error) {
       lastError = error;
