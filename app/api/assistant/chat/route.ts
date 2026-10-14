@@ -53,7 +53,7 @@ function requestVariationSystemPrompt(selectionContext: string): string {
     "Supported operations: {\"action\":\"update-text\",\"targetId\":\"TEXT node id\",\"text\":\"replacement\"}; {\"action\":\"rename-node\",\"targetId\":\"node id\",\"name\":\"new name\"}; {\"action\":\"set-fill\",\"targetId\":\"node id\",\"color\":\"#RRGGBB\"}; {\"action\":\"move-node\",\"targetId\":\"node id\",\"x\":16,\"y\":16}; {\"action\":\"resize-node\",\"targetId\":\"node id\",\"width\":320,\"height\":80}; {\"action\":\"create-text\",\"parentId\":\"FRAME node id\",\"text\":\"label\",\"x\":16,\"y\":16,\"fontSize\":14,\"color\":\"#RRGGBB\"}; or {\"action\":\"create-rectangle\",\"parentId\":\"FRAME node id\",\"width\":120,\"height\":48,\"x\":16,\"y\":16,\"color\":\"#RRGGBB\"}.",
     "Each variation must be a meaningful visual alternative, not just a renamed duplicate. Use 3-8 high-impact changes across hierarchy, spacing, card treatment, contrast, copy, or CTA emphasis where suitable. Keep the existing product purpose and essential information. Never delete nodes, call arbitrary APIs, or use IDs outside the selected frame. Use #RRGGBB colors. Do not output empty operations arrays.",
     "Current Figma context: " + selectionContext,
-  ].join("\\n\\n");
+  ].join("\n\n");
 }
 
 function conversationSystemPrompt(selectionContext: string): string {
@@ -207,7 +207,10 @@ export async function POST(request: Request) {
       lastError = error;
       const status = error instanceof PluginOpenRouterError ? error.status : 502;
       if (status === 401 || status === 403 || status === 400) break;
-      if (selectedModel.tier === "paid") break;
+      // A selected paid text-only model can be substituted with a free vision model.
+      // If that free vision call returns empty content or fails, continue to the approved
+      // paid vision fallback rather than stopping merely because the dropdown is paid.
+      if (selectedModel.tier === "paid" && !visualIntent) break;
     }
   }
 
