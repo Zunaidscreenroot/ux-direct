@@ -811,6 +811,8 @@
       const prompt = (typeof overrideText === "string" ? overrideText : $("prompt").value).trim();
       if (prompt.length < 1) return;
       const visualIntent = /\b(visual(?:ly)?|scan|look\s+at|inspect|review|audit|critique|improv(?:e|ement|ements)|better|redesign|layout|spacing|alignment|screen|screenshot|compare|design quality|hierarchy|analy[sz]e|evaluation|evaluate|assess|what\s+(?:is|looks)\s+wrong|find\s+(?:issues|problems)|feedback|visual design|usability|affordance|contrast|typography|white\s*space|overflow|clipping)\b/i.test(prompt);
+      // Compute this before visual preflight: its consent text reads designIntent.
+      const designIntent = requestsFigmaEdit(prompt);
       if (visualIntent && !currentSelection.previewDataUrl) {
         appendMessage("assistant", "I can’t scan this frame visually yet because its screenshot preview is not ready. Select the frame in Figma and wait until the cockpit says “Visual preview ready,” then retry. No inference or document changes were made.");
         return;
@@ -869,7 +871,6 @@
         return /\b(add|create|insert|change|update|edit|modify|rename|replace|set|remove|delete|redesign|apply|adjust|fix|implement|build|improv(?:e|ement|ements)|restyle|recolor|move|resize|polish|polished|optimize|optimise|clean\s+up)\b/i.test(text) ||
           /\bmake\b.*\b(better|clearer|more|less|consistent|accessible|modern|polished)\b/i.test(text);
       }
-      const designIntent = requestsFigmaEdit(prompt);
       try {
         const response = await fetch(API + "/api/assistant/chat", {
           method: "POST",
