@@ -5,6 +5,9 @@ import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { getModelLearningContext, recordModelLearningEvent } from "@/src/figma/model-learning";
 import { resolveKnowledgeProjectKey, retrieveProjectKnowledge } from "@/src/figma/knowledge-rag";
 import { assembleAugmentedContext } from "@/src/figma/context-assembly";
+import { runUxdVariationPipeline } from "@/src/figma/uxd-orchestration";
+import { persistUxdIrTrace, type StoredUxdTrace } from "@/src/figma/uxd-traces";
+import { UXD_IR_VERSION, type UxdIrTrace } from "@/src/figma/uxd-ir";
 import {
   callOpenRouterChat,
   checkPluginRateLimit,
@@ -145,6 +148,22 @@ export async function POST(request: Request) {
   const requestedClientModels = Array.isArray(clientRoute?.modelOrder)
     ? [...new Set(clientRoute.modelOrder.filter((id): id is string => typeof id === "string").slice(0, 5))]
     : [];
+  const requestedPipeline = isRecord(clientRoute?.pipeline) && clientRoute.pipeline.v === UXD_IR_VERSION
+    ? clientRoute.pipeline
+    : null;
+  const requestedVisionIds = requestedPipeline && Array.isArray(requestedPipeline.visionModels)
+    ? [...new Set(requestedPipeline.visionModels.filter((id): id is string => typeof id === "string").slice(0, 4))]
+    : [];
+  const requestedReasoningIds = requestedPipeline && Array.isArray(requestedPipeline.reasoningModels)
+    ? [...new Set(requestedPipeline.reasoningModels.filter((id): id is string => typeof id === "string").slice(0, 5))]
+    : [];
+  const pipelineVisionModels = requestedVisionIds
+    .map((id) => modelOptions.find((model) => model.id === id))
+    .filter((model): model is (typeof modelOptions)[number] => Boolean(model && model.available && model.supportsImages));
+  const pipelineReasoningModels = requestedReasoningIds
+    .map((id) => modelOptions.find((model) => model.id === id))
+    .filter((model): model is (typeof modelOptions)[number] => Boolean(model && model.available && model.automaticRouting !== false));
+  const useUxdIrVariationPipeline = variationIntent && pipelineVisionModels.length > 0 && pipelineReasoningModels.length > 0;
   const useClientRoute = clientRoute?.source === "cockpit" && Boolean(clientCapabilityId) && requestedClientModels.length > 0;
   const capability = useClientRoute && clientCapabilityId
     ? BFCI_CAPABILITIES[clientCapabilityId]
@@ -155,9 +174,10 @@ export async function POST(request: Request) {
   const variationCountMatch = variationIntent
     ? /\b(one|two|three|1|2|3)\s+(?:new\s+)?(?:screen\s+)?variations?\b/i.exec(lastUserPrompt)
     : null;
+  const singularVariationRequested = /\\b(?:a|one)\\s+(?:new\\s+)?(?:screen\\s+)?variation\\b/i.test(lastUserPrompt);
   const variationCount = variationCountMatch
     ? ({ one: 1, two: 2, three: 3, "1": 1, "2": 2, "3": 3 } as Record<string, number>)[variationCountMatch[1].toLowerCase()] ?? 2
-    : 2;
+    : singularVariationRequested ? 1 : 2;
   const designIntent = body.intent === "design-operation" || variationIntent;
   const visualIntent = Boolean(previewDataUrl);
   const baseSystemPrompt = variationIntent
@@ -265,7 +285,9 @@ export async function POST(request: Request) {
     );
   }
   // An image request must never land on a text-only model, even after learning.
-  const candidates = orderedCandidates.slice(0, Math.max(1, capability.maxModelAttempts));
+  const candidates = useUxdIrVariationPipeline
+    ? [pipelineVisionModels[0]]
+    : orderedCandidates.slice(0, Math.max(1, capability.maxModelAttempts));
   if (!candidates.length) {
     return json(request, {
       error: capability.paidRequired
@@ -298,10 +320,12 @@ export async function POST(request: Request) {
       lastError = new PluginOpenRouterError("This model has no verified price metadata and is excluded from automatic routing.", 402);
       continue;
     }
-    const estimatedCallCostUsd = candidate.tier === "free-tier"
+    const estimatedCallCostUsd = useUxdIrVariationPipeline
       ? 0
-      : ((estimatedInputTokens * (inputRate ?? 0)) + (maxOutputTokens * (outputRate ?? 0))) / 1_000_000;
-    if (candidate.tier === "paid" && reservedEstimatedCostUsd + estimatedCallCostUsd > capability.maxEstimatedCostUsd) {
+      : candidate.tier === "free-tier"
+        ? 0
+        : ((estimatedInputTokens * (inputRate ?? 0)) + (maxOutputTokens * (outputRate ?? 0))) / 1_000_000;
+    if (!useUxdIrVariationPipeline && candidate.tier === "paid" && reservedEstimatedCostUsd + estimatedCallCostUsd > capability.maxEstimatedCostUsd) {
       lastError = new PluginOpenRouterError(
         "The per-task estimated cost ceiling for " + capability.label + " would be exceeded by the next retry (estimated task total $" +
           (reservedEstimatedCostUsd + estimatedCallCostUsd).toFixed(4) + " of $" + capability.maxEstimatedCostUsd.toFixed(2) +
@@ -310,43 +334,65 @@ export async function POST(request: Request) {
       );
       continue;
     }
-    reservedEstimatedCostUsd += estimatedCallCostUsd;
+    if (!useUxdIrVariationPipeline) reservedEstimatedCostUsd += estimatedCallCostUsd;
     let attemptLatencyMs: number | undefined;
     let attemptObservedCostUsd: number | null = null;
     let attemptUsage = { promptTokens: null as number | null, completionTokens: null as number | null, totalTokens: null as number | null };
     let validationPassed = false;
     let operationProfile: Record<string, unknown> = {};
     try {
-      if (candidate.tier === "paid") {
-        const reservation = await reserveDailyPaidModelBudget({
-          estimatedCostUsd: estimatedCallCostUsd,
-          model: candidate.id,
-          requestId: learningRequestId + ":" + index,
-        });
-        if (!reservation.allowed) {
-          throw new PluginOpenRouterError(
-            "Daily AI budget reached: ₹" + reservation.spentInr.toFixed(2) + " of ₹" + reservation.limitInr.toFixed(2) +
-            " was reserved in the last 24 hours. Estimated remaining budget: ₹" + reservation.remainingInr.toFixed(2) +
-            ". No additional paid model call was made.",
-            402,
-          );
-        }
-        dailyBudgetInfo = reservation;
-        if (capability.id === "bfci.screen-audit") paidAuditAttempts += 1;
+      let uxdIrTrace: UxdIrTrace | undefined;
+      const result = useUxdIrVariationPipeline
+        ? await runUxdVariationPipeline({
+            runId: learningRequestId,
+            projectKey: activeProjectKey,
+            capability: capability.id,
+            userIntent: lastUserPrompt,
+            pageName: typeof selection.pageName === "string" ? selection.pageName : "",
+            frameItems: items,
+            screenshotDataUrl: previewDataUrl,
+            variationCount,
+            visionModels: pipelineVisionModels,
+            reasoningModels: pipelineReasoningModels,
+            maxEstimatedCostUsd: capability.maxEstimatedCostUsd,
+          })
+        : await (async () => {
+            if (candidate.tier === "paid") {
+              const reservation = await reserveDailyPaidModelBudget({
+                estimatedCostUsd: estimatedCallCostUsd,
+                model: candidate.id,
+                requestId: learningRequestId + ":" + index,
+              });
+              if (!reservation.allowed) {
+                throw new PluginOpenRouterError(
+                  "Daily AI budget reached: ₹" + reservation.spentInr.toFixed(2) + " of ₹" + reservation.limitInr.toFixed(2) +
+                  " was reserved in the last 24 hours. Estimated remaining budget: ₹" + reservation.remainingInr.toFixed(2) +
+                  ". No additional paid model call was made.",
+                  402,
+                );
+              }
+              dailyBudgetInfo = reservation;
+              if (capability.id === "bfci.screen-audit") paidAuditAttempts += 1;
+            }
+            const value = await callOpenRouterChat(candidate.id, inputMessages, {
+              maxTokens: maxOutputTokens,
+              temperature: variationIntent ? 0.15 : designIntent ? 0.1 : 0.35,
+              timeoutMs: 30000,
+              reasoningEffort: capability.reasoningEffort,
+            });
+            if (candidate.tier === "paid" && value.observedCostUsd !== null) {
+              await settleDailyPaidModelBudget({ requestId: learningRequestId + ":" + index, actualCostUsd: value.observedCostUsd });
+            }
+            return value;
+          })();
+      if ("trace" in result) {
+        uxdIrTrace = result.trace;
+        reservedEstimatedCostUsd += result.estimatedCostUsd;
+        dailyBudgetInfo = result.dailyBudgetInfo || dailyBudgetInfo;
       }
-      const result = await callOpenRouterChat(candidate.id, inputMessages, {
-        maxTokens: maxOutputTokens,
-        temperature: variationIntent ? 0.15 : designIntent ? 0.1 : 0.35,
-        timeoutMs: 30000,
-        reasoningEffort: capability.reasoningEffort,
-      });
       attemptLatencyMs = result.latencyMs;
       attemptObservedCostUsd = result.observedCostUsd;
       attemptUsage = result.usage;
-      // Provider charges may apply even when a downstream JSON or quality gate rejects the response.
-      if (candidate.tier === "paid" && attemptObservedCostUsd !== null) {
-        await settleDailyPaidModelBudget({ requestId: learningRequestId + ":" + index, actualCostUsd: attemptObservedCostUsd });
-      }
       if (variationIntent) {
         let plan: unknown;
         try {
@@ -401,20 +447,38 @@ export async function POST(request: Request) {
         };
         validationPassed = true;
       }
+      if (uxdIrTrace) {
+        uxdIrTrace = {
+          ...uxdIrTrace,
+          status: "awaiting_confirmation",
+          artifacts: { ...(isRecord(uxdIrTrace.artifacts) ? uxdIrTrace.artifacts : {}), operationPlan: plan },
+        };
+        await persistUxdIrTrace(uxdIrTrace, {
+          totalPromptTokens: attemptUsage.promptTokens,
+          totalCompletionTokens: attemptUsage.completionTokens,
+          estimatedCostUsd: reservedEstimatedCostUsd,
+          observedCostUsd: attemptObservedCostUsd,
+        });
+      }
+      const effectiveModelId = result.model;
+      const effectiveTier = "modelTier" in result ? result.modelTier : candidate.tier;
       await recordModelLearningEvent({
         requestId: learningRequestId,
         capability: capability.id,
-        modelId: candidate.id,
-        modelTier: candidate.tier,
+        modelId: effectiveModelId,
+        modelTier: effectiveTier,
         outcome: validationPassed ? "validated" : "usable",
         validationPassed,
         latencyMs: attemptLatencyMs,
-        estimatedCostUsd: estimatedCallCostUsd,
+        estimatedCostUsd: "estimatedCostUsd" in result ? result.estimatedCostUsd : estimatedCallCostUsd,
         observedCostUsd: attemptObservedCostUsd,
         promptTokens: attemptUsage.promptTokens ?? undefined,
         completionTokens: attemptUsage.completionTokens ?? undefined,
         totalTokens: attemptUsage.totalTokens ?? undefined,
-        operationProfile,
+        operationProfile: {
+          ...operationProfile,
+          ...(uxdIrTrace ? { uxdIrVersion: UXD_IR_VERSION, pipeline: "infinity-stones", stageCount: uxdIrTrace.stages.length } : {}),
+        },
       });
       const wasFallback = candidate.id !== selectedModel.id;
       return json(request, {
@@ -423,12 +487,12 @@ export async function POST(request: Request) {
         capabilityLabel: capability.label,
         qualityTarget: capability.targetQuality,
         paidRequired: capability.paidRequired,
-        estimatedCostUsd: estimatedCallCostUsd,
+        estimatedCostUsd: "estimatedCostUsd" in result ? result.estimatedCostUsd : estimatedCallCostUsd,
         observedCostUsd: result.observedCostUsd,
         usage: result.usage,
         estimatedCostBudgetUsd: capability.maxEstimatedCostUsd,
         estimatedReservedCostUsd: reservedEstimatedCostUsd,
-        dailyBudget: dailyBudgetInfo ? await getDailyPaidModelBudgetStatus() : undefined,
+        dailyBudget: (dailyBudgetInfo || (uxdIrTrace && reservedEstimatedCostUsd > 0)) ? await getDailyPaidModelBudgetStatus() : undefined,
         contextAssembly: {
           projectKey: assembledContext.projectKey,
           retrievedSources: knowledge.hits.length,
@@ -438,14 +502,22 @@ export async function POST(request: Request) {
         },
         provider: "openrouter",
         model: result.model,
-        tier: candidate.tier,
+        tier: "modelTier" in result ? result.modelTier : candidate.tier,
         latencyMs: result.latencyMs,
-        routingStrategy: visualIntent
-          ? "vision-direct"
-          : wasFallback
-            ? candidate.tier === "paid" ? "paid-fallback" : "free-first-fallback"
-            : candidate.tier === "paid" ? "paid-direct" : "direct",
-        fallbackReason: wasFallback ? "UX Direct selected an alternate model based on this capability and model health." : undefined,
+        routingStrategy: uxdIrTrace
+          ? "infinity-stones"
+          : visualIntent
+            ? "vision-direct"
+            : wasFallback
+              ? candidate.tier === "paid" ? "paid-fallback" : "free-first-fallback"
+              : candidate.tier === "paid" ? "paid-direct" : "direct",
+        fallbackReason: result.model !== selectedModel.id ? "UX Direct routed the request through approved specialist stages." : undefined,
+        ...(uxdIrTrace ? { uxdIrTrace: {
+          v: uxdIrTrace.v,
+          runId: uxdIrTrace.runId,
+          status: uxdIrTrace.status,
+          stages: uxdIrTrace.stages,
+        } } : {}),
       });
     } catch (error) {
       lastError = error;
@@ -475,5 +547,5 @@ export async function POST(request: Request) {
 
   const reason = lastError instanceof Error ? lastError.message : "No configured model returned a usable response.";
   const status = lastError instanceof PluginOpenRouterError ? lastError.status : 502;
-  return json(request, { error: reason, capability: capability.id, estimatedCostBudgetUsd: capability.maxEstimatedCostUsd, estimatedReservedCostUsd: reservedEstimatedCostUsd, dailyBudget: await getDailyPaidModelBudgetStatus(), dailyBudgetLimitInr: 50, provider: "openrouter", model: selectedModel.id }, status >= 400 && status <= 599 ? status : 502);
+  return json(request, { error: reason, capability: capability.id, estimatedCostBudgetUsd: capability.maxEstimatedCostUsd, estimatedReservedCostUsd: reservedEstimatedCostUsd, dailyBudget: await getDailyPaidModelBudgetStatus(), dailyBudgetLimitInr: 50, provider: "openrouter", model: selectedModel.id, responseMode: body.responseMode === "action" ? "action" : "explain", ...(useUxdIrVariationPipeline ? { uxdIr: { v: UXD_IR_VERSION, status: "failed" } } : {}) }, status >= 400 && status <= 599 ? status : 502);
 }
