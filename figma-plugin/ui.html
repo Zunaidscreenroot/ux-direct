@@ -32,10 +32,30 @@
     .selection-preview-status.ready { color:#22845d; }
     .selection-preview-status.error { color:#c53f45; }
     #selectionPreview { flex:0 0 auto; width:132px; height:76px; object-fit:contain; border:1px solid var(--figma-color-border); border-radius:6px; background:var(--figma-color-bg); }
-    .project-select { flex:0 0 82px; width:82px; min-width:0; padding:5px 4px; border:1px solid var(--figma-color-border); border-radius:8px; background:var(--figma-color-bg); color:var(--figma-color-text); font:inherit; font-size:9px; }
     .model-select { flex:1 1 auto; width:0; min-width:0; max-width:none; padding:5px 7px; border:1px solid var(--figma-color-border); border-radius:8px; background:var(--figma-color-bg); color:var(--figma-color-text); font:inherit; font-size:10px; }
     #modelStatus { flex:0 1 auto; max-width:34%; }
-    .budget-status { flex:0 0 auto; padding:3px 1px 5px; color:var(--figma-color-text-secondary); font-size:9px; line-height:1.3; overflow-wrap:anywhere; }
+    .budget-summary-row { display:flex; align-items:center; gap:8px; flex:0 0 auto; min-width:0; }
+    .budget-status { flex:1 1 auto; min-width:0; padding:3px 1px 5px; color:var(--figma-color-text-secondary); font-size:9px; line-height:1.3; overflow-wrap:anywhere; }
+    .budget-ledger-button, .budget-ledger-actions button { flex:0 0 auto; border:1px solid var(--figma-color-border); border-radius:7px; padding:4px 8px; background:var(--figma-color-bg-secondary); color:var(--figma-color-text); font:inherit; font-size:9px; font-weight:700; }
+    .budget-ledger-panel { position:fixed; z-index:22; top:84px; left:10px; right:10px; max-height:calc(100vh - 96px); display:flex; flex-direction:column; gap:8px; overflow:hidden; padding:11px 12px 10px; border:1px solid var(--figma-color-border); border-radius:12px; background:var(--figma-color-bg); box-shadow:0 8px 32px rgba(0,0,0,.2); }
+    .budget-ledger-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .budget-ledger-title { display:flex; flex-direction:column; gap:3px; min-width:0; }
+    .budget-ledger-title strong { font-size:12px; }
+    #budgetLedgerMeta { font-size:9px; }
+    .budget-ledger-actions { display:flex; align-items:center; gap:5px; }
+    .budget-ledger-summary { font-size:10px; line-height:1.4; color:var(--figma-color-text-secondary); }
+    .budget-progress { width:100%; height:5px; overflow:hidden; border-radius:999px; background:var(--figma-color-bg-secondary); }
+    .budget-progress-fill { width:0; height:100%; border-radius:inherit; background:var(--figma-color-bg-brand,#2563eb); transition:width .2s ease; }
+    .budget-ledger-columns, .budget-ledger-row { display:grid; grid-template-columns:64px minmax(0,1fr) 54px 64px; gap:6px; align-items:center; }
+    .budget-ledger-columns { flex:0 0 auto; padding:5px 0; color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary)); font-size:8px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+    .budget-ledger-entries { flex:1 1 auto; min-height:40px; overflow:auto; overscroll-behavior:contain; }
+    .budget-ledger-row { padding:7px 0; border-top:1px solid var(--figma-color-border); font-size:9px; line-height:1.35; }
+    .budget-ledger-time, .budget-ledger-model, .budget-ledger-state, .budget-ledger-amount { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .budget-ledger-model { font-weight:650; }
+    .budget-ledger-state { color:var(--figma-color-text-secondary); }
+    .budget-ledger-amount { text-align:right; font-variant-numeric:tabular-nums; }
+    .budget-ledger-empty { padding:10px 0; color:var(--figma-color-text-secondary); font-size:10px; line-height:1.4; }
+    .budget-ledger-note { flex:0 0 auto; margin:0; padding-top:6px; border-top:1px solid var(--figma-color-border); color:var(--figma-color-text-secondary); font-size:9px; line-height:1.4; }
     .muted { color:var(--figma-color-text-secondary); }
     .chat { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; overflow:hidden; }
     .chatlog { display:flex; flex:1 1 auto; flex-direction:column; gap:12px; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px 2px 14px; scroll-behavior:smooth; }
@@ -87,12 +107,7 @@
       <button id="healthStatus" class="status-tag warn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="healthPanel" title="Automatic native API checks; click for details"><span id="healthDot" class="dot"></span><span id="healthStatusText" class="tagtext">API checks pending</span></button>
     </div>
   </header>
-  <div class="modelbar" aria-label="Project knowledge scope and automatic AI routing">
-    <select id="projectSelect" class="project-select" aria-label="Active project knowledge scope" title="Choose which approved client knowledge UX Direct may retrieve.">
-      <option value="dmi-housing-finance" selected>DMI HFC</option>
-      <option value="ujjivan-sfb">Ujjivan SFB</option>
-      <option value="shared-bfci">Shared BFCI</option>
-    </select>
+  <div class="modelbar" aria-label="Automatic AI routing">
     <select id="modelSelect" class="model-select" aria-hidden="true" tabindex="-1" hidden disabled>
       <option value="">Automatic routing</option>
     </select>
@@ -101,10 +116,32 @@
     </div>
     <button id="testPaidModel" class="model-test" type="button" hidden disabled aria-hidden="true" tabindex="-1">Test</button>
   </div>
-  <div id="budgetStatus" class="budget-status" aria-live="polite" title="Shared rolling 24-hour budget. Paid inference is blocked if this budget cannot be verified.">AI budget · ₹50/day · checking usage…</div>
+  <div class="budget-summary-row">
+    <div id="budgetStatus" class="budget-status" aria-live="polite" title="Shared rolling 24-hour budget. Paid inference is blocked if this budget cannot be verified.">AI budget · checking live balance…</div>
+    <button id="budgetLedgerToggle" class="budget-ledger-button" type="button" aria-controls="budgetLedgerPanel" aria-expanded="false">Ledger</button>
+  </div>
+  <section id="budgetLedgerPanel" class="budget-ledger-panel" aria-label="Live AI budget ledger" hidden>
+    <div class="budget-ledger-head">
+      <div class="budget-ledger-title">
+        <strong>Live AI budget ledger</strong>
+        <span id="budgetLedgerMeta" class="muted">Waiting for server ledger…</span>
+      </div>
+      <div class="budget-ledger-actions">
+        <button id="refreshBudgetLedger" type="button">Refresh</button>
+        <button id="closeBudgetLedger" type="button" aria-label="Close budget ledger">×</button>
+      </div>
+    </div>
+    <div id="budgetLedgerSummary" class="budget-ledger-summary">Checking rolling 24-hour reservations…</div>
+    <div class="budget-progress" role="progressbar" aria-label="Rolling 24-hour AI budget usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div id="budgetProgressFill" class="budget-progress-fill"></div>
+    </div>
+    <div class="budget-ledger-columns" aria-hidden="true"><span>Time</span><span>Model</span><span>State</span><span>Reserved</span></div>
+    <div id="budgetLedgerEntries" class="budget-ledger-entries"><div class="muted">Waiting for budget reservations…</div></div>
+    <p class="budget-ledger-note">One shared ₹50 rolling 24-hour cap covers DMI, Ujjivan, and embedding calls. Amounts include reservation safety margins; uncertain failed attempts remain reserved until they age out.</p>
+  </section>
   <div id="providerSpendStatus" class="budget-status" aria-live="polite" title="Read-only OpenRouter spending data from the server-side management key.">OpenRouter spend · checking management API…</div>
   <div id="learningStatus" class="budget-status" aria-live="polite" title="Persistent, anonymized model-performance memory. Raw prompts and screenshots are not stored.">Product memory · checking Supabase…</div>
-  <div id="knowledgeStatus" class="budget-status" aria-live="polite" title="Approved knowledge sources for the selected client are retrieved from the private company knowledge index.">Knowledge · waiting for a task</div>
+  <div id="knowledgeStatus" class="budget-status" aria-live="polite" title="Approved knowledge sources are retrieved from the explicitly configured client scope and reusable shared BFCI guidance.">Knowledge · waiting for a task</div>
   <div id="actionCoverageStatus" class="budget-status" aria-live="polite" title="Native action support is separate from Plugin API health checks. The current catalog includes editing, layout, vectors, effects, grids, components and instance operations; this is not yet literal one-to-one parity with Automator’s 100+ actions.">Figma actions · 32 native design operation types</div>
 
   <section class="selection-panel" aria-label="Current Figma selection" aria-live="polite">
@@ -137,6 +174,10 @@
   <script>
     const API = "https://ux-direct-git-work-vercel-cockpit-preflight-screenroot.vercel.app"; // Keep plugin requests on the same PR preview as the visual-analysis backend.
     const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
+    // Project picker is intentionally hidden for now. DMI is the temporary active scope;
+    // Ujjivan remains a separate server-side namespace for its rollout.
+    const ACTIVE_PROJECT_KEY = "DMI";
+    const ACTIVE_PROJECT_LABEL = "DMI";
     const $ = (id) => document.getElementById(id);
     let verifiedFileKey = null;
     let pluginSessionStarted = false;
@@ -153,6 +194,8 @@
     let modelAvailable = false;
     let modelOptions = [];
     let modelProbeVersion = 0;
+    let monitoringInFlight = false;
+    let monitoringRefreshTimer = null;
     let openRouterFreeQuotaExhausted = false;
     let currentSelection = { fileKey: null, pageName: "", selection: [], revision: 0, previewDataUrl: null, previewNodeId: null };
     const chatHistory = [];
@@ -182,16 +225,88 @@
     function updateDailyBudgetStatus(budget) {
       const target = $("budgetStatus");
       if (!target) return;
+      const progress = document.querySelector(".budget-progress");
+      const fill = $("budgetProgressFill");
       if (!budget || !Number.isFinite(Number(budget.spentInr)) || !Number.isFinite(Number(budget.limitInr)) || !Number.isFinite(Number(budget.remainingInr))) {
-        target.textContent = "AI budget · ₹50/day · live balance unavailable; paid calls fail closed";
+        target.textContent = "AI budget · live balance unavailable; paid calls fail closed";
         target.title = "The server-side daily budget guard remains active. If the transactional ledger cannot be checked, paid inference is blocked.";
+        if (fill) fill.style.width = "0%";
+        if (progress) progress.setAttribute("aria-valuenow", "0");
         return;
       }
       const spent = Number(budget.spentInr);
       const limit = Number(budget.limitInr);
       const remaining = Number(budget.remainingInr);
-      target.textContent = "AI budget · ₹" + spent.toFixed(2) + " / ₹" + limit.toFixed(0) + " used in 24h · ₹" + remaining.toFixed(2) + " left";
-      target.title = "Rolling 24-hour reservations include a conservative safety margin. Failed provider attempts remain reserved for safety until they age out.";
+      const percent = limit > 0 ? Math.max(0, Math.min(100, spent / limit * 100)) : 0;
+      target.textContent = "AI budget · ₹" + spent.toFixed(2) + " / ₹" + limit.toFixed(0) + " reserved · ₹" + remaining.toFixed(2) + " left";
+      target.title = "Shared rolling 24-hour budget. Includes paid inference and embedding reservations, with a safety margin.";
+      if (fill) fill.style.width = percent.toFixed(1) + "%";
+      if (progress) progress.setAttribute("aria-valuenow", String(Math.round(percent)));
+      const summary = $("budgetLedgerSummary");
+      if (summary) summary.textContent = "₹" + spent.toFixed(2) + " reserved out of ₹" + limit.toFixed(2) + " in the rolling 24-hour window · ₹" + remaining.toFixed(2) + " remaining.";
+    }
+
+    function updateDailyBudgetLedger(ledger) {
+      const meta = $("budgetLedgerMeta");
+      const summary = $("budgetLedgerSummary");
+      const list = $("budgetLedgerEntries");
+      if (!meta || !summary || !list) return;
+      list.replaceChildren();
+      if (!ledger || ledger.available !== true || !Array.isArray(ledger.entries)) {
+        meta.textContent = "Live ledger unavailable";
+        summary.textContent = ledger && ledger.error ? String(ledger.error) : "The server returned no reservation ledger.";
+        const empty = document.createElement("div");
+        empty.className = "budget-ledger-empty";
+        empty.textContent = "Could not load live reservation rows. Paid inference remains fail-closed if the server cannot verify budget usage.";
+        list.appendChild(empty);
+        return;
+      }
+      const checkedAt = ledger.checkedAt ? new Date(ledger.checkedAt) : new Date();
+      meta.textContent = "Updated " + checkedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) + " · last 24h";
+      const totalCount = Number.isFinite(Number(ledger.totalCount)) ? Number(ledger.totalCount) : ledger.entries.length;
+      summary.textContent = totalCount + " reservation(s) recorded in the rolling 24-hour window. Showing " + ledger.entries.length + " most recent.";
+      if (!ledger.entries.length) {
+        const empty = document.createElement("div");
+        empty.className = "budget-ledger-empty";
+        empty.textContent = "No paid-model or embedding reservations in the last 24 hours.";
+        list.appendChild(empty);
+        return;
+      }
+      ledger.entries.forEach((entry) => {
+        const row = document.createElement("div");
+        row.className = "budget-ledger-row";
+        const time = document.createElement("span");
+        time.className = "budget-ledger-time";
+        const when = entry && entry.reservedAt ? new Date(entry.reservedAt) : null;
+        time.textContent = when && Number.isFinite(when.getTime())
+          ? when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+          : "—";
+        time.title = when && Number.isFinite(when.getTime()) ? when.toLocaleString() : "";
+        const model = document.createElement("span");
+        model.className = "budget-ledger-model";
+        model.textContent = String(entry && entry.modelId || "Unknown model");
+        model.title = model.textContent;
+        const state = document.createElement("span");
+        state.className = "budget-ledger-state";
+        const rawState = String(entry && entry.state || "unknown");
+        state.textContent = rawState === "completed" ? "Settled" : rawState === "reserved" ? "Reserved" : rawState;
+        state.title = rawState;
+        const amount = document.createElement("span");
+        amount.className = "budget-ledger-amount";
+        const amountInr = Number(entry && entry.amountInr);
+        amount.textContent = Number.isFinite(amountInr) ? "₹" + amountInr.toFixed(3) : "—";
+        row.append(time, model, state, amount);
+        list.appendChild(row);
+      });
+    }
+
+    function toggleBudgetLedger(open) {
+      const panel = $("budgetLedgerPanel");
+      if (!panel) return;
+      const show = typeof open === "boolean" ? open : panel.hidden;
+      panel.hidden = !show;
+      $("budgetLedgerToggle").setAttribute("aria-expanded", String(show));
+      if (show) void loadOpenRouterMonitoring();
     }
 
     function updateOpenRouterSpendStatus(monitoring) {
@@ -236,17 +351,24 @@
     }
 
     async function loadOpenRouterMonitoring() {
-      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy) return;
+      if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY || !backendHealthy || monitoringInFlight) return;
+      monitoringInFlight = true;
       try {
         const response = await fetch(API + "/api/openrouter/monitoring?fileKey=" + encodeURIComponent(verifiedFileKey), { method: "GET", cache: "no-store" });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || "Monitoring endpoint returned HTTP " + response.status + ".");
         updateOpenRouterSpendStatus(payload.openRouter);
         updateLearningStatus(payload.learning);
-        if (payload.dailyBudget) updateDailyBudgetStatus(payload.dailyBudget);
+        updateDailyBudgetStatus(payload.dailyBudget || null);
+        updateDailyBudgetLedger(payload.dailyBudgetLedger || null);
       } catch (error) {
-        updateOpenRouterSpendStatus({ configured: true, available: false, error: error && error.message ? error.message : "Monitoring request failed." });
+        const detail = error && error.message ? error.message : "Monitoring request failed.";
+        updateOpenRouterSpendStatus({ configured: true, available: false, error: detail });
         updateLearningStatus({ available: false });
+        updateDailyBudgetStatus(null);
+        updateDailyBudgetLedger({ available: false, error: detail });
+      } finally {
+        monitoringInFlight = false;
       }
     }
 
@@ -642,6 +764,7 @@
 
     window.addEventListener("pagehide", () => {
       if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      if (monitoringRefreshTimer) window.clearInterval(monitoringRefreshTimer);
       if (healthTimeout) window.clearTimeout(healthTimeout);
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
       const body = JSON.stringify({
@@ -905,7 +1028,6 @@
       $("modelSelect").disabled = true;
       $("prompt").disabled = true;
       isSending = true;
-      $("projectSelect").disabled = true;
       showTyping();
       setActivity("Thinking…");
 
@@ -943,7 +1065,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             fileKey: verifiedFileKey,
-            project: $("projectSelect").value,
+            project: ACTIVE_PROJECT_KEY,
             provider: currentModel.provider,
             model: currentModel.id,
             intent: variationIntent ? "design-variation" : designIntent ? "design-operation" : "chat",
@@ -962,7 +1084,7 @@
         void loadOpenRouterMonitoring();
         if (data.dailyBudget) updateDailyBudgetStatus(data.dailyBudget);
         if (data.contextAssembly && $("knowledgeStatus")) {
-          const scopeLabel = $("projectSelect").options[$("projectSelect").selectedIndex].textContent || "selected project";
+          const scopeLabel = ACTIVE_PROJECT_LABEL;
           const count = Number(data.contextAssembly.retrievedSources || 0);
           $("knowledgeStatus").textContent = count > 0
             ? "Knowledge · " + count + " approved passage(s) · " + String(data.contextAssembly.retrievalMode || "retrieval") + " · " + scopeLabel
@@ -1224,7 +1346,6 @@
         hideTyping();
         isSending = false;
         $("prompt").disabled = false;
-        $("projectSelect").disabled = false;
         $("modelSelect").disabled = !backendHealthy || modelOptions.length === 0;
         updateSendAvailability();
         $("prompt").focus();
@@ -1235,13 +1356,6 @@
       event.preventDefault();
       void sendChatMessage();
     });
-    $("projectSelect").addEventListener("change", () => {
-      const projectLabel = $("projectSelect").options[$("projectSelect").selectedIndex].textContent || "selected project";
-      chatHistory.length = 0;
-      $("chatLog").replaceChildren();
-      appendMessage("assistant", "Project scope changed to " + projectLabel + ". Conversation history was cleared to prevent client context from carrying across.");
-      $("knowledgeStatus").textContent = "Knowledge · waiting for a task · " + projectLabel;
-    });
     $("prompt").addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
@@ -1250,9 +1364,23 @@
     });
     $("healthStatus").addEventListener("click", () => toggleHealthPanel());
     $("closeHealth").addEventListener("click", () => toggleHealthPanel(false));
+    $("budgetLedgerToggle").addEventListener("click", () => toggleBudgetLedger());
+    $("refreshBudgetLedger").addEventListener("click", () => void loadOpenRouterMonitoring());
+    $("closeBudgetLedger").addEventListener("click", () => toggleBudgetLedger(false));
     window.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") toggleHealthPanel(false);
+      if (event.key === "Escape") {
+        toggleHealthPanel(false);
+        toggleBudgetLedger(false);
+      }
     });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") void loadOpenRouterMonitoring();
+    });
+    window.addEventListener("focus", () => void loadOpenRouterMonitoring());
+    if (monitoringRefreshTimer) window.clearInterval(monitoringRefreshTimer);
+    monitoringRefreshTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadOpenRouterMonitoring();
+    }, 60000);
 
     parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
     window.onmessage = (event) => {
