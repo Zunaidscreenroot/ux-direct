@@ -60,7 +60,7 @@ export const PLUGIN_FREE_MODELS: PluginModelDefinition[] = [
     supportsToolCalling: false,
     inputUsdPerMillion: 0,
     outputUsdPerMillion: 0,
-    automaticRouting: false,
+    automaticRouting: true,
     specialties: ["vision", "screen-audit"],
   },
 ];
