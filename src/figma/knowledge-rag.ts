@@ -241,7 +241,7 @@ export async function retrieveProjectKnowledge(projectValue: string, query: stri
 
     const [semanticHits, keywordHits] = await Promise.all([semanticPromise, keywordPromise]);
     const hits = mergeHybridKnowledgeResults(semanticHits, keywordHits, 8) as ProjectKnowledgeHit[];
-    const retrievalMode = semanticHits.length && keywordHits.length
+    const retrievalMode: ProjectKnowledgeResult["retrievalMode"] = semanticHits.length && keywordHits.length
       ? "hybrid"
       : semanticHits.length
         ? "semantic"
