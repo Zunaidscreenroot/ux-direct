@@ -79,7 +79,7 @@ export class UXToolRegistry {
   }
 
   describe(): DiscoveredTool[] {
-    return [...this.tools.values()].map((tool) => this.toCard(tool, [], true));
+    return [...this.tools.values()].map((tool) => this.toCard(tool, []));
   }
 
   discover(request: ToolDiscoveryRequest = {}): DiscoveredTool[] {
@@ -91,7 +91,7 @@ export class UXToolRegistry {
     const maxRisk = request.allowedRisk ? RISK_RANK[request.allowedRisk] : RISK_RANK.high;
 
     return [...this.tools.values()]
-      .map((tool) => this.toCard(tool, [...intentTags], request.includeUnavailable ?? false))
+      .map((tool) => this.toCard(tool, [...intentTags]))
       .filter((tool) => {
         if (!request.includeUnavailable && !tool.available) return false;
         if (allowedOperations && !allowedOperations.has(tool.operation)) return false;
@@ -137,7 +137,6 @@ export class UXToolRegistry {
   private toCard(
     tool: UXToolDefinition,
     intentTags: readonly string[],
-    includeUnavailable: boolean,
   ): DiscoveredTool {
     const available = tool.available();
     const tags = new Set(tool.tags.map((tag) => tag.toLowerCase()));
@@ -153,7 +152,7 @@ export class UXToolRegistry {
       risk: tool.risk,
       costClass: tool.costClass,
       requiresApproval: tool.requiresApproval,
-      available: includeUnavailable ? available : available,
+      available,
       intentMatch,
     };
   }
