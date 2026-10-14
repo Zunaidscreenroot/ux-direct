@@ -397,6 +397,7 @@ export async function POST(request: Request) {
       attemptLatencyMs = result.latencyMs;
       attemptObservedCostUsd = result.observedCostUsd;
       attemptUsage = result.usage;
+      let uxdIrPlan: unknown = undefined;
       if (variationIntent) {
         let plan: unknown;
         try {
@@ -450,12 +451,13 @@ export async function POST(request: Request) {
           qualityGate: "passed",
         };
         validationPassed = true;
+        uxdIrPlan = plan;
       }
       if (uxdIrTrace && uxdIrTrace.mode === "action") {
         uxdIrTrace = {
           ...uxdIrTrace,
           status: "awaiting_confirmation",
-          artifacts: { ...(isRecord(uxdIrTrace.artifacts) ? uxdIrTrace.artifacts : {}), operationPlan: plan },
+          artifacts: { ...(isRecord(uxdIrTrace.artifacts) ? uxdIrTrace.artifacts : {}), ...(uxdIrPlan !== undefined ? { operationPlan: uxdIrPlan } : {}) },
         };
         await persistUxdIrTrace(uxdIrTrace, {
           totalPromptTokens: attemptUsage.promptTokens,
