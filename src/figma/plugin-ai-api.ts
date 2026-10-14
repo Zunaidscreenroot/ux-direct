@@ -12,47 +12,156 @@ export type PluginChatMessage = {
   content: PluginChatContent;
 };
 
-export const PLUGIN_FREE_MODELS = [
+export interface PluginModelDefinition {
+  id: string;
+  label: string;
+  tier: "free-tier" | "paid";
+  supportsImages: boolean;
+  supportsStructuredOutput: boolean;
+  supportsToolCalling: boolean;
+  inputUsdPerMillion: number | null;
+  outputUsdPerMillion: number | null;
+  automaticRouting: boolean;
+  specialties: string[];
+}
+
+export const PLUGIN_FREE_MODELS: PluginModelDefinition[] = [
   {
     id: "nvidia/nemotron-3.5-lightning:free",
     label: "NVIDIA Nemotron 3.5 Lightning · Free",
-    tier: "free-tier" as const,
+    tier: "free-tier",
     supportsImages: false,
+    supportsStructuredOutput: false,
+    supportsToolCalling: false,
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+    automaticRouting: true,
+    specialties: ["chat", "copy", "handoff"],
   },
   {
     id: "nvidia/nemotron-3-ultra-550b-a55b:free",
     label: "NVIDIA Nemotron 3 Ultra · Free",
-    tier: "free-tier" as const,
+    tier: "free-tier",
     supportsImages: false,
+    supportsStructuredOutput: false,
+    supportsToolCalling: false,
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+    automaticRouting: true,
+    specialties: ["chat", "copy", "reasoning"],
   },
   {
     id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-    label: "NVIDIA Nemotron Nano Omni · Free",
-    tier: "free-tier" as const,
+    label: "NVIDIA Nemotron Nano Omni · Free · Experimental vision",
+    tier: "free-tier",
     supportsImages: true,
+    supportsStructuredOutput: false,
+    supportsToolCalling: false,
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+    automaticRouting: false,
+    specialties: ["vision", "screen-audit"],
   },
-] as const;
+];
 
-export const PLUGIN_PAID_MODELS = [
+export const PLUGIN_PAID_MODELS: PluginModelDefinition[] = [
   {
     id: "deepseek/deepseek-v4-flash-0731",
     label: "DeepSeek V4 Flash 0731 · Paid",
-    tier: "paid" as const,
+    tier: "paid",
     supportsImages: false,
+    supportsStructuredOutput: true,
+    supportsToolCalling: true,
+    inputUsdPerMillion: 0.0152,
+    outputUsdPerMillion: 1.28,
+    automaticRouting: false,
+    specialties: ["reasoning", "coding", "text-plan"],
   },
   {
     id: "deepseek/deepseek-v4.1-flash",
     label: "DeepSeek V4.1 Flash · Paid",
-    tier: "paid" as const,
+    tier: "paid",
     supportsImages: true,
+    supportsStructuredOutput: true,
+    supportsToolCalling: true,
+    inputUsdPerMillion: 0.13,
+    outputUsdPerMillion: 0.52,
+    automaticRouting: true,
+    specialties: ["reasoning", "vision", "structured-plan", "journey-design"],
+  },
+  {
+    id: "anthropic/claude-haiku-5.5",
+    label: "Claude Haiku 5.5 · Paid · Low cost",
+    tier: "paid",
+    supportsImages: true,
+    supportsStructuredOutput: true,
+    supportsToolCalling: true,
+    inputUsdPerMillion: 0.1,
+    outputUsdPerMillion: 0.5,
+    automaticRouting: true,
+    specialties: ["vision", "screen-audit", "copy", "structured-plan"],
+  },
+  {
+    id: "z-ai/glm-4.6v",
+    label: "GLM 4.6V · Paid · Visual design",
+    tier: "paid",
+    supportsImages: true,
+    supportsStructuredOutput: true,
+    supportsToolCalling: true,
+    inputUsdPerMillion: 0.3,
+    outputUsdPerMillion: 0.9,
+    automaticRouting: true,
+    specialties: ["vision", "screen-redesign", "layout-analysis", "ui-reconstruction"],
+  },
+  {
+    id: "moonshotai/kimi-k2.5",
+    label: "Kimi K2.5 · Paid · Visual reasoning",
+    tier: "paid",
+    supportsImages: true,
+    supportsStructuredOutput: true,
+    supportsToolCalling: true,
+    inputUsdPerMillion: 0.45,
+    outputUsdPerMillion: 2.25,
+    automaticRouting: true,
+    specialties: ["vision", "screen-redesign", "agentic-planning", "journey-design"],
+  },
+  {
+    id: "google/gemini-3.1-pro-preview",
+    label: "Gemini 3.1 Pro · Paid · Complex reasoning",
+    tier: "paid",
+    supportsImages: true,
+    supportsStructuredOutput: true,
+    supportsToolCalling: true,
+    inputUsdPerMillion: 2,
+    outputUsdPerMillion: 12,
+    automaticRouting: true,
+    specialties: ["vision", "complex-reasoning", "journey-design", "large-context"],
+  },
+  {
+    id: "anthropic/claude-sonnet-5.5",
+    label: "Claude Sonnet 5.5 · Paid · Premium quality",
+    tier: "paid",
+    supportsImages: true,
+    supportsStructuredOutput: true,
+    supportsToolCalling: true,
+    inputUsdPerMillion: 2,
+    outputUsdPerMillion: 10,
+    automaticRouting: true,
+    specialties: ["vision", "premium-redesign", "quality-review", "complex-reasoning"],
   },
   {
     id: "openai/gpt-6-luna",
-    label: "GPT-6 Luna · Paid",
-    tier: "paid" as const,
+    label: "GPT-6 Luna · Paid · Manual only (pricing unverified)",
+    tier: "paid",
     supportsImages: false,
+    supportsStructuredOutput: false,
+    supportsToolCalling: false,
+    inputUsdPerMillion: null,
+    outputUsdPerMillion: null,
+    automaticRouting: false,
+    specialties: ["manual-test"],
   },
-] as const;
+];
 
 type OpenRouterResponsePayload = {
   model?: unknown;
@@ -126,9 +235,11 @@ export function getPluginModelList() {
     ...model,
     provider: "openrouter" as const,
     available: hasApiKey,
-    reason: hasApiKey
-      ? "Provider key is present. Use Test to verify this model; paid inference may incur an API charge."
-      : "Model service credentials are not configured for this deployment.",
+    reason: !hasApiKey
+      ? "Model service credentials are not configured for this deployment."
+      : model.inputUsdPerMillion === null || model.outputUsdPerMillion === null
+        ? "Manual-only: current pricing/capabilities have not been verified, so automatic routing is disabled."
+        : "Model is configured. Use Test to verify it before routing; paid inference may incur an API charge.",
   }));
   return [...freeModels, ...paidModels];
 }
