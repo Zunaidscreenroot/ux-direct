@@ -247,6 +247,7 @@ export async function POST(request: Request) {
         const reservation = await reserveDailyPaidModelBudget({
           estimatedCostUsd: estimatedCallCostUsd,
           model: candidate.id,
+          requestId: learningRequestId + ":" + index,
         });
         if (!reservation.allowed) {
           throw new PluginOpenRouterError(
