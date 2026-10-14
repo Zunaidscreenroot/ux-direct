@@ -192,7 +192,10 @@ export async function POST(request: Request) {
     "Page: " + (typeof selection.pageName === "string" ? selection.pageName : ""),
     "Selected layers: " + selectedLayerNames,
   ].filter(Boolean).join("\n").slice(0, 4000);
-  const knowledge = await retrieveProjectKnowledge(activeProjectKey, retrievalQuery);
+  const shortGreeting = /^(hi|hello|hey|thanks|thank you|ok|okay|good morning|good afternoon)[.!\\s]*$/i.test(lastUserPrompt.trim());
+  const knowledge = lastUserPrompt.trim().length >= 12 && !shortGreeting
+    ? await retrieveProjectKnowledge(activeProjectKey, retrievalQuery)
+    : { available: true, projectKey: activeProjectKey, hits: [], context: "", retrievalMode: "skipped" as const };
   const baseAugmentedPrompt = useClientRoute && clientSystemPrompt
     ? clientSystemPrompt + "\n\n" + capabilityGuardrails
     : baseSystemPrompt + "\n\n" + capabilityGuardrails;
