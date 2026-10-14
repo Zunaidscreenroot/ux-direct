@@ -211,6 +211,7 @@
     let heartbeatTimer = null;
     let isSending = false;
     let lastUxdRunId = null;
+    let pendingUxdRunId = null;
     let uxdTraceLoading = false;
     let connectionDiagnosticRow = null;
     let modelProbeRow = null;
@@ -595,12 +596,12 @@
     }
     function hideTyping() { const typing = $("typing"); if (typing) typing.remove(); }
     appendMessage("assistant", "Hi! What are we working on?");
-    async function updateUxdTraceStatus(status, results) {
-      if (!lastUxdRunId || !verifiedFileKey) return;
+    async function updateUxdTraceStatus(status, results, runIdOverride) {
+      const runId = typeof runIdOverride === "string" ? runIdOverride : lastUxdRunId;
+      if (!runId || !verifiedFileKey) return;
       const resultItems = Array.isArray(results) ? results : [];
       const appliedOperations = resultItems.reduce((sum, item) => sum + Math.max(0, Number(item && item.operationsApplied) || 0), 0);
       const failedOperations = resultItems.reduce((sum, item) => sum + Math.max(0, Number(item && item.operationsFailed) || 0), 0);
-      const runId = lastUxdRunId;
       try {
         await fetch(API + "/api/uxd-traces", {
           method: "POST",
@@ -1193,6 +1194,7 @@
       if (isSending) return;
       const prompt = (typeof overrideText === "string" ? overrideText : $("prompt").value).trim();
       if (prompt.length < 1) return;
+      let requestUxdRunId = null;
       const variationIntent = /\b(?:create|make|generate|build|produce|want|show|give)\b[\s\S]{0,100}\b(?:variation|variations|variant|variants|alternative|alternatives|options|new screen|new version)\b|\b(?:clone|duplicate)\b[\s\S]{0,60}\b(?:screen|frame|variation|version)\b/i.test(prompt);
       const highComputeIntent = variationIntent || /\b(?:redesign|rework|restructure|responsive|desktop version|mobile version|multi[- ]?screen|journey design|user flow|vkyc flow|cpv flow|new screen|generate screen|design system|auto[- ]layout)\b/i.test(prompt);
       const visualIntent = /\b(scan|look\s+at|inspect|review|audit|critique|improv(?:e|ement|ements)|better|redesign|layout|spacing|alignment|screen|screenshot|compare|design quality|hierarchy|analy[sz]e|evaluation|evaluate|assess|what\s+(?:is|looks)\s+wrong|find\s+(?:issues|problems)|feedback|visual design|usability|affordance|contrast|typography|white\s*space|overflow|clipping)\b/i.test(prompt) || variationIntent;
@@ -1310,7 +1312,8 @@
         }
         if (data.uxdIrTrace && typeof data.uxdIrTrace.runId === "string") {
           lastUxdRunId = data.uxdIrTrace.runId;
-          setModelStatus("ok", "UXD-IR pipeline complete", "Vision evidence and structured operation plan are saved as run " + lastUxdRunId + ". Natural-language explanation is optional.");
+          requestUxdRunId = lastUxdRunId;
+          setModelStatus("ok", "UXD-IR pipeline complete", "Compact stage evidence and validated artifacts are saved as run " + lastUxdRunId + ". Natural-language explanation is optional.");
         }
         if (!response.ok) throw new Error(data.error || "The assistant returned HTTP " + response.status + (data.requestId ? " · Request " + data.requestId : ""));
         if (typeof data.content !== "string" || !data.content.trim()) throw new Error("The assistant returned an empty message. Please try again.");
@@ -1493,16 +1496,14 @@
             setActivity("Vision evidence and operation plan validated. Waiting for confirmation.");
             const confirmed = window.confirm("Create " + variations.length + " new frame variation(s)?\n\n" + summary + "\n\nThe source frame stays unchanged. The native Figma executor will apply operations only to new copies.");
             if (confirmed) {
+              pendingUxdRunId = requestUxdRunId;
               parent.postMessage({ pluginMessage: { type: "apply-design-variations", payload: {
                 sourceId: source.id,
                 variations: variations.map((item) => ({ name: item.name, rationale: item.rationale, operations: item.operations }))
               } } }, "*");
               setActivity("Creating frame variations…");
             } else {
-              if (lastUxdRunId) void fetch(API + "/api/uxd-traces", {
-                method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ fileKey: verifiedFileKey, project: ACTIVE_PROJECT_KEY, runId: lastUxdRunId, status: "cancelled" })
-              }).catch(() => {});
+              if (requestUxdRunId) void updateUxdTraceStatus("cancelled", [], requestUxdRunId);
               setActivity("Variation plan cancelled. No frames were created.");
             }
             return;
@@ -1561,7 +1562,7 @@
         setActivity("Response received. Continue the conversation or give me the next task.");
       } catch (error) {
         const message = error && error.message ? error.message : "Unknown chat error";
-        if (lastUxdRunId && (variationIntent || auditIntent)) void updateUxdTraceStatus("failed", []);
+        if (requestUxdRunId && (variationIntent || auditIntent)) void updateUxdTraceStatus("failed", [], requestUxdRunId);
         appendMessage("assistant", "I couldn’t complete that response: " + message + "\n\nYour message is still in this session’s conversation context. You can retry or continue with a smaller request.");
         setActivity("Response failed. Your Figma document was not changed by this chat request.");
       } finally {
@@ -1649,21 +1650,22 @@
 
       if (message.type === "design-variation-result") {
         const results = Array.isArray(message.results) ? message.results : [];
-        if (lastUxdRunId) void updateUxdTraceStatus(message.ok ? "completed" : "failed", results);
+        const completedRunId = pendingUxdRunId;
+        pendingUxdRunId = null;
+        if (completedRunId) void updateUxdTraceStatus(message.ok ? "completed" : "failed", results, completedRunId);
         if (results.length) {
           appendMessage("assistant", message.ok ? "Done — variation frames created." : "Execution partially failed. Inspect the new frames before retrying.");
           setActivity(message.ok ? "Variation frames created and selected for review." : "Some variation operations failed; inspect the new frames.");
         } else {
           appendMessage("assistant", "Execution failed. Inspect the canvas before retrying.");
           setActivity("Variation creation failed; inspect the canvas before retrying.");
-          if (lastUxdRunId) void updateUxdTraceStatus("failed", []);
+          if (completedRunId) void updateUxdTraceStatus("failed", [], completedRunId);
         }
         return;
       }
 
       if (message.type === "design-operation-result") {
         const results = Array.isArray(message.results) ? message.results : [];
-        if (lastUxdRunId) void updateUxdTraceStatus(message.ok ? "completed" : "failed", results);
         if (message.ok) {
           appendMessage("assistant", "Done — Figma changes applied.");
           setActivity("Changes applied. Review the frame visually.");
