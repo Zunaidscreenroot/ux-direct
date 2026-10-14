@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { providersFromEnv } from "@/src/model-gateway";
+import { netlifyDeploymentScope } from "@/src/netlify/deployment-scope";
 
 const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 function isAllowedOrigin(origin: string | null, request: Request): boolean {
@@ -29,7 +30,7 @@ export async function GET(request: Request) {
   const activeProviders = providersFromEnv().filter(provider => provider.kind !== "mock");
   return NextResponse.json({
     service: "ux-direct-backend", status: "ok", checkedAt: new Date().toISOString(),
-    deployment: { platform: "netlify", host: new URL(request.url).host },
+    deployment: { platform: "netlify", host: new URL(request.url).host, context: process.env.CONTEXT || "local", stateScope: netlifyDeploymentScope() },
     mode: activeProviders.length ? activeProviders.map(provider => provider.name).join(", ") : "mock",
     modelProviderConfigured: activeProviders.length > 0,
     figma: {
