@@ -66,3 +66,10 @@ The modular-hands feature branch contains initial primitives for the world model
 - Persist facts, evidence and decisions only through a store that enforces workspace scope. The in-memory world model is currently a reference implementation.
 - Keep model credentials, routing and paid-budget enforcement server-side.
 - Deployments stay separate from feature-branch architecture work.
+
+
+## Capability growth and evidence-backed learning
+
+The universal Brain must keep one intelligence while its capability registry grows. New website, application or future-domain abilities are registered with versioned metadata and runtime checks; they are discovered when relevant rather than inserted into a hardcoded task sequence. The capability registry describes abilities, while the runtime tool registry remains the authoritative gate for actual operations.
+
+The optional director learning hook supplies scoped, advisory preferences from repeated verified outcomes. The learning loop excludes raw prompts/design payloads, requires explicit licensing and approval for cross-client signals, and cannot grant tool access or bypass budget/approval rules. See [Capability Registry and Evidence-Backed Learning](capability-registry-and-learning.md) for implementation details and production gaps.
