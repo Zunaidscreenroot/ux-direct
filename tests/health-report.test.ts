@@ -1,3 +1,4 @@
+import { FIGMA_ACTION_CATALOGUE, summarizeActionCatalogue, FIGMA_ACTION_CATALOGUE_TARGET } from "../src/quality/figma-action-catalogue";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -144,4 +145,25 @@ test("smoke test fails when an online plugin has no persisted report or when act
     report: failedReport,
   });
   assert.equal(results.find((item) => item.name === "Native Figma action results")?.status, "fail");
+});
+
+
+test("action catalogue has at least 100 unique, categorized action definitions", () => {
+  const summary = summarizeActionCatalogue();
+  const ids = FIGMA_ACTION_CATALOGUE.map((item) => item.id);
+  assert.ok(summary.total >= FIGMA_ACTION_CATALOGUE_TARGET);
+  assert.equal(new Set(ids).size, ids.length, "Action IDs must be unique");
+  assert.ok(summary.categories.length >= 10, "Catalogue should span multiple Figma/UX capability groups");
+  for (const item of FIGMA_ACTION_CATALOGUE) {
+    assert.ok(item.id.length > 0);
+    assert.ok(item.category.length > 0);
+    assert.ok(item.requiredApi.length > 0);
+    if (item.destructive) assert.equal(item.needsHumanApproval, true, item.id + " destructive actions need approval");
+  }
+});
+
+test("health audit reports catalogue readiness independently from executed native tests", () => {
+  const audit = inspectHealthReport(makeReport());
+  assert.equal(audit.actionCatalogue.total, FIGMA_ACTION_CATALOGUE.length);
+  assert.equal(audit.actionReadinessComplete, audit.actionCatalogue.total >= FIGMA_ACTION_CATALOGUE_TARGET);
 });
