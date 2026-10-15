@@ -9,9 +9,9 @@
   ],
   "networkAccess": {
     "allowedDomains": [
-      "https://uxdirect.netlify.app"
+      "https://deploy-preview-31--uxdirect.netlify.app"
     ],
-    "reasoning": "UX Direct sends the user's prompt and selected node metadata to its backend to create a task plan. It does not upload file contents or modify the design in this MVP."
+    "reasoning": "For this test branch, UX Direct calls the PR-specific Netlify Deploy Preview only. The ChatGPT MCP endpoint and Figma plugin API use this same preview host; production is deliberately not contacted."
   },
   "enablePrivatePluginApi": true,
   "documentAccess": "dynamic-page"

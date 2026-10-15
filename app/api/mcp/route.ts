@@ -108,9 +108,22 @@ async function callTool(name: string, args: unknown, request: Request) {
       }),
     ]);
     const backend = await backendResponse.json().catch(() => ({ error: "Health endpoint returned invalid JSON." }));
+    const backendHealthy = backendResponse.ok && backend?.status === "ok";
+    const backendHost = typeof backend?.deployment?.host === "string"
+      ? backend.deployment.host
+      : new URL(request.url).host;
     return toolText({
       checkedAt: new Date().toISOString(),
-      backend: { reachable: backendResponse.ok, status: backendResponse.ok ? "connected" : "error", details: backend },
+      backend: {
+        connected: backendHealthy,
+        reachable: backendResponse.ok,
+        state: backendHealthy ? "connected" : "disconnected",
+        status: backendHealthy ? "connected" : "error",
+        httpStatus: backendResponse.status,
+        host: backendHost,
+        lastCheckedAt: typeof backend?.checkedAt === "string" ? backend.checkedAt : null,
+        details: backend,
+      },
       chatgptConnector: {
         state: chatgptConnector.state,
         connected: chatgptConnector.connected,
