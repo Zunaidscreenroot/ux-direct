@@ -43,6 +43,30 @@ A real task should result in editable, product-consistent design output plus rat
 
 This repository is being initialized. Start with a small, testable vertical slice rather than attempting every capability at once. Keep architecture extensible and measure each addition against real Express Computers and DMI Finance work.
 
+## ChatGPT MCP connection
+
+The remote MCP endpoint is `/api/mcp`. ChatGPT connects using OAuth authorization code flow with PKCE; it does not require a manually entered Bearer API key.
+
+For a Netlify Deploy Preview, use:
+
+```text
+https://<your-deploy-preview-host>/api/mcp
+```
+
+OAuth discovery is exposed at:
+
+- `/.well-known/oauth-authorization-server`
+- `/.well-known/oauth-protected-resource`
+- `/.well-known/oauth-protected-resource/api/mcp`
+
+Configure these **secret** environment variables in Netlify for the `deploy-preview` context, with **Functions** and **Runtime** scopes:
+
+- `UX_DIRECT_MCP_OAUTH_SECRET`: a unique random signing secret, at least 32 characters.
+- `UX_DIRECT_MCP_CONNECTION_CODE`: a private code you enter on the UX Direct authorization screen.
+- `UX_DIRECT_MCP_ISSUER_URL`: optional. Leave unset on previews so the URL is inferred from the preview host.
+
+Never commit the actual values. After configuring them, redeploy the preview so the function runtime can read them. The MCP server validates signed access tokens and scopes each tool: `ux:read` for status/read operations, `ux:plan` for task planning, and `figma:health` for the Figma diagnostic command.
+
 ## Security
 
 - Keep API keys in environment variables; never commit secrets.
