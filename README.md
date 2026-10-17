@@ -47,7 +47,7 @@ This repository is being initialized. Start with a small, testable vertical slic
 
 The remote MCP endpoint is `/api/mcp`. ChatGPT connects using OAuth authorization code flow with PKCE; it does not require a manually entered Bearer API key.
 
-For a Netlify Deploy Preview, use:
+For a Vercel Preview deployment, use:
 
 ```text
 https://<your-deploy-preview-host>/api/mcp
@@ -59,13 +59,17 @@ OAuth discovery is exposed at:
 - `/.well-known/oauth-protected-resource`
 - `/.well-known/oauth-protected-resource/api/mcp`
 
-Configure these **secret** environment variables in Netlify for the `deploy-preview` context, with **Functions** and **Runtime** scopes:
+Configure these **secret** environment variables in Vercel for the **Preview** environment:
 
 - `UX_DIRECT_MCP_OAUTH_SECRET`: a unique random signing secret, at least 32 characters.
 - `UX_DIRECT_MCP_CONNECTION_CODE`: a private code you enter on the UX Direct authorization screen.
 - `UX_DIRECT_MCP_ISSUER_URL`: optional. Leave unset on previews so the URL is inferred from the preview host.
 
 Never commit the actual values. After configuring them, redeploy the preview so the function runtime can read them. The MCP server validates signed access tokens and scopes each tool: `ux:read` for status/read operations, `ux:plan` for task planning, and `figma:health` for the Figma diagnostic command.
+
+## Vercel storage
+
+The Figma plugin bridge, ChatGPT connection activity, model usage ledger, and gateway settings use the project's private Vercel Blob store. Keep the `BLOB_READ_WRITE_TOKEN` attached to the Vercel project for Preview and Production environments. Blob keys are namespaced by feature and branch so preview configuration and usage records do not overwrite production records. Legacy Netlify Blob records are not automatically copied into Vercel Blob; historical records must be exported from Netlify and imported separately if needed.
 
 ## Security
 
