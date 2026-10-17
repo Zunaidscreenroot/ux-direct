@@ -1,5 +1,5 @@
 import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
-import { getMcpIssuer, verifyMcpPayload } from "@/lib/mcp-oauth";
+import { getMcpIssuer, getMcpSecret, verifyMcpPayload } from "@/lib/mcp-oauth";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -355,6 +355,7 @@ export async function POST(request: Request) {
   let token: AuthClaims | null;
   try {
     issuer = getMcpIssuer(request);
+    getMcpSecret();
     token = verifyMcpPayload(getBearer(request), "access") as AuthClaims | null;
   } catch {
     return NextResponse.json(
