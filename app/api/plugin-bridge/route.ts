@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { recordOperationalEvent } from "@/src/observability/event-log";
-import { listBlobPathnames, readBlobJson, writeBlobJson } from "@/src/storage/vercel-blob-json";
+import { listBlobPathnames, readBlobJson, vercelBlobNamespace, writeBlobJson } from "@/src/storage/vercel-blob-json";
 import { ALLOWED_FIGMA_FILE_KEY, isAllowedFigmaFileKey } from "@/src/security/figma-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const PREFIX = "ux-direct-bridge";
+const PREFIX = vercelBlobNamespace("ux-direct-bridge");
 const PLUGIN_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 const ID = z.string().trim().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/);
 const CHECK = z.object({
