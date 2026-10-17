@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readBlobJson, writeBlobJson } from "@/src/storage/vercel-blob-json";
+import { isVercelBlobConfigured, readBlobJson, writeBlobJson } from "@/src/storage/vercel-blob-json";
 
 export type GatewayMode = "free" | "paid" | "local" | "mock";
 export type ModulePolicy = { enabled: boolean; mode: GatewayMode; selectedModelKey: string; monthlyBudgetInr: number; maxRequestCostInr: number; allowFallback: boolean };
@@ -92,7 +92,7 @@ function cleanSettings(input: unknown): GatewaySettings {
 }
 export async function getGatewaySettings(): Promise<GatewaySettings> {
   const key = envScopeKey();
-  try {
+  if (isVercelBlobConfigured()) try {
     const value = await readBlobJson<unknown>(key);
     if (value && typeof value === "object") {
       const settings = cleanSettings(value);
@@ -107,10 +107,12 @@ export async function saveGatewaySettings(input: unknown): Promise<GatewaySettin
   const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
   const settings = cleanSettings({ ...raw, updatedAt: new Date().toISOString() });
   runtimeSettings.set(key, settings);
-  try {
-    await writeBlobJson(key, settings);
-  } catch (error) {
-    throw new Error("Could not persist gateway settings to Vercel Blob: " + (error instanceof Error ? error.message : "unknown error"));
+  if (isVercelBlobConfigured()) {
+    try {
+      await writeBlobJson(key, settings);
+    } catch (error) {
+      throw new Error("Could not persist gateway settings to Vercel Blob: " + (error instanceof Error ? error.message : "unknown error"));
+    }
   }
   return settings;
 }
