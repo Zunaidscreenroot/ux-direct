@@ -30,7 +30,7 @@ export function vercelBlobNamespace(base: string): string {
  * Only server-side code should call this helper; blob URLs remain private.
  */
 export async function readBlobJson<T>(pathname: string): Promise<T | null> {
-  const blob = await get(pathname, { access: PRIVATE_ACCESS });
+  const blob = await get(pathname, { access: PRIVATE_ACCESS, useCache: false });
   if (!blob || blob.statusCode !== 200 || !blob.stream) return null;
 
   const raw = await new Response(blob.stream).text();
