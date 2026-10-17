@@ -122,7 +122,7 @@ function ModelGatewayPanel(){
     <label className="gateway-control-field"><span>USD → INR rate</span><input type="number" min="1" max="250" step=".5" value={fx} onChange={e=>mutate(s=>({...s,usdToInrRate:Math.max(1,Math.min(250,Number(e.target.value)||97))}))}/><small>Used to convert published USD rate suggestions; editable.</small></label>
     <label className="gateway-master-toggle"><input type="checkbox" checked={settings?.paidRoutingEnabled??false} onChange={e=>mutate(s=>({...s,paidRoutingEnabled:e.target.checked}))}/><span><strong>Allow paid routing</strong><small>Master switch · also needs server-side ALLOW_PAID_MODELS=true</small></span></label>
    </div>
-   <p className="gateway-footnote">{data?.budget.retention==="netlify-blobs"?"Branch-scoped Netlify Blobs persistence is active.":"Runtime fallback may reset on serverless restarts."} Blob storage is not transactional: simultaneous paid requests can race a cap. Treat budgets as best-effort until transactional reservations are implemented.</p>
+   <p className="gateway-footnote">{data?.budget.retention==="vercel-blob"?"Branch-scoped Vercel Blob persistence is active.":"Runtime fallback may reset on serverless restarts."} Blob storage is not transactional: simultaneous paid requests can race a cap. Treat budgets as best-effort until transactional reservations are implemented.</p>
   </section>
   <div className="gateway-section-heading"><div><span className="section-kicker">01 · MODULE CONTROL</span><h2>One model policy per agent</h2><p>Switch modules on/off. Choose a mode and exact model, then define monthly and per-request caps.</p></div><span className="count">{modules.filter(m=>settings?.modules[m.id]?.enabled).length} / {modules.length} ON</span></div>
   <div className="gateway-module-grid">{modules.map(module=>{const p=settings?.modules[module.id];if(!p)return null;const chosen=models.find(m=>m.selectionKey===p.selectedModelKey);const rec=recommendation(module,p.mode);const paidRec=recommendation(module,"paid");const used=data?.budget.spentByModuleInr?.[module.id]??0;return <article className={"gateway-module-card "+(!p.enabled?"module-disabled":"")} key={module.id}>
@@ -153,10 +153,10 @@ function ModelGatewayPanel(){
   <div className="gateway-section-heading"><div><span className="section-kicker">03 · PROVIDER REGISTRY</span><h2>API key placeholders</h2></div><span className="count">{keyReady} KEYS DETECTED</span></div>
   <div className="gateway-provider-grid">{(data?.providers??[]).map(p=><article className="gateway-provider-card" key={p.id}><div className="gateway-provider-top"><span className="gateway-provider-mark">{p.label.split(" ").map(w=>w[0]).join("").slice(0,2)}</span><span className={"status-chip "+(p.configured?"status-success":"status-neutral")}>{p.configured?"Configured · unverified":p.keyDetected?"Key detected · setup incomplete":p.tier==="local"?"Endpoint not configured":"Key not added"}</span></div><h3>{p.label}</h3><p>{p.tier==="paid"?"Paid provider · opt-in required":p.tier==="local"?"Local inference · no API token charge":"Free-tier candidate · verify account and quotas"}</p><label className="gateway-key-label" htmlFor={"key-slot-"+p.id}>{p.envName}</label><div className="gateway-key-placeholder"><input id={"key-slot-"+p.id} type="password" placeholder={p.secretRequired?"API key placeholder · final step":"Local endpoint placeholder"} disabled readOnly aria-label={p.envName+" placeholder; edit disabled"}/><span>{p.keyDetected?"KEY DETECTED":p.configured?"CONNECTED":"PLACEHOLDER"}</span></div><small className="gateway-provider-note">No keys are collected or stored in the dashboard. Add credentials later through server-side environment variables.</small></article>)}</div>
   <div className="gateway-section-heading"><div><span className="section-kicker">04 · TOKEN LEDGER</span><h2>Every request attributed to a purpose</h2><p>Usage, model, latency, status and estimated cost; prompt/response content is never shown.</p></div><span className="count">{Math.min(records.length,200)} / 200 RECORDS</span></div>
-  <section className="gateway-panel token-ledger-panel"><div className="token-ledger-intro"><div><strong>Request-by-request accounting</strong><p>Current month only; cost is estimated from configured rates.</p></div><span className="ledger-retention">{data?.budget.retention==="netlify-blobs"?"Persistent · scoped ledger":"Runtime fallback"}</span></div>
+  <section className="gateway-panel token-ledger-panel"><div className="token-ledger-intro"><div><strong>Request-by-request accounting</strong><p>Current month only; cost is estimated from configured rates.</p></div><span className="ledger-retention">{data?.budget.retention==="vercel-blob"?"Persistent · scoped ledger":"Runtime fallback"}</span></div>
    {records.length===0?<div className="gateway-empty-state"><div className="gateway-empty-icon">◷</div><strong>No model calls recorded this month</strong><p>Mock smoke test verifies wiring at ₹0 but isn&apos;t AI inference.</p></div>:<div className="token-ledger-table-wrap"><table className="gateway-table token-table"><thead><tr><th>TIME / REQUEST</th><th>MODULE</th><th>MODEL</th><th>INPUT</th><th>OUTPUT</th><th>TOTAL</th><th>EST. COST</th><th>LATENCY</th></tr></thead><tbody>{records.map(r=><tr key={r.id}><td><strong>{new Date(r.at).toLocaleString()}</strong><small>#{r.requestId.slice(0,8)} · {r.status}</small></td><td>{modules.find(m=>m.id===r.moduleId)?.label??r.moduleId??"Unattributed"}</td><td><strong>{r.model}</strong><small>{r.provider} · {r.tier}</small></td><td>{r.usageReported===false?"—":r.promptTokens.toLocaleString("en-IN")}</td><td>{r.usageReported===false?"—":r.completionTokens.toLocaleString("en-IN")}</td><td>{r.usageReported===false?"Unavailable":r.totalTokens.toLocaleString("en-IN")}</td><td>{inr(r.estimatedCostInr)}</td><td>{r.latencyMs.toLocaleString("en-IN")} ms</td></tr>)}</tbody></table></div>}
   </section>
-  <div className="gateway-savebar"><div><strong>{dirty.current?"Unsaved configuration":message||"Settings saved"}</strong><p>Applies to this Netlify environment/branch only. Provider API keys stay server-side. Saving requires the server-side MODEL_GATEWAY_ADMIN_KEY.</p></div><label className="gateway-admin-key"><span>Gateway settings admin key</span><input type="password" autoComplete="off" value={adminKey} onChange={e=>setAdminKey(e.target.value)} placeholder="Enter admin key to save" aria-label="Gateway settings admin key" /><small>Kept in memory only; never saved in browser storage.</small></label><button className="submit-button" type="button" onClick={()=>void save()} disabled={!draft||saving||!dirty.current}>{saving?"Saving…":"Save gateway settings ↗"}</button></div>
+  <div className="gateway-savebar"><div><strong>{dirty.current?"Unsaved configuration":message||"Settings saved"}</strong><p>Applies to this Vercel environment/branch only. Provider API keys stay server-side. Saving requires the server-side MODEL_GATEWAY_ADMIN_KEY.</p></div><label className="gateway-admin-key"><span>Gateway settings admin key</span><input type="password" autoComplete="off" value={adminKey} onChange={e=>setAdminKey(e.target.value)} placeholder="Enter admin key to save" aria-label="Gateway settings admin key" /><small>Kept in memory only; never saved in browser storage.</small></label><button className="submit-button" type="button" onClick={()=>void save()} disabled={!draft||saving||!dirty.current}>{saving?"Saving…":"Save gateway settings ↗"}</button></div>
   {message&&<p className="gateway-smoke-message" role="status">{message}</p>}
   <p className="gateway-footer-note">Last refreshed {data?.checkedAt?new Date(data.checkedAt).toLocaleTimeString():"not checked"}. Dashboard refresh is one read-only GET per minute; it never calls providers or Figma.</p>
   <footer>UX DIRECT <span>·</span> TECHNICAL ACCOUNTANT / MODEL GATEWAY</footer>
@@ -260,7 +260,7 @@ export default function Home() {
     setPluginHealthMessage("Sending a native API test request to the active Figma plugin…");
     const clientId = activePluginSession.clientId;
     try {
-      await logDashboardEvent("Plugin health check requested", "info", "User requested the native Figma API self-test from the Netlify dashboard.");
+      await logDashboardEvent("Plugin health check requested", "info", "User requested the native Figma API self-test from the UX Direct dashboard.");
       const response = await fetch("/api/plugin-bridge", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: "command", clientId, action: "native-api-health-check" })
@@ -325,7 +325,7 @@ export default function Home() {
         ?? orderedSessions[0]?.healthReport
         ?? null;
       setSmokeChecks(buildHealthSmokeChecks({
-        backendHealthy: snapshot.health.status === "ok" && snapshot.health.deployment?.platform === "netlify",
+        backendHealthy: snapshot.health.status === "ok" && snapshot.health.deployment?.platform === "vercel",
         bridgeReachable: snapshot.bridgeReachable,
         pluginOnline: Boolean(onlineSession),
         report,
@@ -446,7 +446,7 @@ export default function Home() {
             <div className="connection-grid">
               <article className="connection-card">
                 <div className="connection-card-top"><span className="service-icon">API</span><span className={"status-chip " + (backendHealthy ? "status-success" : "status-error")}>{backendHealthy ? "Healthy" : "Unreachable"}</span></div>
-                <h2>UX Direct backend</h2><p>Dashboard → Netlify production API</p>
+                <h2>UX Direct backend</h2><p>Dashboard → Vercel preview API</p>
                 <dl><div><dt>Health endpoint</dt><dd>{backendHealthy ? "Responding" : "Not verified"}</dd></div><div><dt>Task planning</dt><dd>{health?.capabilities.taskPlanning ? "Available" : "Unknown"}</dd></div><div><dt>Last checked</dt><dd>{lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : "—"}</dd></div></dl>
               </article>
               <article className="connection-card plugin-bridge-card">
@@ -517,7 +517,7 @@ export default function Home() {
                   </article>
                 ))}</div>
               )}
-              <p className="retention-note">Log retention: best-effort recent events. Netlify serverless memory may reset between requests; structured runtime events are also emitted to Netlify runtime logs. Durable cross-session history needs persistent storage.</p>
+              <p className="retention-note">Log retention: best-effort recent events. Vercel function memory may reset between requests; structured runtime events are also emitted to Vercel runtime logs. Durable cross-session history needs persistent storage.</p>
             </div>
             <footer>UX DIRECT <span>·</span> CONNECTIONS &amp; OPERATIONS</footer>
           </div>

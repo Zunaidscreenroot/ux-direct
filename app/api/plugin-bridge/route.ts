@@ -1,13 +1,13 @@
-import { getStore } from "@netlify/blobs";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { recordOperationalEvent } from "@/src/observability/event-log";
+import { listBlobPathnames, readBlobJson, vercelBlobNamespace, writeBlobJson } from "@/src/storage/vercel-blob-json";
 import { ALLOWED_FIGMA_FILE_KEY, isAllowedFigmaFileKey } from "@/src/security/figma-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const PREFIX = "ux-direct-bridge";
+const PREFIX = vercelBlobNamespace("ux-direct-bridge");
 const PLUGIN_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 const ID = z.string().trim().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/);
 const CHECK = z.object({
@@ -60,35 +60,21 @@ function isPluginRequest(request: Request): boolean {
   const origin = request.headers.get("origin");
   return !!origin && PLUGIN_ORIGINS.has(origin);
 }
-const STORE_NAME = "ux-direct-plugin-bridge";
-function bridgeStore() {
-  // Netlify Functions provide site identity and Blobs authorization automatically.
-  return getStore(STORE_NAME, { region: "us-east-2", consistency: "strong" });
-}
 async function readJson<T>(pathname: string): Promise<T | null> {
-  const store = bridgeStore();
-  // Avoid a direct content read for absent keys. Netlify Blobs listing reliably
-  // returns the index; only fetch JSON when the exact object is present.
-  const index = await store.list({ prefix: pathname });
-  if (!index.blobs.some((blob) => blob.key === pathname)) return null;
-  const value = await store.get(pathname, { type: "text" });
-  if (value === null) return null;
-  return JSON.parse(value) as T;
+  return readBlobJson<T>(pathname);
 }
 async function writeJson(pathname: string, value: unknown): Promise<void> {
-  await bridgeStore().set(pathname, JSON.stringify(value), {
-    metadata: { contentType: "application/json" },
-  });
+  return writeBlobJson(pathname, value);
 }
 function publicSession(session: Session) {
   const { sessionToken: _neverExpose, ...safe } = session;
   return safe;
 }
 async function listSessions() {
-  const result = await bridgeStore().list({ prefix: `${PREFIX}/sessions/` });
-  const sessionBlobs = result.blobs.filter((blob) => blob.key.endsWith("/session.json"));
-  const sessions = await Promise.all(sessionBlobs.map(async (blob) => {
-    try { return await readJson<Session>(blob.key); } catch { return null; }
+  const sessionKeys = (await listBlobPathnames(`${PREFIX}/sessions/`))
+    .filter((key) => key.endsWith("/session.json"));
+  const sessions = await Promise.all(sessionKeys.map(async (key) => {
+    try { return await readJson<Session>(key); } catch { return null; }
   }));
   const now = Date.now();
   return sessions.filter((session): session is Session => !!session && isAllowedFigmaFileKey(session.fileKey)).map((session) => ({
@@ -129,8 +115,8 @@ export async function GET(request: Request) {
     }
     return NextResponse.json({ error: "Unsupported bridge mode." }, { status: 400, headers });
   } catch (error) {
-    console.error("[ux-direct-bridge] Netlify Blobs read failed", error);
-    return NextResponse.json({ error: "Could not read bridge state from Netlify Blobs storage." }, { status: 500, headers });
+    console.error("[ux-direct-bridge] Vercel Blob read failed", error);
+    return NextResponse.json({ error: "Could not read bridge state from Vercel Blob storage." }, { status: 500, headers });
   }
 }
 
@@ -265,7 +251,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Unsupported bridge mode." }, { status: 400, headers });
   } catch (error) {
-    console.error("[ux-direct-bridge] Netlify Blobs request failed", error);
-    return NextResponse.json({ error: "Bridge request failed while reading or writing Netlify Blobs storage." }, { status: 500, headers });
+    console.error("[ux-direct-bridge] Vercel Blob request failed", error);
+    return NextResponse.json({ error: "Bridge request failed while reading or writing Vercel Blob storage." }, { status: 500, headers });
   }
 }

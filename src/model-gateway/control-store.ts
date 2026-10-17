@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isVercelBlobConfigured, readBlobJson, writeBlobJson } from "@/src/storage/vercel-blob-json";
 
 export type GatewayMode = "free" | "paid" | "local" | "mock";
 export type ModulePolicy = { enabled: boolean; mode: GatewayMode; selectedModelKey: string; monthlyBudgetInr: number; maxRequestCostInr: number; allowFallback: boolean };
@@ -13,29 +14,17 @@ export const GATEWAY_MODULES = [
   { id: "critique", label: "UX critique & quality review", description: "Review UX decisions, accessibility, edge cases and consistency.", alias: "uxd/critique", tasks: ["critique", "reasoning", "quality"], suggestedBudgetShare: 500 },
   { id: "general", label: "General gateway calls", description: "Direct model calls without a more specific agent purpose.", alias: "direct", tasks: ["general", "chat"], suggestedBudgetShare: 100 }
 ] as const;
-type BlobStore = { get(key: string, options: { type: "json" }): Promise<unknown>; setJSON(key: string, value: unknown): Promise<void> };
 const runtimeSettings = new Map<string, GatewaySettings>();
-let storePromise: Promise<BlobStore | null> | null = null;
 function amount(value: unknown, fallback: number, max = 1_000_000_000): number {
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) && n >= 0 ? Math.min(max, Number(n.toFixed(4))) : fallback;
 }
 export function modelKey(provider: string, id: string) { return provider + "::" + id; }
 function envScopeKey(env = process.env) {
-  const branch = env.NETLIFY_BRANCH || env.BRANCH || "";
-  if (env.CONTEXT === "production" || (env.NETLIFY === "true" && branch === "main")) return "gateway-control:production";
-  return "gateway-control:preview:" + (branch || env.CONTEXT || "local").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 80);
-}
-async function getStore(): Promise<BlobStore | null> {
-  if (process.env.NETLIFY !== "true" && !process.env.NETLIFY_BLOBS_CONTEXT) return null;
-  if (!storePromise) storePromise = (async () => {
-    try {
-      const { getStore } = await import("@netlify/blobs");
-      // Branch-prefixed keys below isolate preview settings from production settings.
-      return getStore("ux-direct-gateway-control") as unknown as BlobStore;
-    } catch { return null; }
-  })();
-  return storePromise;
+  const branch = env.VERCEL_GIT_COMMIT_REF || env.BRANCH || "";
+  if (env.VERCEL_ENV === "production") return "ux-direct-gateway-control/production";
+  return "ux-direct-gateway-control/preview/" +
+    (branch || env.VERCEL_ENV || "local").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 80);
 }
 function pricePolicy(inputUsd = 0, outputUsd = 0, fx = 97): ModelPolicy {
   return { monthlyBudgetInr: 500, maxRequestCostInr: 50, inputPriceInrPerMillion: Number((inputUsd * fx).toFixed(4)), outputPriceInrPerMillion: Number((outputUsd * fx).toFixed(4)) };
@@ -103,17 +92,14 @@ function cleanSettings(input: unknown): GatewaySettings {
 }
 export async function getGatewaySettings(): Promise<GatewaySettings> {
   const key = envScopeKey();
-  const store = await getStore();
-  if (store) {
-    try {
-      const value = await store.get(key, { type: "json" });
-      if (value && typeof value === "object") {
-        const settings = cleanSettings(value);
-        runtimeSettings.set(key, settings);
-        return settings;
-      }
-    } catch { /* runtime fallback */ }
-  }
+  if (isVercelBlobConfigured()) try {
+    const value = await readBlobJson<unknown>(key);
+    if (value && typeof value === "object") {
+      const settings = cleanSettings(value);
+      runtimeSettings.set(key, settings);
+      return settings;
+    }
+  } catch { /* runtime fallback */ }
   return cleanSettings(runtimeSettings.get(key) ?? defaultGatewaySettings());
 }
 export async function saveGatewaySettings(input: unknown): Promise<GatewaySettings> {
@@ -121,10 +107,12 @@ export async function saveGatewaySettings(input: unknown): Promise<GatewaySettin
   const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
   const settings = cleanSettings({ ...raw, updatedAt: new Date().toISOString() });
   runtimeSettings.set(key, settings);
-  const store = await getStore();
-  if (store) {
-    try { await store.setJSON(key, settings); }
-    catch (error) { throw new Error("Could not persist gateway settings to Netlify Blobs: " + (error instanceof Error ? error.message : "unknown error")); }
+  if (isVercelBlobConfigured()) {
+    try {
+      await writeBlobJson(key, settings);
+    } catch (error) {
+      throw new Error("Could not persist gateway settings to Vercel Blob: " + (error instanceof Error ? error.message : "unknown error"));
+    }
   }
   return settings;
 }

@@ -26,7 +26,7 @@ Free API access still needs a provider account/key in most cases. "Free tier" do
 
 The Model Gateway dashboard is available from the main UX Direct navigation. `GET /api/model-gateway/dashboard` returns sanitized provider readiness, the model catalog, monthly budget snapshot, and per-request token ledger. It never returns key values. The chat endpoint records prompt/completion/total token counts when the provider reports usage, model/provider, request ID, latency, estimated INR cost, and blocked/failed outcomes. Prompt and response text are not written to the usage ledger.
 
-The ledger persists to Netlify Blobs in the Netlify runtime and falls back to best-effort in-process memory in local/unsupported runtimes. Read-modify-write budget checks are not transactional, so simultaneous paid requests can race the cap. Add concurrency-safe budget reservations before production paid traffic.
+The ledger persists to Vercel Blob in the Vercel runtime and falls back to best-effort in-process memory in local/unsupported runtimes. Read-modify-write budget checks are not transactional, so simultaneous paid requests can race the cap. Add concurrency-safe budget reservations before production paid traffic.
 
 Set `MODEL_GATEWAY_MONTHLY_BUDGET_INR=3000` for the default ₹3,000 monthly cap. Paid providers remain unavailable unless both per-million token prices are configured, the budget is non-zero, `ALLOW_PAID_MODELS=true`, and the provider key is present. Set prices from the provider's current pricing page; do not rely on guessed values. The budget guard estimates maximum request cost before dispatch and blocks requests that would exceed the remaining budget.
 

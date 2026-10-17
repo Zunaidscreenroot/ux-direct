@@ -43,6 +43,18 @@ A real task should result in editable, product-consistent design output plus rat
 
 This repository is being initialized. Start with a small, testable vertical slice rather than attempting every capability at once. Keep architecture extensible and measure each addition against real Express Computers and DMI Finance work.
 
+## Backend and Figma plugin
+
+UX Direct uses a direct architecture: the Figma plugin calls the UX Direct backend APIs, while the backend handles task planning, model routing, quality checks, telemetry, and plugin health commands. The plugin heartbeat and controlled native API self-test use the private Vercel Blob store for shared session/command state.
+
+For local plugin development, import `figma-plugin/manifest.json` in Figma Desktop. The current preview plugin backend is configured in `figma-plugin/ui.html` and allowed by `figma-plugin/manifest.json`. Update both when testing a different preview URL.
+
+The backend and Figma plugin communicate directly. A separate ChatGPT MCP server, OAuth handshake, or ChatGPT activity bridge is not part of this architecture. The model gateway and Figma plugin remain the foundation for a future cost-optimized native Figma workflow.
+
+## Vercel storage
+
+The Figma plugin bridge, model usage ledger, and gateway settings use the project's private Vercel Blob store. Keep the `BLOB_READ_WRITE_TOKEN` attached to the Vercel project for Preview and Production environments. Blob keys are namespaced by feature and branch so preview configuration and usage records do not overwrite production records. Legacy Netlify Blob records are not automatically copied into Vercel Blob; historical records must be exported from Netlify and imported separately if needed.
+
 ## Security
 
 - Keep API keys in environment variables; never commit secrets.
