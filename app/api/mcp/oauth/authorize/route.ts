@@ -36,7 +36,7 @@ function getInput(values: URLSearchParams | FormData): AuthorizeInput | null {
   const redirects = Array.isArray(client?.redirect_uris)
     ? client.redirect_uris.filter((value): value is string => typeof value === "string")
     : [];
-  const requested = scope.split(/\\s+/).filter(Boolean);
+  const requested = scope.split(/\s+/).filter(Boolean);
 
   if (
     !client ||
