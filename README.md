@@ -43,33 +43,17 @@ A real task should result in editable, product-consistent design output plus rat
 
 This repository is being initialized. Start with a small, testable vertical slice rather than attempting every capability at once. Keep architecture extensible and measure each addition against real Express Computers and DMI Finance work.
 
-## ChatGPT MCP connection
+## Backend and Figma plugin
 
-The remote MCP endpoint is `/api/mcp`. ChatGPT connects using OAuth authorization code flow with PKCE; it does not require a manually entered Bearer API key.
+UX Direct uses a direct architecture: the Figma plugin calls the UX Direct backend APIs, while the backend handles task planning, model routing, quality checks, telemetry, and plugin health commands. The plugin heartbeat and controlled native API self-test use the private Vercel Blob store for shared session/command state.
 
-For a Vercel Preview deployment, use:
+For local plugin development, import `figma-plugin/manifest.json` in Figma Desktop. The current preview plugin backend is configured in `figma-plugin/ui.html` and allowed by `figma-plugin/manifest.json`. Update both when testing a different preview URL.
 
-```text
-https://<your-deploy-preview-host>/api/mcp
-```
-
-OAuth discovery is exposed at:
-
-- `/.well-known/oauth-authorization-server`
-- `/.well-known/oauth-protected-resource`
-- `/.well-known/oauth-protected-resource/api/mcp`
-
-Configure these **secret** environment variables in Vercel for the **Preview** environment:
-
-- `UX_DIRECT_MCP_OAUTH_SECRET`: a unique random signing secret, at least 32 characters.
-- `UX_DIRECT_MCP_CONNECTION_CODE`: a private code you enter on the UX Direct authorization screen.
-- `UX_DIRECT_MCP_ISSUER_URL`: optional. Leave unset on previews so the URL is inferred from the preview host.
-
-Never commit the actual values. After configuring them, redeploy the preview so the function runtime can read them. The MCP server validates signed access tokens and scopes each tool: `ux:read` for status/read operations, `ux:plan` for task planning, and `figma:health` for the Figma diagnostic command.
+The backend and Figma plugin communicate directly. A separate ChatGPT MCP server, OAuth handshake, or ChatGPT activity bridge is not part of this architecture. The model gateway and Figma plugin remain the foundation for a future cost-optimized native Figma workflow.
 
 ## Vercel storage
 
-The Figma plugin bridge, ChatGPT connection activity, model usage ledger, and gateway settings use the project's private Vercel Blob store. Keep the `BLOB_READ_WRITE_TOKEN` attached to the Vercel project for Preview and Production environments. Blob keys are namespaced by feature and branch so preview configuration and usage records do not overwrite production records. Legacy Netlify Blob records are not automatically copied into Vercel Blob; historical records must be exported from Netlify and imported separately if needed.
+The Figma plugin bridge, model usage ledger, and gateway settings use the project's private Vercel Blob store. Keep the `BLOB_READ_WRITE_TOKEN` attached to the Vercel project for Preview and Production environments. Blob keys are namespaced by feature and branch so preview configuration and usage records do not overwrite production records. Legacy Netlify Blob records are not automatically copied into Vercel Blob; historical records must be exported from Netlify and imported separately if needed.
 
 ## Security
 
