@@ -314,7 +314,7 @@ async function callTool(name: string, args: unknown, request: Request) {
     return response.ok ? toolText(body) : toolText({ status: response.status, body }, true);
   }
 
-  return toolText({ error: \`Unknown UX Direct tool: \${name}\` }, true);
+  return toolText({ error: "Unknown UX Direct tool: " + name }, true);
 }
 
 export async function OPTIONS(request: Request) {
@@ -405,7 +405,7 @@ export async function POST(request: Request) {
       case "tools/call": {
         const name = params.name;
         if (typeof name !== "string") return rpcError(id, -32602, "tools/call requires a tool name.", headers);
-        if (!TOOLS.some(tool => tool.name === name)) return rpcResult(id, toolText({ error: \`Unknown UX Direct tool: \${name}\` }, true), headers);
+        if (!TOOLS.some(tool => tool.name === name)) return rpcResult(id, toolText({ error: "Unknown UX Direct tool: " + name }, true), headers);
         try {
           return rpcResult(id, await callTool(name, params.arguments ?? {}, request), headers);
         } catch (error) {
