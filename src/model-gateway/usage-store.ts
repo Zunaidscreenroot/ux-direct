@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ProviderConfig, TokenUsage } from "./index";
 import { getGatewaySettings, modelKey } from "./control-store";
-import { readBlobJson, writeBlobJson } from "@/src/storage/vercel-blob-json";
+import { isVercelBlobConfigured, readBlobJson, writeBlobJson } from "@/src/storage/vercel-blob-json";
 
 export type UsageRecord = {
   id: string;
@@ -62,6 +62,9 @@ function monthKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 async function readRecords(): Promise<{ records: UsageRecord[]; retention: BudgetSnapshot["retention"] }> {
+  if (!isVercelBlobConfigured()) {
+    return { records: [...runtimeRecords], retention: "best-effort-runtime" };
+  }
   try {
     const value = await readBlobJson<unknown>(scopedLedgerKey());
     const persisted = Array.isArray(value) ? value as UsageRecord[] : [];
@@ -105,10 +108,12 @@ export async function recordModelUsage(input: Omit<UsageRecord, "id" | "at"> & {
   const { records } = await readRecords();
   const next = [item, ...records].slice(0, MAX_RECORDS);
   runtimeRecords.splice(0, runtimeRecords.length, ...next);
-  try {
-    await writeBlobJson(scopedLedgerKey(), next);
-  } catch {
-    // The UI reports best-effort runtime retention if persistent reads/writes fail.
+  if (isVercelBlobConfigured()) {
+    try {
+      await writeBlobJson(scopedLedgerKey(), next);
+    } catch {
+      // The UI reports best-effort runtime retention if persistent reads/writes fail.
+    }
   }
   // Structured logs never contain prompts, completions, or credentials.
   console.info("[model-gateway-usage]", JSON.stringify(item));
