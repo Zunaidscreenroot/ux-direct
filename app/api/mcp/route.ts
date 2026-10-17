@@ -12,6 +12,37 @@ const PROTOCOL_VERSIONS = new Set(["2024-11-05", "2025-03-26", "2025-06-18", "20
 
 type JsonRpcId = string | number | null;
 type JsonRpcMessage = { jsonrpc?: unknown; id?: JsonRpcId; method?: unknown; params?: unknown };
+type BridgeSession = {
+  clientId?: string;
+  status?: string;
+  isOnline?: boolean;
+  lastHeartbeatAt?: string;
+  latestCommand?: {
+    commandId?: string;
+    action?: string;
+    status?: string;
+    issuedAt?: string;
+    completedAt?: string;
+    failure?: string;
+  };
+  healthReport?: {
+    passed?: number;
+    available?: number;
+    failed?: number;
+    notTested?: number;
+    checkedAt?: string;
+    checks?: Array<{ category?: string; name?: string; level?: string; status?: string; reason?: string }>;
+  };
+};
+type BridgeSnapshot = {
+  sessions?: BridgeSession[];
+  latestReport?: {
+    clientId?: string;
+    commandId?: string;
+    savedAt?: string;
+    healthReport?: BridgeSession["healthReport"];
+  } | null;
+};
 
 function corsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("origin");
@@ -54,6 +85,48 @@ function toolText(value: unknown, isError = false) {
   };
 }
 
+async function fetchBridgeSnapshot(request: Request): Promise<BridgeSnapshot> {
+  const response = await fetch(new URL("/api/plugin-bridge?mode=sessions", request.url), {
+    method: "GET",
+    headers: { accept: "application/json", origin: new URL(request.url).origin },
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
+  });
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = body && typeof body === "object" && "error" in body && typeof body.error === "string"
+      ? body.error
+      : "Plugin bridge returned HTTP " + response.status + ".";
+    throw new Error(message);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new Error("Plugin bridge returned an invalid response.");
+  }
+  return body as BridgeSnapshot;
+}
+
+async function postBridgeCommand(request: Request, body: Record<string, unknown>) {
+  const origin = new URL(request.url).origin;
+  const response = await fetch(new URL("/api/plugin-bridge", request.url), {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json", origin },
+    body: JSON.stringify(body),
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
+  });
+  const result: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = result && typeof result === "object" && "error" in result && typeof result.error === "string"
+      ? result.error
+      : "Plugin bridge returned HTTP " + response.status + ".";
+    throw new Error(message);
+  }
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new Error("Plugin bridge returned an invalid command response.");
+  }
+  return result as Record<string, unknown>;
+}
+
 const TOOLS = [
   {
     name: "ux_direct_status",
@@ -68,14 +141,33 @@ const TOOLS = [
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: "ux_direct_figma_plugin_queue_health_check",
+    description: "Queue a controlled native Figma plugin API self-test for the currently online, allowlisted UX Direct plugin session. The test may create or reuse a dedicated persistent 'UXD API Test Lab' page and test fixtures in the approved file. It should not navigate away from or intentionally modify the user's active working page. This is a diagnostic action, not wireframe generation. Use only when the user asks to test the Figma plugin.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "ux_direct_figma_plugin_health_check_status",
+    description: "Retrieve the status and results of a previously queued native Figma plugin API self-test by command ID. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        commandId: { type: "string", minLength: 8, maxLength: 100, pattern: "^[A-Za-z0-9_-]{8,100}$", description: "The commandId returned by ux_direct_figma_plugin_queue_health_check." },
+      },
+      required: ["commandId"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: "ux_direct_plan_task",
-    description: "Ask UX Direct for a reviewable UX task plan. Planning only: this does not edit Figma or execute external writes. Use 'general' for BFCI website revamp and other general UX tasks, or 'express-computers' for Express Computers work. DMI-specific project data is not exposed through this connector.",
+    description: "Ask UX Direct for a reviewable UX task plan. Planning only: this does not edit Figma or execute external writes. Use 'general' for BFSI website revamp and other general UX tasks, or 'express-computers' for Express Computers work. DMI-specific project data is not exposed through this connector.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string", minLength: 1, maxLength: 160, description: "Short task name." },
         request: { type: "string", minLength: 5, maxLength: 8000, description: "Requirements, constraints, context, expected screens, and review criteria." },
-        project: { type: "string", enum: ["general", "express-computers"], description: "Use general for BFCI website revamp work." },
+        project: { type: "string", enum: ["general", "express-computers"], description: "Use general for BFSI website revamp work." },
       },
       required: ["title", "request", "project"],
       additionalProperties: false,
@@ -127,6 +219,76 @@ async function callTool(name: string, args: unknown, request: Request) {
     });
   }
 
+  if (name === "ux_direct_figma_plugin_queue_health_check") {
+    const snapshot = await fetchBridgeSnapshot(request);
+    const session = (snapshot.sessions ?? []).find((item) => item.isOnline === true && typeof item.clientId === "string");
+    if (!session?.clientId) {
+      return toolText({
+        status: "offline",
+        error: "No active allowlisted Figma plugin session is online. Open the UX Direct plugin in the approved Figma file and retry.",
+      }, true);
+    }
+    try {
+      const queued = await postBridgeCommand(request, {
+        mode: "command",
+        clientId: session.clientId,
+        action: "native-api-health-check",
+      });
+      return toolText({
+        status: "queued",
+        commandId: queued.commandId,
+        pluginSession: {
+          clientId: session.clientId,
+          lastHeartbeatAt: session.lastHeartbeatAt ?? null,
+        },
+        sideEffects: "Runs the native API self-test in the dedicated UXD API Test Lab page and stores its report. It does not generate, move, or rearrange production UI.",
+        nextStep: "Call ux_direct_figma_plugin_health_check_status with this commandId to retrieve progress and results.",
+      });
+    } catch (error) {
+      return toolText({ status: "error", error: error instanceof Error ? error.message : "Could not queue the Figma plugin health check." }, true);
+    }
+  }
+
+  if (name === "ux_direct_figma_plugin_health_check_status") {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be a JSON object." }, true);
+    const input = args as Record<string, unknown>;
+    const commandId = typeof input.commandId === "string" ? input.commandId.trim() : "";
+    if (!/^[A-Za-z0-9_-]{8,100}$/.test(commandId)) {
+      return toolText({ error: "Provide the commandId returned by ux_direct_figma_plugin_queue_health_check." }, true);
+    }
+    const snapshot = await fetchBridgeSnapshot(request);
+    const session = (snapshot.sessions ?? []).find((item) => item.latestCommand?.commandId === commandId);
+    const latestReport = snapshot.latestReport?.commandId === commandId ? snapshot.latestReport : null;
+    const report = latestReport?.healthReport ?? session?.healthReport ?? null;
+    if (!session && !latestReport) {
+      return toolText({
+        commandId,
+        status: "not_found",
+        message: "No matching active command or latest report was found. The command may have expired or been superseded by a newer plugin test.",
+      });
+    }
+    return toolText({
+      commandId,
+      status: session?.latestCommand?.status ?? (latestReport ? "completed" : "unknown"),
+      issuedAt: session?.latestCommand?.issuedAt ?? null,
+      completedAt: session?.latestCommand?.completedAt ?? latestReport?.savedAt ?? null,
+      failure: session?.latestCommand?.failure ?? null,
+      pluginSession: session ? {
+        clientId: session.clientId,
+        isOnline: session.isOnline === true,
+        lastHeartbeatAt: session.lastHeartbeatAt ?? null,
+      } : latestReport ? { clientId: latestReport.clientId ?? null } : null,
+      healthReport: report ? {
+        passed: report.passed ?? 0,
+        available: report.available ?? 0,
+        failed: report.failed ?? 0,
+        notTested: report.notTested ?? 0,
+        checkedAt: report.checkedAt ?? null,
+        checks: (report.checks ?? []).slice(0, 60),
+      } : null,
+    });
+  }
+
   if (name === "ux_direct_plan_task") {
     if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be a JSON object." }, true);
     const input = args as Record<string, unknown>;
@@ -152,7 +314,7 @@ async function callTool(name: string, args: unknown, request: Request) {
     return response.ok ? toolText(body) : toolText({ status: response.status, body }, true);
   }
 
-  return toolText({ error: `Unknown UX Direct tool: ${name}` }, true);
+  return toolText({ error: "Unknown UX Direct tool: " + name }, true);
 }
 
 export async function OPTIONS(request: Request) {
@@ -233,7 +395,7 @@ export async function POST(request: Request) {
           protocolVersion: PROTOCOL_VERSIONS.has(requested) ? requested : "2025-11-25",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "ux-direct", version: "0.1.0" },
-          instructions: "UX Direct offers health checks and reviewable UX task planning. It does not make Figma edits through this connector. Use the general project for BFCI website revamp work; DMI-specific data is not exposed.",
+          instructions: "UX Direct offers health checks, connection status, reviewable UX task planning, and a controlled native Figma plugin API self-test. The self-test targets the dedicated UXD API Test Lab page in the pre-allowlisted file; it does not generate production designs. Use 'general' for BFSI website revamp work and 'express-computers' for Express Computers work. DMI-specific project data is not exposed through this connector.",
         }, headers);
       }
       case "ping":
@@ -243,7 +405,7 @@ export async function POST(request: Request) {
       case "tools/call": {
         const name = params.name;
         if (typeof name !== "string") return rpcError(id, -32602, "tools/call requires a tool name.", headers);
-        if (!TOOLS.some(tool => tool.name === name)) return rpcResult(id, toolText({ error: `Unknown UX Direct tool: ${name}` }, true), headers);
+        if (!TOOLS.some(tool => tool.name === name)) return rpcResult(id, toolText({ error: "Unknown UX Direct tool: " + name }, true), headers);
         try {
           return rpcResult(id, await callTool(name, params.arguments ?? {}, request), headers);
         } catch (error) {
