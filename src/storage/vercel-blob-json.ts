@@ -10,6 +10,22 @@ export function isVercelBlobConfigured(): boolean {
 }
 
 /**
+ * Prefix persistent keys by Vercel environment and branch. The Blob store is shared,
+ * so this keeps preview heartbeats/commands and settings separate from production.
+ */
+export function vercelBlobNamespace(base: string): string {
+  const env = process.env.VERCEL_ENV;
+  const branch = (process.env.VERCEL_GIT_COMMIT_REF || process.env.BRANCH || "local")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .slice(0, 80);
+  const scope = env === "production" || (!env && branch === "main")
+    ? "production"
+    : `${env === "preview" ? "preview" : "development"}/${branch}`;
+  return `${base}/${scope}`;
+}
+
+/**
  * Read one JSON record from the project's private Vercel Blob store.
  * Only server-side code should call this helper; blob URLs remain private.
  */
