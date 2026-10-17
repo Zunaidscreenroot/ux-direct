@@ -2,6 +2,13 @@ import { get, list, put } from "@vercel/blob";
 
 const PRIVATE_ACCESS = "private" as const;
 
+export function isVercelBlobConfigured(): boolean {
+  return Boolean(
+    process.env.BLOB_READ_WRITE_TOKEN ||
+    (process.env.VERCEL_OIDC_TOKEN && process.env.BLOB_STORE_ID)
+  );
+}
+
 /**
  * Read one JSON record from the project's private Vercel Blob store.
  * Only server-side code should call this helper; blob URLs remain private.
