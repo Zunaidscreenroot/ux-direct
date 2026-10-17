@@ -1,5 +1,5 @@
-import { timingSafeEqual } from "node:crypto";
 import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
+import { getMcpIssuer, verifyMcpPayload } from "@/lib/mcp-oauth";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -12,6 +12,7 @@ const PROTOCOL_VERSIONS = new Set(["2024-11-05", "2025-03-26", "2025-06-18", "20
 
 type JsonRpcId = string | number | null;
 type JsonRpcMessage = { jsonrpc?: unknown; id?: JsonRpcId; method?: unknown; params?: unknown };
+type AuthClaims = { typ: "access"; iss?: string; aud?: string; resource?: string; scope?: string; exp?: number; sub?: string };
 type BridgeSession = {
   clientId?: string;
   status?: string;
@@ -61,13 +62,27 @@ function originIsAllowed(request: Request): boolean {
   return !origin || origin === new URL(request.url).origin || CHATGPT_ORIGINS.has(origin);
 }
 
-function isAuthorized(request: Request): boolean {
-  const expected = process.env.UX_DIRECT_MCP_API_KEY;
-  const authorization = request.headers.get("authorization");
-  if (!expected || expected.length < 32 || !authorization?.startsWith("Bearer ")) return false;
-  const supplied = Buffer.from(authorization.slice(7));
-  const secret = Buffer.from(expected);
-  return supplied.length === secret.length && timingSafeEqual(supplied, secret);
+function getBearer(request: Request): string {
+  const header = request.headers.get("authorization") || "";
+  return /^Bearer\\s+/i.test(header) ? header.replace(/^Bearer\\s+/i, "").trim() : "";
+}
+
+function tokenHasScope(token: AuthClaims, required: string): boolean {
+  return String(token.scope || "").split(/\\s+/).includes(required);
+}
+
+function unauthorized(request: Request) {
+  const metadata = getMcpIssuer(request) + "/.well-known/oauth-protected-resource/api/mcp";
+  return NextResponse.json(
+    { error: "unauthorized", error_description: "A valid UX Direct MCP OAuth token is required." },
+    {
+      status: 401,
+      headers: {
+        "WWW-Authenticate": 'Bearer resource_metadata="' + metadata + '", scope="ux:read ux:plan figma:health"',
+        "Cache-Control": "no-store",
+      },
+    },
+  );
 }
 
 function rpcResult(id: JsonRpcId, result: unknown, headers: HeadersInit) {
@@ -130,24 +145,28 @@ async function postBridgeCommand(request: Request, body: Record<string, unknown>
 const TOOLS = [
   {
     name: "ux_direct_status",
+    requiredScope: "ux:read",
     description: "Check whether the UX Direct backend is healthy and inspect its non-secret service status. Read-only.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "ux_direct_connection_status",
+    requiredScope: "ux:read",
     description: "Show whether ChatGPT has recently called the authenticated UX Direct connector and whether the approved Figma plugin is online. ChatGPT state means authenticated MCP activity within five minutes; Figma state means a heartbeat within 75 seconds.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "ux_direct_figma_plugin_queue_health_check",
+    requiredScope: "figma:health",
     description: "Queue a controlled native Figma plugin API self-test for the currently online, allowlisted UX Direct plugin session. The test may create or reuse a dedicated persistent 'UXD API Test Lab' page and test fixtures in the approved file. It should not navigate away from or intentionally modify the user's active working page. This is a diagnostic action, not wireframe generation. Use only when the user asks to test the Figma plugin.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: "ux_direct_figma_plugin_health_check_status",
+    requiredScope: "ux:read",
     description: "Retrieve the status and results of a previously queued native Figma plugin API self-test by command ID. Read-only.",
     inputSchema: {
       type: "object",
@@ -161,6 +180,7 @@ const TOOLS = [
   },
   {
     name: "ux_direct_plan_task",
+    requiredScope: "ux:plan",
     description: "Ask UX Direct for a reviewable UX task plan. Planning only: this does not edit Figma or execute external writes. Use 'general' for BFSI website revamp and other general UX tasks, or 'express-computers' for Express Computers work. DMI-specific project data is not exposed through this connector.",
     inputSchema: {
       type: "object",
@@ -322,30 +342,32 @@ export async function OPTIONS(request: Request) {
   return new Response(null, { status: 204, headers: corsHeaders(request) });
 }
 
-export async function GET() {
-  return NextResponse.json(
-    { error: "This MCP endpoint accepts POST requests only." },
-    { status: 405, headers: { Allow: "POST, OPTIONS", "Cache-Control": "no-store" } },
-  );
+export async function GET(request: Request) {
+  // A 401 challenge advertises OAuth discovery to clients probing with GET.
+  return unauthorized(request);
 }
 
 export async function POST(request: Request) {
   const headers = corsHeaders(request);
   if (!originIsAllowed(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
 
-  const configuredKey = process.env.UX_DIRECT_MCP_API_KEY;
-  if (!configuredKey || configuredKey.length < 32) {
+  let issuer: string;
+  let token: AuthClaims | null;
+  try {
+    issuer = getMcpIssuer(request);
+    token = verifyMcpPayload(getBearer(request), "access") as AuthClaims | null;
+  } catch {
     return NextResponse.json(
-      { error: "UX Direct MCP is not configured. Set UX_DIRECT_MCP_API_KEY to a unique secret of at least 32 characters." },
+      { error: "UX Direct MCP OAuth is not configured. Set UX_DIRECT_MCP_OAUTH_SECRET and UX_DIRECT_MCP_CONNECTION_CODE for this deployment context." },
       { status: 503, headers },
     );
   }
-  if (!isAuthorized(request)) {
-    return NextResponse.json(
-      { error: "A valid Bearer API key is required." },
-      { status: 401, headers: { ...headers, "WWW-Authenticate": "Bearer" } },
-    );
-  }
+  if (
+    !token ||
+    token.iss !== issuer ||
+    token.aud !== issuer + "/api/mcp" ||
+    token.resource !== issuer + "/api/mcp"
+  ) return unauthorized(request);
 
   // Persist only a timestamp. Never store the bearer key or the user's prompt here.
   await recordChatGPTActivity().catch(() => {
@@ -400,12 +422,18 @@ export async function POST(request: Request) {
       }
       case "ping":
         return rpcResult(id, {}, headers);
-      case "tools/list":
-        return rpcResult(id, { tools: TOOLS }, headers);
+      case "tools/list": {
+        const visible = TOOLS.filter(tool => tokenHasScope(token!, tool.requiredScope));
+        return rpcResult(id, { tools: visible.map(({ requiredScope, ...definition }) => definition) }, headers);
+      }
       case "tools/call": {
         const name = params.name;
         if (typeof name !== "string") return rpcError(id, -32602, "tools/call requires a tool name.", headers);
-        if (!TOOLS.some(tool => tool.name === name)) return rpcResult(id, toolText({ error: "Unknown UX Direct tool: " + name }, true), headers);
+        const tool = TOOLS.find(candidate => candidate.name === name);
+        if (!tool) return rpcResult(id, toolText({ error: "Unknown UX Direct tool: " + name }, true), headers);
+        if (!tokenHasScope(token!, tool.requiredScope)) {
+          return rpcResult(id, toolText({ error: "OAuth token is missing required scope " + tool.requiredScope + ". Reconnect with the required UX Direct permissions." }, true), headers);
+        }
         try {
           return rpcResult(id, await callTool(name, params.arguments ?? {}, request), headers);
         } catch (error) {
