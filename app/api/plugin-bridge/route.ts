@@ -251,7 +251,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Unsupported bridge mode." }, { status: 400, headers });
   } catch (error) {
-    console.error("[ux-direct-bridge] Netlify Blobs request failed", error);
-    return NextResponse.json({ error: "Bridge request failed while reading or writing Netlify Blobs storage." }, { status: 500, headers });
+    console.error("[ux-direct-bridge] Vercel Blob request failed", error);
+    return NextResponse.json({ error: "Bridge request failed while reading or writing Vercel Blob storage." }, { status: 500, headers });
   }
 }
