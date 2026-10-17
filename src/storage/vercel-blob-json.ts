@@ -3,15 +3,11 @@ import { get, list, put } from "@vercel/blob";
 const PRIVATE_ACCESS = "private" as const;
 
 /**
- * Read JSON from the connected private Vercel Blob store.
- * Bypass the CDN cache because bridge heartbeats and commands are frequently overwritten.
+ * Read one JSON record from the project's private Vercel Blob store.
+ * Only server-side code should call this helper; blob URLs remain private.
  */
 export async function readBlobJson<T>(pathname: string): Promise<T | null> {
-  const blob = await get(pathname, {
-    access: PRIVATE_ACCESS,
-    useCache: false,
-  });
-
+  const blob = await get(pathname, { access: PRIVATE_ACCESS });
   if (!blob || blob.statusCode !== 200 || !blob.stream) return null;
 
   const raw = await new Response(blob.stream).text();
@@ -23,8 +19,8 @@ export async function readBlobJson<T>(pathname: string): Promise<T | null> {
 }
 
 /**
- * Write stable pathnames so every plugin heartbeat updates the same session record.
- * The bucket is private: session tokens and pending commands never get public URLs.
+ * Store bridge records at deterministic paths to support heartbeat updates.
+ * Vercel credentials are resolved from the server environment by the SDK.
  */
 export async function writeBlobJson(pathname: string, value: unknown): Promise<void> {
   await put(pathname, JSON.stringify(value), {
