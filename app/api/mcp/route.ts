@@ -64,11 +64,11 @@ function originIsAllowed(request: Request): boolean {
 
 function getBearer(request: Request): string {
   const header = request.headers.get("authorization") || "";
-  return /^Bearer\\s+/i.test(header) ? header.replace(/^Bearer\\s+/i, "").trim() : "";
+  return /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
 }
 
 function tokenHasScope(token: AuthClaims, required: string): boolean {
-  return String(token.scope || "").split(/\\s+/).includes(required);
+  return String(token.scope || "").split(/\s+/).includes(required);
 }
 
 function unauthorized(request: Request) {
