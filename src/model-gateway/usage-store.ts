@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ProviderConfig, TokenUsage } from "./index";
 import { getGatewaySettings, modelKey } from "./control-store";
+import { readBlobJson, writeBlobJson } from "@/src/storage/vercel-blob-json";
 
 export type UsageRecord = {
   id: string;
@@ -31,7 +32,7 @@ export type BudgetSnapshot = {
   pricingConfigured: boolean;
   month: string;
   records: UsageRecord[];
-  retention: "netlify-blobs" | "best-effort-runtime";
+  retention: "vercel-blob" | "best-effort-runtime";
   spentByModuleInr: Record<string, number>;
   spentByModelInr: Record<string, number>;
   paidCallsThisMonth: number;
@@ -39,11 +40,6 @@ export type BudgetSnapshot = {
 
 const runtimeRecords: UsageRecord[] = [];
 const MAX_RECORDS = 1000;
-type LedgerStore = {
-  get(key: string, options: { type: "json" }): Promise<unknown>;
-  setJSON(key: string, value: unknown): Promise<void>;
-};
-let storePromise: Promise<LedgerStore | null> | null = null;
 
 function positiveNumber(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -57,43 +53,24 @@ export function getBudgetConfig(env: Record<string, string | undefined> = proces
   };
 }
 function scopedLedgerKey(env = process.env) {
-  const branch = env.NETLIFY_BRANCH || env.BRANCH || "";
-  if (env.CONTEXT === "production" || (env.NETLIFY === "true" && branch === "main")) return "usage-records";
-  return "usage-records:preview:" + (branch || env.CONTEXT || "local").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 80);
+  const branch = env.VERCEL_GIT_COMMIT_REF || env.BRANCH || "";
+  if (env.VERCEL_ENV === "production") return "ux-direct-model-gateway-usage/usage-records";
+  return "ux-direct-model-gateway-usage/usage-records:preview:" +
+    (branch || env.VERCEL_ENV || "local").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 80);
 }
 function monthKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
-async function getPersistentStore(): Promise<LedgerStore | null> {
-  // Netlify Blobs is used only in the deployed Netlify runtime. Local tests/dev
-  // remain dependency-free and use the runtime memory fallback.
-  if (process.env.NETLIFY !== "true" && !process.env.NETLIFY_BLOBS_CONTEXT) return null;
-  if (!storePromise) {
-    storePromise = (async () => {
-      try {
-        const { getStore } = await import("@netlify/blobs");
-        return getStore("ux-direct-model-gateway-usage") as unknown as LedgerStore;
-      } catch {
-        return null;
-      }
-    })();
+async function readRecords(): Promise<{ records: UsageRecord[]; retention: BudgetSnapshot["retention"] }> {
+  try {
+    const value = await readBlobJson<unknown>(scopedLedgerKey());
+    const persisted = Array.isArray(value) ? value as UsageRecord[] : [];
+    runtimeRecords.splice(0, runtimeRecords.length, ...persisted.slice(0, MAX_RECORDS));
+    return { records: [...runtimeRecords], retention: "vercel-blob" };
+  } catch {
+    // Keep requests available if persistent storage is temporarily unavailable.
+    return { records: [...runtimeRecords], retention: "best-effort-runtime" };
   }
-  return storePromise;
-}
-async function readRecords(): Promise<{ records: UsageRecord[]; retention: BudgetSnapshot["retention"]; store: LedgerStore | null }> {
-  const store = await getPersistentStore();
-  if (store) {
-    try {
-      const value = await store.get(scopedLedgerKey(), { type: "json" });
-      const persisted = Array.isArray(value) ? value as UsageRecord[] : [];
-      runtimeRecords.splice(0, runtimeRecords.length, ...persisted.slice(0, MAX_RECORDS));
-      return { records: [...runtimeRecords], retention: "netlify-blobs", store };
-    } catch {
-      // Keep requests available during a temporary Blobs failure, but expose that
-      // the ledger is now only best-effort in memory for this runtime.
-    }
-  }
-  return { records: [...runtimeRecords], retention: "best-effort-runtime", store: null };
 }
 export function estimateCostInr(
   promptTokens: number,
@@ -125,12 +102,13 @@ export async function recordModelUsage(input: Omit<UsageRecord, "id" | "at"> & {
     moduleId: input.moduleId?.slice(0, 60),
     note: input.note?.slice(0, 240)
   };
-  const { records, store } = await readRecords();
+  const { records } = await readRecords();
   const next = [item, ...records].slice(0, MAX_RECORDS);
   runtimeRecords.splice(0, runtimeRecords.length, ...next);
-  if (store) {
-    try { await store.setJSON(scopedLedgerKey(), next); }
-    catch { /* The UI will report runtime-only retention if subsequent reads fail. */ }
+  try {
+    await writeBlobJson(scopedLedgerKey(), next);
+  } catch {
+    // The UI reports best-effort runtime retention if persistent reads/writes fail.
   }
   // Structured logs never contain prompts, completions, or credentials.
   console.info("[model-gateway-usage]", JSON.stringify(item));
