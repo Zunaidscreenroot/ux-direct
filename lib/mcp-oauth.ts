@@ -50,7 +50,7 @@ export function verifyMcpPayload(token: string, expectedType?: McpClaims["typ"])
 }
 
 export function getMcpIssuer(request: Request): string {
-  const configured = readMcpEnv("UX_DIRECT_MCP_ISSUER_URL").trim().replace(/\\/+$/, "");
+  const configured = readMcpEnv("UX_DIRECT_MCP_ISSUER_URL").trim().replace(/\/+$/, "");
   return configured || new URL(request.url).origin;
 }
 
