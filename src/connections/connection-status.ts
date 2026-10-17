@@ -1,8 +1,8 @@
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
-import { listBlobPathnames, readBlobJson, writeBlobJson } from "@/src/storage/vercel-blob-json";
+import { listBlobPathnames, readBlobJson, vercelBlobNamespace, writeBlobJson } from "@/src/storage/vercel-blob-json";
 
-const ACTIVITY_KEY = "ux-direct-connection-status/chatgpt/last-activity.json";
-const BRIDGE_PREFIX = "ux-direct-bridge/sessions/";
+const ACTIVITY_KEY = vercelBlobNamespace("ux-direct-connection-status") + "/chatgpt/last-activity.json";
+const BRIDGE_PREFIX = vercelBlobNamespace("ux-direct-bridge") + "/sessions/";
 export const CHATGPT_ACTIVE_WINDOW_MS = 5 * 60 * 1000;
 const FIGMA_ACTIVE_WINDOW_MS = 75 * 1000;
 
