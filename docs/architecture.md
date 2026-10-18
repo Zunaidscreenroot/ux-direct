@@ -31,7 +31,7 @@ User request
 - **Task orchestration:** explicit task states, steps, retries, cancellation, and checkpoints.
 - **Capability registry:** each capability declares inputs, outputs, dependencies, permission requirements, risk, cost class, and tests.
 - **Context resolver:** retrieves relevant project, client, design, and task context; surfaces conflicts instead of silently guessing.
-- **Product memory:** separates observed facts, candidate patterns, and trusted/approved patterns. Keep evidence and provenance with each memory item.
+- **Shared Brain:** persists reusable memory and source-backed knowledge in Supabase/Postgres. Draft owner corrections retain original wording and provenance; approved rules are scoped and retrieved through keyword search plus optional pgvector/RRF. Raw client findings stay in the Past findings store and are never auto-promoted to global memory.
 - **Model gateway:** one internal interface for multiple model providers and local models. Route by task complexity, vision needs, privacy, quality, latency, availability, and cost.
 - **Design IR:** validated structured representation for screens, layout, components, content, interactions, and rationale; adapters translate it to Figma operations.
 - **Quality gates:** requirement coverage, journey completeness, visual consistency, accessibility, UX writing, responsive behavior, edge states, and interaction integrity.
@@ -61,4 +61,4 @@ Understand -> retrieve evidence -> plan -> compare alternatives -> execute -> cr
 - Keep the product in this repository only.
 - Do not depend on the separate `figma-design-agent` repository.
 - Do not train a foundation model from scratch; use model APIs/local models plus project memory and retrieval.
-- Do not add a database or external service until the MVP requires persistence; keep interfaces ready for one.
+- Use the existing Supabase/Postgres project for durable shared memory, source-backed knowledge and retrieval evaluation; do not introduce a separate graph database until measured retrieval failures justify its operational cost.

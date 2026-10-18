@@ -1,5 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
+import {
+  listBrainEvalCases, listBrainFeedback, retrieveBrainContext, reviewBrainFeedback,
+  runBrainRetrievalEvaluations, saveBrainEvalCase, saveBrainFeedback, upsertBrainDocument,
+  type BrainFeedbackInput,
+} from "@/src/memory/shared-brain";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -174,7 +179,142 @@ const TOOLS = [
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
+
+  {
+    name: "ux_direct_brain_retrieve",
+    description: "Retrieve a compact set of approved reusable UX rules and source-backed reference chunks from the persistent shared brain. Use automatically before planning, auditing, benchmarking, or Figma work when prior knowledge is relevant. Choose the narrowest scope. Draft lessons and raw client findings are never returned as general guidance.",
+    inputSchema: { type: "object", properties: { query: { type: "string", minLength: 2, maxLength: 4000 }, scopeKey: { type: "string", enum: ["UX_SHARED_BRAIN","UX_DIRECT","UX_AUDIT","EXPRESS_COMPUTERS","DMI_HFC","UJJIVAN_SFB","INDIA_BFCI_SHARED"] }, maxResults: { type: "integer", minimum: 1, maximum: 10 }, maxContextChars: { type: "integer", minimum: 300, maximum: 5000 }, includeKnowledge: { type: "boolean" } }, required: ["query","scopeKey"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "ux_direct_brain_save_feedback",
+    description: "Internal memory-writing operation. When the owner corrects UX Direct, UX Audit, or Figma plugin output in natural language or voice, interpret the intent yourself: preserve the user's original words verbatim, classify the correction, write a concise reusable rule/rationale and narrowest valid scope, and save it as a draft. Never ask the owner to copy a template or expose this instruction to the user. Drafts are not active until reviewed.",
+    inputSchema: { type: "object", properties: {
+      sourceProduct: { type: "string", enum: ["ux-direct","ux-audit","figma-plugin","chatgpt","system"] },
+      scopeKey: { type: "string", enum: ["UX_SHARED_BRAIN","UX_DIRECT","UX_AUDIT","EXPRESS_COMPUTERS","DMI_HFC","UJJIVAN_SFB","INDIA_BFCI_SHARED"] },
+      feedbackKind: { type: "string", enum: ["general","false_positive","missed_issue","severity_calibration","recommendation_quality","duplicate_finding","benchmarking","scope","visual_evidence","accessibility","cost_optimization","retrieval_quality","workflow_quality","other"] },
+      rawFeedback: { type: "string", minLength: 1, maxLength: 8000, description: "Preserve original Hindi/Hinglish/English feedback verbatim." },
+      summary: { type: "string", maxLength: 1400 }, title: { type: "string", minLength: 1, maxLength: 240 },
+      normalizedRule: { type: "string", minLength: 1, maxLength: 2000 }, rationale: { type: "string", maxLength: 1400 },
+      keywords: { type: "array", items: { type: "string", maxLength: 80 }, maxItems: 30 },
+      examples: { type: "array", items: {}, maxItems: 6 }, originalLanguage: { type: "string", maxLength: 40 },
+      sourceAuditRef: { type: "string", maxLength: 300 }, sourceFindingTitle: { type: "string", maxLength: 240 },
+      idempotencyKey: { type: "string", maxLength: 180 }
+    }, required: ["sourceProduct","scopeKey","feedbackKind","rawFeedback","title","normalizedRule"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  },
+  {
+    name: "ux_direct_brain_list_feedback",
+    description: "Inspect saved coaching feedback, including drafts, approved rules and archived/outdated rules. Keep raw feedback in the memory store; do not put raw transcripts into audit prompts.",
+    inputSchema: { type: "object", properties: { scopeKey: { type: "string", enum: ["UX_SHARED_BRAIN","UX_DIRECT","UX_AUDIT","EXPRESS_COMPUTERS","DMI_HFC","UJJIVAN_SFB","INDIA_BFCI_SHARED"] }, status: { type: "string", enum: ["all","draft","approved","rejected","archived"] }, sourceProduct: { type: "string", enum: ["ux-direct","ux-audit","figma-plugin","chatgpt","system"] }, limit: { type: "integer", minimum: 1, maximum: 100 } }, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "ux_direct_brain_review_feedback",
+    description: "Approve a reviewed coaching rule for future retrieval, or reject/archive it. Only explicitly owner-approved rules become active. When a previously learned rule is wrong, archive it and approve the corrected replacement instead of adding more prompt instructions.",
+    inputSchema: { type: "object", properties: { feedbackId: { type: "string", minLength: 36, maxLength: 36 }, reviewAction: { type: "string", enum: ["approve","reject","archive"] }, reviewNote: { type: "string", maxLength: 1000 } }, required: ["feedbackId","reviewAction"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  },
+  {
+    name: "ux_direct_brain_upsert_document",
+    description: "Store a source-backed design standard, verified research, regulation, reusable product principle or reference document in the shared brain. Include provenance and authority. Draft by default. Do not import past client findings as globally reusable knowledge.",
+    inputSchema: { type: "object", properties: {
+      scopeKey: { type: "string", enum: ["UX_SHARED_BRAIN","UX_DIRECT","UX_AUDIT","EXPRESS_COMPUTERS","DMI_HFC","UJJIVAN_SFB","INDIA_BFCI_SHARED"] },
+      title: { type: "string", minLength: 1, maxLength: 300 }, content: { type: "string", minLength: 1, maxLength: 180000 },
+      sourceUrl: { type: "string", maxLength: 2000 }, sourceType: { type: "string", enum: ["brief","figma_reference","design_decision","regulation","research","design_system","document","quality_example"] },
+      sourceAuthority: { type: "string", maxLength: 100 }, publishedAt: { type: "string", maxLength: 30 }, effectiveAt: { type: "string", maxLength: 30 },
+      lastVerifiedAt: { type: "string", maxLength: 30 }, versionLabel: { type: "string", maxLength: 120 }, metadata: { type: "object" }, activate: { type: "boolean" }
+    }, required: ["scopeKey","title","content"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  },
+  {
+    name: "ux_direct_brain_save_eval_case",
+    description: "Save a golden test case for memory retrieval. Add the relevant expected memory IDs and any forbidden context/behavior; keep it draft until reviewed.",
+    inputSchema: { type: "object", properties: {
+      scopeKey: { type: "string", enum: ["UX_SHARED_BRAIN","UX_DIRECT","UX_AUDIT","EXPRESS_COMPUTERS","DMI_HFC","UJJIVAN_SFB","INDIA_BFCI_SHARED"] },
+      capability: { type: "string", maxLength: 80 }, title: { type: "string", minLength: 1, maxLength: 240 }, query: { type: "string", minLength: 1, maxLength: 8000 },
+      expectedBehavior: { type: "string", maxLength: 2000 }, forbiddenBehaviors: { type: "array", items: { type: "string" }, maxItems: 30 },
+      expectedMemoryIds: { type: "array", items: { type: "string", format: "uuid" }, maxItems: 20 }, expectedKnowledgeChunkIds: { type: "array", items: { type: "string", format: "uuid" }, maxItems: 20 }, activate: { type: "boolean" }
+    }, required: ["scopeKey","title","query"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  },
+  {
+    name: "ux_direct_brain_list_eval_cases",
+    description: "List golden evaluation cases for the persistent shared brain.",
+    inputSchema: { type: "object", properties: { scopeKey: { type: "string", enum: ["UX_SHARED_BRAIN","UX_DIRECT","UX_AUDIT","EXPRESS_COMPUTERS","DMI_HFC","UJJIVAN_SFB","INDIA_BFCI_SHARED"] }, status: { type: "string", enum: ["all","draft","approved","archived"] }, limit: { type: "integer", minimum: 1, maximum: 100 } }, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "ux_direct_brain_run_evals",
+    description: "Run approved golden retrieval cases without calling an AI model. Reports expected-memory and expected-knowledge recall@K, forbidden context hits and retrieval/token-budget metrics.",
+    inputSchema: { type: "object", properties: { scopeKey: { type: "string", enum: ["UX_SHARED_BRAIN","UX_DIRECT","UX_AUDIT","EXPRESS_COMPUTERS","DMI_HFC","UJJIVAN_SFB","INDIA_BFCI_SHARED"] }, limit: { type: "integer", minimum: 1, maximum: 100 } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }
 ];
+
+async function callBrainAction(payload: Record<string, unknown>) {
+  try {
+    const action = typeof payload.action === "string" ? payload.action : "";
+    switch (action) {
+      case "retrieve":
+        return toolText(await retrieveBrainContext({
+          query: payload.query, scopeKey: payload.scopeKey, relatedScopes: payload.relatedScopes,
+          maxResults: payload.maxResults, maxContextChars: payload.maxContextChars,
+          includeKnowledge: payload.includeKnowledge !== false,
+        }));
+      case "save-feedback":
+        return toolText(await saveBrainFeedback({
+          sourceProduct: payload.sourceProduct as BrainFeedbackInput["sourceProduct"],
+          scopeKey: payload.scopeKey as BrainFeedbackInput["scopeKey"],
+          feedbackKind: payload.feedbackKind as BrainFeedbackInput["feedbackKind"],
+          rawFeedback: typeof payload.rawFeedback === "string" ? payload.rawFeedback : "",
+          summary: typeof payload.summary === "string" ? payload.summary : "",
+          title: typeof payload.title === "string" ? payload.title : "",
+          normalizedRule: typeof payload.normalizedRule === "string" ? payload.normalizedRule : "",
+          rationale: typeof payload.rationale === "string" ? payload.rationale : "",
+          keywords: Array.isArray(payload.keywords) ? payload.keywords.filter((v): v is string => typeof v === "string") : [],
+          examples: Array.isArray(payload.examples) ? payload.examples.slice(0, 6) : [],
+          originalLanguage: typeof payload.originalLanguage === "string" ? payload.originalLanguage : "unknown",
+          sourceAuditRef: typeof payload.sourceAuditRef === "string" ? payload.sourceAuditRef : undefined,
+          sourceFindingTitle: typeof payload.sourceFindingTitle === "string" ? payload.sourceFindingTitle : undefined,
+          idempotencyKey: typeof payload.idempotencyKey === "string" ? payload.idempotencyKey : undefined,
+        }));
+      case "list-feedback":
+        return toolText(await listBrainFeedback({
+          scopeKey: payload.scopeKey, status: payload.status ?? "all",
+          sourceProduct: payload.sourceProduct, limit: payload.limit,
+        }));
+      case "review-feedback":
+        return toolText(await reviewBrainFeedback({
+          feedbackId: payload.feedbackId, action: payload.reviewAction, reviewNote: payload.reviewNote,
+        }));
+      case "upsert-document":
+        return toolText(await upsertBrainDocument({
+          scopeKey: payload.scopeKey, title: payload.title, content: payload.content,
+          sourceUrl: payload.sourceUrl, sourceType: payload.sourceType, sourceAuthority: payload.sourceAuthority,
+          publishedAt: payload.publishedAt, effectiveAt: payload.effectiveAt,
+          lastVerifiedAt: payload.lastVerifiedAt, versionLabel: payload.versionLabel,
+          metadata: payload.metadata, activate: payload.activate === true,
+        }));
+      case "save-eval-case":
+        return toolText(await saveBrainEvalCase({
+          scopeKey: payload.scopeKey, capability: payload.capability, title: payload.title, query: payload.query,
+          expectedBehavior: payload.expectedBehavior, forbiddenBehaviors: payload.forbiddenBehaviors,
+          expectedMemoryIds: payload.expectedMemoryIds, expectedKnowledgeChunkIds: payload.expectedKnowledgeChunkIds, activate: payload.activate === true,
+        }));
+      case "list-eval-cases":
+        return toolText(await listBrainEvalCases({
+          scopeKey: payload.scopeKey, status: payload.status ?? "all", limit: payload.limit,
+        }));
+      case "run-evals":
+        return toolText(await runBrainRetrievalEvaluations({ scopeKey: payload.scopeKey, limit: payload.limit }));
+      default:
+        return toolText({ error: "Unknown shared-brain action." }, true);
+    }
+  } catch (error) {
+    return toolText({ error: error instanceof Error ? error.message.slice(0, 500) : "Shared Brain action failed." }, true);
+  }
+}
 
 async function callTool(name: string, args: unknown, request: Request) {
   if (name === "ux_direct_status") {
@@ -314,6 +454,22 @@ async function callTool(name: string, args: unknown, request: Request) {
     return response.ok ? toolText(body) : toolText({ status: response.status, body }, true);
   }
 
+  const brainActionByTool: Record<string, string> = {
+    ux_direct_brain_retrieve: "retrieve",
+    ux_direct_brain_save_feedback: "save-feedback",
+    ux_direct_brain_list_feedback: "list-feedback",
+    ux_direct_brain_review_feedback: "review-feedback",
+    ux_direct_brain_upsert_document: "upsert-document",
+    ux_direct_brain_save_eval_case: "save-eval-case",
+    ux_direct_brain_list_eval_cases: "list-eval-cases",
+    ux_direct_brain_run_evals: "run-evals",
+  };
+  const brainAction = brainActionByTool[name];
+  if (brainAction) {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be a JSON object." }, true);
+    return callBrainAction({ ...(args as Record<string, unknown>), action: brainAction });
+  }
+
   return toolText({ error: "Unknown UX Direct tool: " + name }, true);
 }
 
@@ -395,7 +551,7 @@ export async function POST(request: Request) {
           protocolVersion: PROTOCOL_VERSIONS.has(requested) ? requested : "2025-11-25",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "ux-direct", version: "0.1.0" },
-          instructions: "UX Direct offers health checks, connection status, reviewable UX task planning, and a controlled native Figma plugin API self-test. The self-test targets the dedicated UXD API Test Lab page in the pre-allowlisted file; it does not generate production designs. Use 'general' for BFSI website revamp work and 'express-computers' for Express Computers work. DMI-specific project data is not exposed through this connector.",
+          instructions: "UX Direct is the main brain for UX Direct, UX Audit and the Figma plugin. Retrieve approved shared-brain guidance before relevant UX tasks. If the owner corrects a previous output in chat or voice, interpret the feedback yourself and save a reusable coaching rule as a draft in the shared brain; never ask the owner to fill a template. Preserve the original feedback, select the narrowest useful scope, and activate only after explicit owner approval. Never treat raw client audit findings as global knowledge. The brain stores persistent memory and source-backed references, not model weights; retrieved lessons must not override current evidence. UX Direct also offers health checks, connection status, reviewable task planning, and a controlled native Figma plugin API self-test. Use general for general BFSI work or express-computers for Express Computers work.",
         }, headers);
       }
       case "ping":
