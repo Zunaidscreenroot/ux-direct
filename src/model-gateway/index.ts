@@ -5,7 +5,36 @@ import { GATEWAY_MODULES, getGatewaySettings, getDefaultModelPolicy, modelKey } 
  * Provider usage may still cost money; local inference uses your own compute.
  */
 export type ChatRole = "system" | "user" | "assistant";
-export type ChatMessage = { role: ChatRole; content: string };
+export type ChatTextPart = { type: "text"; text: string };
+export type ChatImagePart = { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } };
+export type ChatContent = string | Array<ChatTextPart | ChatImagePart>;
+export type ChatMessage = { role: ChatRole; content: ChatContent };
+
+/** Extract only textual content for limits and safe telemetry; image URLs are never logged. */
+export function chatContentText(content: ChatContent): string {
+  if (typeof content === "string") return content;
+  return content.filter((part): part is ChatTextPart => part.type === "text").map(part => part.text).join("\\n");
+}
+
+/** Validate OpenAI-compatible text and image_url content before sending it to a provider. */
+export function isValidChatContent(value: unknown): value is ChatContent {
+  if (typeof value === "string") return value.length <= 200_000;
+  if (!Array.isArray(value) || value.length < 1 || value.length > 20) return false;
+  return value.every((part: unknown) => {
+    if (!part || typeof part !== "object" || Array.isArray(part)) return false;
+    const item = part as Record<string, unknown>;
+    if (item.type === "text") return typeof item.text === "string" && item.text.length <= 100_000;
+    if (item.type === "image_url" && item.image_url && typeof item.image_url === "object") {
+      const image = item.image_url as Record<string, unknown>;
+      if (typeof image.url !== "string" || typeof image.detail === "string" && !["auto", "low", "high"].includes(image.detail)) return false;
+      try {
+        const url = new URL(image.url);
+        return url.protocol === "https:" && !url.username && !url.password;
+      } catch { return false; }
+    }
+    return false;
+  });
+}
 export type GatewayRequest = {
   model: string;
   requestId?: string;
@@ -217,8 +246,8 @@ export async function chatCompletion(
 ): Promise<GatewayResponse> {
   if (!request.model?.trim()) throw new GatewayError("A model is required.",400);
   if (!Array.isArray(request.messages)||request.messages.length===0) throw new GatewayError("At least one chat message is required.",400);
-  if(request.messages.some(m=>!m||!["system","user","assistant"].includes(m.role)||typeof m.content!=="string"))throw new GatewayError("Messages must contain a supported role and string content.",400);
-  const promptChars=request.messages.reduce((n,m)=>n+m.content.length,0);
+  if(request.messages.some(m=>!m||!["system","user","assistant"].includes(m.role)||!isValidChatContent(m.content)))throw new GatewayError("Messages must contain supported roles and valid text/image content.",400);
+  const promptChars=request.messages.reduce((n,m)=>n+chatContentText(m.content).length,0);
   if(promptChars>200_000)throw new GatewayError("Request content exceeds the 200,000-character limit.",413);
 
   const providers=options.providers??providersFromEnv();
@@ -270,7 +299,7 @@ export async function chatCompletion(
     }
   }
   if(provider.kind==="mock"||provider.baseUrl.startsWith("mock://")){
-    const lastUser=[...request.messages].reverse().find(m=>m.role==="user")?.content??"";
+    const lastUser=chatContentText([...request.messages].reverse().find(m=>m.role==="user")?.content??"");
     const usage={prompt_tokens:0,completion_tokens:0,total_tokens:0};
     await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model,tier:"mock",promptTokens:0,completionTokens:0,totalTokens:0,usageReported:true,estimatedCostInr:0,latencyMs:Date.now()-started,status:"success"});
     return {id:requestId,model,content:`[UX Direct mock — no model API called] Received ${lastUser.length} characters. Configure a connected provider for inference.`,provider:provider.name,latencyMs:Date.now()-started,usage};
