@@ -55,9 +55,15 @@ test("legacy gateway credentials remain server-only and are not saved in browser
   assert.ok(settingsRoute.includes("MODEL_GATEWAY_ADMIN_KEY"));
 });
 
-test("free-first OpenRouter example is pinned to an exact model and never silently turns on paid calls", () => {
+test("OpenRouter homepage chat stays free-only while internal routing is dynamic and cost-sensitive", () => {
   const env = read(".env.example");
   assert.ok(env.includes("OPENROUTER_MODELS=google/gemma-4-31b-it:free"));
+  assert.ok(env.includes("OPENROUTER_AUTO_ROUTING=true"));
+  assert.ok(env.includes("OPENROUTER_AUTO_MAX_INPUT_USD_PER_1M=0.20"));
+  assert.ok(env.includes("OPENROUTER_AUTO_MAX_OUTPUT_USD_PER_1M=0.50"));
   assert.ok(env.includes("ALLOW_PAID_MODELS=false"));
   assert.ok(env.includes("MODEL_GATEWAY_ADMIN_KEY="));
+  assert.ok(!env.includes("OPENROUTER_PAID_MODELS"));
+  assert.ok(!env.includes("UXD_INTERNAL_PAID_MODEL"));
+  assert.ok(!env.includes("MODEL_GATEWAY_MONTHLY_BUDGET_INR=3000"));
 });
