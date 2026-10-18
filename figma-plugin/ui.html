@@ -110,13 +110,13 @@
         parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: command.commandId } }, "*");
       }
       $("connectionDot").className = "dot ok";
-      $("connectionText").textContent = "Vercel production connected · plugin bridge online";
+      $("connectionText").textContent = "Vercel backend reachable · Figma session sync online";
       return { ok: true, error: "" };
     } catch (error) {
       const detail = error && error.message ? error.message : "Unknown bridge error";
-      console.warn("[UX Direct Vercel bridge]", error);
+      console.warn("[UX Direct Figma session sync]", error);
       $("connectionDot").className = "dot";
-      $("connectionText").textContent = "Vercel reachable · plugin bridge unavailable";
+      $("connectionText").textContent = "Vercel backend reachable · Figma session sync unavailable";
       return { ok: false, error: detail };
     }
   }
@@ -153,9 +153,9 @@
     await refreshConnectionStatus();
     $("runHealth").disabled = false;
     $("healthSummary").textContent = connection && bridge.ok
-      ? "Vercel production and persistent plugin bridge connected. Run the native API self-test when ready."
+      ? "Vercel backend and Figma session sync connected. Run the native API self-test when ready."
       : connection
-        ? "Vercel health check passed, but plugin bridge is unavailable: " + bridge.error
+        ? "Vercel backend is reachable, but Figma session sync is unavailable: " + bridge.error
         : "Could not verify the Vercel production backend. Check the connection before proceeding.";
     // Bridge heartbeat is sufficient for liveness; do not emit a separate telemetry POST each interval.
     heartbeatTimer = window.setInterval(() => {
