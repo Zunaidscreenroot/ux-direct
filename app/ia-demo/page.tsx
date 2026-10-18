@@ -72,36 +72,54 @@ const samplePages: PageRecord[] = [
 ];
 
 function buildGraph(pages: PageRecord[]): { nodes: SiteNode[]; edges: Edge[] } {
-  const levelCounts = new Map<number, number>();
-  const sorted = [...pages].sort((a, b) => a.depth - b.depth || a.title.localeCompare(b.title));
-  const nodes: SiteNode[] = sorted.map((page) => {
-    const index = levelCounts.get(page.depth) ?? 0;
-    levelCounts.set(page.depth, index + 1);
-    return {
-      id: page.id,
-      type: "page",
-      position: { x: 30 + page.depth * 295, y: 25 + index * 165 },
-      data: {
-        title: page.title,
-        url: page.url,
-        depth: page.depth,
-        status: page.status,
-        outbound: page.links?.length ?? 0,
-        sample: page.id.startsWith("sample-")
-      }
-    };
-  });
-  const pageIds = new Map(sorted.map((page) => [page.url, page.id]));
-  const edges: Edge[] = sorted.flatMap((page) => {
+  const byUrl = new Map(pages.map((page) => [page.url, page]));
+  const children = new Map<string, string[]>();
+  const roots: string[] = [];
+  for (const page of pages) {
+    const parent = page.parentUrl && byUrl.has(page.parentUrl) ? page.parentUrl : null;
+    if (!parent) roots.push(page.url);
+    else children.set(parent, [...(children.get(parent) ?? []), page.url]);
+  }
+  const positionByUrl = new Map<string, {x:number;y:number}>();
+  const subtreeHeight = new Map<string, number>();
+  const measure = (url: string, visited = new Set<string>()): number => {
+    if (subtreeHeight.has(url)) return subtreeHeight.get(url)!;
+    if (visited.has(url)) return 1;
+    const nextVisited = new Set(visited); nextVisited.add(url);
+    const childUrls = (children.get(url) ?? []).filter(child => !nextVisited.has(child));
+    const height = Math.max(1, childUrls.reduce((sum, child) => sum + measure(child, nextVisited), 0));
+    subtreeHeight.set(url, height);
+    return height;
+  };
+  const place = (url:string, depth:number, yStart:number, visited = new Set<string>()) => {
+    if (positionByUrl.has(url) || visited.has(url)) return;
+    const page = byUrl.get(url); if (!page) return;
+    const height = measure(url);
+    positionByUrl.set(url, { x: 40 + depth * 310, y: yStart + Math.max(0, (height - 1) * 76) });
+    const nextVisited = new Set(visited); nextVisited.add(url);
+    let nextY = yStart;
+    for (const child of children.get(url) ?? []) {
+      const childHeight = measure(child);
+      place(child, depth + 1, nextY, nextVisited);
+      nextY += childHeight * 152;
+    }
+  };
+  let nextRootY = 24;
+  for (const root of roots) { place(root, 0, nextRootY); nextRootY += measure(root) * 152 + 56; }
+  // Preserve disconnected pages if parent links are missing or the crawl is capped.
+  for (const page of pages) {
+    if (!positionByUrl.has(page.url)) { place(page.url, page.depth, nextRootY); nextRootY += 180; }
+  }
+  const nodes: SiteNode[] = pages.map(page => ({
+    id: page.id,
+    type: "page",
+    position: positionByUrl.get(page.url) ?? {x: 40 + page.depth * 310, y: 24},
+    data: { title: page.title, url: page.url, depth: page.depth, status: page.status, outbound: page.links?.length ?? 0, sample: page.id.startsWith("sample-") }
+  }));
+  const pageIds = new Map(pages.map(page => [page.url, page.id]));
+  const edges: Edge[] = pages.flatMap(page => {
     if (!page.parentUrl || !pageIds.has(page.parentUrl)) return [];
-    return [{
-      id: "edge-" + pageIds.get(page.parentUrl) + "-" + page.id,
-      source: pageIds.get(page.parentUrl)!,
-      target: page.id,
-      type: "smoothstep",
-      animated: false,
-      style: { stroke: "#99b5a3", strokeWidth: 1.5 }
-    }];
+    return [{ id: "edge-" + pageIds.get(page.parentUrl) + "-" + page.id, source: pageIds.get(page.parentUrl)!, target: page.id, type: "smoothstep", animated: false, style: { stroke: "#99b5a3", strokeWidth: 1.5 } }];
   });
   return { nodes, edges };
 }
