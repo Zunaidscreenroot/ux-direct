@@ -300,7 +300,7 @@ async function callBrainAction(payload: Record<string, unknown>) {
         return toolText(await saveBrainEvalCase({
           scopeKey: payload.scopeKey, capability: payload.capability, title: payload.title, query: payload.query,
           expectedBehavior: payload.expectedBehavior, forbiddenBehaviors: payload.forbiddenBehaviors,
-          expectedMemoryIds: payload.expectedMemoryIds, activate: payload.activate === true,
+          expectedMemoryIds: payload.expectedMemoryIds, expectedKnowledgeChunkIds: payload.expectedKnowledgeChunkIds, activate: payload.activate === true,
         }));
       case "list-eval-cases":
         return toolText(await listBrainEvalCases({
