@@ -285,7 +285,6 @@ export default function ChatWorkspace() {
             <div className="ud-audit-toolbar">
               <button className="ud-audit-back" onClick={() => setAuditTool(null)}>← Audit workspace</button>
               <div className="ud-audit-tool-switcher">{auditTools.map((tool) => <button className={auditTool === tool.id ? "active" : ""} key={tool.id} onClick={() => setAuditTool(tool.id)}>{tool.title}</button>)}</div>
-              <a href={AUDIT_URL + auditToolInfo?.path} target="_blank" rel="noreferrer" className="ud-open-separate">Open separately ↗</a>
             </div>
             <iframe className="ud-audit-frame" key={auditTool} title={auditToolInfo?.title || "UX Audit"} src={AUDIT_URL + (auditToolInfo?.path || "/") + "?embed=1"} allow="clipboard-read; clipboard-write" />
           </div>}
