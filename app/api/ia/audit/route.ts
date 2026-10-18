@@ -170,15 +170,20 @@ export async function POST(request: Request) {
   ].join("\n\n");
 
   try {
-    const model = process.env.UXD_IA_MODEL || process.env.UX_DIRECT_CHAT_MODEL || "mock/ux-direct";
-    const inferredProvider = model === "mock/ux-direct" ? "mock" : process.env.UXD_IA_PROVIDER?.trim() || (model.includes("/") ? "openrouter" : undefined);
+    // Default to the configured Reasoning module so the gateway selects its approved model.
+    // A direct model override is explicit; the deterministic mock is never the implicit audit model.
+    const model = process.env.UXD_IA_MODEL?.trim() || "uxd/reasoning";
+    const isGatewayTaskAlias = model.startsWith("uxd/");
+    const inferredProvider = isGatewayTaskAlias ? undefined
+      : process.env.UXD_IA_PROVIDER?.trim() || (model.includes("/") ? "openrouter" : undefined);
     const configuredModule = process.env.UXD_IA_GATEWAY_MODULE || "";
-    const moduleId = model === "mock/ux-direct" ? "general" :
-      ["reasoning", "classification", "extraction", "summarization", "vision", "critique"].includes(configuredModule) ? configuredModule : "general";
+    const moduleId = isGatewayTaskAlias ? undefined :
+      ["reasoning", "classification", "extraction", "summarization", "vision", "critique", "general"].includes(configuredModule)
+        ? configuredModule : "reasoning";
     const response = await chatCompletionWithFallback({
       model,
       ...(inferredProvider ? { providerId: inferredProvider } : {}),
-      moduleId,
+      ...(moduleId ? { moduleId } : {}),
             messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
