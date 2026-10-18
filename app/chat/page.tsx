@@ -15,6 +15,14 @@ type BrainTrace = {
 };
 type ChatMessage = { id: string; role: Role; content: string; brain?: BrainTrace };
 type FreeModel = { id: string; name: string; contextLength?: number };
+type RegressionSuiteStatus = {
+  status: "not_configured" | "not_run" | "partial" | "passed" | "failed" | "unavailable";
+  configuredCases: number;
+  completedCases: number;
+  passed: number;
+  failed: number;
+  lastRunAt: string | null;
+};
 type ServiceStatus = {
   connected: boolean;
   checkedAt?: string;
@@ -22,7 +30,12 @@ type ServiceStatus = {
   defaultModel?: string;
   freeModels: FreeModel[];
   uxAudit: { reachable: boolean; baseUrl: string; error?: string };
-  brain: { reachable: boolean; error?: string };
+  brain: {
+    reachable: boolean;
+    error?: string;
+    retrievalRegressionTests?: RegressionSuiteStatus;
+    semanticVectorSearch?: string;
+  };
 };
 type Tab = "chat" | "audit" | "connections";
 type AuditTool = "ia" | "audit" | "benchmark";
@@ -47,6 +60,8 @@ export default function ChatWorkspace() {
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState<ServiceStatus | null>(null);
   const [statusBusy, setStatusBusy] = useState(false);
+  const [regressionBusy, setRegressionBusy] = useState(false);
+  const [regressionNotice, setRegressionNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [chatError, setChatError] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
@@ -75,6 +90,30 @@ export default function ChatWorkspace() {
       });
     } finally {
       setStatusBusy(false);
+    }
+  }
+
+  async function runRetrievalRegressionTests() {
+    setRegressionBusy(true);
+    setRegressionNotice("");
+    try {
+      const response = await fetch("/api/assistant/retrieval-evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        cache: "no-store",
+      });
+      const payload = await response.json() as { total?: number; passed?: number; failed?: number; error?: string; modelInferenceCalls?: number };
+      if (!response.ok) throw new Error(payload.error || "Retrieval regression tests could not be completed.");
+      setRegressionNotice(
+        "Completed " + (payload.total ?? 0) + " cases: " + (payload.passed ?? 0) + " passed, " +
+        (payload.failed ?? 0) + " failed. Model calls: " + (payload.modelInferenceCalls ?? 0) + "."
+      );
+      await refreshStatus();
+    } catch (error) {
+      setRegressionNotice(error instanceof Error ? error.message : "Retrieval regression run failed.");
+    } finally {
+      setRegressionBusy(false);
     }
   }
 
@@ -323,7 +362,7 @@ export default function ChatWorkspace() {
           <div className="ud-connection-grid">
             <article className="ud-connection-card"><div className="ud-connection-card-top"><span className="ud-connection-icon purple">◎</span><span className={"ud-status-pill " + (status?.connected ? "ok" : "error")}>{status?.connected ? "Connected" : statusBusy ? "Checking" : "Needs attention"}</span></div><h2>OpenRouter · Free models</h2><p>Chat inference is routed only to models with the <code>:free</code> model ID suffix. Paid-model fallbacks are disabled.</p><dl><div><dt>Free models found</dt><dd>{status?.freeModels.length ?? "—"}</dd></div><div><dt>Selected model</dt><dd>{activeModel?.name || (status?.defaultModel ? shortModelName(status.defaultModel) : "Not selected")}</dd></div><div><dt>Last check</dt><dd>{status?.checkedAt ? new Date(status.checkedAt).toLocaleTimeString() : "Not checked"}</dd></div></dl>{status?.error && <p className="ud-connection-error">{status.error}</p>}</article>
             <article className="ud-connection-card"><div className="ud-connection-card-top"><span className="ud-connection-icon green">⌘</span><span className={"ud-status-pill " + (status?.uxAudit.reachable ? "ok" : "error")}>{status?.uxAudit.reachable ? "Reachable" : statusBusy ? "Checking" : "Unavailable"}</span></div><h2>UX Audit engine</h2><p>The existing audit product is embedded here. It remains a separate backend Worker, but you do not need to open it as a second product.</p><dl><div><dt>Service</dt><dd>Cloudflare Worker</dd></div><div><dt>Workspace route</dt><dd>/#audit</dd></div><div><dt>Audit endpoint</dt><dd>Server-side</dd></div></dl>{!status?.uxAudit.reachable && <p className="ud-connection-error">{status?.uxAudit.error || "Audit worker did not respond during the last check."}</p>}</article>
-            <article className="ud-connection-card"><div className="ud-connection-card-top"><span className="ud-connection-icon cyan">✦</span><span className={"ud-status-pill " + (status?.brain.reachable ? "ok" : "muted")}>{status?.brain.reachable ? "Reachable" : statusBusy ? "Checking" : "Not verified"}</span></div><h2>Shared Knowledge Brain</h2><p>Approved shared context is retrieved for chat when the server-side brain key is configured. Chat continues if memory retrieval is temporarily unavailable.</p><dl><div><dt>Memory context</dt><dd>{status?.brain.reachable ? "Available" : "Best effort"}</dd></div><div><dt>Scope</dt><dd>UX Direct + UX Audit</dd></div></dl></article>
+            <article className="ud-connection-card"><div className="ud-connection-card-top"><span className="ud-connection-icon cyan">✦</span><span className={"ud-status-pill " + (status?.brain.reachable ? "ok" : "muted")}>{status?.brain.reachable ? "Reachable" : statusBusy ? "Checking" : "Not verified"}</span></div><h2>Shared Knowledge Brain</h2><p>Approved shared context is retrieved for chat when the server-side brain key is configured. Chat continues if memory retrieval is temporarily unavailable.</p><dl><div><dt>Memory context</dt><dd>{status?.brain.reachable ? "Available" : "Best effort"}</dd></div><div><dt>Scope</dt><dd>UX Direct + UX Audit</dd></div><div><dt>Retrieval tests</dt><dd>{status?.brain.retrievalRegressionTests?.configuredCases ? status.brain.retrievalRegressionTests.configuredCases + " configured · " + (status.brain.retrievalRegressionTests.status === "not_run" ? "not run" : status.brain.retrievalRegressionTests.status) : status?.brain.retrievalRegressionTests?.status === "not_configured" ? "Not configured" : "Not verified"}</dd></div><div><dt>Last evaluation</dt><dd>{status?.brain.retrievalRegressionTests?.lastRunAt ? status.brain.retrievalRegressionTests.passed + "/" + status.brain.retrievalRegressionTests.configuredCases + " passed · " + new Date(status.brain.retrievalRegressionTests.lastRunAt).toLocaleTimeString() : "Not run yet"}</dd></div><div><dt>Retrieval mode</dt><dd>Postgres full-text · no model call</dd></div></dl><button className="ud-secondary-button" onClick={() => void runRetrievalRegressionTests()} disabled={!status?.brain.reachable || regressionBusy}>{regressionBusy ? "Running retrieval tests…" : "Run retrieval tests ↻"}</button>{regressionNotice && <p className="ud-connection-error" role="status">{regressionNotice}</p>}</article>
           </div>
           <section className="ud-connector-footer"><div><span className="ud-connector-icon">⌁</span><div><strong>ChatGPT MCP connector</strong><p>Use this endpoint when connecting UX Direct as a ChatGPT tool provider. It exposes audit and shared-brain tools through OAuth, separately from this app chat.</p><code>{typeof window !== "undefined" ? window.location.origin + "/api/mcp" : "/api/mcp"}</code></div></div><a href="/.well-known/oauth-authorization-server" target="_blank" rel="noreferrer">View OAuth metadata ↗</a></section>
         </section>}
