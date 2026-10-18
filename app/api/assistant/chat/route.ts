@@ -197,7 +197,7 @@ export async function POST(request: Request) {
   const promptMessages = compactRecentMessages(messages, { maxMessages: 14, maxTotalChars: 22000, maxMessageChars: 6000 });
   const lastUserMessage = [...promptMessages].reverse().find((message) => message.role === "user")?.content || "";
   const brain = await retrieveMemory(request, lastUserMessage);
-  const systemContent = buildBrainSystemPrompt(brain);
+  const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
   const clientFallbacks = Array.isArray(value.fallbackModels)
     ? value.fallbackModels.filter((entry): entry is string => typeof entry === "string" && isFreeModelId(entry)).slice(0, 12)
