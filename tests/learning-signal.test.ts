@@ -8,6 +8,7 @@ test("detects natural English feedback as a coaching signal", () => {
 
 test("detects natural Hindi/Hinglish feedback without a special instruction", () => {
   assert.equal(detectCoachingSignal("Is screen mein CTA hierarchy galat thi. Aisa hona chahiye tha; aage se ye galti mat repeat karna."), true);
+  assert.equal(detectCoachingSignal("No, I meant the primary CTA stays stronger, but you made the secondary action dominant."), true);
 });
 
 test("does not treat an ordinary design brief as training", () => {
@@ -27,5 +28,6 @@ test("keeps project-specific feedback in the project's scope by default", () => 
 
 test("allows broader learning scope only when owner explicitly generalizes it", () => {
   assert.equal(resolveLearningScope("UX_SHARED_BRAIN", "dmi-finance", "Remember this across all products as a global rule."), "UX_SHARED_BRAIN");
+  assert.equal(resolveLearningScope("project:dmi-finance", "dmi-finance", "Make this a shared rule across all products."), "UX_SHARED_BRAIN");
   assert.equal(resolveLearningScope("indian-bfsi", "general", "Make this rule for future Indian BFSI audits."), "indian-bfsi");
 });
