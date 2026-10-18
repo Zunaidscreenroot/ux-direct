@@ -28,7 +28,7 @@ export function estimateChatContentChars(content: ChatContent): number {
 
 /** Validate OpenAI-compatible text and image_url content before sending it to a provider. */
 export function isValidChatContent(value: unknown): value is ChatContent {
-  if (typeof value === "string") return value.length <= 200_000;
+  if (typeof value === "string") return true;
   if (!Array.isArray(value) || value.length < 1 || value.length > 20) return false;
   return value.every((part: unknown) => {
     if (!part || typeof part !== "object" || Array.isArray(part)) return false;
@@ -39,9 +39,13 @@ export function isValidChatContent(value: unknown): value is ChatContent {
       if (typeof image.url !== "string" || typeof image.detail === "string" && !["auto", "low", "high"].includes(image.detail)) return false;
       try {
         const url = new URL(image.url);
-        const host = url.hostname.toLowerCase().replace(/^\\[|\\]$/g, "");
+        const host = url.hostname.toLowerCase();
+        const hostParts = host.split(".");
+        const isIpv4 = hostParts.length === 4 && hostParts.every((part) =>
+          part.length > 0 && [...part].every((character) => character >= "0" && character <= "9") && Number(part) <= 255
+        );
         const blockedHost = host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") ||
-          host.endsWith(".internal") || /^\\d{1,3}(?:\\.\\d{1,3}){3}$/.test(host) || host.includes(":") || !host.includes(".");
+          host.endsWith(".internal") || isIpv4 || host.includes(":") || !host.includes(".");
         return url.protocol === "https:" && !url.username && !url.password && !blockedHost && url.href.length <= 2048;
       } catch { return false; }
     }
