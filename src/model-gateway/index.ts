@@ -341,7 +341,7 @@ export async function chatCompletion(
       responseContentType = (response.headers.get("content-type") || "unknown content type").slice(0,120);
       const responseText = await response.text();
       let parsed: unknown;
-      try { parsed = JSON.parse(responseText.replace(/^\\uFEFF/, "")); }
+      try { parsed = JSON.parse(responseText.replace(/^\uFEFF/, "")); }
       catch {
         if (attempt + 1 < parseAttempts) continue;
         throw new GatewayError(
