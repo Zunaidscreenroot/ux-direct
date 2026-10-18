@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   const activeProviders = providersFromEnv().filter(provider => provider.kind !== "mock");
   return NextResponse.json({
     service: "ux-direct-backend", status: "ok", checkedAt: new Date().toISOString(),
-    deployment: { platform: "netlify", host: new URL(request.url).host },
+    deployment: { platform: "cloudflare-workers", host: new URL(request.url).host },
     mode: activeProviders.length ? activeProviders.map(provider => provider.name).join(", ") : "mock",
     modelProviderConfigured: activeProviders.length > 0,
     figma: {
