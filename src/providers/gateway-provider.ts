@@ -42,7 +42,7 @@ export const gatewayProvider: ModelProvider = {
         },
         {
           role: "user",
-          content: JSON.stringify({ title, request, project, instruction: "Create an evidence-conscious, reviewable UX task plan." })
+          content: JSON.stringify({ title, request, project, instruction: "Create an evidence-conscious, reviewable UX task plan.", approvedSharedMemory: memoryContext.slice(0, 3200) || undefined })
         }
       ]
     });
