@@ -10,7 +10,7 @@ export async function GET(request: Request) {
       resource: issuer + "/api/mcp",
       authorization_servers: [issuer],
       bearer_methods_supported: ["header"],
-      scopes_supported: ["ux:read", "ux:execute", "ux:execute", "offline_access"],
+      scopes_supported: ["ux:read", "ux:execute", "ux:learn", "offline_access"],
     },
     { headers: { "Cache-Control": "public, max-age=300" } },
   );
