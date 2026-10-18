@@ -332,7 +332,8 @@
         throw new Error((data.error || "Backend returned " + response.status) + (data.requestId ? " · Request ID " + data.requestId : ""));
       }
       renderPlan(data);
-      status("Response received · " + (data.mode || "unknown") + " mode · ₹" + (data.cost && data.cost.amount != null ? data.cost.amount : "?") + " API cost · Request " + (data.requestId || "recorded") + ". No Figma changes made.");
+      const learningStatus = data.learningCapture && data.learningCapture.status === "draft-saved" ? " · Correction stored in shared brain as a draft" : data.learningCapture && data.learningCapture.status === "approved" ? " · Correction learned into shared brain" : data.learningCapture && data.learningCapture.status === "failed" ? " · Shared-brain save failed; plan still completed" : "";
+      status("Response received · " + (data.mode || "unknown") + " mode · ₹" + (data.cost && data.cost.amount != null ? data.cost.amount : "?") + " API cost · Request " + (data.requestId || "recorded") + ". No Figma changes made." + learningStatus);
       await sendTelemetry("Task response received", "success", "Planning response returned to the plugin UI.", { requestId: data.requestId, project: $("project").value, durationMs, mode: data.mode });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
