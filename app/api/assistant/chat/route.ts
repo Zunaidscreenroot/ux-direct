@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { collectFreeModelCandidates, compactRecentMessages, hasAssistantTextDelta, isFreeModelId } from "@/src/providers/openrouter-chat";
+import { retrieveBrainContext } from "@/src/memory/shared-brain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,48 +47,26 @@ function brainHeaders(brain: BrainContextInfo, model?: string): Headers {
   return headers;
 }
 
-async function retrieveMemory(request: Request, query: string): Promise<BrainContextInfo> {
+async function retrieveMemory(_request: Request, query: string): Promise<BrainContextInfo> {
   const startedAt = Date.now();
-  const token = process.env.UX_DIRECT_BRAIN_API_KEY;
-  if (!token) {
-    return { contextText: "", status: "disabled", memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
-  }
   if (!query.trim()) {
     return { contextText: "", status: "empty", memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
   }
 
+  // Retrieve shared context in-process instead of self-fetching the same Worker.
   try {
-    const endpoint = new URL("/api/brain/retrieve", request.url);
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        query: query.slice(0, 3000),
-        scopeKeys: ["UX_SHARED_BRAIN", "indian-bfsi", "project:ux-direct", "project:ux-audit", "project:dmi-finance", "project:ujjivan-sfb"],
-        limit: 4,
-        maxChars: 1800,
-        includeKnowledge: true,
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(1800),
+    const result = await retrieveBrainContext({
+      query: query.slice(0, 3000),
+      scopeKeys: ["UX_SHARED_BRAIN", "indian-bfsi", "project:ux-direct", "project:ux-audit", "project:dmi-finance", "project:ujjivan-sfb"],
+      limit: 4,
+      maxChars: 1800,
+      includeKnowledge: true,
     });
-    if (!response.ok) {
-      return { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: Date.now() - startedAt };
-    }
-    const payload = await response.json() as {
-      contextText?: unknown;
-      retrieval?: { status?: unknown; memoryCount?: unknown; knowledgeChunkCount?: unknown };
-    };
-    const contextText = typeof payload.contextText === "string" ? payload.contextText.slice(0, 3000) : "";
-    const reportedStatus = payload.retrieval?.status;
-    const status: BrainStatus = reportedStatus === "complete" || reportedStatus === "empty" || reportedStatus === "degraded"
-      ? reportedStatus
-      : contextText ? "complete" : "empty";
     return {
-      contextText,
-      status,
-      memoryCount: safeCount(payload.retrieval?.memoryCount),
-      knowledgeChunkCount: safeCount(payload.retrieval?.knowledgeChunkCount),
+      contextText: typeof result.contextText === "string" ? result.contextText.slice(0, 1800) : "",
+      status: result.retrieval.status,
+      memoryCount: safeCount(result.retrieval.memoryCount),
+      knowledgeChunkCount: safeCount(result.retrieval.knowledgeChunkCount),
       durationMs: Date.now() - startedAt,
     };
   } catch {
