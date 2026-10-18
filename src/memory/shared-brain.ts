@@ -421,6 +421,56 @@ export async function listBrainKnowledgeDocuments(input: { status?: string; limi
   return Array.isArray(result) ? result as Record<string, unknown>[] : [];
 }
 
+export async function saveBrainEvalCase(input: {
+  scopeKey?: string;
+  capability?: string;
+  title: string;
+  input: string;
+  expectedBehavior: string;
+  forbiddenBehaviors?: string[];
+  expectedMemoryIds?: string[];
+  source?: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const scopeKey = normalizeScope(input.scopeKey);
+  const forbiddenBehaviors = (input.forbiddenBehaviors || []).map(value => textValue(value, 300, "forbiddenBehavior")).filter(Boolean).slice(0, 20);
+  const expectedMemoryIds = (input.expectedMemoryIds || []).filter(safeUuid).slice(0, 30);
+  const body = {
+    scope_key: scopeKey,
+    capability: textValue(input.capability, 100, "capability") || "retrieval",
+    title: textValue(input.title, 200, "title", true),
+    input: textValue(input.input, 4000, "input", true),
+    expected_behavior: textValue(input.expectedBehavior, 2000, "expectedBehavior", true),
+    forbidden_behaviors: forbiddenBehaviors,
+    expected_memory_ids: expectedMemoryIds,
+    status: "draft",
+    source: textValue(input.source, 80, "source") || "human-approved",
+    metadata: input.metadata || {},
+    updated_at: new Date().toISOString(),
+  };
+  const result = await supabaseRequest("uxd_brain_eval_cases", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(body),
+  });
+  const row = Array.isArray(result) ? result[0] : null;
+  if (!row?.id) throw new Error("Could not save the shared-brain evaluation case.");
+  return { id: row.id, title: row.title, scopeKey: row.scope_key, capability: row.capability, status: row.status };
+}
+
+export async function reviewBrainEvalCase(input: { caseId: string; action: "approve" | "reject" | "archive" }) {
+  if (!safeUuid(input.caseId)) throw new Error("caseId must be a valid UUID.");
+  const status = input.action === "approve" ? "approved" : input.action === "reject" ? "rejected" : "archived";
+  const result = await supabaseRequest(`uxd_brain_eval_cases?id=eq.${encodeURIComponent(input.caseId)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
+  });
+  const row = Array.isArray(result) ? result[0] : null;
+  if (!row?.id) throw new Error("Evaluation case was not found or could not be reviewed.");
+  return { id: row.id, title: row.title, scopeKey: row.scope_key, status: row.status };
+}
+
 export async function listBrainEvalCases(limit = 100) {
   const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
   const result = await supabaseRequest(`uxd_brain_eval_cases?select=id,scope_key,capability,title,input,expected_behavior,forbidden_behaviors,expected_memory_ids,status,last_run_at,last_run_result,source,metadata&status=eq.approved&order=updated_at.desc&limit=${safeLimit}`);
