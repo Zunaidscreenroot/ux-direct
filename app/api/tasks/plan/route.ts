@@ -10,6 +10,7 @@ import { getGatewaySettings } from "@/src/model-gateway/control-store";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
+import { retrieveBrainContext } from "@/src/memory/shared-brain";
 
 const requestSchema = z.object({
   title: z.string().trim().min(1).max(160),
@@ -93,8 +94,33 @@ export async function POST(request: Request) {
       ? gatewayProvider : mockProvider;
   const executionMode = selectedProvider === mockProvider ? "mock" : "gateway";
   recordOperationalEvent({ source: "backend", event: "Task request received", status: "info", summary: "Task planning request accepted; prompt contents are not stored in the operational log.", requestId, project: parsed.data.project, mode: executionMode });
+  let brainContext: Awaited<ReturnType<typeof retrieveBrainContext>> | null = null;
+  if (selectedProvider !== mockProvider) {
+    try {
+      const taskText = `${parsed.data.title}\\n${parsed.data.request}\\n${parsed.data.project}`;
+      const looksBfsi = /\\b(bfsi|bank|banking|financial services|finance|loan|credit|upi|insurance|nbfc|dmi|ujjivan|sfb)\\b/i.test(taskText);
+      const scopeKey = parsed.data.project === "express-computers"
+        ? "EXPRESS_COMPUTERS"
+        : looksBfsi ? "INDIA_BFCI_SHARED" : "UX_DIRECT";
+      brainContext = await retrieveBrainContext({
+        query: taskText,
+        scopeKey,
+        maxResults: 6,
+        maxContextChars: 3000,
+      });
+    } catch (brainError) {
+      recordOperationalEvent({
+        source: "backend", event: "Shared brain retrieval degraded", status: "warning",
+        summary: brainError instanceof Error ? brainError.message.slice(0, 180) : "Shared brain unavailable; continuing without memory.",
+        requestId, project: parsed.data.project,
+      });
+    }
+  }
   try {
-    const result = await planUXTask({ ...taskInput, requestId, provider: selectedProvider });
+    const result = await planUXTask({
+      ...taskInput, requestId, provider: selectedProvider,
+      memoryContext: brainContext?.context || "",
+    });
     const durationMs = Date.now() - startedAt;
     const usage = (await getBudgetSnapshot()).records.find(record => record.requestId === requestId);
     recordOperationalEvent({ source: "backend", event: "Task response returned", status: "success", summary: executionMode === "mock" ? "Mock plan returned. No model API or Figma edit was performed." : "Model gateway plan returned; no Figma edit was performed.", requestId, project: parsed.data.project, durationMs, mode: executionMode });
@@ -105,7 +131,13 @@ export async function POST(request: Request) {
         durationMs, responseStatus: "success", figmaChangesMade: false,
         provider: usage?.provider ?? "mock", model: usage?.model ?? "mock/ux-direct",
         promptTokens: usage?.promptTokens ?? 0, completionTokens: usage?.completionTokens ?? 0,
-        totalTokens: usage?.totalTokens ?? 0
+        totalTokens: usage?.totalTokens ?? 0,
+        sharedBrain: {
+          retrievalMode: brainContext?.retrievalMode ?? "not-used",
+          memoryCount: brainContext?.memoryCount ?? 0,
+          knowledgeCount: brainContext?.knowledgeCount ?? 0,
+          contextCharacters: brainContext?.contextCharacters ?? 0,
+        }
       }
     }, { headers });
   } catch (error) {
