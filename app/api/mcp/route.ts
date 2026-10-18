@@ -1,5 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
+import {
+  listBrainEvalCases, listBrainFeedback, retrieveBrainContext, reviewBrainFeedback,
+  runBrainRetrievalEvaluations, saveBrainEvalCase, saveBrainFeedback, upsertBrainDocument,
+  type BrainFeedbackInput,
+} from "@/src/memory/shared-brain";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -247,16 +252,68 @@ const TOOLS = [
   }
 ];
 
-async function callBrainAction(request: Request, payload: Record<string, unknown>) {
-  const key = process.env.UX_DIRECT_BRAIN_API_KEY;
-  if (!key || key.length < 32) return toolText({ error: "UX Shared Brain is not configured on the server." }, true);
-  const response = await fetch(new URL("/api/brain", request.url), {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json", authorization: "Bearer " + key },
-    body: JSON.stringify(payload), cache: "no-store", signal: AbortSignal.timeout(20_000),
-  });
-  const body = await response.json().catch(() => ({ error: "Shared Brain returned invalid JSON." }));
-  return response.ok ? toolText(body) : toolText({ status: response.status, body }, true);
+async function callBrainAction(payload: Record<string, unknown>) {
+  try {
+    const action = typeof payload.action === "string" ? payload.action : "";
+    switch (action) {
+      case "retrieve":
+        return toolText(await retrieveBrainContext({
+          query: payload.query, scopeKey: payload.scopeKey, relatedScopes: payload.relatedScopes,
+          maxResults: payload.maxResults, maxContextChars: payload.maxContextChars,
+          includeKnowledge: payload.includeKnowledge !== false,
+        }));
+      case "save-feedback":
+        return toolText(await saveBrainFeedback({
+          sourceProduct: payload.sourceProduct as BrainFeedbackInput["sourceProduct"],
+          scopeKey: payload.scopeKey as BrainFeedbackInput["scopeKey"],
+          feedbackKind: payload.feedbackKind as BrainFeedbackInput["feedbackKind"],
+          rawFeedback: typeof payload.rawFeedback === "string" ? payload.rawFeedback : "",
+          summary: typeof payload.summary === "string" ? payload.summary : "",
+          title: typeof payload.title === "string" ? payload.title : "",
+          normalizedRule: typeof payload.normalizedRule === "string" ? payload.normalizedRule : "",
+          rationale: typeof payload.rationale === "string" ? payload.rationale : "",
+          keywords: Array.isArray(payload.keywords) ? payload.keywords.filter((v): v is string => typeof v === "string") : [],
+          examples: Array.isArray(payload.examples) ? payload.examples.slice(0, 6) : [],
+          originalLanguage: typeof payload.originalLanguage === "string" ? payload.originalLanguage : "unknown",
+          sourceAuditRef: typeof payload.sourceAuditRef === "string" ? payload.sourceAuditRef : undefined,
+          sourceFindingTitle: typeof payload.sourceFindingTitle === "string" ? payload.sourceFindingTitle : undefined,
+          idempotencyKey: typeof payload.idempotencyKey === "string" ? payload.idempotencyKey : undefined,
+        }));
+      case "list-feedback":
+        return toolText(await listBrainFeedback({
+          scopeKey: payload.scopeKey, status: payload.status ?? "all",
+          sourceProduct: payload.sourceProduct, limit: payload.limit,
+        }));
+      case "review-feedback":
+        return toolText(await reviewBrainFeedback({
+          feedbackId: payload.feedbackId, action: payload.reviewAction, reviewNote: payload.reviewNote,
+        }));
+      case "upsert-document":
+        return toolText(await upsertBrainDocument({
+          scopeKey: payload.scopeKey, title: payload.title, content: payload.content,
+          sourceUrl: payload.sourceUrl, sourceType: payload.sourceType, sourceAuthority: payload.sourceAuthority,
+          publishedAt: payload.publishedAt, effectiveAt: payload.effectiveAt,
+          lastVerifiedAt: payload.lastVerifiedAt, versionLabel: payload.versionLabel,
+          metadata: payload.metadata, activate: payload.activate === true,
+        }));
+      case "save-eval-case":
+        return toolText(await saveBrainEvalCase({
+          scopeKey: payload.scopeKey, capability: payload.capability, title: payload.title, query: payload.query,
+          expectedBehavior: payload.expectedBehavior, forbiddenBehaviors: payload.forbiddenBehaviors,
+          expectedMemoryIds: payload.expectedMemoryIds, activate: payload.activate === true,
+        }));
+      case "list-eval-cases":
+        return toolText(await listBrainEvalCases({
+          scopeKey: payload.scopeKey, status: payload.status ?? "all", limit: payload.limit,
+        }));
+      case "run-evals":
+        return toolText(await runBrainRetrievalEvaluations({ scopeKey: payload.scopeKey, limit: payload.limit }));
+      default:
+        return toolText({ error: "Unknown shared-brain action." }, true);
+    }
+  } catch (error) {
+    return toolText({ error: error instanceof Error ? error.message.slice(0, 500) : "Shared Brain action failed." }, true);
+  }
 }
 
 async function callTool(name: string, args: unknown, request: Request) {
@@ -410,7 +467,7 @@ async function callTool(name: string, args: unknown, request: Request) {
   const brainAction = brainActionByTool[name];
   if (brainAction) {
     if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be a JSON object." }, true);
-    return callBrainAction(request, { ...(args as Record<string, unknown>), action: brainAction });
+    return callBrainAction({ ...(args as Record<string, unknown>), action: brainAction });
   }
 
   return toolText({ error: "Unknown UX Direct tool: " + name }, true);
