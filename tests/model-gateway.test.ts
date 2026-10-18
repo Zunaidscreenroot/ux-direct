@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chatCompletion, GatewayError, isValidChatContent, resolveProvider, type ProviderConfig } from "../src/model-gateway";
+import { chatCompletion, GatewayError, estimateChatContentChars, isValidChatContent, resolveProvider, type ProviderConfig } from "../src/model-gateway";
 
 const providers: ProviderConfig[] = [
   { name: "openai", baseUrl: "https://example.test/v1", apiKey: "test-key", models: ["gpt-test"] },
@@ -263,4 +263,11 @@ test("validates multimodal screenshot content before sending it to a model", () 
   assert.equal(isValidChatContent([
     { type: "image_url", image_url: { url: "https://service.internal/screen.png" } }
   ]), false);
+});
+
+test("paid-request estimates include conservative cost allowance for screenshots", () => {
+  assert.equal(estimateChatContentChars([
+    { type: "text", text: "audit" },
+    { type: "image_url", image_url: { url: "https://images.example.com/screen.png" } }
+  ]), 32_005);
 });
