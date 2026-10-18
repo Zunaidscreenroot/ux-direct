@@ -22,7 +22,7 @@ function quoteIdentifier(value: string): string {
 }
 
 function parseFilter(value: string): { op: string; value: string } {
-  const match = value.match(/^(eq|neq|gt|gte|lt|lte|is|in)\.(.*)$/s);
+  const match = value.match(/^(eq|neq|gt|gte|lt|lte|is|in)\.([\s\S]*)$/);
   if (!match) throw new Error("Unsupported database filter.");
   return { op: match[1], value: match[2] };
 }
