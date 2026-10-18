@@ -164,12 +164,14 @@ export async function retrieveBrainContext(input: {
         p_memory_types: Array.isArray(input.memoryTypes) && input.memoryTypes.length ? input.memoryTypes.slice(0, 12) : null,
       }),
     });
+    let knowledgeFailed = false;
     const knowledgePromise = input.includeKnowledge === false
       ? Promise.resolve([])
       : supabaseRequest("rpc/uxd_brain_search_knowledge", {
           method: "POST",
           body: JSON.stringify({ p_query: query, p_scope_keys: scopeKeys, p_limit: Math.min(MAX_CHUNKS, limit) }),
         }).catch((error) => {
+          knowledgeFailed = true;
           console.warn("[uxd-brain] knowledge retrieval degraded:", error instanceof Error ? error.message.slice(0, 180) : "unknown");
           return [];
         });
@@ -180,7 +182,7 @@ export async function retrieveBrainContext(input: {
     return {
       memories, knowledge, contextText,
       retrieval: {
-        status: memories.length || knowledge.length ? "complete" : "empty",
+        status: knowledgeFailed ? "degraded" : memories.length || knowledge.length ? "complete" : "empty",
         memoryCount: memories.length,
         knowledgeChunkCount: knowledge.length,
         maxChars,

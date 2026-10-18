@@ -5,7 +5,14 @@ import "./chat.css";
 import { ThinkingOrb } from "thinking-orbs";
 
 type Role = "user" | "assistant";
-type ChatMessage = { id: string; role: Role; content: string };
+type BrainTrace = {
+  status: "complete" | "empty" | "degraded" | "disabled" | "unknown";
+  memoryCount: number;
+  knowledgeChunkCount: number;
+  durationMs: number;
+  model?: string;
+};
+type ChatMessage = { id: string; role: Role; content: string; brain?: BrainTrace };
 type FreeModel = { id: string; name: string; contextLength?: number };
 type ServiceStatus = {
   connected: boolean;
@@ -134,6 +141,7 @@ export default function ChatWorkspace() {
     setBusy(true);
     const controller = new AbortController();
     abortRef.current = controller;
+    let brainTrace: BrainTrace | undefined;
     try {
       const response = await fetch("/api/assistant/chat", {
         method: "POST",
@@ -141,6 +149,14 @@ export default function ChatWorkspace() {
         body: JSON.stringify({ model: selectedModel, messages: conversation.map((message) => ({ role: message.role, content: message.content })) }),
         signal: controller.signal,
       });
+      const headerStatus = response.headers.get("X-UXD-Brain-Status");
+      brainTrace = {
+        status: headerStatus === "complete" || headerStatus === "empty" || headerStatus === "degraded" || headerStatus === "disabled" ? headerStatus : "unknown",
+        memoryCount: Number(response.headers.get("X-UXD-Brain-Memories") || 0) || 0,
+        knowledgeChunkCount: Number(response.headers.get("X-UXD-Brain-References") || 0) || 0,
+        durationMs: Number(response.headers.get("X-UXD-Brain-Latency-Ms") || 0) || 0,
+        model: response.headers.get("X-UXD-Model") || selectedModel,
+      };
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(typeof payload.error === "string" ? payload.error : "OpenRouter returned HTTP " + response.status + ".");
@@ -150,35 +166,43 @@ export default function ChatWorkspace() {
       const decoder = new TextDecoder();
       let buffer = "";
       let fullText = "";
+      const consumeLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) return;
+        const data = trimmed.slice(5).trim();
+        if (!data || data === "[DONE]") return;
+        try {
+          const payload = JSON.parse(data);
+          const delta = payload.choices?.[0]?.delta?.content;
+          const textDelta = typeof delta === "string"
+            ? delta
+            : Array.isArray(delta)
+              ? delta.filter((part: unknown) => !!part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string").map((part: { text: string }) => part.text).join("")
+              : "";
+          if (textDelta) {
+            fullText += textDelta;
+            setMessages([...conversation, { id: assistantId, role: "assistant", content: fullText, brain: brainTrace }]);
+          }
+        } catch { /* Ignore malformed or non-text SSE event frames. */ }
+      };
       while (true) {
         const chunk = await reader.read();
         if (chunk.done) break;
         buffer += decoder.decode(chunk.value, { stream: true });
-        const lines = buffer.split("\n");
+        const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const data = trimmed.slice(5).trim();
-          if (!data || data === "[DONE]") continue;
-          try {
-            const payload = JSON.parse(data);
-            const delta = payload.choices?.[0]?.delta?.content;
-            if (typeof delta === "string" && delta) {
-              fullText += delta;
-              setMessages([...conversation, { id: assistantId, role: "assistant", content: fullText }]);
-            }
-          } catch { /* Ignore incomplete or non-text event frames. */ }
-        }
+        for (const line of lines) consumeLine(line);
       }
+      buffer += decoder.decode();
+      if (buffer.trim()) consumeLine(buffer);
       if (!fullText.trim() && !controller.signal.aborted) {
-        setMessages([...conversation, { id: assistantId, role: "assistant", content: "The free model returned an empty response. Try a different free model or ask again." }]);
+        setMessages([...conversation, { id: assistantId, role: "assistant", content: "The selected free model returned no readable text. Try another available free model.", brain: brainTrace }]);
       }
     } catch (error) {
       if (!controller.signal.aborted) {
         const message = error instanceof Error ? error.message : "Chat request failed.";
         setChatError(message);
-        setMessages([...conversation, { id: assistantId, role: "assistant", content: "I couldn't complete that response. " + message }]);
+        setMessages([...conversation, { id: assistantId, role: "assistant", content: "I couldn't complete that response. " + message, brain: brainTrace }]);
       }
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
@@ -253,7 +277,7 @@ export default function ChatWorkspace() {
             <div className="ud-thread-heading"><span className="ud-thread-mark">◌</span><div><strong>UX Direct</strong><small>Free OpenRouter model · responses are streamed</small></div><button onClick={newChat}>New chat ＋</button></div>
             {messages.map((message) => <article className={"ud-message " + message.role} key={message.id}>
               <div className={"ud-message-avatar " + message.role}>{message.role === "assistant" ? "u" : "Z"}</div>
-              <div className="ud-message-body"><div className="ud-message-role">{message.role === "assistant" ? "UX Direct" : "You"}</div><div className="ud-message-text">{message.content || (busy && message.role === "assistant" ? <span className="ud-typing"><i /><i /><i /></span> : "")}</div></div>
+              <div className="ud-message-body"><div className="ud-message-role">{message.role === "assistant" ? "UX Direct" : "You"}</div><div className="ud-message-text">{message.content || (busy && message.role === "assistant" ? <span className="ud-typing"><i /><i /><i /></span> : "")}</div>{message.brain && <div className="ud-message-meta"><span className={message.brain.status === "complete" && (message.brain.memoryCount + message.brain.knowledgeChunkCount) > 0 ? "retrieval-ok" : "retrieval-note"}>{message.brain.status === "complete" ? "Shared brain · " + message.brain.memoryCount + " memories · " + message.brain.knowledgeChunkCount + " references" : message.brain.status === "empty" ? "Shared brain · no matching approved context" : message.brain.status === "disabled" ? "Shared brain · API key not configured" : message.brain.status === "degraded" ? "Shared brain · retrieval unavailable" : "Shared brain · status not reported"}</span>{message.brain.model && <span>Model · {message.brain.model.split("/").slice(-1)[0].replace(/:free$/, "")}</span>}</div>}</div>
             </article>)}
             <div ref={endRef} />
           </div>}
