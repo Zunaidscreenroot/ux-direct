@@ -5,6 +5,21 @@ export const BRAIN_SCOPES = [
   "DMI_HFC", "UJJIVAN_SFB", "INDIA_BFCI_SHARED",
 ] as const;
 export type BrainScope = (typeof BRAIN_SCOPES)[number];
+
+export function resolveTaskBrainScope(project: string, title: string, request: string): BrainScope {
+  const value = [project, title, request].join(" ").toLowerCase();
+  if (project === "express-computers" || /\b(express computers|express-computers)\b/i.test(value)) return "EXPRESS_COMPUTERS";
+  if (/\b(dmi|dmi hfc|dmi finance|dmi housing finance)\b/i.test(value)) return "DMI_HFC";
+  if (/\b(ujjivan|ujjivan sfb|ujjivan small finance)\b/i.test(value)) return "UJJIVAN_SFB";
+  const explicitNonIndia = /\b(united states|u\.s\.a?\.?|uk|united kingdom|singapore|australia|canada|international market|non.indian)\b/i.test(value);
+  const indiaSignal = /\b(india|indian|rbi|upi|ifsc|aadhaar|aadhar|pan card|nbfc|sfb|small finance bank|bfsi)\b|₹/i.test(value);
+  const financialSignal = /\b(bank|banking|finance|financial services|insurance|lender|loan|credit|deposit|wealth|mortgage|payment)\b/i.test(value);
+  if ((indiaSignal && financialSignal) || (indiaSignal && /\b(bfsi|rbi|upi|ifsc|nbfc|sfb|small finance bank)\b/i.test(value))) return "INDIA_BFCI_SHARED";
+  // The first proving grounds are Indian BFSI, but don't leak their rules into
+  // clearly international or generic non-financial products.
+  if (financialSignal && !explicitNonIndia) return "INDIA_BFCI_SHARED";
+  return "UX_DIRECT";
+}
 export type BrainProduct = "ux-direct" | "ux-audit" | "figma-plugin" | "chatgpt" | "system";
 export type BrainStatus = "draft" | "approved" | "rejected" | "archived";
 
