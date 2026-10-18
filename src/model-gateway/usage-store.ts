@@ -51,7 +51,7 @@ function positiveNumber(value: string | undefined, fallback: number): number {
 }
 export function getBudgetConfig(env: Record<string, string | undefined> = process.env) {
   return {
-    monthlyBudgetInr: positiveNumber(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR, 3000),
+    monthlyBudgetInr: positiveNumber(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR, 0),
     inputPriceInrPerMillion: positiveNumber(env.MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M, 0),
     outputPriceInrPerMillion: positiveNumber(env.MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M, 0),
   };
@@ -157,7 +157,7 @@ export async function getBudgetSnapshot(env = process.env, now = new Date()): Pr
   return {
     currency: "INR", monthlyBudgetInr: monthlyBudget, spentThisMonthInr: Number(spent.toFixed(4)),
     remainingInr: Math.max(0, Number((monthlyBudget - spent).toFixed(4))),
-    percentUsed: monthlyBudget > 0 ? Math.min(100, Number((spent / monthlyBudget * 100).toFixed(2))) : 100,
+    percentUsed: monthlyBudget > 0 ? Math.min(100, Number((spent / monthlyBudget * 100).toFixed(2))) : 0,
     inputPriceInrPerMillion: config.inputPriceInrPerMillion, outputPriceInrPerMillion: config.outputPriceInrPerMillion,
     pricingConfigured, month, records: monthly.slice(0, 200), retention, spentByModuleInr, spentByModelInr, paidCallsThisMonth: paidMonthly.length
   };
