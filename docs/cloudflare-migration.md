@@ -9,10 +9,10 @@ This branch prepares UX Direct to move from Vercel to Cloudflare Workers. It use
 - Production D1 database ID: `85f849e4-cf2a-412a-970d-477065bb380c`
 - Preview D1 database ID: `156ac74e-ffe0-4667-be59-e724d279680d`
 - D1 table: `ux_direct_kv`, created by `migrations/0001_ux_direct_kv.sql`
-- D1 binding: `UX_DIRECT_STATE` (production and preview database IDs are configured separately)
+- D1 binding: `UX_DIRECT_STATE` (the `previews` block points at the separate preview database)
 - Environment marker: `UX_DIRECT_ENV=production`
 
-The D1 table stores plugin bridge sessions/commands/health reports and the persisted model-gateway settings. Keep the Worker Preview's `UX_DIRECT_STATE` binding pointed at the preview database in Cloudflare Preview settings; never configure a preview to use production D1. The usage ledger remains best-effort in-memory telemetry; it is not a transactional billing or hard budget-enforcement system.
+The D1 table stores plugin bridge sessions/commands/health reports and the persisted model-gateway settings. The checked-in `previews.d1_databases` binding points previews at the preview database; keep Cloudflare Previews Base settings in sync with `wrangler.jsonc` and never bind a preview to production D1. The usage ledger remains best-effort in-memory telemetry; it is not a transactional billing or hard budget-enforcement system.
 
 ## Build configuration
 
