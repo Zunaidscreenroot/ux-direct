@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 const MAX_BODY_BYTES = 350_000;
 
 function authorized(request: Request): boolean {
-  const expected = process.env.UX_DIRECT_BRAIN_API_KEY || "";
+  const expected = process.env.UX_DIRECT_BRAIN_API_KEY || process.env.UX_DIRECT_MCP_API_KEY || "";
   const suppliedHeader = request.headers.get("authorization") || "";
   const supplied = suppliedHeader.startsWith("Bearer ") ? suppliedHeader.slice(7).trim() : "";
   if (expected.length < 32 || supplied.length !== expected.length) return false;
