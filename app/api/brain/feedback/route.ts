@@ -53,7 +53,6 @@ export async function POST(request: Request) {
       const feedback = await listBrainFeedback(input);
       return Response.json({ feedback, count: feedback.length }, { headers: brainNoStoreHeaders() });
     }
-    validateBrainScopes([String((await listBrainFeedback({ status: "all", limit: 1 })).find(row => row.id === input.feedbackId)?.scope_key || "UX_SHARED_BRAIN")]);
     const result = await reviewBrainFeedback({ feedbackId: input.feedbackId, action: input.decision, reviewNote: input.reviewNote });
     return Response.json({ result }, { headers: brainNoStoreHeaders() });
   } catch (error) {
