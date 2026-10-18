@@ -130,9 +130,7 @@ export default function AuditDemoPage() {
             </label>
           </div>
           <label className="audit-screens-label" htmlFor="auditScreens">Screenshots to review</label>
-          <textarea id="auditScreens" className="audit-screens-input" value={screenshotText} onChange={(event) => setScreenshotText(event.target.value)} rows={5} placeholder={"One screenshot per line:
-Ujjivan SFB | Cards page | https://image.thum.io/get/width/1440/https://example.com/cards
-AU SFB | Cards page | https://your-public-r2-url/cards.png"} required />
+          <textarea id="auditScreens" className="audit-screens-input" value={screenshotText} onChange={(event) => setScreenshotText(event.target.value)} rows={5} placeholder={"One screenshot per line:\nUjjivan SFB | Cards page | https://image.thum.io/get/width/1440/https://example.com/cards\nAU SFB | Cards page | https://your-public-r2-url/cards.png"} required />
           <p className="audit-help">Format: Site name | Page or journey step | Public HTTPS image URL. Use matched page types across sites for useful benchmarking. Screenshot images will be sent to the model provider selected in Model Gateway; do not send confidential client screens to an unapproved provider.</p>
           <button className="submit-button" type="submit" disabled={busy}>{busy ? "Auditing screenshots…" : "Run UX audit & benchmark →"}</button>
         </form>
