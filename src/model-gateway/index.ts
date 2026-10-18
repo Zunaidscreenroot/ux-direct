@@ -339,8 +339,14 @@ export async function chatCompletion(
   }
   const fetchImpl=options.fetchImpl??fetch;
   const controller=new AbortController();
-  const timeout=setTimeout(()=>controller.abort(),options.timeoutMs??45_000);
-  const abort=()=>controller.abort();request.signal?.addEventListener("abort",abort,{once:true});
+  // Complex IA/UX analysis needs more headroom than a short chat completion.
+  const timeoutMs=options.timeoutMs??(isOpenRouterAuto?120_000:45_000);
+  let timedOut=false;
+  let requestCancelled=false;
+  const timeout=setTimeout(()=>{timedOut=true;controller.abort();},timeoutMs);
+  const abort=()=>{requestCancelled=true;controller.abort();};
+  if(request.signal?.aborted)abort();
+  else request.signal?.addEventListener("abort",abort,{once:true});
   const usdToInrRate=settings.usdToInrRate||97;
   const rates={billable,
     inputPriceInrPerMillion:modelPolicy.inputPriceInrPerMillion,
@@ -355,9 +361,10 @@ export async function chatCompletion(
       ...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{}),
       ...(request.response_format?{response_format:request.response_format}:{}),
       ...(isOpenRouterAuto?{
-        // Let OpenRouter's lowest cost tier select an eligible route. Combining
-        // it with a restrictive max_price filter can leave no models and return 404.
+        // No fixed model list, exclusions, or token-price ceiling: ask OpenRouter
+        // to choose a capable low-cost model, then prefer a high-throughput endpoint.
         plugins:[{id:"auto-router",cost_tier:"low"}],
+        provider:{sort:"throughput"},
         usage:{include:true}
       }:{})
     });
@@ -412,7 +419,11 @@ export async function chatCompletion(
     await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model:modelUsed,tier:usageTier,...tokenUsage,estimatedCostInr,latencyMs,status:"success",note:tokenUsage.usageReported?(reportedUsdCost!==null?"OpenRouter-reported cost converted to INR.":undefined):"Provider did not return token usage; cost is estimated using the configured price ceiling."});
     return {id:typeof payload.id==="string"?payload.id:undefined,model:modelUsed,content,usage:payload.usage,provider:provider.name,latencyMs};
   }catch(error){
-    const failure=error instanceof GatewayError?error:controller.signal.aborted?new GatewayError("Model request timed out or was cancelled.",504,provider.name):new GatewayError(error instanceof Error?error.message:"Unknown provider error.",502,provider.name);
+    const failure=error instanceof GatewayError?error:controller.signal.aborted
+      ?new GatewayError(
+        timedOut?"OpenRouter request timed out after "+Math.round(timeoutMs/1000)+" seconds.":requestCancelled?"Model request was cancelled by the client.":"Model request was aborted.",
+        timedOut?504:499,provider.name)
+      :new GatewayError(error instanceof Error?error.message:"Unknown provider error.",502,provider.name);
     await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model,tier:billable?"paid":(model.endsWith(":free")||policy.mode==="free"||provider.kind==="free-tier"?"free-tier":provider.kind??"paid"),promptTokens:0,completionTokens:0,totalTokens:0,usageReported:false,estimatedCostInr:billable?usageStore.estimateCostInr(Math.ceil(promptChars/4),request.max_tokens??1024,provider,process.env,model,rates):0,latencyMs:Date.now()-started,status:"error",note:failure.message+" Usage unavailable; paid cost is a conservative estimate."});
     throw failure;
   }finally{clearTimeout(timeout);request.signal?.removeEventListener("abort",abort);}
