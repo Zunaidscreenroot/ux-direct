@@ -10,7 +10,7 @@ import { getGatewaySettings } from "../model-gateway/control-store";
 export const gatewayProvider: ModelProvider = {
   id: "model-gateway",
   mode: "remote",
-  async plan({ title, request, project, requestId }: { title: string; request: string; project: TaskProject; requestId?: string }): Promise<TaskPlan> {
+  async plan({ title, request, project, requestId, memoryContext }: { title: string; request: string; project: TaskProject; requestId?: string; memoryContext?: string }): Promise<TaskPlan> {
     const providers = providersFromEnv();
     const settings = await getGatewaySettings();
     const actualProviders = providers.filter(provider => provider.kind !== "mock");
@@ -36,7 +36,9 @@ export const gatewayProvider: ModelProvider = {
             "Return only one valid JSON object. No markdown fences and no prose outside JSON.",
             "Schema: { summary: string, assumptions: string[], steps: [{ id: string, label: string, capabilityId: string }], qualityChecks: string[], requiresHumanReview: true }.",
             "Create 4-7 concrete steps with unique short ids and capabilityIds. Keep assumptions and qualityChecks concise.",
-            "Never claim you read a Figma file or changed a design. Human review is always required."
+            "Never claim you read a Figma file or changed a design. Human review is always required.",
+            "Treat retrieved brain memory as scoped guidance; prefer current task evidence, respect source provenance, and never invent evidence.",
+            memoryContext ? "APPROVED SHARED UX BRAIN CONTEXT (bounded retrieval): " + memoryContext.slice(0, 3000) : "No shared-brain context was retrieved; use task evidence and mark uncertainties.",
           ].join(" ")
         },
         {
