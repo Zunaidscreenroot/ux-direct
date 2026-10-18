@@ -164,7 +164,7 @@ export async function POST(request: Request) {
   const userPrompt = [
     "Review this discovered information architecture for " + origin + ".",
     "Crawl includes " + pages.length + " page records and may be capped; treat omissions as unknown.",
-    "Return JSON schema: {"summary":"...","findings":[{"title":"...","severity":"Critical|High|Medium|Low","category":"...","evidence":"...","recommendation":"...","confidence":0.0,"hypothesis":true,"url":"exact supplied page URL"}]}",
+    "Return JSON schema: {\"summary\":\"...\",\"findings\":[{\"title\":\"...\",\"severity\":\"Critical|High|Medium|Low\",\"category\":\"...\",\"evidence\":\"...\",\"recommendation\":\"...\",\"confidence\":0.0,\"hypothesis\":true,\"url\":\"exact supplied page URL\"}]}",
     "Aim for up to 12 distinct findings. Each evidence string must refer to one or more supplied page titles, paths, HTTP statuses, headings, or links. Do not claim screenshot findings.",
     JSON.stringify({ origin, pageCount: pages.length, pages: evidenceContext })
   ].join("\n\n");
