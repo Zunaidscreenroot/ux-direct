@@ -194,7 +194,7 @@ const TOOLS = [
   },
   {
     name: "ux_direct_brain_save_feedback",
-    description: "Internal coaching tool. When the owner explains in Hindi/Hinglish/English what UX Direct, UX Audit, or the Figma plugin got wrong or should learn, interpret the feedback yourself and create a compact reusable rule; do not ask the owner to copy a special instruction. Preserve the original wording. Classify the lesson, rationale, scope, keywords, and optional example/audit reference. Saves as draft only; never activate automatically. Keep client-specific findings out of global shared scope.",
+    description: "Internal coaching tool. When the owner explains in Hindi/Hinglish/English what UX Direct, UX Audit, or the Figma plugin got wrong or should learn, interpret the feedback yourself and create a compact reusable rule; do not ask the owner to copy a special instruction. Preserve the original wording. Classify the lesson, rationale, scope, keywords, and optional example/audit reference. Save as draft by default. If the owner explicitly asks to train/remember/store it for future use, call the review tool after saving and approve it; do not approve a routine correction without that clear reuse intent. Keep client-specific findings out of global shared scope.",
     inputSchema: {
       type: "object",
       properties: {
