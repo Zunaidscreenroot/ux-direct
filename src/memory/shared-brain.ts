@@ -227,65 +227,78 @@ function renderContext(items: BrainContextItem[], maxChars: number): string {
 }
 
 export async function retrieveBrainContext(input: {
-  query: unknown; scopeKey: unknown; maxResults?: unknown; maxContextChars?: unknown; includeKnowledge?: boolean;
+  query: unknown; scopeKey: unknown; relatedScopes?: unknown; maxResults?: unknown; maxContextChars?: unknown; includeKnowledge?: boolean;
 }) {
   const query = requiredText(input.query, "query", MAX_QUERY_CHARS, 2);
   const scopeKey = safeScope(input.scopeKey);
+  const requestedRelated = Array.isArray(input.relatedScopes) ? input.relatedScopes : [];
+  const relatedScopes = [...new Set(requestedRelated
+    .filter((value): value is string => typeof value === "string")
+    .map(value => safeScope(value))
+    .filter(value => value !== scopeKey))].slice(0, 2);
+  const scopes = [scopeKey, ...relatedScopes];
   const maxResults = safeCount(input.maxResults, 8, 10);
   const maxContextChars = safeCount(input.maxContextChars, MAX_CONTEXT_CHARS, MAX_CONTEXT_CHARS);
   const count = Math.min(10, Math.max(6, maxResults));
   const queryShort = query.slice(0, MAX_QUERY_CHARS);
-  const keywordJobs: Array<Promise<unknown>> = [
-    supabaseRequest("rpc/search_uxd_brain_memory_keyword", {
-      method: "POST", body: JSON.stringify({ p_project_key: scopeKey, p_query: queryShort, p_match_count: count }),
-    }),
-  ];
-  if (input.includeKnowledge !== false) {
-    keywordJobs.push(supabaseRequest("rpc/search_uxd_brain_knowledge_keyword", {
-      method: "POST", body: JSON.stringify({ p_project_key: scopeKey, p_query: queryShort, p_match_count: count }),
-    }));
-  }
-  const keywordResults = await Promise.all(keywordJobs.map(p => p.catch(() => [])));
-  const pools: Array<{ kind: "memory" | "knowledge"; rows: any[] }> = [
-    { kind: "memory", rows: Array.isArray(keywordResults[0]) ? keywordResults[0] as any[] : [] },
-  ];
-  if (input.includeKnowledge !== false) pools.push({ kind: "knowledge", rows: Array.isArray(keywordResults[1]) ? keywordResults[1] as any[] : [] });
 
+  // One bounded keyword request per relevant scope; no model call is needed for keyword retrieval.
+  const keywordJobs: Array<{kind:"memory"|"knowledge";scope:BrainScope;promise:Promise<unknown>}> = [];
+  for (const scope of scopes) {
+    keywordJobs.push({kind:"memory",scope,promise:supabaseRequest("rpc/search_uxd_brain_memory_keyword",{
+      method:"POST",body:JSON.stringify({p_project_key:scope,p_query:queryShort,p_match_count:count})
+    })});
+    if (input.includeKnowledge !== false) {
+      keywordJobs.push({kind:"knowledge",scope,promise:supabaseRequest("rpc/search_uxd_brain_knowledge_keyword",{
+        method:"POST",body:JSON.stringify({p_project_key:scope,p_query:queryShort,p_match_count:count})
+      })});
+    }
+  }
+  const keywordResults = await Promise.all(keywordJobs.map(job=>job.promise.catch(()=>[])));
+  const pools: Array<{kind:"memory"|"knowledge";rows:any[]}> = keywordResults.map((rows,index)=>({
+    kind:keywordJobs[index].kind,
+    rows:Array.isArray(rows)?rows as any[]:[]
+  }));
+
+  // Embeddings are opt-in. If enabled, calculate the query vector once and use it across scopes.
   const embedding = await embedText(queryShort);
   if (embedding) {
     const vector = vectorLiteral(embedding.vector);
-    const semanticJobs: Array<Promise<unknown>> = [
-      supabaseRequest("rpc/match_uxd_brain_memory", {
-        method: "POST", body: JSON.stringify({
-          p_query_embedding: vector, p_embedding_model: embedding.model, p_project_key: scopeKey,
-          p_match_count: count, p_min_similarity: 0.28,
-        }),
-      }),
-    ];
-    if (input.includeKnowledge !== false) semanticJobs.push(supabaseRequest("rpc/match_uxd_brain_knowledge", {
-      method: "POST", body: JSON.stringify({
-        p_query_embedding: vector, p_embedding_model: embedding.model, p_project_key: scopeKey,
-        p_match_count: count, p_min_similarity: 0.28,
-      }),
-    }));
-    const semanticResults = await Promise.all(semanticJobs.map(p => p.catch(() => [])));
-    pools.push({ kind: "memory", rows: Array.isArray(semanticResults[0]) ? semanticResults[0] as any[] : [] });
-    if (input.includeKnowledge !== false) pools.push({ kind: "knowledge", rows: Array.isArray(semanticResults[1]) ? semanticResults[1] as any[] : [] });
+    const semanticJobs: Array<{kind:"memory"|"knowledge";scope:BrainScope;promise:Promise<unknown>}> = [];
+    for (const scope of scopes) {
+      semanticJobs.push({kind:"memory",scope,promise:supabaseRequest("rpc/match_uxd_brain_memory",{
+        method:"POST",body:JSON.stringify({
+          p_query_embedding:vector,p_embedding_model:embedding.model,p_project_key:scope,
+          p_match_count:count,p_min_similarity:0.28,
+        })
+      })});
+      if (input.includeKnowledge !== false) {
+        semanticJobs.push({kind:"knowledge",scope,promise:supabaseRequest("rpc/match_uxd_brain_knowledge",{
+          method:"POST",body:JSON.stringify({
+            p_query_embedding:vector,p_embedding_model:embedding.model,p_project_key:scope,
+            p_match_count:count,p_min_similarity:0.28,
+          })
+        })});
+      }
+    }
+    const semanticResults = await Promise.all(semanticJobs.map(job=>job.promise.catch(()=>[])));
+    for (let index=0;index<semanticResults.length;index++) {
+      pools.push({kind:semanticJobs[index].kind,rows:Array.isArray(semanticResults[index])?semanticResults[index] as any[]:[]});
+    }
   }
 
-  const items = fuseResults(pools, maxResults);
+  const items = fuseResults(pools,maxResults);
+  const context = renderContext(items,maxContextChars);
   return {
-    scopeKey,
-    retrievalMode: embedding ? "hybrid-keyword-vector-rrf" : "keyword-full-text",
-    embeddingModel: embedding?.model ?? null,
-    memoryCount: items.filter(i => i.kind === "memory").length,
-    knowledgeCount: items.filter(i => i.kind === "knowledge").length,
-    memoryIds: items.filter(i => i.kind === "memory").map(i => i.id),
-    documentChunkIds: items.filter(i => i.kind === "knowledge").map(i => i.id),
-    context: renderContext(items, maxContextChars),
-    items: items.map(({ score, content, ...rest }) => ({ ...rest, score: Number(score.toFixed(5)), excerpt: content.slice(0, 900) })),
-    contextCharacters: renderContext(items, maxContextChars).length,
-    contextBudgetCharacters: maxContextChars,
+    scopeKey,relatedScopes,retrievalMode:embedding?"hybrid-keyword-vector-rrf":"keyword-full-text",
+    embeddingModel:embedding?.model??null,
+    memoryCount:items.filter(i=>i.kind==="memory").length,
+    knowledgeCount:items.filter(i=>i.kind==="knowledge").length,
+    memoryIds:items.filter(i=>i.kind==="memory").map(i=>i.id),
+    documentChunkIds:items.filter(i=>i.kind==="knowledge").map(i=>i.id),
+    context,
+    items:items.map(({score,content,...rest})=>({...rest,score:Number(score.toFixed(5)),excerpt:content.slice(0,900)})),
+    contextCharacters:context.length,contextBudgetCharacters:maxContextChars,
   };
 }
 
