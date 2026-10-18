@@ -46,8 +46,8 @@ export function resolveLearningScope(candidateScope: unknown, project: TaskProje
   const isExplicitGlobal = EXPLICIT_GLOBAL_SCOPE.some(pattern => pattern.test(originalFeedback));
   const containsIndianBfsi = /\b(indian|india|bfsi|banking|finance|financial|insurance|nbfc|rbi|loan|lending)\b/i.test(originalFeedback);
   if (isExplicitGlobal) {
-    if (requested === "indian-bfsi" || (containsIndianBfsi && /\b(bfsi|banking|finance|insurance|rbi|loan|lending)\b/i.test(originalFeedback))) return "indian-bfsi";
-    return ALLOWED_SCOPE_KEYS.has(requested) ? requested : "UX_SHARED_BRAIN";
+    if (containsIndianBfsi && /\b(bfsi|banking|finance|insurance|rbi|loan|lending)\b/i.test(originalFeedback)) return "indian-bfsi";
+    return "UX_SHARED_BRAIN";
   }
   if (project === "dmi-finance") return "project:dmi-finance";
   if (project === "express-computers") return "project:express-computers";
