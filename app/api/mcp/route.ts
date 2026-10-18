@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { getMcpIssuer, verifyMcpPayload } from "@/lib/mcp-oauth";
 import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
 import { NextResponse } from "next/server";
 import { addBrainKnowledgeDocument, listBrainFeedback, listBrainKnowledgeDocuments, reviewBrainEvalCase, reviewBrainFeedback, reviewBrainKnowledgeDocument, retrieveBrainContext, runBrainRetrievalEvals, saveBrainEvalCase, saveBrainFeedback } from "@/src/memory/shared-brain";
@@ -62,13 +63,79 @@ function originIsAllowed(request: Request): boolean {
   return !origin || origin === new URL(request.url).origin || CHATGPT_ORIGINS.has(origin);
 }
 
-function isAuthorized(request: Request): boolean {
-  const expected = process.env.UX_DIRECT_MCP_API_KEY;
-  const authorization = request.headers.get("authorization");
-  if (!expected || expected.length < 32 || !authorization?.startsWith("Bearer ")) return false;
-  const supplied = Buffer.from(authorization.slice(7));
-  const secret = Buffer.from(expected);
-  return supplied.length === secret.length && timingSafeEqual(supplied, secret);
+type DirectMcpClaims = {
+  typ: "access";
+  iss?: string;
+  aud?: string;
+  resource?: string;
+  scope?: string;
+  exp?: number;
+  sub?: string;
+};
+
+function bearerValue(request: Request): string {
+  const authorization = request.headers.get("authorization") || "";
+  return authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+}
+
+function authorizedClaims(request: Request): DirectMcpClaims | null {
+  const suppliedToken = bearerValue(request);
+  if (!suppliedToken) return null;
+
+  // Compatibility fallback for non-ChatGPT service callers. ChatGPT custom MCP
+  // connections use the OAuth 2.1 / PKCE flow below.
+  const expectedKey = process.env.UX_DIRECT_MCP_API_KEY;
+  if (expectedKey && expectedKey.length >= 32) {
+    const actual = Buffer.from(suppliedToken);
+    const expected = Buffer.from(expectedKey);
+    if (actual.length === expected.length && timingSafeEqual(actual, expected)) {
+      const issuer = getMcpIssuer(request);
+      return { typ: "access", iss: issuer, aud: issuer + "/api/mcp", resource: issuer + "/api/mcp", scope: "ux:read ux:execute ux:learn offline_access" };
+    }
+  }
+
+  const issuer = getMcpIssuer(request);
+  const resource = issuer + "/api/mcp";
+  const claims = verifyMcpPayload(suppliedToken, "access") as unknown as DirectMcpClaims | null;
+  if (!claims || claims.iss !== issuer || (claims.aud !== resource && claims.resource !== resource)) return null;
+  return claims;
+}
+
+function toolScope(name: string): string {
+  if ([
+    "ux_direct_brain_save_feedback",
+    "ux_direct_brain_review_feedback",
+    "ux_direct_brain_add_reference",
+    "ux_direct_brain_review_reference",
+    "ux_direct_brain_add_eval_case",
+    "ux_direct_brain_review_eval_case",
+  ].includes(name)) return "ux:learn";
+  if ([
+    "ux_direct_figma_plugin_queue_health_check",
+    "ux_direct_plan_task",
+    "ux_direct_brain_run_retrieval_evals",
+    "ux_direct_uxaudit_run_page_audit",
+    "ux_direct_uxaudit_generate_improved_ia",
+    "ux_direct_uxaudit_run_benchmark",
+  ].includes(name)) return "ux:execute";
+  return "ux:read";
+}
+
+function claimHasScope(claims: DirectMcpClaims, required: string): boolean {
+  const granted = new Set(String(claims.scope || "").split(/\\s+/).filter(Boolean));
+  return granted.has(required) || granted.has("*");
+}
+
+function unauthorized(request: Request) {
+  const issuer = getMcpIssuer(request);
+  const metadata = issuer + "/.well-known/oauth-protected-resource/api/mcp";
+  return NextResponse.json(
+    { error: "Authentication required. Authorize UX Direct through its OAuth connection flow." },
+    { status: 401, headers: {
+      "WWW-Authenticate": 'Bearer resource_metadata="' + metadata + '", scope="ux:read ux:execute ux:learn offline_access"',
+      "Cache-Control": "no-store",
+    }},
+  );
 }
 
 function rpcResult(id: JsonRpcId, result: unknown, headers: HeadersInit) {
@@ -918,30 +985,17 @@ export async function OPTIONS(request: Request) {
   return new Response(null, { status: 204, headers: corsHeaders(request) });
 }
 
-export async function GET() {
-  return NextResponse.json(
-    { error: "This MCP endpoint accepts POST requests only." },
-    { status: 405, headers: { Allow: "POST, OPTIONS", "Cache-Control": "no-store" } },
-  );
+export async function GET(request: Request) {
+  // MCP clients use this unauthenticated challenge to discover OAuth metadata.
+  return unauthorized(request);
 }
 
 export async function POST(request: Request) {
   const headers = corsHeaders(request);
   if (!originIsAllowed(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
 
-  const configuredKey = process.env.UX_DIRECT_MCP_API_KEY;
-  if (!configuredKey || configuredKey.length < 32) {
-    return NextResponse.json(
-      { error: "UX Direct MCP is not configured. Set UX_DIRECT_MCP_API_KEY to a unique secret of at least 32 characters." },
-      { status: 503, headers },
-    );
-  }
-  if (!isAuthorized(request)) {
-    return NextResponse.json(
-      { error: "A valid Bearer API key is required." },
-      { status: 401, headers: { ...headers, "WWW-Authenticate": "Bearer" } },
-    );
-  }
+  const claims = authorizedClaims(request);
+  if (!claims) return unauthorized(request);
 
   // Persist only a timestamp. Never store the bearer key or the user's prompt here.
   await recordChatGPTActivity().catch(() => {
@@ -997,11 +1051,14 @@ export async function POST(request: Request) {
       case "ping":
         return rpcResult(id, {}, headers);
       case "tools/list":
-        return rpcResult(id, { tools: TOOLS }, headers);
+        return rpcResult(id, { tools: TOOLS.filter((tool) => claimHasScope(claims, toolScope(tool.name))) }, headers);
       case "tools/call": {
         const name = params.name;
         if (typeof name !== "string") return rpcError(id, -32602, "tools/call requires a tool name.", headers);
         if (!TOOLS.some(tool => tool.name === name)) return rpcResult(id, toolText({ error: "Unknown UX Direct tool: " + name }, true), headers);
+        if (!claimHasScope(claims, toolScope(name))) {
+          return rpcResult(id, toolText({ error: "OAuth token is missing required scope " + toolScope(name) + ". Reconnect UX Direct with full access." }, true), headers);
+        }
         try {
           return rpcResult(id, await callTool(name, params.arguments ?? {}, request), headers);
         } catch (error) {
