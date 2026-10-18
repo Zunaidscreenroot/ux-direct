@@ -404,7 +404,7 @@ export function routeTask(task: "classify" | "extract" | "summarize" | "ux-reaso
  */
 export async function chatCompletionWithFallback(
   request: GatewayRequest,
-  options: { providers?: ProviderConfig[]; fetchImpl?: typeof fetch; timeoutMs?: number } = {}
+  options: { providers?: ProviderConfig[]; fetchImpl?: typeof fetch; timeoutMs?: number; maxFallbackAttempts?: number } = {}
 ): Promise<GatewayResponse> {
   try { return await chatCompletion(request, options); }
   catch (primaryError) {
@@ -423,6 +423,8 @@ export async function chatCompletionWithFallback(
     const status = primaryError instanceof GatewayError ? primaryError.status : (typeof primaryError === "object" && primaryError !== null && "status" in primaryError && typeof primaryError.status === "number" ? primaryError.status : 502);
     if (![408, 429, 500, 502, 503, 504].includes(status)) throw primaryError;
     const providers = options.providers ?? providersFromEnv();
+    const fallbackAttemptLimit = options.maxFallbackAttempts === undefined
+      ? 3 : Math.max(0, Math.min(5, Math.floor(options.maxFallbackAttempts)));
     let lastError: unknown = primaryError;
 
     // For auto-selected task aliases, fail over only to explicitly configured,
@@ -443,7 +445,7 @@ export async function chatCompletionWithFallback(
         Number(a.provider === primaryEntry?.provider) - Number(b.provider === primaryEntry?.provider) ||
         score(b) - score(a) ||
         a.label.localeCompare(b.label)
-      ).slice(0, 3);
+      ).slice(0, fallbackAttemptLimit);
       for (const entry of candidates) {
         try {
           return await chatCompletion({ ...request, model: entry.id, providerId: entry.provider, moduleId }, options);
@@ -459,8 +461,11 @@ export async function chatCompletionWithFallback(
     const primaryModel = policy!.selectedModelKey.slice("gemini::".length);
     const gemini = providers.find(provider => provider.name === "gemini" && provider.kind === "free-tier");
     if (!gemini || gemini.models.length < 2) throw primaryError;
+    let fallbackAttempts = 0;
     for (const model of gemini.models) {
+      if (fallbackAttempts >= fallbackAttemptLimit) break;
       if (model === primaryModel || model === request.model) continue;
+      fallbackAttempts++;
       try { return await chatCompletion({ ...request, model, providerId: "gemini", moduleId: undefined }, options); }
       catch (error) { lastError = error; }
     }
