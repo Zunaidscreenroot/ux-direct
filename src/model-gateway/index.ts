@@ -61,6 +61,7 @@ export type GatewayRequest = {
   signal?: AbortSignal;
   moduleId?: string;
   providerId?: string;
+  response_format?: { type: "json_object" };
 };
 export type TokenUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 type ProviderChatPayload = { id?: unknown; model?: unknown; choices?: Array<{ message?: { content?: unknown } }>; usage?: TokenUsage };
@@ -97,10 +98,18 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   // Task routing prefers configured real providers and uses mock only as the last resort.
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
   const paidRoutingReady = env.ALLOW_PAID_MODELS === "true" && Number(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "3000") > 0;
-  const openRouterModels = csv(env.OPENROUTER_MODELS).filter(model => model.endsWith(":free") || paidRoutingReady);
+  // Keep homepage chat's explicit free provider pool separate from paid internal jobs.
+  const openRouterModels = csv(env.OPENROUTER_MODELS).filter(model => model.endsWith(":free"));
   if (env.OPENROUTER_API_KEY && openRouterModels.length) providers.push({
     name: "openrouter", baseUrl: trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"),
-    apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: openRouterModels.some(model => !model.endsWith(":free")) ? "paid" : "free-tier"
+    apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: "free-tier"
+  });
+  const openRouterPaidModels = paidRoutingReady
+    ? csv(env.OPENROUTER_PAID_MODELS).filter(model => !model.endsWith(":free"))
+    : [];
+  if (env.OPENROUTER_API_KEY && openRouterPaidModels.length) providers.push({
+    name: "openrouter-paid", baseUrl: trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1"),
+    apiKey: env.OPENROUTER_API_KEY, models: openRouterPaidModels, kind: "paid"
   });
   const geminiBillingKind = env.GEMINI_BILLING_MODE === "paid" ? "paid" : "free-tier";
   if ((env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) && (geminiBillingKind !== "paid" || paidRoutingReady)) providers.push({
@@ -159,6 +168,7 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
     { id: "openai/gpt-oss-20b", provider: "groq", label: "GPT OSS 20B · Groq", tier: "free-tier", tasks: ["classification","extraction","fast drafts"], notes: "Free quotas may apply. Published paid price $0.075 input / $0.30 output per 1M tokens.", usdInputPerMillion: .075, usdOutputPerMillion: .3, pricingSource: GROQ_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
     { id: "gpt-oss-120b", provider: "cerebras", label: "GPT OSS 120B · Cerebras", tier: "free-tier", tasks: ["reasoning","critique"], notes: "Check model ID and available quota in your account." },
     { id: "apodex/apodex-1.1-mini:free", provider: "openrouter", label: "Apodex 1.1 Mini · OpenRouter free", tier: "free-tier", tasks: ["reasoning","research","summaries"], notes: "Explicit :free model; free availability and rate limits may change." },
+    { id: "deepseek/deepseek-v4-flash-0731", provider: "openrouter-paid", label: "DeepSeek V4 Flash 0731 · paid internal", tier: "paid", tasks: ["reasoning","critique","information architecture","structured output"], notes: "Budgeted low-cost paid route for internal jobs.", usdInputPerMillion: 0.01208, usdOutputPerMillion: 0.1436, pricingSource: "https://openrouter.ai/deepseek/deepseek-v4-flash-0731", pricingReviewedAt: "2026-10-18" },
     { id: "nvidia/nemotron-3-ultra-550b-a55b:free", provider: "openrouter", label: "NVIDIA Nemotron 3 Ultra · free", tier: "free-tier", tasks: ["reasoning","planning","research"], notes: "Current OpenRouter free model; very large reasoning model. Free provider endpoints have rate limits and may log inputs." , pricingSource: "https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b:free", pricingReviewedAt: "2026-10-11" },
     { id: "poolside/laguna-s-2.1:free", provider: "openrouter", label: "Poolside Laguna S 2.1 · free", tier: "free-tier", tasks: ["coding","agentic coding","reasoning"], notes: "Free hosted endpoint; provider terms may allow use of prompts/outputs for model improvement. Do not send confidential client data without approval.", pricingSource: "https://openrouter.ai/poolside/laguna-s-2.1:free", pricingReviewedAt: "2026-10-11" },
     { id: "nvidia/nemotron-3.5-lightning:free", provider: "openrouter", label: "NVIDIA Nemotron 3.5 Lightning · free", tier: "free-tier", tasks: ["classification","extraction","high-volume agents"], notes: "Low-cost/high-throughput workload candidate; verify current free endpoint availability.", pricingSource: "https://openrouter.ai/nvidia/nemotron-3.5-lightning:free", pricingReviewedAt: "2026-10-11" },
@@ -198,7 +208,7 @@ export function resolveProvider(model: string, providers: ProviderConfig[]): Pro
 
 const TASK_MODULES: Record<string, string> = {
   "uxd/classify":"classification","uxd/extract":"extraction","uxd/summarize":"summarization",
-  "uxd/reasoning":"reasoning","uxd/vision":"vision","uxd/critique":"critique"
+  "uxd/reasoning":"reasoning","uxd/vision":"vision","uxd/critique":"critique","uxd/ia-audit":"ia-audit"
 };
 function providerForEntry(entry: ModelCatalogEntry, providers: ProviderConfig[]) {
   return providers.find(p => p.name === entry.provider && (p.models.includes(entry.id) || (p.models.includes("default") && ["ollama","custom"].includes(p.name))));
@@ -330,7 +340,7 @@ export async function chatCompletion(
   try{
     const headers:Record<string,string>={"Content-Type":"application/json",...(provider.apiKey?(provider.apiKeyHeader?{[provider.apiKeyHeader]:provider.apiKey}:{Authorization:`Bearer ${provider.apiKey}`}):{}),...provider.headers};
     const providerUrl = `${trimSlash(provider.baseUrl)}/chat/completions`;
-    const providerBody = JSON.stringify({model,messages:request.messages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{})});
+    const providerBody = JSON.stringify({model,messages:request.messages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{}),...(request.response_format?{response_format:request.response_format}:{})});
     let response: Response | undefined;
     let payload: ProviderChatPayload | undefined;
     const parseAttempts = billable ? 1 : 2;

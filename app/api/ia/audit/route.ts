@@ -4,7 +4,7 @@ import { chatCompletionWithFallback, GatewayError } from "@/src/model-gateway";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_PAGES = 30;
+const MAX_PAGES = 120;
 const rateWindows = new Map<string, { count: number; since: number }>();
 
 type PageInput = {
@@ -17,6 +17,10 @@ type PageInput = {
   description?: string | null;
   headings?: string[];
   links?: Array<{ url: string; label: string }>;
+  children?: Array<{ url: string; label: string }>;
+  documentTitle?: string;
+  inspected?: boolean;
+  hierarchySource?: "official-html-sitemap" | "observed-crawl";
 };
 
 type Finding = {
@@ -125,8 +129,17 @@ export async function POST(request: Request) {
       parentUrl: typeof page.parentUrl === "string" && publicHttpUrl(page.parentUrl)?.origin === origin ? new URL(page.parentUrl).href : null,
       status: typeof page.status === "number" && Number.isFinite(page.status) ? page.status : null,
       description: clipText(page.description, 320) || null,
+      documentTitle: clipText(page.documentTitle, 180) || undefined,
+      inspected: page.inspected === true,
+      hierarchySource: page.hierarchySource === "official-html-sitemap" ? "official-html-sitemap" : "observed-crawl",
+      children: Array.isArray(page.children) ? page.children.slice(0, 18).flatMap(childValue => {
+        const child = asRecord(childValue);
+        const target = publicHttpUrl(child?.url);
+        if (!child || !target || target.origin !== origin) return [];
+        return [{ url: target.href, label: clipText(child.label, 100) || target.pathname }];
+      }) : [],
       headings: Array.isArray(page.headings) ? page.headings.filter((x): x is string => typeof x === "string").slice(0, 10).map(x => clipText(x, 100)) : [],
-      links: Array.isArray(page.links) ? page.links.slice(0, 15).flatMap((linkValue) => {
+      links: Array.isArray(page.links) ? page.links.slice(0, 8).flatMap((linkValue) => {
         const link = asRecord(linkValue);
         const target = publicHttpUrl(link?.url);
         if (!link || !target || target.origin !== origin) return [];
@@ -140,18 +153,27 @@ export async function POST(request: Request) {
   const evidenceContext = pages.map(page => ({
     url: page.url,
     title: page.title,
+    documentTitle: page.documentTitle,
     depth: page.depth,
     parentUrl: page.parentUrl,
     status: page.status,
+    inspected: page.inspected === true,
     description: page.description,
+    hierarchySource: page.hierarchySource,
     headings: page.headings,
-    links: (page.links ?? []).slice(0, 15).map(link => ({ label: link.label, url: link.url })),
-    note: "This parent relationship comes from the bounded crawler's traversal path; it is not guaranteed to represent every live navigation menu."
+    children: (page.children ?? []).slice(0, 12).map(child => ({ label: child.label, url: child.url })),
+    links: (page.links ?? []).slice(0, 8).map(link => ({ label: link.label, url: link.url })),
+    note: page.hierarchySource === "official-html-sitemap"
+      ? "Parent/child grouping comes from the site's nested HTML sitemap. It can differ from live menu rendering. Pages with inspected=false are known sitemap entries whose HTTP status and headings have not been checked."
+      : "Parent relationship comes from the bounded link crawl path, not necessarily the site's intended navigation hierarchy."
   }));
+
   const systemPrompt = [
-    "You are a careful information-architecture analyst reviewing a public website from a bounded crawl.",
+    "You are a careful information-architecture analyst reviewing supplied current site structure and public-page evidence.",
     "Return only one valid JSON object with keys summary and findings. Do not use Markdown fences.",
-    "Use observed evidence in the supplied pages only. Do not invent pages, links, analytics, user tests, business metrics, or legal-compliance claims.",
+    "Use only supplied page records, nested sitemap relationships, observed links, document titles, headings and HTTP statuses. Do not invent pages, links, analytics, user tests, business metrics, or compliance claims.",
+    "When hierarchySource is official-html-sitemap, use it as the published hierarchy and separately assess outgoing links. Uninspected pages are unverified; their status, title-heading match and content details are unknown.",
+    "Review actual structural choices across the hierarchy: taxonomy consistency, duplicate or near-duplicate destinations, sibling label clarity, misplaced categories, uneven branch depth, and discoverability of high-value banking tasks and disclosures. For every recommendation, name exact supplied paths and propose specific moves, renames or parent-child changes instead of generic advice.",
     "Every finding must have title, severity (Critical|High|Medium|Low), category, evidence, recommendation, confidence (0..1), hypothesis (boolean), and url.",
     "The finding's url must be one exact URL from the supplied page records.",
     "Be conservative: when the crawl cannot prove a usability problem, set hypothesis=true and explicitly say what must be validated.",
@@ -165,14 +187,14 @@ export async function POST(request: Request) {
     "Review this discovered information architecture for " + origin + ".",
     "Crawl includes " + pages.length + " page records and may be capped; treat omissions as unknown.",
     "Return JSON schema: {\"summary\":\"...\",\"findings\":[{\"title\":\"...\",\"severity\":\"Critical|High|Medium|Low\",\"category\":\"...\",\"evidence\":\"...\",\"recommendation\":\"...\",\"confidence\":0.0,\"hypothesis\":true,\"url\":\"exact supplied page URL\"}]}",
-    "Aim for up to 8 distinct findings. Each evidence string must refer to one or more supplied page titles, paths, HTTP statuses, headings, or links. Do not claim screenshot findings.",
+    "Aim for up to 8 distinct findings. Every structural recommendation must cite exact supplied paths and explain how the proposed placement helps a real banking task. Do not claim screenshot, analytics or user-testing evidence.",
     JSON.stringify({ origin, pageCount: pages.length, pages: evidenceContext })
   ].join("\n\n");
 
   try {
     // Default to the configured Reasoning module so the gateway selects its approved model.
     // A direct model override is explicit; the deterministic mock is never the implicit audit model.
-    const model = process.env.UXD_IA_MODEL?.trim() || "uxd/reasoning";
+    const model = "uxd/ia-audit";
     const isGatewayTaskAlias = model.startsWith("uxd/");
     const inferredProvider = isGatewayTaskAlias ? undefined
       : process.env.UXD_IA_PROVIDER?.trim() || (model.includes("/") ? "openrouter" : undefined);
@@ -190,6 +212,7 @@ export async function POST(request: Request) {
       ],
       temperature: 0.15,
       max_tokens: 3200,
+      response_format: { type: "json_object" },
       signal: request.signal
     }, { timeoutMs: 15_000, maxFallbackAttempts: 1 });
     const raw = response.content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");

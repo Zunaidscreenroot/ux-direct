@@ -5,13 +5,14 @@ export type ModulePolicy = { enabled: boolean; mode: GatewayMode; selectedModelK
 export type ModelPolicy = { monthlyBudgetInr: number; maxRequestCostInr: number; inputPriceInrPerMillion: number; outputPriceInrPerMillion: number };
 export type GatewaySettings = { version: 1; globalMonthlyBudgetInr: number; usdToInrRate: number; paidRoutingEnabled: boolean; modules: Record<string, ModulePolicy>; models: Record<string, ModelPolicy>; updatedAt?: string };
 export const GATEWAY_MODULES = [
-  { id: "reasoning", label: "Reasoning & task planning", description: "Multi-step UX decisions, task plans and complex trade-offs.", alias: "uxd/reasoning", tasks: ["reasoning", "task planning", "analysis"], suggestedBudgetShare: 1000 },
-  { id: "classification", label: "Classification", description: "Route requests, identify intent and classify design work.", alias: "uxd/classify", tasks: ["classification", "intent", "routing"], suggestedBudgetShare: 250 },
-  { id: "extraction", label: "Structured extraction", description: "Extract fields, requirements, rules and entities into structured output.", alias: "uxd/extract", tasks: ["extraction", "structured output", "requirements"], suggestedBudgetShare: 250 },
-  { id: "summarization", label: "Summarization", description: "Summarize briefs, long notes, research and design references.", alias: "uxd/summarize", tasks: ["summaries", "summarization", "long context"], suggestedBudgetShare: 300 },
-  { id: "vision", label: "Visual / screen analysis", description: "Interpret screenshots, UI states and visual references.", alias: "uxd/vision", tasks: ["vision", "visual analysis", "screenshots"], suggestedBudgetShare: 600 },
-  { id: "critique", label: "UX critique & quality review", description: "Review UX decisions, accessibility, edge cases and consistency.", alias: "uxd/critique", tasks: ["critique", "reasoning", "quality"], suggestedBudgetShare: 500 },
-  { id: "general", label: "General gateway calls", description: "Direct model calls without a more specific agent purpose.", alias: "direct", tasks: ["general", "chat"], suggestedBudgetShare: 100 }
+  { id: "reasoning", label: "Reasoning & task planning", description: "Paid low-cost reasoning for internal product workflows.", alias: "uxd/reasoning", tasks: ["reasoning", "task planning", "analysis"], suggestedBudgetShare: 180 },
+  { id: "classification", label: "Classification", description: "Classify and route internal work using a budgeted paid model.", alias: "uxd/classify", tasks: ["classification", "intent", "routing"], suggestedBudgetShare: 80 },
+  { id: "extraction", label: "Structured extraction", description: "Extract fields, requirements, rules and entities.", alias: "uxd/extract", tasks: ["extraction", "structured output", "requirements"], suggestedBudgetShare: 80 },
+  { id: "summarization", label: "Summarization", description: "Summarize briefs, notes, research and references.", alias: "uxd/summarize", tasks: ["summaries", "summarization", "long context"], suggestedBudgetShare: 80 },
+  { id: "vision", label: "Visual / screen analysis", description: "Interpret screenshots, UI states and visual references.", alias: "uxd/vision", tasks: ["vision", "visual analysis", "screenshots"], suggestedBudgetShare: 100 },
+  { id: "critique", label: "UX critique & quality review", description: "Review UX decisions, accessibility, edge cases and consistency.", alias: "uxd/critique", tasks: ["critique", "reasoning", "quality"], suggestedBudgetShare: 120 },
+  { id: "ia-audit", label: "IA architecture review", description: "Paid, bounded analysis of sitemap structure and findability risks.", alias: "uxd/ia-audit", tasks: ["information architecture", "reasoning", "structured output"], suggestedBudgetShare: 250 },
+  { id: "general", label: "General gateway calls", description: "Reserved for the homepage chat, which uses its own explicit free-only route.", alias: "direct", tasks: ["general", "chat"], suggestedBudgetShare: 50 }
 ] as const;
 type BlobStore = { get(key: string, options: { type: "json" }): Promise<unknown>; setJSON(key: string, value: unknown): Promise<void> };
 const runtimeSettings = new Map<string, GatewaySettings>();
@@ -42,7 +43,18 @@ function pricePolicy(inputUsd = 0, outputUsd = 0, fx = 97): ModelPolicy {
 }
 export function defaultGatewaySettings(): GatewaySettings {
   const modules: Record<string, ModulePolicy> = {};
-  for (const m of GATEWAY_MODULES) modules[m.id] = { enabled: true, mode: "free", selectedModelKey: m.id === "reasoning" && (process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY) ? modelKey("gemini", "gemini-3.5-flash-lite") : "auto", monthlyBudgetInr: m.suggestedBudgetShare, maxRequestCostInr: 10, allowFallback: m.id === "reasoning" };
+  const paidModelId = process.env.UXD_INTERNAL_PAID_MODEL?.trim() || "deepseek/deepseek-v4-flash-0731";
+  const paidProviderId = "openrouter-paid";
+  for (const m of GATEWAY_MODULES) {
+    modules[m.id] = {
+      enabled: true,
+      mode: "paid",
+      selectedModelKey: modelKey(paidProviderId, paidModelId),
+      monthlyBudgetInr: m.suggestedBudgetShare,
+      maxRequestCostInr: 5,
+      allowFallback: false
+    };
+  }
   const models: Record<string, ModelPolicy> = {
     [modelKey("gemini", "gemini-3.8-flash")]: pricePolicy(.75, 3.75),
     [modelKey("gemini", "gemini-3.5-flash")]: pricePolicy(1.5, 9),
@@ -54,13 +66,25 @@ export function defaultGatewaySettings(): GatewaySettings {
     [modelKey("groq", "openai/gpt-oss-20b")]: pricePolicy(.075, .3),
     [modelKey("deepseek", "deepseek-flash")]: pricePolicy(.30, 1.20),
     [modelKey("deepseek", "deepseek-v4-pro")]: pricePolicy(1.32, 3.96),
+    [modelKey("openrouter-paid", "deepseek/deepseek-v4-flash-0731")]: { ...pricePolicy(0.01208, 0.1436), monthlyBudgetInr: 1000, maxRequestCostInr: 5 },
     [modelKey("openrouter", "apodex/apodex-1.1-mini:free")]: pricePolicy(),
     [modelKey("ollama", "qwen2.5:7b")]: pricePolicy(),
     [modelKey("ollama", "gemma4:31b")]: pricePolicy(),
     [modelKey("cerebras", "gpt-oss-120b")]: pricePolicy(),
     [modelKey("openai", "gpt-4o-mini")]: pricePolicy(.15, .6)
   };
-  return { version: 1, globalMonthlyBudgetInr: 3000, usdToInrRate: 97, paidRoutingEnabled: false, modules, models };
+  const paidRoutesConfigured = process.env.ALLOW_PAID_MODELS === "true" &&
+    Boolean(process.env.OPENROUTER_API_KEY?.trim()) &&
+    (process.env.OPENROUTER_PAID_MODELS || "").split(",").map(value => value.trim()).includes(paidModelId) &&
+    Number(process.env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "0") > 0;
+  return {
+    version: 1,
+    globalMonthlyBudgetInr: Math.min(1000, Math.max(1, Number(process.env.MODEL_GATEWAY_MONTHLY_BUDGET_INR) || 1000)),
+    usdToInrRate: 97,
+    paidRoutingEnabled: Boolean(paidRoutesConfigured),
+    modules,
+    models
+  };
 }
 function cleanSettings(input: unknown): GatewaySettings {
   const defaults = defaultGatewaySettings();
@@ -74,7 +98,8 @@ function cleanSettings(input: unknown): GatewaySettings {
     const mode = c.mode;
     modules[m.id] = {
       enabled: typeof c.enabled === "boolean" ? c.enabled : true,
-      mode: mode === "free" || mode === "paid" || mode === "local" || mode === "mock" ? mode : base.mode,
+      // Internal gateway modules must never use the homepage chat's free model pool.
+      mode: "paid",
       selectedModelKey: typeof c.selectedModelKey === "string" && c.selectedModelKey.length <= 220 ? c.selectedModelKey : base.selectedModelKey,
       monthlyBudgetInr: amount(c.monthlyBudgetInr, base.monthlyBudgetInr),
       maxRequestCostInr: amount(c.maxRequestCostInr, base.maxRequestCostInr),

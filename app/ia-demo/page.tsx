@@ -14,7 +14,9 @@ type SiteNodeData = {
   url: string;
   depth: number;
   status: number | null;
+  inspected?: boolean;
   outbound: number;
+  hierarchySource?: "official-html-sitemap" | "observed-crawl";
   sample?: boolean;
 };
 type SiteNode = Node<SiteNodeData, "page">;
@@ -29,15 +31,23 @@ type PageRecord = {
   headings?: string[];
   description?: string | null;
   error?: string;
+  documentTitle?: string;
+  inspected?: boolean;
+  hierarchySource?: "official-html-sitemap" | "observed-crawl";
+  children?: Array<{ url: string; label: string }>;
 };
 type DiscoveryResult = {
   origin: string; pages: PageRecord[]; pageCount: number;
   failedCount: number; capped: boolean; elapsedMs: number;
+  hierarchySource: "official-html-sitemap" | "observed-crawl";
+  hierarchySourceUrl?: string;
+  totalKnownPages: number;
+  inspectedCount: number;
 };
 
 function PageNode({ data }: NodeProps<SiteNode>) {
-  const failed = data.status === null || data.status >= 400;
-  const statusColor = data.status === null ? "#7b879b" : data.status >= 400 ? "#f28c9c" : "#74e7c1";
+  const failed = data.status !== null && data.status >= 400;
+  const statusColor = data.status === null ? "#a1adbf" : data.status >= 400 ? "#f28c9c" : "#74e7c1";
   const pagePath = new URL(data.url).pathname || "/";
   return (
     <div style={{
@@ -50,13 +60,13 @@ function PageNode({ data }: NodeProps<SiteNode>) {
         <span style={{ fontSize: 9, textTransform: "uppercase", fontWeight: 800, color: "#9db0c7", letterSpacing: ".09em" }}>LEVEL {data.depth + 1}</span>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 9, color: statusColor }}>
           <span style={{ width: 6, height: 6, borderRadius: 10, background: statusColor, display: "inline-block" }} />
-          {data.status === null ? "UNFETCHED" : "HTTP " + data.status}
+          {data.status === null ? (data.inspected === false ? "NOT CHECKED" : "UNVERIFIED") : "HTTP " + data.status}
         </span>
       </div>
       <div style={{ fontSize: 12, fontWeight: 800, lineHeight: 1.45, overflowWrap: "anywhere", color: "#f4f7fc" }}>{data.title}</div>
       <div style={{ fontSize: 10, color: "#91e9d1", lineHeight: 1.45, marginTop: 6, overflowWrap: "anywhere" }}>{pagePath}</div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 11, borderTop: "1px solid #2b3749", paddingTop: 9, fontSize: 9, color: "#93a3b8" }}>
-        <span>{data.status ?? "No response"}</span><span>{data.outbound} outgoing links</span>
+        <span>{data.status ?? "No response"}</span><span>{data.hierarchySource === "official-html-sitemap" ? data.outbound + " sitemap children" : data.outbound + " outgoing links"}</span>
       </div>
       <Handle type="source" position={Position.Right} style={{ background: "#8debd1", width: 8, height: 8, border: "2px solid #101722" }} />
     </div>
@@ -119,7 +129,7 @@ function buildGraph(pages: PageRecord[]): { nodes: SiteNode[]; edges: Edge[] } {
     id: page.id,
     type: "page",
     position: positionByUrl.get(page.url) ?? {x: 40 + page.depth * 310, y: 24},
-    data: { title: page.title, url: page.url, depth: page.depth, status: page.status, outbound: page.links?.length ?? 0, sample: page.id.startsWith("sample-") }
+    data: { title: page.title, url: page.url, depth: page.depth, status: page.status, inspected: page.inspected, outbound: page.hierarchySource === "official-html-sitemap" ? page.children?.length ?? 0 : page.links?.length ?? 0, hierarchySource: page.hierarchySource, sample: page.id.startsWith("sample-") }
   }));
   const pageIds = new Map(pages.map(page => [page.url, page.id]));
   const edges: Edge[] = pages.flatMap(page => {
@@ -132,7 +142,7 @@ function buildGraph(pages: PageRecord[]): { nodes: SiteNode[]; edges: Edge[] } {
 export default function IADemoPage() {
   const [url, setUrl] = useState("https://www.ujjivansfb.bank.in/");
   const [maxDepth, setMaxDepth] = useState("3");
-  const [maxPages, setMaxPages] = useState("18");
+  const [maxPages, setMaxPages] = useState("120");
   const [pages, setPages] = useState<PageRecord[]>(samplePages);
   const [result, setResult] = useState<DiscoveryResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -203,7 +213,8 @@ export default function IADemoPage() {
       // link sample, not every raw outgoing link emitted by the crawler.
       const auditPages = result.pages.map((page) => ({
         ...page,
-        links: (page.links || []).slice(0, 18),
+        links: (page.links || []).slice(0, 8),
+        children: (page.children || []).slice(0, 18),
         headings: (page.headings || []).slice(0, 8)
       }));
       const response = await fetch("/api/ia/audit", {
@@ -249,22 +260,25 @@ export default function IADemoPage() {
           </label>
           <label>Max pages
             <select value={maxPages} onChange={(event) => setMaxPages(event.target.value)}>
-              <option value="8">8</option><option value="18">18</option><option value="30">30</option>
+              <option value="30">30</option><option value="60">60</option><option value="120">120</option>
             </select>
           </label>
           <button className="submit-button" type="submit" disabled={busy}>{busy ? "Discovering…" : "Discover IA →"}</button>
         </div>
-        <p className="ia-note">The deployed crawler is deliberately bounded and same-origin. It reads public HTML only; JavaScript-only pages may expose fewer links. It does not use Playwright or Cloudflare Browser Run.</p>
+        <p className="ia-note">Prefers the site's nested HTML sitemap for the published hierarchy, then inspects a bounded page sample for HTTP status and headings. If no sitemap is found, the viewer labels the result as an observed crawl path instead. Public HTML only.</p>
       </form>
 
       {error ? <div className="ia-error" role="alert">{error}</div> : null}
       {result ? (
         <div className="ia-metrics">
           <div><strong>{result.pageCount}</strong><span>pages mapped</span></div>
-          <div><strong>{result.failedCount}</strong><span>failed / non-HTML</span></div>
-          <div><strong>{(result.elapsedMs / 1000).toFixed(1)}s</strong><span>crawl time</span></div>
-          <div><strong>{result.capped ? "Capped" : "Complete"}</strong><span>crawl status</span></div>
+          <div><strong>{result.totalKnownPages}</strong><span>known pages</span></div>
+          <div><strong>{result.inspectedCount}</strong><span>pages inspected</span></div>
+          <div><strong>{result.capped ? "Capped" : "Within scope"}</strong><span>map scope</span></div>
           <span className="ia-origin">{result.origin}</span>
+          <p className="ia-source-note">{result.hierarchySource === "official-html-sitemap"
+            ? "Hierarchy source: official HTML sitemap" + (result.hierarchySourceUrl ? " (" + new URL(result.hierarchySourceUrl).pathname + ")" : "") + ". Pages not yet inspected remain unverified for HTTP status and page headings."
+            : "Hierarchy source: observed link crawl. This is an approximation of navigation, not a verified site-owner IA."}</p>
         </div>
       ) : (
         <div className="ia-sample-note">Sample map only — no live site has been crawled yet.</div>
@@ -318,7 +332,7 @@ export default function IADemoPage() {
           <div><span className="ia-kicker">SELECTED PAGE</span><h2>{selectedPage.title}</h2><a href={selectedPage.url} target="_blank" rel="noreferrer">{selectedPage.url}</a></div>
           <div><strong>Depth</strong><span>L{selectedPage.depth + 1}</span></div>
           <div><strong>HTTP status</strong><span>{selectedPage.status ?? "Not fetched"}</span></div>
-          <div><strong>H1–H6 headings</strong>{selectedPage.headings?.length ? selectedPage.headings.slice(0, 8).map((heading, i) => <span key={i}>{heading}</span>) : <span>No headings extracted</span>}</div>
+          <div><strong>H1–H6 headings</strong>{selectedPage.headings?.length ? selectedPage.headings.slice(0, 8).map((heading, i) => <span key={i}>{heading}</span>) : <span>{selectedPage.inspected === false ? "Not inspected yet" : "No headings extracted"}</span>}{selectedPage.documentTitle && selectedPage.documentTitle !== selectedPage.title ? <span>Document title: {selectedPage.documentTitle}</span> : null}</div>
         </section>
       ) : null}
 
@@ -329,7 +343,7 @@ export default function IADemoPage() {
             <tbody>{pages.map((page) => <tr key={page.id}>
               <td>L{page.depth + 1}</td><td><button type="button" className="ia-page-select" onClick={() => setSelectedPage(page)}>{page.title}</button></td>
               <td><a href={page.url} target="_blank" rel="noreferrer">{new URL(page.url).pathname || "/"}</a></td>
-              <td>{page.status ?? "Failed"}</td><td>{page.headings?.length ?? 0}</td>
+              <td>{page.inspected === false ? "Not checked" : page.status ?? "Failed"}</td><td>{page.headings?.length ?? 0}</td>
             </tr>)}</tbody></table></div>
         </section>
       ) : null}
@@ -348,7 +362,7 @@ export default function IADemoPage() {
         .ia-controls input,.ia-controls select{height:42px;padding:0 12px;border:1px solid #2d3a4f;border-radius:9px;background:#141c29;color:#eaf1fb;font:inherit;font-size:12px}
         .ia-controls label{display:flex;flex-direction:column;gap:5px;font-size:10px;font-weight:800;color:#65766c}
         .ia-controls .submit-button{height:42px}
-        .ia-note{font-size:11px;color:#8493aa;margin:12px 0 0;line-height:1.5}
+        .ia-note{font-size:11px;color:#8493aa;margin:12px 0 0;line-height:1.5}.ia-source-note{flex-basis:100%;margin:0;color:#b7c9d7;font-size:11px;line-height:1.6;padding:10px 12px;background:#141e2b;border:1px solid #2a394a;border-radius:9px}
         .ia-error{max-width:1400px;margin:0 auto 15px;padding:12px 15px;background:#2a1b22;color:#f6a5b4;border:1px solid #633440;border-radius:10px;font-size:12px}
         .ia-sample-note{max-width:1400px;margin:0 auto 12px;font-size:11px;color:#77837a}
         .ia-metrics{max-width:1400px;margin:0 auto 15px;display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}

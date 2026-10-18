@@ -27,7 +27,8 @@ test("normalizes a successful OpenAI-compatible response", async () => {
   const result = await chatCompletion({
     model: "gpt-test",
     messages: [{ role: "user", content: "hello" }],
-    max_tokens: 12
+    max_tokens: 12,
+    response_format: { type: "json_object" }
   }, {
     providers,
     fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -43,6 +44,7 @@ test("normalizes a successful OpenAI-compatible response", async () => {
   });
   assert.equal(calledUrl, "https://example.test/v1/chat/completions");
   assert.equal(calledBody.max_tokens, 12);
+  assert.deepEqual(calledBody.response_format, { type: "json_object" });
   assert.equal(result.content, "hello back");
   assert.equal(result.provider, "openai");
   assert.equal(result.usage?.total_tokens, 5);
@@ -143,37 +145,49 @@ test("paid provider keys do not enable paid routing without explicit opt-in", as
 });
 
 
-test("UX task aliases resolve to configured providers and safely fall back to mock", async () => {
-  const providers = [{ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" as const }];
-  const result = await chatCompletion({
+test("internal paid aliases fail closed when paid routing is not enabled", async () => {
+  const { saveGatewaySettings, defaultGatewaySettings, modelKey } = await import("../src/model-gateway/control-store");
+  const settings = defaultGatewaySettings();
+  settings.paidRoutingEnabled = false;
+  settings.modules.critique = {
+    ...settings.modules.critique,
+    mode: "paid",
+    selectedModelKey: modelKey("openrouter-paid", "deepseek/deepseek-v4-flash-0731"),
+    allowFallback: false
+  };
+  await saveGatewaySettings(settings);
+  const configured: ProviderConfig[] = [
+    { name: "openrouter-paid", baseUrl: "https://openrouter.example/api/v1", apiKey: "test-key", models: ["deepseek/deepseek-v4-flash-0731"], kind: "paid" },
+    { name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" }
+  ];
+  await assert.rejects(() => chatCompletion({
     model: "uxd/critique",
+    moduleId: "critique",
     messages: [{ role: "user", content: "Review this screen." }]
-  }, { providers });
-  assert.equal(result.model, "mock/ux-direct");
-  assert.equal(result.provider, "mock");
+  }, { providers: configured }), (error: unknown) =>
+    error instanceof GatewayError && error.status === 403 && /Paid routing is locked/.test(error.message));
 });
 
 
-test("OpenRouter only exposes explicitly free models until paid mode is enabled", async () => {
+test("OpenRouter free homepage models and paid internal models use separate provider pools", async () => {
   const { providersFromEnv } = await import("../src/model-gateway");
-  const locked = providersFromEnv({
+  const env = {
     NODE_ENV: "production",
     OPENROUTER_API_KEY: "test-only",
-    OPENROUTER_MODELS: "vendor/free-model:free,vendor/paid-model"
-  });
-  const router = locked.find(p => p.name === "openrouter");
-  assert.deepEqual(router?.models, ["vendor/free-model:free"]);
-  assert.equal(router?.kind, "free-tier");
-  const paid = providersFromEnv({
-    NODE_ENV: "production",
-    OPENROUTER_API_KEY: "test-only",
-    OPENROUTER_MODELS: "vendor/paid-model",
-    ALLOW_PAID_MODELS: "true",
-    MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M: "12",
-    MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: "48",
-    MODEL_GATEWAY_MONTHLY_BUDGET_INR: "3000"
-  });
-  assert.equal(paid.find(p => p.name === "openrouter")?.kind, "paid");
+    OPENROUTER_MODELS: "vendor/free-model:free,vendor/not-enabled",
+    OPENROUTER_PAID_MODELS: "vendor/paid-model",
+    MODEL_GATEWAY_MONTHLY_BUDGET_INR: "1000"
+  };
+  const locked = providersFromEnv({ ...env, ALLOW_PAID_MODELS: "false" });
+  assert.deepEqual(locked.find(p => p.name === "openrouter")?.models, ["vendor/free-model:free"]);
+  assert.equal(locked.find(p => p.name === "openrouter")?.kind, "free-tier");
+  assert.equal(locked.some(p => p.name === "openrouter-paid"), false);
+
+  const enabled = providersFromEnv({ ...env, ALLOW_PAID_MODELS: "true" });
+  assert.deepEqual(enabled.find(p => p.name === "openrouter")?.models, ["vendor/free-model:free"]);
+  assert.equal(enabled.find(p => p.name === "openrouter")?.kind, "free-tier");
+  assert.deepEqual(enabled.find(p => p.name === "openrouter-paid")?.models, ["vendor/paid-model"]);
+  assert.equal(enabled.find(p => p.name === "openrouter-paid")?.kind, "paid");
 });
 
 test("custom endpoints are disabled unless local or paid mode is explicitly enabled", async () => {
@@ -194,11 +208,11 @@ test("custom endpoints are disabled unless local or paid mode is explicitly enab
 });
 
 
-test("an explicitly chosen model never silently fails over to another provider", async () => {
+test("an explicitly chosen model never silently fails over from a paid internal module", async () => {
   const { chatCompletionWithFallback } = await import("../src/model-gateway");
   const configured: ProviderConfig[] = [
     { name: "groq", baseUrl: "https://groq.example/v1", apiKey: "test", models: ["openai/gpt-oss-20b"], kind: "free-tier" },
-    { name: "gemini", baseUrl: "https://gemini.example/v1", apiKey: "test", models: ["gemini-3.8-flash"], kind: "free-tier" },
+    { name: "openrouter-paid", baseUrl: "https://paid.example/v1", apiKey: "test", models: ["deepseek/deepseek-v4-flash-0731"], kind: "paid" },
     { name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" }
   ];
   const attempted: string[] = [];
@@ -211,9 +225,9 @@ test("an explicitly chosen model never silently fails over to another provider",
       attempted.push(String(input));
       return new Response("rate limited", { status: 429 });
     }) as typeof fetch
-  }), /Provider returned HTTP 429/);
-  assert.equal(attempted.length, 1);
-  assert.equal(attempted[0], "https://groq.example/v1/chat/completions");
+  }), (error: unknown) => error instanceof GatewayError && error.status === 403 &&
+    /Request model does not match the exact module selection/.test(error.message));
+  assert.equal(attempted.length, 0);
 });
 
 

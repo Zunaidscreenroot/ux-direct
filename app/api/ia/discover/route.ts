@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   }
   try {
     const result = await discoverSiteMap(input.url, {
-      maxPages: typeof input.maxPages === "number" ? input.maxPages : 18,
+      maxPages: typeof input.maxPages === "number" ? input.maxPages : 120,
       maxDepth: typeof input.maxDepth === "number" ? input.maxDepth : 3,
       budgetMs: 18_000
     });
