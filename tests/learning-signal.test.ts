@@ -54,3 +54,9 @@ test("keeps client-specific feedback within the named client scope", () => {
 test("general banking rules stay in the Indian BFSI scope", () => {
   assert.equal(resolveChatLearningScope("For Indian banking, always make fees and consent clear."), "indian-bfsi");
 });
+
+test("a follow-up correction inherits only the prior task's client scope", () => {
+  const followUpCorrection = "Aage se findings aur recommendations specific rakhna.";
+  assert.equal(resolveChatLearningScope(followUpCorrection + "\\nConversation task context: Ujjivan SFB website revamp"), "project:ujjivan-sfb");
+  assert.equal(resolveChatLearningScope(followUpCorrection + "\\nConversation task context: DMI HFC loan journey"), "project:dmi-finance");
+});
