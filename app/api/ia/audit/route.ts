@@ -172,11 +172,14 @@ export async function POST(request: Request) {
   try {
     const model = process.env.UXD_IA_MODEL || process.env.UX_DIRECT_CHAT_MODEL || "mock/ux-direct";
     const inferredProvider = model === "mock/ux-direct" ? "mock" : process.env.UXD_IA_PROVIDER?.trim() || (model.includes("/") ? "openrouter" : undefined);
+    const configuredModule = process.env.UXD_IA_GATEWAY_MODULE || "";
+    const moduleId = model === "mock/ux-direct" ? "general" :
+      ["reasoning", "classification", "extraction", "summarization", "vision", "critique"].includes(configuredModule) ? configuredModule : "general";
     const response = await chatCompletionWithFallback({
       model,
       ...(inferredProvider ? { providerId: inferredProvider } : {}),
-      moduleId: model === "mock/ux-direct" ? "general" : "reasoning",
-      messages: [
+      moduleId,
+            messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
