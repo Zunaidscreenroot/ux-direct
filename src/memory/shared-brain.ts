@@ -519,14 +519,16 @@ export async function upsertBrainDocument(input: {
 
 export async function saveBrainEvalCase(input: {
   scopeKey: unknown; capability?: unknown; title: unknown; query: unknown;
-  expectedBehavior?: unknown; forbiddenBehaviors?: unknown; expectedMemoryIds?: unknown; activate?: unknown;
+  expectedBehavior?: unknown; forbiddenBehaviors?: unknown; expectedMemoryIds?: unknown; expectedKnowledgeChunkIds?: unknown; activate?: unknown;
 }) {
   const scopeKey = safeScope(input.scopeKey);
   const title = requiredText(input.title, "title", 240);
   const query = requiredText(input.query, "query", 8000);
   const forbiddenBehaviors = words(input.forbiddenBehaviors);
   const expectedMemoryIds = Array.isArray(input.expectedMemoryIds)
-    ? input.expectedMemoryIds.filter((v): v is string => typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v)).slice(0, 20) : [];
+    ? input.expectedMemoryIds.filter((v): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)).slice(0, 20) : [];
+  const expectedKnowledgeChunkIds = Array.isArray(input.expectedKnowledgeChunkIds)
+    ? input.expectedKnowledgeChunkIds.filter((v): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)).slice(0, 20) : [];
   const activate = input.activate === true;
   const now = new Date().toISOString();
   const rows = await supabaseRequest("uxd_brain_eval_cases", {
@@ -535,12 +537,13 @@ export async function saveBrainEvalCase(input: {
       scope_key: scopeKey, capability: optionalText(input.capability, 80) || "retrieval",
       title, input: query, expected_behavior: optionalText(input.expectedBehavior, 2000) || "",
       forbidden_behaviors: forbiddenBehaviors, expected_memory_ids: expectedMemoryIds,
+      expected_knowledge_chunk_ids: expectedKnowledgeChunkIds,
       status: activate ? "approved" : "draft", source: "human-approved", updated_at: now,
     }),
   });
   const row = Array.isArray(rows) ? rows[0] : null;
   if (!row?.id) throw new Error("Evaluation case did not save.");
-  return { id: String(row.id), title, scopeKey, status: String(row.status), activated: activate };
+  return { id: String(row.id), title, scopeKey, status: String(row.status), activated: activate, expectedMemoryCount: expectedMemoryIds.length, expectedKnowledgeChunkCount: expectedKnowledgeChunkIds.length };
 }
 
 export async function runBrainRetrievalEvaluations(input: { scopeKey?: unknown; limit?: unknown } = {}) {
@@ -550,23 +553,39 @@ export async function runBrainRetrievalEvaluations(input: { scopeKey?: unknown; 
   if (scopeKey) filters.scope_key = "eq." + scopeKey;
   const cases = await supabaseRequest(queryPath("uxd_brain_eval_cases", filters, "*", limit));
   if (!Array.isArray(cases) || !cases.length) return { count: 0, passed: 0, recallAtK: null, message: "No approved retrieval evaluation cases have been saved." };
-  const results = [];
+  const results: Array<Record<string, unknown>> = [];
   for (const row of cases) {
     const retrieved = await retrieveBrainContext({
-      query: row.input, scopeKey: row.scope_key, maxResults: 8, maxContextChars: 3000,
+      query: row.input, scopeKey: row.scope_key, maxResults: 10, maxContextChars: 3000,
     });
     const expected: string[] = Array.isArray(row.expected_memory_ids) ? row.expected_memory_ids : [];
-    const hits = expected.filter(id => retrieved.memoryIds.includes(id));
+    const expectedKnowledge: string[] = Array.isArray(row.expected_knowledge_chunk_ids) ? row.expected_knowledge_chunk_ids : [];
+    const memoryHits = expected.filter(id => retrieved.memoryIds.includes(id));
+    const knowledgeHits = expectedKnowledge.filter(id => retrieved.documentChunkIds.includes(id));
+    const totalExpected = expected.length + expectedKnowledge.length;
+    const totalHits = memoryHits.length + knowledgeHits.length;
     const text = retrieved.context.toLowerCase();
     const forbiddenHits = (Array.isArray(row.forbidden_behaviors) ? row.forbidden_behaviors : [])
       .filter((needle: string) => needle && text.includes(String(needle).toLowerCase()));
-    const pass = expected.length ? hits.length === expected.length && forbiddenHits.length === 0 : forbiddenHits.length === 0;
-    const recall = expected.length ? hits.length / expected.length : null;
+    const pass = totalExpected ? totalHits === totalExpected && forbiddenHits.length === 0 : forbiddenHits.length === 0;
+    const recall = totalExpected ? totalHits / totalExpected : null;
     const report = {
-      passed: pass, expectedCount: expected.length, retrievedExpectedCount: hits.length,
-      recallAtK: recall, forbiddenHits, retrievedMemoryCount: retrieved.memoryCount,
-      retrievedKnowledgeCount: retrieved.knowledgeCount, contextCharacters: retrieved.contextCharacters,
-      retrievalMode: retrieved.retrievalMode, completedAt: new Date().toISOString(),
+      passed: pass,
+      expectedCount: totalExpected,
+      expectedMemoryCount: expected.length,
+      expectedKnowledgeCount: expectedKnowledge.length,
+      retrievedExpectedCount: totalHits,
+      retrievedExpectedMemoryCount: memoryHits.length,
+      retrievedExpectedKnowledgeCount: knowledgeHits.length,
+      missingMemoryIds: expected.filter(id => !memoryHits.includes(id)),
+      missingKnowledgeChunkIds: expectedKnowledge.filter(id => !knowledgeHits.includes(id)),
+      recallAtK: recall,
+      forbiddenHits,
+      retrievedMemoryCount: retrieved.memoryCount,
+      retrievedKnowledgeCount: retrieved.knowledgeCount,
+      contextCharacters: retrieved.contextCharacters,
+      retrievalMode: retrieved.retrievalMode,
+      completedAt: new Date().toISOString(),
     };
     await supabaseRequest("uxd_brain_eval_cases?id=eq." + encodeURIComponent(String(row.id)), {
       method: "PATCH", headers: { Prefer: "return=minimal" },
@@ -576,7 +595,8 @@ export async function runBrainRetrievalEvaluations(input: { scopeKey?: unknown; 
   }
   const recallValues = results.map(r => r.recallAtK).filter((v): v is number => typeof v === "number");
   return {
-    count: results.length, passed: results.filter(r => r.passed).length,
+    count: results.length,
+    passed: results.filter(r => r.passed).length,
     failed: results.filter(r => !r.passed).length,
     recallAtK: recallValues.length ? Number((recallValues.reduce((a,b) => a+b, 0) / recallValues.length).toFixed(3)) : null,
     results,
