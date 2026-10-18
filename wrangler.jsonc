@@ -46,6 +46,9 @@
     }
   ],
   "previews": {
+    "images": {
+      "binding": "IMAGES"
+    },
     "vars": {
       "UX_DIRECT_ENV": "preview",
       "OPENROUTER_MODELS": "nvidia/nemotron-3.5-lightning:free,nvidia/nemotron-3-ultra-550b-a55b:free,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
