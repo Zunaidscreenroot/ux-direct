@@ -33,10 +33,18 @@ export async function GET(request: Request) {
     mode: activeProviders.length ? activeProviders.map(provider => provider.name).join(", ") : "mock",
     modelProviderConfigured: activeProviders.length > 0,
     figma: {
+      integration: "native_plugin_api",
+      oauthRequired: false,
       oauthConfigured: figmaOAuthConfigured,
-      status: figmaOAuthConfigured ? "configured_not_verified" : "not_configured",
-      note: figmaOAuthConfigured ? "OAuth credentials are present; user authorization has not been verified by this endpoint." : "Figma account login is not configured yet. Plugin-to-backend reachability is checked separately."
+      status: "native_plugin_bridge",
+      note: "Figma document access for this product uses the installed plugin's native Figma Plugin APIs; Figma OAuth is not required for that path. The current MCP bridge exposes plugin heartbeat and API diagnostics, while general-purpose design read/write commands are not yet exposed. Live plugin reachability is reported separately."
     },
-    capabilities: { taskPlanning: true, figmaRead: false, figmaWrite: false, operationalLog: "best_effort_runtime" }
+    capabilities: {
+      taskPlanning: true,
+      figmaRead: false,
+      figmaWrite: false,
+      figmaExecution: "diagnostics_only",
+      operationalLog: "best_effort_runtime"
+    }
   }, { headers: corsHeaders(origin) });
 }
