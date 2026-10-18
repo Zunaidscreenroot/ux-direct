@@ -12,7 +12,9 @@ test("home opens the unified chat-first workspace instead of the operations dash
   assert.ok(chat.includes("Message UX Direct"));
   assert.ok(chat.includes("Audit"));
   assert.ok(chat.includes("Connections"));
-  assert.ok(chat.includes("ud-brain-orb"));
+  assert.ok(chat.includes("ThinkingOrb"));
+  assert.ok(chat.includes('from "thinking-orbs"'));
+  assert.equal(chat.includes("ud-brain-orb"), false);
   assert.equal(page.includes("ModelGatewayPanel"), false);
 });
 
