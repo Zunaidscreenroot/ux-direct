@@ -107,7 +107,7 @@ function buildGraph(pages: PageRecord[]): { nodes: SiteNode[]; edges: Edge[] } {
 }
 
 export default function IADemoPage() {
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState("https://www.ujjivansfb.bank.in/");
   const [maxDepth, setMaxDepth] = useState("3");
   const [maxPages, setMaxPages] = useState("18");
   const [pages, setPages] = useState<PageRecord[]>(samplePages);
@@ -115,7 +115,17 @@ export default function IADemoPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [selectedPage, setSelectedPage] = useState<PageRecord | null>(null);
-  const graph = useMemo(() => buildGraph(pages), [pages]);
+  const [search, setSearch] = useState("");
+  const [auditBusy, setAuditBusy] = useState(false);
+  const [auditError, setAuditError] = useState("");
+  const [auditSummary, setAuditSummary] = useState<string | null>(null);
+  const [auditFindings, setAuditFindings] = useState<Array<{title:string; severity:string; evidence:string; recommendation:string; confidence:number; hypothesis:boolean; url:string}>>([]);
+  const [showFindings, setShowFindings] = useState(true);
+  const filteredPages = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return term ? pages.filter((page) => page.title.toLowerCase().includes(term) || page.url.toLowerCase().includes(term) || (page.description || "").toLowerCase().includes(term)) : pages;
+  }, [pages, search]);
+  const graph = useMemo(() => buildGraph(filteredPages), [filteredPages]);
   const [nodes, setNodes, onNodesChange] = useNodesState<SiteNode>(graph.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(graph.edges);
 
@@ -133,6 +143,9 @@ export default function IADemoPage() {
     setBusy(true);
     setError("");
     setResult(null);
+    setAuditFindings([]);
+    setAuditSummary(null);
+    setAuditError("");
     try {
       const response = await fetch("/api/ia/discover", {
         method: "POST",
@@ -155,10 +168,10 @@ export default function IADemoPage() {
     <main className="ia-workbench">
       <header className="ia-head">
         <div>
-          <Link href="/" className="ia-back">← UX Direct cockpit</Link>
+          <Link href="/chat" className="ia-back">← UX Direct cockpit</Link>
           <div className="eyebrow" style={{ marginTop: 24 }}><span className="pulse" /> INFORMATION ARCHITECTURE</div>
-          <h1>See the site as a <em>structure.</em></h1>
-          <p className="intro">Discover a bounded set of same-origin pages, then inspect the page hierarchy and navigation relationships in an interactive map.</p>
+          <h1>Information architecture <em>studio.</em></h1>
+          <p className="intro">Discover your site structure, inspect the real page hierarchy, then let AI review the architecture for evidence-backed findability risks.</p>
         </div>
       </header>
 
@@ -198,6 +211,11 @@ export default function IADemoPage() {
         <div className="ia-canvas-head">
           <div><strong>IA map</strong><span>Drag nodes · zoom · pan · select a page</span></div>
           <div className="ia-legend"><span><i style={{ background: "#4f9569" }} /> HTTP 2xx/3xx</span><span><i style={{ background: "#d97757" }} /> HTTP error</span></div>
+        </div>
+        <div className="ia-graph-toolbar">
+          <input aria-label="Search discovered pages" placeholder="Search page names or URLs…" value={search} onChange={(event) => setSearch(event.target.value)} />
+          <span>{filteredPages.length} of {pages.length} pages</span>
+          <button type="button" className="ia-audit-cta" onClick={auditIA} disabled={!result || auditBusy}>{auditBusy ? "Analysing IA…" : "✦ Audit IA with AI"}</button>
         </div>
         <div style={{ width: "100%", height: 590 }}>
           <ReactFlow
@@ -246,36 +264,37 @@ export default function IADemoPage() {
       <footer className="ia-footer">UX DIRECT <span>·</span> IA DISCOVERY / INTERACTIVE MAP</footer>
 
       <style jsx global>{`
-        .ia-workbench{min-height:100vh;background:#fbfcfa;color:#17211f;padding:42px clamp(18px,4vw,64px) 28px}
+        .ia-workbench{min-height:100vh;background:radial-gradient(ellipse at 72% -12%,#182239 0%,#0b0f16 48%,#0a0d13 100%);color:#f4f7fc;padding:28px clamp(18px,4vw,54px) 24px;font-family:"DM Sans",sans-serif}
         .ia-head{max-width:1400px;margin:0 auto 28px}
-        .ia-back{color:#466956;text-decoration:none;font-size:12px;font-weight:800}
-        .ia-workbench h1{font-family:Manrope,sans-serif;font-size:clamp(32px,4vw,48px);line-height:1.08;letter-spacing:-1.8px;margin:0 0 14px}
-        .ia-toolbar,.ia-canvas,.ia-page-detail,.ia-table-wrap{max-width:1400px;margin:0 auto 18px;border:1px solid #e4e9e3;border-radius:16px;background:#fff;box-shadow:0 4px 20px rgba(28,55,42,.035)}
+        .ia-back{color:#93e9d0;text-decoration:none;font-size:12px;font-weight:800}
+        .ia-workbench h1{font-family:Manrope,sans-serif;font-size:clamp(32px,4vw,48px);line-height:1.08;letter-spacing:-1.8px;margin:0 0 14px;color:#f2f6fc}.ia-workbench h1 em{font-style:normal;background:linear-gradient(90deg,#92f2d9,#b5a6ff);color:transparent;background-clip:text}.ia-workbench .intro{max-width:680px;color:#99a8bd;font-size:13px;line-height:1.8}.ia-workbench .eyebrow{color:#91e9d1}
+        .ia-toolbar,.ia-canvas,.ia-page-detail,.ia-table-wrap,.ia-findings-wrap{max-width:1400px;margin:0 auto 18px;border:1px solid #263347;border-radius:16px;background:#101722;box-shadow:0 8px 28px rgba(0,0,0,.12)}
         .ia-toolbar{padding:18px}
-        .ia-url-label{font-size:11px;font-weight:800;display:block;margin-bottom:8px;color:#65766c}
+        .ia-url-label{font-size:11px;font-weight:800;display:block;margin-bottom:8px;color:#8493aa}
         .ia-controls{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
         .ia-controls input{flex:1;min-width:250px}
-        .ia-controls input,.ia-controls select{height:42px;padding:0 12px;border:1px solid #dfe6df;border-radius:9px;background:#fff;color:#17211f;font:inherit;font-size:12px}
+        .ia-controls input,.ia-controls select{height:42px;padding:0 12px;border:1px solid #2d3a4f;border-radius:9px;background:#141c29;color:#eaf1fb;font:inherit;font-size:12px}
         .ia-controls label{display:flex;flex-direction:column;gap:5px;font-size:10px;font-weight:800;color:#65766c}
         .ia-controls .submit-button{height:42px}
-        .ia-note{font-size:11px;color:#748078;margin:12px 0 0;line-height:1.5}
-        .ia-error{max-width:1400px;margin:0 auto 15px;padding:12px 15px;background:#fff3ef;color:#963f2c;border:1px solid #f0c7bc;border-radius:10px;font-size:12px}
+        .ia-note{font-size:11px;color:#8493aa;margin:12px 0 0;line-height:1.5}
+        .ia-error{max-width:1400px;margin:0 auto 15px;padding:12px 15px;background:#2a1b22;color:#f6a5b4;border:1px solid #633440;border-radius:10px;font-size:12px}
         .ia-sample-note{max-width:1400px;margin:0 auto 12px;font-size:11px;color:#77837a}
         .ia-metrics{max-width:1400px;margin:0 auto 15px;display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}
-        .ia-metrics>div{min-width:115px;background:#fff;border:1px solid #e4e9e3;border-radius:12px;padding:12px 15px}
+        .ia-metrics>div{min-width:115px;background:#fff;border:1px solid #2a374b;border-radius:12px;padding:12px 15px;background:#121a26;color:#f3f7fc}
         .ia-metrics strong,.ia-metrics span{display:block}.ia-metrics strong{font-size:20px;font-family:Manrope,sans-serif}.ia-metrics span{font-size:10px;color:#748078;margin-top:4px}
-        .ia-origin{align-self:center;margin-left:auto;color:#758078;font-size:11px;overflow-wrap:anywhere}
+        .ia-origin{align-self:center;margin-left:auto;color:#8493aa;font-size:11px;overflow-wrap:anywhere}
         .ia-canvas{overflow:hidden}
-        .ia-canvas-head{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:15px 18px;border-bottom:1px solid #edf0eb;flex-wrap:wrap}
-        .ia-canvas-head strong,.ia-canvas-head span{display:block}.ia-canvas-head strong{font-size:13px}.ia-canvas-head span{font-size:10px;color:#79847b;margin-top:3px}
+        .ia-canvas-head{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:15px 18px;border-bottom:1px solid #263245;flex-wrap:wrap}
+        .ia-canvas-head strong,.ia-canvas-head span{display:block}.ia-canvas-head strong{font-size:13px}.ia-canvas-head span{font-size:10px;color:#8a98ad;margin-top:3px}
         .ia-legend{display:flex;gap:12px;flex-wrap:wrap}.ia-legend span{display:flex;align-items:center;gap:5px}.ia-legend i{width:7px;height:7px;border-radius:50%;display:inline-block}
         .ia-page-detail{padding:18px;display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(100px,1fr));gap:18px}
-        .ia-page-detail h2{font-size:20px;margin:8px 0}.ia-page-detail a{font-size:11px;color:#456f54;overflow-wrap:anywhere}
+        .ia-page-detail h2{font-size:20px;margin:8px 0}.ia-page-detail a{font-size:11px;color:#91e9d1;overflow-wrap:anywhere}
         .ia-page-detail>div>strong,.ia-page-detail>div>span{display:block;font-size:11px;margin-bottom:7px}.ia-page-detail>div>strong{color:#78847b;font-size:10px;text-transform:uppercase;letter-spacing:.06em}
         .ia-kicker{font-size:9px;font-weight:900;letter-spacing:.12em;color:#6b846f}
-        .ia-table-wrap{overflow:hidden}.ia-table-scroll{overflow:auto}.ia-table{border-collapse:collapse;width:100%;font-size:11px}.ia-table th,.ia-table td{text-align:left;border-bottom:1px solid #edf0eb;padding:12px 16px;white-space:nowrap}.ia-table th{color:#748078;text-transform:uppercase;font-size:9px;letter-spacing:.08em;background:#fafbf9}.ia-table a{color:#4d725b}
-        .ia-page-select{border:0;background:transparent;padding:0;color:#234c37;font-weight:800;text-align:left}
+        .ia-table-wrap{overflow:hidden}.ia-table-scroll{overflow:auto}.ia-table{border-collapse:collapse;width:100%;font-size:11px}.ia-table th,.ia-table td{text-align:left;border-bottom:1px solid #edf0eb;padding:12px 16px;white-space:nowrap}.ia-table th{color:#748078;text-transform:uppercase;font-size:9px;letter-spacing:.08em;background:#141c29}.ia-table a{color:#91e9d1}
+        .ia-page-select{border:0;background:transparent;padding:0;color:#b9f2e2;font-weight:800;text-align:left}
         .ia-footer{max-width:1400px;margin:28px auto 0;text-align:right;font-size:9px;letter-spacing:.14em;font-weight:800;color:#758078}.ia-footer span{color:#b6c8b4;margin:0 6px}
+        .ia-graph-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid #263245;background:#111925}.ia-graph-toolbar input{flex:1;min-width:220px;height:36px;border:1px solid #2b394e;border-radius:8px;background:#151e2c;color:#f1f6fc;padding:0 10px;font-size:11px}.ia-graph-toolbar>span{color:#8291a7;font-size:10px}.ia-graph-toolbar button,.ia-toggle{border:1px solid #3a6258;border-radius:9px;background:linear-gradient(135deg,#90f1d5,#b5a5ff);color:#0b1720;padding:10px 13px;font-size:11px;font-weight:900}.ia-graph-toolbar button:disabled{opacity:.5;cursor:wait}.ia-findings-wrap{overflow:hidden}.ia-summary{padding:0 18px;color:#a9b7c9;font-size:12px;line-height:1.7}.ia-finding{padding:16px 18px;border-top:1px solid #263245}.ia-finding-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ia-finding-title strong{font-size:12px}.ia-finding p{color:#a8b5c8;font-size:12px;line-height:1.7}.ia-finding a{font-size:11px;color:#93e9d0;text-decoration:none}.ia-severity,.ia-hypothesis,.ia-confidence{font:9px "DM Mono",monospace;border-radius:999px;padding:5px 7px;border:1px solid #314057;color:#aab8ca}.ia-severity.sev-critical,.ia-severity.sev-high{border-color:#6a3c48;background:#2a1920;color:#f3a1b0}.ia-severity.sev-medium{border-color:#6b5437;background:#2b2319;color:#e8c18b}.ia-severity.sev-low{border-color:#31534c;background:#142620;color:#98e6ca}.ia-hypothesis{border-color:#6553a3;background:#201a36;color:#c1b5ff}.ia-confidence{margin-left:auto}.ia-toggle{background:#1a2637;color:#b9c7d8;border-color:#34445b}.ia-page-detail{color:#edf4fc}.ia-page-detail a{color:#91e9d1}.ia-table td{color:#d5deeb}.ia-table th{background:#141c29}.ia-canvas-head{border-bottom-color:#263245}.ia-legend{color:#9aa8bd}
         @media(max-width:750px){.ia-workbench{padding-top:24px}.ia-controls input{min-width:100%}.ia-page-detail{grid-template-columns:1fr 1fr}.ia-origin{margin-left:0;width:100%}}
       `}</style>
     </main>
