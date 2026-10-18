@@ -48,7 +48,7 @@ function normalizeReport(value: unknown, input: {
   product: string; journey: string; goal: string; screenshots: AuditScreenshot[];
 }): UXAuditReport | null {
   const parsed = record(value);
-  if (!parsed || !Array.isArray(parsed.findings) || !Array.isArray(parsed.benchmark)) return null;
+  if (!parsed || !Array.isArray(parsed.findings)) return null;
   const findings: AuditFinding[] = [];
   for (const raw of parsed.findings.slice(0, 60)) {
     const item = record(raw);
@@ -64,7 +64,9 @@ function normalizeReport(value: unknown, input: {
     if (kind === "positive" && category !== "POSITIVE") continue;
     if (kind === "issue" && category === "POSITIVE") continue;
     const itemSeverity = kind === "positive" ? null : severity(item.severity);
+    const heuristic = asText(item.heuristic, 200) || null;
     if (kind === "issue" && itemSeverity === null) continue;
+    if (kind === "issue" && itemSeverity !== null && itemSeverity >= 3 && !heuristic) continue;
     const confidenceRaw = typeof item.confidence === "number" && Number.isFinite(item.confidence) ? item.confidence : 0.5;
     findings.push({
       id: "",
@@ -76,14 +78,14 @@ function normalizeReport(value: unknown, input: {
       evidence,
       impact: asText(item.impact, 1000),
       recommendation,
-      heuristic: asText(item.heuristic, 200) || null,
+      heuristic,
       confidence: Math.max(0, Math.min(1, confidenceRaw)),
       region: normalizeRegion(item.region)
     });
   }
   const benchmark: BenchmarkComparison[] = [];
   const allowedSites = new Set(input.screenshots.map((s) => s.siteName));
-  for (const raw of parsed.benchmark.slice(0, 60)) {
+  for (const raw of (Array.isArray(parsed.benchmark) ? parsed.benchmark : []).slice(0, 60)) {
     const item = record(raw);
     if (!item) continue;
     const siteName = asText(item.siteName, 100);
