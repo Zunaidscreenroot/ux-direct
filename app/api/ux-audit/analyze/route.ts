@@ -88,13 +88,16 @@ function normalizeReport(value: unknown, input: {
     });
   }
   const benchmark: BenchmarkComparison[] = [];
-  const allowedSites = new Set(input.screenshots.map((s) => s.siteName));
-  for (const raw of (Array.isArray(parsed.benchmark) ? parsed.benchmark : []).slice(0, 60)) {
+  // Match provider-generated site names case-insensitively, then preserve the user's canonical label.
+  const allowedSites = new Map(input.screenshots.map((s) => [s.siteName.trim().toLowerCase(), s.siteName]));
+  const hasMultipleSites = allowedSites.size >= 2;
+  for (const raw of (hasMultipleSites && Array.isArray(parsed.benchmark) ? parsed.benchmark : []).slice(0, 60)) {
     const item = record(raw);
     if (!item) continue;
-    const siteName = asText(item.siteName, 100);
+    const suppliedSiteName = asText(item.siteName, 100);
+    const siteName = allowedSites.get(suppliedSiteName.toLowerCase());
     const relativePosition = item.relativePosition;
-    if (!allowedSites.has(siteName) || !["stronger", "at-par", "weaker", "not-comparable"].includes(String(relativePosition))) continue;
+    if (!siteName || !["stronger", "at-par", "weaker", "not-comparable"].includes(String(relativePosition))) continue;
     const criterion = asText(item.criterion, 180);
     const evidence = asText(item.evidence, 1000);
     if (!criterion || !evidence) continue;
