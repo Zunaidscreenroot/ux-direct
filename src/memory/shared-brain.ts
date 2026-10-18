@@ -11,7 +11,7 @@ export function resolveTaskBrainScope(project: string, title: string, request: s
   if (project === "express-computers" || /\b(express computers|express-computers)\b/i.test(value)) return "EXPRESS_COMPUTERS";
   if (/\b(dmi|dmi hfc|dmi finance|dmi housing finance)\b/i.test(value)) return "DMI_HFC";
   if (/\b(ujjivan|ujjivan sfb|ujjivan small finance)\b/i.test(value)) return "UJJIVAN_SFB";
-  const explicitNonIndia = /\b(united states|u\.s\.a?\.?|uk|united kingdom|singapore|australia|canada|international market|non.indian)\b/i.test(value);
+  const explicitNonIndia = /\b(united states|us|usa|uk|united kingdom|singapore|australia|canada|international market|non.indian)\b|u\.s\./i.test(value);
   const indiaSignal = /\b(india|indian|rbi|upi|ifsc|aadhaar|aadhar|pan card|nbfc|sfb|small finance bank|bfsi)\b|₹/i.test(value);
   const financialSignal = /\b(bank|banking|finance|financial services|insurance|lender|loan|credit|deposit|wealth|mortgage|payment)\b/i.test(value);
   if ((indiaSignal && financialSignal) || (indiaSignal && /\b(bfsi|rbi|upi|ifsc|nbfc|sfb|small finance bank)\b/i.test(value))) return "INDIA_BFCI_SHARED";
