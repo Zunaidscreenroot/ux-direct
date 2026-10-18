@@ -8,7 +8,7 @@ Every module (reasoning, classification, extraction, summarization, vision, UX c
 
 Exact model selection is a strict allowlist. If a model is disconnected, incompatible with the chosen mode, the module is off, or any budget cap is exhausted, the request is blocked instead of silently using another model. Paid calls require module mode=paid, gateway paid-routing switch, `ALLOW_PAID_MODELS=true` server-side, keys, positive exact-model rates and passing global/module/model/request budgets. Free-tier API usage estimates as ₹0 only while the connected provider account/request really uses its free tier.
 
-Settings and usage keys are branch/environment scoped, so preview does not overwrite production settings or usage records. Netlify Blobs is best-effort key/value storage rather than transactional accounting; concurrent paid calls may race a cap. Use transactional reservations before relying on caps as a production financial guarantee.
+Settings are environment-scoped so Cloudflare production and previews can be isolated with UX_DIRECT_ENV and branch variables. On Cloudflare, gateway settings use the shared D1 key/value store; the prior Netlify deployment remains a compatibility fallback during migration. The separate usage ledger is still best-effort in-memory telemetry, not transactional accounting. Do not rely on these display-oriented budget estimates as a hard financial limit without implementing and testing atomic reservations.
 
 ## What it provides
 
@@ -22,7 +22,7 @@ Settings and usage keys are branch/environment scoped, so preview does not overw
 
 The main dashboard includes a Model Gateway tab, provider readiness and non-editable API-key placeholders for the final setup step. It shows per-request prompt/completion/total tokens, model, provider, latency, estimated cost, month-to-date spend and the ₹3,000 default budget. `GET /api/model-gateway/dashboard` returns only sanitized readiness and ledger data.
 
-The initial usage ledger is in-memory best-effort telemetry and may reset on serverless restarts. Treat it as operational visibility rather than a durable billing source until persistent storage and concurrency-safe budget reservation are implemented.
+The initial usage ledger is in-memory best-effort telemetry and may reset on serverless restarts. Treat it as operational visibility rather than a durable billing source until a durable usage ledger and concurrency-safe budget reservation are implemented.
 
 ## Configure providers
 
