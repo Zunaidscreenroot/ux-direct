@@ -59,6 +59,7 @@ export async function POST(request: Request) {
         const result = await retrieveBrainContext({
           query: body.query,
           scopeKey: body.scopeKey,
+          relatedScopes: body.relatedScopes,
           maxResults: body.maxResults,
           maxContextChars: body.maxContextChars,
           includeKnowledge: body.includeKnowledge !== false,
