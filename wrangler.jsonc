@@ -3,20 +3,39 @@
   "name": "ux-direct",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-10-18",
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
   "preview_urls": true,
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "images": {
+    "binding": "IMAGES"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "ux-direct"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "NEXT_INC_CACHE_R2_BUCKET",
+      "bucket_name": "ux-direct-opennext-cache"
+    },
+    {
+      "binding": "UX_DIRECT_ASSETS",
+      "bucket_name": "ux-direct-assets"
+    }
+  ],
   "observability": {
     "enabled": true
   },
   "vars": {
-    "UX_DIRECT_ENV": "production"
+    "UX_DIRECT_ENV": "production",
+    "OPENROUTER_MODELS": "nvidia/nemotron-3.5-lightning:free,nvidia/nemotron-3-ultra-550b-a55b:free,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "ALLOW_PAID_MODELS": "false"
   },
   "d1_databases": [
     {
@@ -28,7 +47,9 @@
   ],
   "previews": {
     "vars": {
-      "UX_DIRECT_ENV": "preview"
+      "UX_DIRECT_ENV": "preview",
+      "OPENROUTER_MODELS": "nvidia/nemotron-3.5-lightning:free,nvidia/nemotron-3-ultra-550b-a55b:free,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+      "ALLOW_PAID_MODELS": "false"
     },
     "d1_databases": [
       {
@@ -36,6 +57,16 @@
         "database_name": "ux-direct-state-preview",
         "database_id": "156ac74e-ffe0-4667-be59-e724d279680d",
         "migrations_dir": "migrations"
+      }
+    ],
+    "r2_buckets": [
+      {
+        "binding": "NEXT_INC_CACHE_R2_BUCKET",
+        "bucket_name": "ux-direct-opennext-cache-preview"
+      },
+      {
+        "binding": "UX_DIRECT_ASSETS",
+        "bucket_name": "ux-direct-assets-preview"
       }
     ]
   }
