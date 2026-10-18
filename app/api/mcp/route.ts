@@ -494,7 +494,7 @@ export async function POST(request: Request) {
           protocolVersion: PROTOCOL_VERSIONS.has(requested) ? requested : "2025-11-25",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "ux-direct", version: "0.1.0" },
-          instructions: "UX Direct offers health checks, connection status, reviewable UX task planning, and a controlled native Figma plugin API self-test. The self-test targets the dedicated UXD API Test Lab page in the pre-allowlisted file; it does not generate production designs. Use 'general' for BFSI website revamp work and 'express-computers' for Express Computers work. DMI-specific project data is not exposed through this connector.",
+          instructions: "UX Direct is the main brain for UX Direct, UX Audit and the Figma plugin. Retrieve approved shared-brain guidance before relevant UX tasks. If the owner corrects a previous output in chat or voice, interpret the feedback yourself and save a reusable coaching rule as a draft in the shared brain; never ask the owner to fill a template. Preserve the original feedback, select the narrowest useful scope, and activate only after explicit owner approval. Never treat raw client audit findings as global knowledge. The brain stores persistent memory and source-backed references, not model weights; retrieved lessons must not override current evidence. UX Direct also offers health checks, connection status, reviewable task planning, and a controlled native Figma plugin API self-test. Use general for general BFSI work or express-computers for Express Computers work.",
         }, headers);
       }
       case "ping":
