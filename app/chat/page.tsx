@@ -265,7 +265,6 @@ export default function ChatWorkspace() {
   }
 
   const activeTitle = activeTab === "chat" ? "Chat" : activeTab === "audit" ? "Audit studio" : "Connections";
-  const activeModel = status?.models.find((model) => model.id === selectedModel);
   const auditToolInfo = auditTools.find((tool) => tool.id === auditTool);
 
   return (
