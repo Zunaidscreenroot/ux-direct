@@ -36,27 +36,32 @@ type DiscoveryResult = {
 };
 
 function PageNode({ data }: NodeProps<SiteNode>) {
-  const statusColor = data.status === null ? "#9ca3af" : data.status >= 400 ? "#d97757" : "#4f9569";
+  const failed = data.status === null || data.status >= 400;
+  const statusColor = data.status === null ? "#7b879b" : data.status >= 400 ? "#f28c9c" : "#74e7c1";
+  const pagePath = new URL(data.url).pathname || "/";
   return (
     <div style={{
-      width: 230, border: "1px solid #dfe6df", borderRadius: 12, background: "#fff",
-      boxShadow: "0 3px 14px rgba(22,49,39,.06)", padding: 12, color: "#182720"
+      width: 236, border: "1px solid " + (failed ? "#66404a" : "#2c4550"), borderRadius: 13,
+      background: "linear-gradient(145deg,#151e2c,#101722)", boxShadow: "0 8px 24px rgba(0,0,0,.2)",
+      padding: 13, color: "#edf4fc", fontFamily: "DM Sans,sans-serif"
     }}>
-      <Handle type="target" position={Position.Left} style={{ background: "#739080", width: 7, height: 7 }} />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 10, textTransform: "uppercase", fontWeight: 800, color: "#65766c", letterSpacing: ".08em" }}>L{data.depth + 1}</span>
-        <span style={{ width: 7, height: 7, borderRadius: 10, background: statusColor, display: "inline-block" }} title={data.status === null ? "Not fetched" : "HTTP " + data.status} />
+      <Handle type="target" position={Position.Left} style={{ background: "#8d8aff", width: 8, height: 8, border: "2px solid #101722" }} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 9 }}>
+        <span style={{ fontSize: 9, textTransform: "uppercase", fontWeight: 800, color: "#9db0c7", letterSpacing: ".09em" }}>LEVEL {data.depth + 1}</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 9, color: statusColor }}>
+          <span style={{ width: 6, height: 6, borderRadius: 10, background: statusColor, display: "inline-block" }} />
+          {data.status === null ? "UNFETCHED" : "HTTP " + data.status}
+        </span>
       </div>
-      <div style={{ fontSize: 13, fontWeight: 800, lineHeight: 1.35, overflowWrap: "anywhere" }}>{data.title}</div>
-      <div style={{ fontSize: 10, color: "#738078", lineHeight: 1.45, marginTop: 6, overflowWrap: "anywhere" }}>{new URL(data.url).pathname || "/"}</div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, borderTop: "1px solid #eef1ed", paddingTop: 8, fontSize: 10, color: "#65766c" }}>
-        <span>{data.status ?? "Not fetched"}</span><span>{data.outbound} links</span>
+      <div style={{ fontSize: 12, fontWeight: 800, lineHeight: 1.45, overflowWrap: "anywhere", color: "#f4f7fc" }}>{data.title}</div>
+      <div style={{ fontSize: 10, color: "#91e9d1", lineHeight: 1.45, marginTop: 6, overflowWrap: "anywhere" }}>{pagePath}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 11, borderTop: "1px solid #2b3749", paddingTop: 9, fontSize: 9, color: "#93a3b8" }}>
+        <span>{data.status ?? "No response"}</span><span>{data.outbound} outgoing links</span>
       </div>
-      <Handle type="source" position={Position.Right} style={{ background: "#739080", width: 7, height: 7 }} />
+      <Handle type="source" position={Position.Right} style={{ background: "#8debd1", width: 8, height: 8, border: "2px solid #101722" }} />
     </div>
   );
 }
-
 const nodeTypes = { page: PageNode };
 
 const samplePages: PageRecord[] = [
