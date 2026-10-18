@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   if (!rateAllowed(request)) {
     return NextResponse.json({ error: "Performance checks are rate limited or the request origin is not allowed." }, { status: 429, headers: { "Cache-Control": "no-store" } });
   }
-  const token = process.env.BROWSERLESS_API_TOKEN || process.env.BROWSERLESS_TOKEN;
+  const token = process.env.BROWSERLESS_API_TOKEN || process.env.BROWSERLESS_API_KEY || process.env.BROWSERLESS_TOKEN;
   if (!token) {
     return NextResponse.json({ error: "Browserless is not configured. Set BROWSERLESS_API_TOKEN in the server environment." }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
   }
   const url = publicUrl((body as { url: string }).url);
   if (!url) return NextResponse.json({ error: "Only public HTTPS website URLs are allowed." }, { status: 400 });
-  const base = (process.env.BROWSERLESS_BASE_URL || "https://production-sfo.browserless.io").replace(/\/+$/, "");
+  const base = (process.env.BROWSERLESS_BASE_URL || process.env.BROWSERLESS_URL || "https://production-sfo.browserless.io").replace(/\/+$/, "");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 25_000);
   try {
