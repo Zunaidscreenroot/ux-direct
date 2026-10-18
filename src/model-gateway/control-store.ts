@@ -98,6 +98,7 @@ function cleanSettings(input: unknown): GatewaySettings {
   for (const m of GATEWAY_MODULES) {
     const base = defaults.modules[m.id];
     const c = rawModules[m.id] && typeof rawModules[m.id] === "object" ? rawModules[m.id] as Record<string, unknown> : {};
+    const mode = c.mode;
     modules[m.id] = {
       enabled: typeof c.enabled === "boolean" ? c.enabled : true,
       // Production internal modules are paid-only. Tests/dev may exercise other modes.

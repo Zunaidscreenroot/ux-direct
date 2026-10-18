@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { POST } from "../app/api/tasks/plan/route";
 import { defaultGatewaySettings, saveGatewaySettings } from "../src/model-gateway/control-store";
 
-process.env.NODE_ENV = "test";
+(process.env as unknown as Record<string, string | undefined>).NODE_ENV = "test";
 
 test("task planning endpoint returns a zero-cost plan for a valid DMI task", async () => {
   const settings = defaultGatewaySettings();
