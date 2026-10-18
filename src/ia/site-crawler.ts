@@ -99,7 +99,7 @@ function isBlockedHost(host: string): boolean {
   if (!host.includes(".")) return true;
   if (host === "0.0.0.0" || host.endsWith(".test") || host.endsWith(".invalid")) return true;
   return false;
-
+}
 
 function normalizePath(pathname: string): string {
   return pathname.replace(/\/{2,}/g, "/") || "/";
