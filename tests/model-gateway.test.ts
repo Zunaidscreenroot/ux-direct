@@ -213,24 +213,37 @@ test("custom endpoints are disabled unless local or paid mode is explicitly enab
 
 test("an explicitly chosen model never silently fails over from a paid internal module", async () => {
   const { chatCompletionWithFallback } = await import("../src/model-gateway");
+  const { saveGatewaySettings, defaultGatewaySettings, modelKey } = await import("../src/model-gateway/control-store");
   const configured: ProviderConfig[] = [
     { name: "groq", baseUrl: "https://groq.example/v1", apiKey: "test", models: ["openai/gpt-oss-20b"], kind: "free-tier" },
     { name: "openrouter-paid", baseUrl: "https://paid.example/v1", apiKey: "test", models: ["deepseek/deepseek-v4-flash-0731"], kind: "paid" },
     { name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" }
   ];
+  const settings = defaultGatewaySettings();
+  settings.modules.general = {
+    ...settings.modules.general,
+    mode: "paid",
+    selectedModelKey: modelKey("openrouter-paid", "deepseek/deepseek-v4-flash-0731"),
+    allowFallback: false
+  };
+  await saveGatewaySettings(settings);
   const attempted: string[] = [];
-  await assert.rejects(() => chatCompletionWithFallback({
-    model: "openai/gpt-oss-20b", moduleId: "general", providerId: "groq",
-    messages: [{ role: "user", content: "Classify this design task." }]
-  }, {
-    providers: configured,
-    fetchImpl: (async (input: RequestInfo | URL) => {
-      attempted.push(String(input));
-      return new Response("rate limited", { status: 429 });
-    }) as typeof fetch
-  }), (error: unknown) => error instanceof GatewayError && error.status === 403 &&
-    /Request model does not match the exact module selection/.test(error.message));
-  assert.equal(attempted.length, 0);
+  try {
+    await assert.rejects(() => chatCompletionWithFallback({
+      model: "openai/gpt-oss-20b", moduleId: "general", providerId: "groq",
+      messages: [{ role: "user", content: "Classify this design task." }]
+    }, {
+      providers: configured,
+      fetchImpl: (async (input: RequestInfo | URL) => {
+        attempted.push(String(input));
+        return new Response("rate limited", { status: 429 });
+      }) as typeof fetch
+    }), (error: unknown) => error instanceof GatewayError && error.status === 403 &&
+      /Request model does not match the exact module selection/.test(error.message));
+    assert.equal(attempted.length, 0);
+  } finally {
+    await saveGatewaySettings(defaultGatewaySettings());
+  }
 });
 
 
