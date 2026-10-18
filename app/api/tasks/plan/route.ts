@@ -10,6 +10,8 @@ import { getGatewaySettings } from "@/src/model-gateway/control-store";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
+import { retrieveBrainContext, reviewBrainFeedback, saveBrainFeedback } from "@/src/memory/shared-brain";
+import { detectCoachingSignal, detectExplicitTrainingIntent, resolveLearningScope } from "@/src/memory/learning-signal";
 
 const requestSchema = z.object({
   title: z.string().trim().min(1).max(160),
@@ -73,6 +75,9 @@ export async function POST(request: Request) {
     recordOperationalEvent({ source: "backend", event: "Task request blocked", status: "warning", summary: "Plugin task request did not carry the approved Figma file key.", requestId });
     return NextResponse.json({ error: "Approved Figma file key required for plugin-originated task requests", requestId }, { status: 403, headers });
   }
+  const originalUserInput = parsed.data.request.split(/\n\nSelected Figma context \(metadata only\):/i)[0].trim().slice(0, 12000);
+  const isPluginRequest = parsed.data.source === "figma-plugin";
+  const learningRequested = isPluginRequest && detectCoachingSignal(originalUserInput);
   const taskInput = { title: parsed.data.title, request: parsed.data.request, project: parsed.data.project };
   const configuredProviders = providersFromEnv();
   const gatewaySettings = await getGatewaySettings();
@@ -94,18 +99,97 @@ export async function POST(request: Request) {
   const executionMode = selectedProvider === mockProvider ? "mock" : "gateway";
   recordOperationalEvent({ source: "backend", event: "Task request received", status: "info", summary: "Task planning request accepted; prompt contents are not stored in the operational log.", requestId, project: parsed.data.project, mode: executionMode });
   try {
-    const result = await planUXTask({ ...taskInput, requestId, provider: selectedProvider });
+    let memoryContext = "";
+    let memoryRetrieval: { status: string; memoryCount: number; knowledgeChunkCount: number; maxChars: number } | null = null;
+    if (executionMode === "gateway") {
+      const searchableText = [parsed.data.title, parsed.data.request].join(" ");
+      const scopes = ["UX_SHARED_BRAIN", "project:ux-direct"];
+      if (/\b(bank|banking|bfsi|finance|financial|loan|credit|upi|insurance|nbfc|ujjivan|dmi|indian)\b/i.test(searchableText)) scopes.push("indian-bfsi");
+      if (parsed.data.project === "dmi-finance") scopes.push("project:dmi-finance");
+      if (parsed.data.project === "express-computers") scopes.push("project:express-computers");
+      const brain = await retrieveBrainContext({
+        query: searchableText,
+        scopeKeys: scopes,
+        limit: 6,
+        maxChars: 3200,
+        includeKnowledge: true,
+      });
+      memoryContext = brain.contextText;
+      memoryRetrieval = brain.retrieval;
+    }
+    const result = await planUXTask({ ...taskInput, requestId, provider: selectedProvider, memoryContext, learningRequested });
+    let learningCapture: { status: "not-requested" | "not-extracted" | "draft-saved" | "approved" | "failed"; feedbackId?: string; scopeKey?: string; duplicate?: boolean } = { status: "not-requested" };
+    if (learningRequested) {
+      const candidate = result.plan.learningCandidate;
+      if (executionMode !== "gateway" || !candidate) {
+        learningCapture = { status: "not-extracted" };
+      } else {
+        try {
+          const scopeKey = resolveLearningScope(candidate.scopeKey, parsed.data.project, originalUserInput);
+          const saved = await saveBrainFeedback({
+            rawFeedback: originalUserInput,
+            summary: originalUserInput.slice(0, 500),
+            title: candidate.title,
+            normalizedRule: candidate.normalizedRule,
+            rationale: candidate.rationale,
+            scopeKey,
+            feedbackKind: candidate.feedbackKind,
+            keywords: candidate.keywords,
+            examples: candidate.examples,
+            originalLanguage: candidate.originalLanguage,
+            sourceProduct: "figma-plugin",
+            sourceAuditRef: parsed.data.fileKey ? "figma-file:" + parsed.data.fileKey : undefined,
+            sourceFindingTitle: parsed.data.title,
+            metadata: { project: parsed.data.project, requestId, origin: "figma-plugin" },
+          });
+          let status: "draft-saved" | "approved" = "draft-saved";
+          if (detectExplicitTrainingIntent(originalUserInput)) {
+            await reviewBrainFeedback({
+              feedbackId: String(saved.id),
+              action: "approve",
+              reviewNote: "Owner explicitly requested future learning through a Figma-plugin correction.",
+              expectedSourceProduct: "figma-plugin",
+            });
+            status = "approved";
+          }
+          learningCapture = { status, feedbackId: String(saved.id), scopeKey, duplicate: saved.duplicate === true };
+          recordOperationalEvent({
+            source: "figma-plugin",
+            event: status === "approved" ? "Shared brain lesson approved" : "Shared brain lesson saved",
+            status: "success",
+            summary: status === "approved" ? "An explicit Figma-plugin training request was added to approved shared memory." : "A Figma-plugin correction was saved as a draft in the shared brain.",
+            requestId,
+            project: parsed.data.project,
+          });
+        } catch (error) {
+          learningCapture = { status: "failed" };
+          recordOperationalEvent({
+            source: "figma-plugin",
+            event: "Shared brain lesson capture failed",
+            status: "warning",
+            summary: "The Figma task plan completed, but its optional learning capture failed: " + (error instanceof Error ? error.message.slice(0, 140) : "unknown error"),
+            requestId,
+            project: parsed.data.project,
+          });
+        }
+      }
+    }
     const durationMs = Date.now() - startedAt;
     const usage = (await getBudgetSnapshot()).records.find(record => record.requestId === requestId);
     recordOperationalEvent({ source: "backend", event: "Task response returned", status: "success", summary: executionMode === "mock" ? "Mock plan returned. No model API or Figma edit was performed." : "Model gateway plan returned; no Figma edit was performed.", requestId, project: parsed.data.project, durationMs, mode: executionMode });
+    const { learningCandidate: _privateLearningCandidate, ...publicPlan } = result.plan;
     return NextResponse.json({
-      ...result, requestId, mode: executionMode,
+      ...result,
+      plan: publicPlan,
+      learningCapture,
+      requestId, mode: executionMode,
       cost: { currency: "INR", amount: usage?.estimatedCostInr ?? 0 },
       diagnostics: {
         durationMs, responseStatus: "success", figmaChangesMade: false,
         provider: usage?.provider ?? "mock", model: usage?.model ?? "mock/ux-direct",
         promptTokens: usage?.promptTokens ?? 0, completionTokens: usage?.completionTokens ?? 0,
-        totalTokens: usage?.totalTokens ?? 0
+        totalTokens: usage?.totalTokens ?? 0,
+        sharedBrain: memoryRetrieval ? { status: memoryRetrieval.status, memoryCount: memoryRetrieval.memoryCount, knowledgeChunkCount: memoryRetrieval.knowledgeChunkCount, contextChars: memoryContext.length } : { status: "not-used", reason: "mock mode" }
       }
     }, { headers });
   } catch (error) {
