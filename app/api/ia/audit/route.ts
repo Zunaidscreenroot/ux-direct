@@ -170,11 +170,12 @@ export async function POST(request: Request) {
   ].join("\n\n");
 
   try {
-    const model = process.env.UXD_IA_MODEL || "mock/ux-direct";
+    const model = process.env.UXD_IA_MODEL || process.env.UX_DIRECT_CHAT_MODEL || "mock/ux-direct";
+    const inferredProvider = model === "mock/ux-direct" ? "mock" : process.env.UXD_IA_PROVIDER?.trim() || (model.includes("/") ? "openrouter" : undefined);
     const response = await chatCompletionWithFallback({
       model,
-      ...(model === "mock/ux-direct" ? {} : { providerId: process.env.UXD_IA_PROVIDER || "openrouter" }),
-      moduleId: "ux-reasoning",
+      ...(inferredProvider ? { providerId: inferredProvider } : {}),
+      moduleId: model === "mock/ux-direct" ? "general" : "reasoning",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
