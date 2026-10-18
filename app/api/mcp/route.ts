@@ -128,6 +128,7 @@ async function postBridgeCommand(request: Request, body: Record<string, unknown>
   return result as Record<string, unknown>;
 }
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- UX Audit APIs return external JSON/SSE payloads normalized below. */
 const DEFAULT_UX_AUDIT_ORIGIN = "https://uxaudit.zunaid-cb7.workers.dev";
 
 function uxauditOrigin(): string {
@@ -315,6 +316,8 @@ async function runUxAuditPage(input: Record<string, unknown>) {
     nextSteps: sessionSaved ? ["Use ux_direct_uxaudit_generate_improved_ia with the sessionId.", "Retrieve approved learning through ux_direct_brain_search before deciding on recommendations."] : ["Audit completed but IA session saving failed; the findings are included in this response."],
   };
 }
+
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 const TOOLS = [
   {
@@ -762,6 +765,7 @@ async function callTool(name: string, args: unknown, request: Request) {
   }
 
 
+  /* eslint-disable @typescript-eslint/no-explicit-any -- Normalize the UX Audit API payload contract at the MCP boundary. */
   if (name === "ux_direct_uxaudit_status") {
     const result = await requestUxAudit("/api/openrouter-status", { method: "GET", timeoutMs: 12_000 });
     return toolText({ service: "UX Audit", checkedAt: new Date().toISOString(), openRouter: result, baseUrl: uxauditOrigin() });
@@ -905,6 +909,7 @@ async function callTool(name: string, args: unknown, request: Request) {
   }
 
 
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   return toolText({ error: "Unknown UX Direct tool: " + name }, true);
 }
 
