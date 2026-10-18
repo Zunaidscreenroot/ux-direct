@@ -288,8 +288,15 @@ export async function listBrainFeedback(input: { status?: string; sourceProduct?
   return Array.isArray(result) ? result as Record<string, unknown>[] : [];
 }
 
-export async function reviewBrainFeedback(input: { feedbackId: string; action: "approve" | "reject" | "archive"; reviewNote?: string }) {
+export async function reviewBrainFeedback(input: { feedbackId: string; action: "approve" | "reject" | "archive"; reviewNote?: string; expectedSourceProduct?: string }) {
   if (!safeUuid(input.feedbackId)) throw new Error("feedbackId must be a valid UUID.");
+  if (input.expectedSourceProduct) {
+    const sourceProduct = normalizeSource(input.expectedSourceProduct);
+    const existing = await supabaseRequest(`uxd_brain_feedback?select=id,source_product&id=eq.${encodeURIComponent(input.feedbackId)}&source_product=eq.${encodeURIComponent(sourceProduct)}&limit=1`);
+    if (!Array.isArray(existing) || !existing[0]?.id) {
+      throw new Error("The feedback record does not belong to the specified source product.");
+    }
+  }
   const result = await supabaseRequest("rpc/uxd_brain_review_feedback", {
     method: "POST",
     body: JSON.stringify({
