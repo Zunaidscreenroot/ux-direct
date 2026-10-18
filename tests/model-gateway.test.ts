@@ -228,7 +228,7 @@ test("OpenRouter Auto applies its low-cost tier and price ceilings without requi
       }) as typeof fetch
     });
     assert.deepEqual(body.plugins, [{ id: "auto-router", cost_tier: "low" }]);
-    assert.deepEqual(body.provider, { max_price: { prompt: 0.1, completion: 0.3 } });
+    assert.equal("provider" in body, false);
     assert.deepEqual(body.usage, { include: true });
     assert.equal(result.model, "vendor/selected-cheap-model");
     assert.equal(result.content, "IA review complete.");
