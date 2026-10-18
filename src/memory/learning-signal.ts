@@ -53,3 +53,15 @@ export function resolveLearningScope(candidateScope: unknown, project: TaskProje
   if (project === "express-computers") return "project:express-computers";
   return "project:general-ux";
 }
+
+
+/** Select a conservative scope for chat-originated coaching; client rules never become global by default. */
+export function resolveChatLearningScope(text: string): string {
+  const value = text.toLowerCase();
+  if (/\\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\\b/.test(value)) return "project:ujjivan-sfb";
+  if (/\\b(dmi|dmi hfc|dmi finance|dmi wealth|housing finance)\\b/.test(value)) return "project:dmi-finance";
+  if (/\\b(ux audit|uxaudit|audit findings|audit workflow|benchmarking)\\b/.test(value)) return "project:ux-audit";
+  if (/\\b(indian bfs(i|fi)|banking|financial services|insurance|rbi|nbfc|credit bureau)\\b/.test(value)) return "indian-bfsi";
+  if (/\\b(shared brain|cross[- ]product|across products|global memory|chat.{0,20}brain|brain.{0,20}chat)\\b/.test(value)) return "UX_SHARED_BRAIN";
+  return "project:ux-direct";
+}
