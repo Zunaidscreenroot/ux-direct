@@ -10,7 +10,7 @@ import { getGatewaySettings } from "../model-gateway/control-store";
 export const gatewayProvider: ModelProvider = {
   id: "model-gateway",
   mode: "remote",
-  async plan({ title, request, project, requestId }: { title: string; request: string; project: TaskProject; requestId?: string }): Promise<TaskPlan> {
+  async plan({ title, request, project, requestId, memoryContext = "" }: { title: string; request: string; project: TaskProject; requestId?: string; memoryContext?: string }): Promise<TaskPlan> {
     const providers = providersFromEnv();
     const settings = await getGatewaySettings();
     const actualProviders = providers.filter(provider => provider.kind !== "mock");
