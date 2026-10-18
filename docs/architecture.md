@@ -44,12 +44,14 @@ Use the least expensive model that can reliably complete a task. Cheap/local mod
 
 ## Figma security boundary
 
+- Use the installed Figma plugin's native Plugin APIs for the open document. This path does not require Figma OAuth; OAuth is relevant only to a separate REST API integration.
 - Start in read-only analysis mode.
 - Allowlist file IDs before any access or mutation.
 - Separate read and write permissions.
 - Require extra safeguards for deletion, broad replacement, or large batch edits.
 - Log operations and verification results.
 - Treat Plugin API, REST API, and external tools as distinct capability surfaces.
+- The current MCP bridge supports plugin heartbeat and native API diagnostics. Do not report general-purpose design read/write execution as available until the corresponding commands are exposed, executed inside the plugin, and verified.
 - Never promise an operation until its API support, permissions, and execution path are tested.
 
 ## Quality loop
