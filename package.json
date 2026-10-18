@@ -16,6 +16,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zod": "^4.1.0",
+    "@xyflow/react": "^12.12.0",
     "@netlify/blobs": "^11.1.4",
     "@neondatabase/serverless": "^1.1.0"
   },
@@ -27,6 +28,7 @@
     "eslint-config-next": "^15.5.0",
     "typescript": "^5.8.3",
     "tsx": "^4.20.3",
+    "@crawlee/cheerio": "^3.18.2",
     "@opennextjs/cloudflare": "latest",
     "wrangler": "latest"
   }
