@@ -9,9 +9,10 @@
   ],
   "networkAccess": {
     "allowedDomains": [
+      "https://ux-direct.zunaid-cb7.workers.dev",
       "https://ux-direct-1qzrcpr0p-screenroot.vercel.app"
     ],
-    "reasoning": "UX Direct sends the user's prompt and selected node metadata to its backend to create a task plan. It does not upload file contents or modify the design in this MVP."
+    "reasoning": "UX Direct sends the user's prompt and selected node metadata to its Cloudflare Workers backend to create a task plan. The prior Vercel origin is temporarily retained for rollback compatibility during migration; remove it after Cloudflare cutover verification."
   },
   "enablePrivatePluginApi": true,
   "documentAccess": "dynamic-page"
