@@ -1,30 +1,46 @@
-# UX Direct Figma plugin (MVP)
+# UX Direct Figma plugin — Cloudflare Conversational Cockpit
 
-The conversational cockpit belongs inside Figma. The production backend is hosted on Netlify at https://uxdirect.netlify.app.
+The plugin's production backend is the UX Direct Cloudflare Worker:
 
-## Current scope
-- Conversational prompt panel inside Figma.
-- Reads the current page name and selected node metadata (ID, name, type, visibility, child count).
-- Sends the brief and selected metadata to `https://uxdirect.netlify.app/api/tasks/plan`.
-- Renders the returned mock plan and quality checks.
-- Does not modify, create, delete, or move Figma nodes.
-- Does not send full file contents.
+`https://ux-direct.zunaid-cb7.workers.dev`
 
-## Import for local testing
-1. Download/clone this repository.
-2. In **Figma Desktop**, open **Plugins → Development → Import plugin from manifest…**.
-3. Select `figma-plugin/manifest.json`.
-4. Open a test design file, select a frame, and run **UX Direct** from **Plugins → Development**.
-5. Type a prompt and choose the matching project. Verify the plan appears in the plugin panel and the canvas remains unchanged.
+## What's included
 
-## Connection status
+- Conversational Cockpit with live status cards for Cloudflare backend, OpenRouter, authenticated ChatGPT MCP activity, and the current Figma plugin heartbeat.
+- Manual cockpit refresh plus a low-frequency OpenRouter provider-status refresh.
+- Conversational task planning with provider/model and shared-brain diagnostics in the result.
+- A native Figma API self-test that reports results back through the Cloudflare plugin bridge.
+- Exact allowlist protection for the approved Figma file.
 
-The panel displays the UX Direct backend/bridge status, recent authenticated ChatGPT connector activity, and whether this exact Figma plugin session has a fresh heartbeat. ChatGPT activity is considered recent for five minutes; a Figma plugin session is online while its heartbeat is younger than 75 seconds. ChatGPT does not keep a permanent tool socket open, so the ChatGPT label represents recent authenticated activity, not a continuous network socket.
+## Import into Figma Desktop
 
-The activity timestamp is stored in Netlify Blobs. The ChatGPT API key is never sent to the Figma plugin. Connection status requests are restricted to the approved Figma file key and expected Figma plugin origins.
+1. Download and extract `UX-Direct-Figma-Plugin-Cloudflare.zip`.
+2. In Figma Desktop, open **Plugins → Development → Import plugin from manifest…**
+3. Select the extracted `manifest.json`.
+4. Open the approved `Zunaid_Workspace` file and run **UX Direct** from **Plugins → Development**.
+5. Select a frame/layer and press **Refresh selection** before asking UX Direct to plan a task.
+
+## Status semantics
+
+- **Cloudflare backend:** `/api/health` responds from the deployed Worker; bridge heartbeat is checked separately.
+- **OpenRouter:** the server validates the configured provider key and confirms available free models. The plugin never sees the API key.
+- **ChatGPT · MCP:** green means an authenticated ChatGPT MCP request was received within the previous five minutes. It is intentionally a recent-activity indicator, not a permanent socket.
+- **Figma bridge:** green means this plugin session's heartbeat was received within the previous 75 seconds.
+
+Connection/session state and plugin health reports are stored through the existing Cloudflare R2 binding. Do not add or restore Netlify/Vercel variables.
+
+## Verify MCP → Figma
+
+Ask ChatGPT to run the UX Direct MCP native plugin health check. The MCP tool queues a health-check command; the open plugin receives it on the next heartbeat, runs the native API test in the dedicated **UXD API Test Lab** page, and syncs the report back to Cloudflare.
+
+- Queue: `ux_direct_figma_plugin_queue_health_check`
+- Read status/result: `ux_direct_figma_plugin_health_check_status` with the returned `commandId`
+
+The native health test may create or reuse persistent test fixtures on the dedicated test page. It does not navigate away from or intentionally change the user's active working page.
 
 ## Current limitations
-- This is a mock-planning vertical slice, not model-powered UX reasoning yet.
-- The plugin currently reads selection metadata only; it does not inspect screenshots or full layer trees.
-- Validate Figma manifest/network permission behavior and backend CORS in the target Figma desktop/web client before acceptance testing.
-- Do not enable write operations or paid model APIs during this phase.
+
+- Task planning can use OpenRouter model reasoning and approved shared-brain context, but the plugin does not yet expose general-purpose Figma design read/write execution through MCP.
+- The task planner currently sends the brief and selected-node metadata (ID, name, type, visibility, child count); it does not upload full file contents or screenshot pixels and does not inspect the complete layer tree automatically.
+- Planning does not create, delete, move, or edit production Figma design nodes.
+- Figma OAuth is not required for the native Plugin API path.
