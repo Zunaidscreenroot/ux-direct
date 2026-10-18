@@ -7,7 +7,7 @@ function getInput(values: URLSearchParams | FormData): AuthorizeInput | null {
   const clientId = val("client_id");
   const client = verifyMcpPayload(clientId.startsWith("uxmcp_") ? clientId.slice(6) : "", "client");
   const redirectUri = val("redirect_uri"), state = val("state");
-  const scope = val("scope") || "ux:read ux:execute ux:execute ux:learn offline_access";
+  const scope = val("scope") || "ux:read ux:execute ux:learn offline_access";
   const challenge = val("code_challenge"), method = val("code_challenge_method"), resource = val("resource");
   const redirects = Array.isArray(client?.redirect_uris) ? client.redirect_uris.filter((x): x is string => typeof x === "string") : [];
   const requested = [...new Set([...scope.split(/\s+/).filter(Boolean), "ux:learn"])];
@@ -25,7 +25,7 @@ function htmlPage(issuer: string, input: AuthorizeInput, error = ""): Response {
   const html = [
     '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect UX Direct</title>',
     '<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f6fa;color:#182235;font:15px/1.5 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;padding:24px}.card{width:min(100%,480px);border:1px solid #dce3ed;border-radius:18px;background:#fff;padding:30px;box-shadow:0 14px 48px #17203312}.brand{font-size:11px;font-weight:900;letter-spacing:.12em;color:#31598f}.mark{display:grid;place-items:center;width:46px;height:46px;border-radius:12px;background:#172b49;color:#fff;font-weight:900;margin:16px 0}.muted{color:#637086;font-size:13px}.notice{background:#fff8e9;border:1px solid #e9cd8e;border-radius:9px;padding:10px;color:#815b12;font-size:12px}.field{display:grid;gap:6px;margin-top:17px}.field label{font-size:12px;font-weight:800}.field input{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:9px;font:inherit}.checks{display:flex;gap:10px;margin:18px 0;color:#5d6b80;font-size:12px}.checks input{margin-top:4px}button{width:100%;border:0;border-radius:9px;background:#1d3559;color:#fff;padding:13px;font-size:13px;font-weight:900;cursor:pointer}button:hover{background:#112747}button:disabled{opacity:.7;cursor:wait}.small{margin-top:15px;color:#78869a;font-size:11px;line-height:1.6}</style></head><body>',
-    '<main class="card"><div class="brand">UX AUDIT · SECURE CONNECTION</div><div class="mark">UX</div><h1>Connect ChatGPT to UX Direct</h1>',
+    '<main class="card"><div class="brand">UX DIRECT · SECURE CONNECTION</div><div class="mark">UX</div><h1>Connect ChatGPT to UX Direct</h1>',
     '<p class="muted"><strong>' + htmlEscape(input.clientName) + '</strong> is requesting access to your UX Direct workspace.</p>',
     '<div class="notice">UX Direct can invoke UX Audit workflows and use your shared UX knowledge. Screenshot audits and benchmarking may incur OpenRouter model charges.</div>',
     error ? '<p class="notice">' + htmlEscape(error) + '</p>' : "",
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
       console.warn("[ux-direct] mcp_oauth_authorize_resource_mismatch");
       return new Response("The OAuth resource does not match this MCP server.", { status: 400, headers: { "Cache-Control": "no-store" } });
     }
-    const expectedPassword = readMcpEnv("UX_DIRECT_MCP_CONNECTION_CODE") || readMcpEnv("UX_DIRECT_MCP_CONNECTION_CODE") || readMcpEnv("UX_DIRECT_MCP_CONNECTION_CODE");
+    const expectedPassword = readMcpEnv("UX_DIRECT_MCP_CONNECTION_CODE");
     const suppliedPassword = String(form.get("password") || "");
     const actual = Buffer.from(suppliedPassword), expected = Buffer.from(expectedPassword);
     if (!expectedPassword || suppliedPassword.length > 500 || actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
