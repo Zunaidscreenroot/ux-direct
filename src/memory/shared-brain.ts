@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { neonRequest as supabaseRequest } from "./neon-rest";
 
 export type BrainMemory = {
   id: string;
@@ -70,40 +71,6 @@ const FEEDBACK_KINDS = new Set([
   "visual_evidence", "accessibility", "interaction_logic", "design_system",
   "cost_optimization", "other",
 ]);
-
-function config() {
-  const url = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
-  const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (!url || !key) throw new Error("Configure SUPABASE_URL and SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_ROLE_KEY) for the UX Direct shared brain.");
-  return { url, key };
-}
-
-async function supabaseRequest(path: string, init: RequestInit = {}) {
-  const { url, key } = config();
-  const response = await fetch(`${url}/rest/v1/${path}`, {
-    ...init,
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      ...(init.headers || {}),
-    },
-    cache: "no-store",
-    signal: init.signal ?? AbortSignal.timeout(12_000),
-  });
-  const text = await response.text();
-  let body: unknown = null;
-  try { body = text ? JSON.parse(text) : null; } catch { body = { error: text.slice(0, 500) }; }
-  if (!response.ok) {
-    const detail = body && typeof body === "object" && "message" in body
-      ? String((body as Record<string, unknown>).message)
-      : typeof body === "object" && body && "error" in body
-        ? String((body as Record<string, unknown>).error)
-        : text.slice(0, 500);
-    throw new Error(`Shared brain database request failed (HTTP ${response.status}): ${detail.slice(0, 400)}`);
-  }
-  return body;
-}
 
 function textValue(value: unknown, max: number, label: string, required = false): string {
   const result = typeof value === "string" ? value.trim() : "";
