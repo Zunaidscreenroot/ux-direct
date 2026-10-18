@@ -256,7 +256,7 @@ export async function saveBrainFeedback(input: BrainFeedbackInput): Promise<Reco
   const existingPath = `uxd_brain_feedback?select=id,status,title,scope_key,source_product,created_at&idempotency_key=eq.${encodeURIComponent(idempotencyKey)}&limit=1`;
   const existingBeforeWrite = await supabaseRequest(existingPath);
   const existingRow = Array.isArray(existingBeforeWrite) ? existingBeforeWrite[0] : null;
-  if (existingRow) return { ...(existingRow as Record<string, unknown>), duplicate: true };
+  if (existingRow && typeof existingRow.id === "string") return { ...(existingRow as Record<string, unknown>), id: existingRow.id, duplicate: true };
   try {
     const created = await supabaseRequest("uxd_brain_feedback", {
       method: "POST",
