@@ -1,6 +1,6 @@
 # Model gateway providers and free-first rollout
 
-The gateway itself is application code and costs **$0 in gateway fees**. It calls providers directly. This file separates providers with a genuine free usage path from paid providers that must stay disabled until the user deliberately configures them.
+The gateway itself is application code and costs **$0 in gateway fees**. It calls providers directly. This file separates the homepage's explicit free-model pool from internal requests routed dynamically through OpenRouter's low-cost Auto Router.
 
 ## Four-hour MVP recommendation
 
@@ -17,7 +17,7 @@ For a wiring/demo smoke test, start with one explicit model, `google/gemma-4-31b
 3. **Google Gemini API free tier** — create a key in Google AI Studio; no gateway fee, and a free quota is available for eligible models/accounts. Model availability, regional access, quotas, and data-use terms vary. Do not send confidential client material until the applicable data terms have been reviewed.
 4. **Groq developer free tier** — requires a key; supported models and request/token quotas vary. Current gateway defaults include GPT OSS 120B and 20B, but verify exact model IDs and free-plan quotas in the provider console before enabling.
 5. **Cerebras free developer access** — requires a key; availability, exact model IDs and quotas are account-specific. Treat it as optional until its model ID is confirmed from your account.
-6. **OpenRouter free models** — requires a key. Use explicit model IDs ending in `:free` where offered; avoid `openrouter/auto` for cost-sensitive production because auto-routing can select a paid model depending on account/model behavior. Free model inventory and rate limits change often.
+6. **OpenRouter free models and internal Auto Router** — requires an OpenRouter key. Homepage chat stays on explicit model IDs ending in `:free`. Internal IA/UX analysis uses `openrouter/auto` with `cost_tier: low` and strict per-token `max_price` ceilings, so the selected model may change per request. Auto routing is not guaranteed to be free; the per-token ceilings constrain the allowed rates. Free model inventory and rate limits change often.
 7. **Paid providers (OpenAI)** — no key is required to build or test the gateway. Add keys only in the final activation step, after tests and local/free-tier checks pass. Anthropic's native Messages API is not implemented in this gateway yet and is intentionally not advertised as supported.
 
 Free API access still needs a provider account/key in most cases. "Free tier" does not mean unlimited, guaranteed availability, private processing, or no data retention.
@@ -28,7 +28,7 @@ The Model Gateway dashboard is available from the main UX Direct navigation. `GE
 
 The ledger persists to Netlify Blobs in the Netlify runtime and falls back to best-effort in-process memory in local/unsupported runtimes. Read-modify-write budget checks are not transactional, so simultaneous paid requests can race the cap. Add concurrency-safe budget reservations before production paid traffic.
 
-Set `MODEL_GATEWAY_MONTHLY_BUDGET_INR=3000` for the default ₹3,000 monthly cap. Paid providers remain unavailable unless both per-million token prices are configured, the budget is non-zero, `ALLOW_PAID_MODELS=true`, and the provider key is present. Set prices from the provider's current pricing page; do not rely on guessed values. The budget guard estimates maximum request cost before dispatch and blocks requests that would exceed the remaining budget.
+No monthly gateway budget is assigned by default; leave `MODEL_GATEWAY_MONTHLY_BUDGET_INR` blank unless you deliberately set one. Internal Auto Router uses a low-cost routing tier plus per-token price ceilings (default $0.10/M input and $0.30/M output), not a monthly budget. This caps the price rate for each request, not aggregate monthly spend. OpenRouter bills according to the model it actually selects. Direct provider routes remain disabled unless deliberately enabled and supplied with exact pricing and budget controls.
 
 ## Environment configuration
 
@@ -96,13 +96,13 @@ The `routeTask()` helper prefers local/free models for classification, extractio
 
 ## Module-level accounting
 
-Each module (reasoning, classification, extraction, summarization, vision, critique and general) has its own on/off switch, mode, exact model selection, monthly cap and per-request cap. Every catalog model has editable monthly/per-request caps and INR input/output rates. Published USD suggestions convert using an editable INR rate and link to their source. Verify current rates and account plans before enabling billing.
+Each module has an on/off switch and routing policy. Monthly and per-request budgets are unset by default; the internal Auto Router instead enforces per-token price ceilings. Fixed-model/direct-provider routes still require deliberate pricing and budget configuration. The usage ledger records the model actually returned by OpenRouter and the provider-reported cost when available.
 
-Routing is strict: a disabled module, disconnected explicit model, incompatible mode, or exceeded budget blocks the request—there is no silent failover. Auto mode chooses only within the selected mode. The recommendation is a deterministic task-fit/cost heuristic, not a live benchmark or provider API call.
+Routing is strict: a disabled module or incompatible route is blocked instead of silently selecting a hard-coded model. Auto Router chooses dynamically within OpenRouter's available candidates, using its low-cost tier plus request price ceilings. This is a provider router, not a live benchmark run by UX Direct.
 
 
 ## Additional available free and paid choices
 
 The curated OpenRouter free catalogue was refreshed from its official Free Models collection on 2026-10-11, with free routing IDs for NVIDIA Nemotron 3 Ultra, Nemotron 3.5 Lightning, Nemotron 3 Super, Nemotron Nano Omni, Poolside Laguna S 2.1, Thinking Machines Inkling and Cohere North Mini Code. Free endpoints are subject to availability, throughput and provider data terms. Some listed endpoints explicitly mention input logging or model-improvement use; do not route confidential client data through them unless the relevant terms are approved. Catalog visibility is not a guarantee that the user's account has the model enabled; the exact ID must be present in `OPENROUTER_MODELS`.
 
-DeepSeek's OpenAI-compatible API is supported as a native paid provider. The catalog shows conservative peak-hour rates to avoid underestimating spend: `deepseek-flash` $0.30/M input and $1.20/M output, and `deepseek-v4-pro` $1.32/M input and $3.96/M output. Off-peak and cache-hit inputs can be lower; see the provider's current pricing page before activation. Sources: https://api-docs.deepseek.com/quick_start/pricing/ and https://openrouter.ai/collections/free-models/.
+Internal analysis does not pin a named model. Auto Router reports the model used for every completed request, so the routing choice remains visible in the usage ledger.
