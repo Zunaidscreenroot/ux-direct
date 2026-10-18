@@ -3,7 +3,9 @@
   "name": "ux-direct",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-10-18",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": true,
   "preview_urls": true,
   "assets": {
@@ -21,7 +23,8 @@
       "binding": "UX_DIRECT_STATE",
       "database_name": "ux-direct-state",
       "database_id": "85f849e4-cf2a-412a-970d-477065bb380c",
-      "migrations_dir": "migrations"
+      "migrations_dir": "migrations",
+      "preview_database_id": "156ac74e-ffe0-4667-be59-e724d279680d"
     }
   ]
 }
