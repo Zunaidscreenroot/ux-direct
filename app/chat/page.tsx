@@ -238,7 +238,7 @@ export default function ChatWorkspace() {
         {activeTab === "chat" && <section className="ud-chat-workspace">
           {messages.length === 0 ? <div className="ud-welcome">
             <div className="ud-thinking-orb" aria-label="UX Direct thinking orb">
-              <ThinkingOrb state={busy ? "working" : statusBusy ? "connecting" : messages.length ? "solving" : "breathing"} size={96} theme="dark" />
+              <ThinkingOrb state={busy ? "working" : statusBusy ? "connecting" : messages.length ? "solving" : "breathing"} size={64} theme="dark" />
             </div>
             <div className="ud-welcome-kicker"><span /> YOUR AI UX PARTNER</div>
             <h1>Think it through.<br /><em>Make it better.</em></h1>
