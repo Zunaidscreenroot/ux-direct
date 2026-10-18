@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ux-direct",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-18",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "ux-direct"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "UX_SHARED_ASSETS",
+      "bucket_name": "ux-shared-memory"
+    }
+  ],
+  "images": {
+    "binding": "IMAGES"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
