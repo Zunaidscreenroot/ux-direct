@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { isValidOAuthAccessToken } from "@/src/mcp/oauth";
 import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
 import { NextResponse } from "next/server";
 
@@ -340,10 +341,10 @@ export async function POST(request: Request) {
       { status: 503, headers },
     );
   }
-  if (!isAuthorized(request)) {
+  if (!isAuthorized(request) && !isValidOAuthAccessToken(request.headers.get("authorization"), new URL("/api/mcp", request.url).toString())) {
     return NextResponse.json(
       { error: "A valid Bearer API key is required." },
-      { status: 401, headers: { ...headers, "WWW-Authenticate": "Bearer" } },
+      { status: 401, headers: { ...headers, "WWW-Authenticate": `Bearer resource_metadata="${new URL("/.well-known/oauth-protected-resource/api/mcp", request.url).toString()}"` } },
     );
   }
 

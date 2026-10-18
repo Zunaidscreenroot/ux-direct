@@ -1,4 +1,4 @@
-import { getStore } from "@netlify/blobs";
+import { listPrivatePathnames, readPrivateJson, writePrivateJson } from "@/src/storage/vercel-blob-json";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { recordOperationalEvent } from "@/src/observability/event-log";
@@ -60,35 +60,15 @@ function isPluginRequest(request: Request): boolean {
   const origin = request.headers.get("origin");
   return !!origin && PLUGIN_ORIGINS.has(origin);
 }
-const STORE_NAME = "ux-direct-plugin-bridge";
-function bridgeStore() {
-  // Netlify Functions provide site identity and Blobs authorization automatically.
-  return getStore(STORE_NAME, { region: "us-east-2", consistency: "strong" });
-}
-async function readJson<T>(pathname: string): Promise<T | null> {
-  const store = bridgeStore();
-  // Avoid a direct content read for absent keys. Netlify Blobs listing reliably
-  // returns the index; only fetch JSON when the exact object is present.
-  const index = await store.list({ prefix: pathname });
-  if (!index.blobs.some((blob) => blob.key === pathname)) return null;
-  const value = await store.get(pathname, { type: "text" });
-  if (value === null) return null;
-  return JSON.parse(value) as T;
-}
-async function writeJson(pathname: string, value: unknown): Promise<void> {
-  await bridgeStore().set(pathname, JSON.stringify(value), {
-    metadata: { contentType: "application/json" },
-  });
-}
 function publicSession(session: Session) {
   const { sessionToken: _neverExpose, ...safe } = session;
   return safe;
 }
 async function listSessions() {
-  const result = await bridgeStore().list({ prefix: `${PREFIX}/sessions/` });
-  const sessionBlobs = result.blobs.filter((blob) => blob.key.endsWith("/session.json"));
-  const sessions = await Promise.all(sessionBlobs.map(async (blob) => {
-    try { return await readJson<Session>(blob.key); } catch { return null; }
+  const sessionPaths = await listPrivatePathnames(`${PREFIX}/sessions/`);
+  const sessionBlobs = sessionPaths.filter((pathname) => pathname.endsWith("/session.json"));
+  const sessions = await Promise.all(sessionBlobs.map(async (pathname) => {
+    try { return await readPrivateJson<Session>(pathname); } catch { return null; }
   }));
   const now = Date.now();
   return sessions.filter((session): session is Session => !!session && isAllowedFigmaFileKey(session.fileKey)).map((session) => ({
@@ -111,17 +91,17 @@ export async function GET(request: Request) {
   try {
     if (mode === "sessions") {
       const [sessions, latestReport] = await Promise.all([
-        listSessions(), readJson<PersistedHealthReport>(latestReportPath),
+        listSessions(), readPrivateJson<PersistedHealthReport>(latestReportPath),
       ]);
       return NextResponse.json({ sessions, latestReport }, { headers });
     }
     if (mode === "state") {
       const parsedId = ID.safeParse(url.searchParams.get("clientId"));
       if (!parsedId.success) return NextResponse.json({ error: "A valid clientId is required." }, { status: 400, headers });
-      const session = await readJson<Session>(sessionPath(parsedId.data));
+      const session = await readPrivateJson<Session>(sessionPath(parsedId.data));
       if (!session || !isAllowedFigmaFileKey(session.fileKey)) return NextResponse.json({ error: "Allowlisted plugin session not found." }, { status: 404, headers });
       const now = Date.now();
-      const latestReport = await readJson<PersistedHealthReport>(latestReportPath);
+      const latestReport = await readPrivateJson<PersistedHealthReport>(latestReportPath);
       return NextResponse.json({
         session: { ...publicSession(session), isOnline: session.status === "online" && now - Date.parse(session.lastHeartbeatAt) < 75000 },
         latestReport,
@@ -129,8 +109,8 @@ export async function GET(request: Request) {
     }
     return NextResponse.json({ error: "Unsupported bridge mode." }, { status: 400, headers });
   } catch (error) {
-    console.error("[ux-direct-bridge] Netlify Blobs read failed", error);
-    return NextResponse.json({ error: "Could not read bridge state from Netlify Blobs storage." }, { status: 500, headers });
+    console.error("[ux-direct-bridge] Vercel Blob read failed", error);
+    return NextResponse.json({ error: "Could not read bridge state from Vercel Blob storage." }, { status: 500, headers });
   }
 }
 
@@ -158,7 +138,7 @@ export async function POST(request: Request) {
     if (mode === "heartbeat") {
       const token = z.string().min(20).max(200).safeParse(body.sessionToken);
       if (!token.success) return NextResponse.json({ error: "Session token is missing." }, { status: 400, headers });
-      const current = await readJson<Session>(path);
+      const current = await readPrivateJson<Session>(path);
       if (current && current.sessionToken !== token.data) return NextResponse.json({ error: "Plugin session token mismatch." }, { status: 403, headers });
       if (current && current.fileKey !== body.fileKey) return NextResponse.json({ error: "Plugin session file-key mismatch." }, { status: 403, headers });
       const now = new Date().toISOString();
@@ -168,26 +148,26 @@ export async function POST(request: Request) {
         lastTestAt: current?.lastTestAt, healthReport: current?.healthReport,
         latestCommand: current?.latestCommand, disconnectedAt: undefined,
       };
-      const queued = await readJson<BridgeCommand>(commandPath(clientId));
+      const queued = await readPrivateJson<BridgeCommand>(commandPath(clientId));
       let command: BridgeCommand | null = null;
       if (queued && queued.status === "pending" && Date.parse(queued.expiresAt) > Date.now()) {
         command = { ...queued, status: "claimed" };
         command.completedAt = undefined;
-        await writeJson(commandPath(clientId), { ...command, claimedAt: now });
+        await writePrivateJson(commandPath(clientId), { ...command, claimedAt: now });
         session.latestCommand = command;
       }
-      await writeJson(path, session);
+      await writePrivateJson(path, session);
       return NextResponse.json({ ok: true, lastHeartbeatAt: now, command }, { headers });
     }
 
     if (mode === "disconnect") {
       const token = z.string().min(20).max(200).safeParse(body.sessionToken);
       if (!token.success) return NextResponse.json({ error: "Session token is missing." }, { status: 400, headers });
-      const current = await readJson<Session>(path);
+      const current = await readPrivateJson<Session>(path);
       if (current && current.sessionToken === token.data && isAllowedFigmaFileKey(current.fileKey) && current.fileKey === body.fileKey) {
         current.status = "offline";
         current.disconnectedAt = new Date().toISOString();
-        await writeJson(path, current);
+        await writePrivateJson(path, current);
       }
       return NextResponse.json({ ok: true }, { headers });
     }
@@ -196,26 +176,26 @@ export async function POST(request: Request) {
       const token = z.string().min(20).max(200).safeParse(body.sessionToken);
       const parsedReport = REPORT.safeParse(body.healthReport);
       if (!token.success || !parsedReport.success) return NextResponse.json({ error: "Session token or health report is invalid." }, { status: 400, headers });
-      const current = await readJson<Session>(path);
+      const current = await readPrivateJson<Session>(path);
       if (!current || current.sessionToken !== token.data || !isAllowedFigmaFileKey(current.fileKey) || current.fileKey !== body.fileKey) {
         return NextResponse.json({ error: "Allowlisted plugin session not found or token/file-key mismatch." }, { status: 403, headers });
       }
       const commandId = typeof body.commandId === "string" ? body.commandId : undefined;
       if (commandId) {
-        const command = await readJson<BridgeCommand>(commandPath(clientId));
+        const command = await readPrivateJson<BridgeCommand>(commandPath(clientId));
         if (!command || command.commandId !== commandId || !["claimed", "pending"].includes(command.status)) {
           return NextResponse.json({ error: "This dashboard command is no longer active." }, { status: 409, headers });
         }
         const completed: BridgeCommand = { ...command, status: "completed", completedAt: new Date().toISOString() };
-        await writeJson(commandPath(clientId), completed);
+        await writePrivateJson(commandPath(clientId), completed);
         current.latestCommand = completed;
       }
       current.healthReport = parsedReport.data;
       current.lastTestAt = parsedReport.data.checkedAt;
       current.lastHeartbeatAt = new Date().toISOString();
       current.status = "online";
-      await writeJson(path, current);
-      await writeJson(latestReportPath, {
+      await writePrivateJson(path, current);
+      await writePrivateJson(latestReportPath, {
         clientId, commandId, savedAt: new Date().toISOString(), healthReport: parsedReport.data,
       } satisfies PersistedHealthReport);
       recordOperationalEvent({
@@ -231,7 +211,7 @@ export async function POST(request: Request) {
     if (mode === "command") {
       const action = z.literal("native-api-health-check").safeParse(body.action);
       if (!action.success) return NextResponse.json({ error: "Unsupported plugin action." }, { status: 400, headers });
-      const current = await readJson<Session>(path);
+      const current = await readPrivateJson<Session>(path);
       if (!current || !isAllowedFigmaFileKey(current.fileKey)) return NextResponse.json({ error: "Allowlisted plugin session not found. Open UX Direct in Zunaid_Workspace first." }, { status: 404, headers });
       if (current.status !== "online" || Date.now() - Date.parse(current.lastHeartbeatAt) >= 75000) {
         return NextResponse.json({ error: "Figma plugin is offline. Open the plugin and try again." }, { status: 409, headers });
@@ -245,16 +225,16 @@ export async function POST(request: Request) {
           ...current.latestCommand, status: "failed", completedAt: new Date().toISOString(),
           failure: "Previous native API test stopped responding; stale command lock was cleared."
         };
-        await writeJson(path, current);
+        await writePrivateJson(path, current);
       }
       const now = new Date();
       const command: BridgeCommand = {
         commandId: crypto.randomUUID(), action: "native-api-health-check", status: "pending",
         issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 240000).toISOString(),
       };
-      await writeJson(commandPath(clientId), command);
+      await writePrivateJson(commandPath(clientId), command);
       current.latestCommand = command;
-      await writeJson(path, current);
+      await writePrivateJson(path, current);
       recordOperationalEvent({
         source: "dashboard", event: "Plugin health check command issued", status: "info",
         summary: "Dashboard queued a native Figma API health check for the active plugin session.",
@@ -265,7 +245,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Unsupported bridge mode." }, { status: 400, headers });
   } catch (error) {
-    console.error("[ux-direct-bridge] Netlify Blobs request failed", error);
-    return NextResponse.json({ error: "Bridge request failed while reading or writing Netlify Blobs storage." }, { status: 500, headers });
+    console.error("[ux-direct-bridge] Vercel Blob request failed", error);
+    return NextResponse.json({ error: "Bridge request failed while reading or writing Vercel Blob storage." }, { status: 500, headers });
   }
 }

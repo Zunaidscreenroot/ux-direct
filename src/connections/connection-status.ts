@@ -1,10 +1,7 @@
-import { getStore } from "@netlify/blobs";
+import { listPrivatePathnames, readPrivateJson, writePrivateJson } from "@/src/storage/vercel-blob-json";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 
-const REGION = "us-east-2";
-const ACTIVITY_STORE = "ux-direct-connection-status";
 const ACTIVITY_KEY = "chatgpt/last-activity.json";
-const BRIDGE_STORE = "ux-direct-plugin-bridge";
 const BRIDGE_PREFIX = "ux-direct-bridge/sessions/";
 export const CHATGPT_ACTIVE_WINDOW_MS = 5 * 60 * 1000;
 const FIGMA_ACTIVE_WINDOW_MS = 75 * 1000;
@@ -16,31 +13,19 @@ type PluginSession = {
   status: "online" | "offline";
   lastHeartbeatAt: string;
   connectedAt?: string;
-};
-
-function activityStore() {
-  return getStore(ACTIVITY_STORE, { region: REGION, consistency: "strong" });
-}
-function bridgeStore() {
-  return getStore(BRIDGE_STORE, { region: REGION, consistency: "strong" });
 }
 
 export async function recordChatGPTActivity(): Promise<void> {
   const activity: ChatGPTActivity = { lastActivityAt: new Date().toISOString() };
-  await activityStore().set(ACTIVITY_KEY, JSON.stringify(activity), {
-    metadata: { contentType: "application/json" },
-  });
+  await writePrivateJson(ACTIVITY_KEY, activity);
 }
 
 export async function getChatGPTConnectionStatus(now = Date.now()) {
-  const store = activityStore();
-  const index = await store.list({ prefix: ACTIVITY_KEY });
-  if (!index.blobs.some((blob) => blob.key === ACTIVITY_KEY)) {
+  let activity: ChatGPTActivity | null = null;
+  try { activity = await readPrivateJson<ChatGPTActivity>(ACTIVITY_KEY); } catch { activity = null; }
+  if (!activity) {
     return { state: "not_seen" as const, connected: false, lastActivityAt: null, ageMs: null };
   }
-  const raw = await store.get(ACTIVITY_KEY, { type: "text" });
-  let activity: ChatGPTActivity | null = null;
-  try { activity = raw ? JSON.parse(raw) as ChatGPTActivity : null; } catch { activity = null; }
   const timestamp = activity?.lastActivityAt ? Date.parse(activity.lastActivityAt) : NaN;
   if (!Number.isFinite(timestamp)) {
     return { state: "not_seen" as const, connected: false, lastActivityAt: null, ageMs: null };
@@ -56,17 +41,12 @@ export async function getChatGPTConnectionStatus(now = Date.now()) {
 }
 
 export async function getFigmaPluginConnectionStatus(clientId?: string, now = Date.now()) {
-  const store = bridgeStore();
-  const index = await store.list({ prefix: BRIDGE_PREFIX });
-  const keys = index.blobs
-    .map((blob) => blob.key)
+  const keys = (await listPrivatePathnames(BRIDGE_PREFIX))
     .filter((key) => key.endsWith("/session.json"))
     .slice(0, 100);
   const sessions = await Promise.all(keys.map(async (key): Promise<PluginSession | null> => {
     try {
-      const raw = await store.get(key, { type: "text" });
-      if (!raw) return null;
-      const session = JSON.parse(raw) as PluginSession;
+      const session = await readPrivateJson<PluginSession>(key);
       if (!session || !isAllowedFigmaFileKey(session.fileKey) || typeof session.clientId !== "string") return null;
       return session;
     } catch {

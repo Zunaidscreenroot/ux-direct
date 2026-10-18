@@ -48,7 +48,13 @@ test("tool list only exposes status and safe UX planning", async () => {
   try {
     const response = await POST(request({ jsonrpc: "2.0", id: 2, method: "tools/list" }, { key: validKey }));
     const body = await response.json();
-    assert.deepEqual(body.result.tools.map((tool: { name: string }) => tool.name), ["ux_direct_status", "ux_direct_connection_status", "ux_direct_plan_task"]);
+    assert.deepEqual(body.result.tools.map((tool: { name: string }) => tool.name), [
+      "ux_direct_status",
+      "ux_direct_connection_status",
+      "ux_direct_figma_plugin_queue_health_check",
+      "ux_direct_figma_plugin_health_check_status",
+      "ux_direct_plan_task",
+    ]);
     const planner = body.result.tools.find((tool: { name: string }) => tool.name === "ux_direct_plan_task");
     assert.deepEqual(planner.inputSchema.properties.project.enum, ["general", "express-computers"]);
   } finally {
