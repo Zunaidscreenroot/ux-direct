@@ -488,7 +488,9 @@ export async function runBrainRetrievalEvals(limit = 50) {
   const cases = await listBrainEvalCases(limit);
   const results = [];
   for (const item of cases) {
-    const retrieval = await retrieveBrainContext({ query: String(item.input || ""), scopeKeys: [String(item.scope_key || "UX_SHARED_BRAIN")], limit: 8, includeKnowledge: true, maxChars: 5200 });
+    const caseScope = String(item.scope_key || "UX_SHARED_BRAIN");
+    const evaluationScopes = caseScope === "UX_SHARED_BRAIN" ? ["UX_SHARED_BRAIN"] : ["UX_SHARED_BRAIN", caseScope];
+    const retrieval = await retrieveBrainContext({ query: String(item.input || ""), scopeKeys: evaluationScopes, limit: 8, includeKnowledge: true, maxChars: 5200 });
     const expected = Array.isArray(item.expected_memory_ids) ? item.expected_memory_ids.map(String) : [];
     const retrievedIds = retrieval.memories.map(memory => memory.id);
     const missingExpected = expected.filter(id => !retrievedIds.includes(id));
