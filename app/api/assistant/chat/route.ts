@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildBrainSystemPrompt, resolveBrainScopes } from "@/src/memory/chat-context";
+import { buildBrainSystemPrompt, buildRetrievalQuery, resolveBrainScopes } from "@/src/memory/chat-context";
 import { collectFreeModelCandidates, compactRecentMessages, hasAssistantTextDelta, isFreeModelId } from "@/src/providers/openrouter-chat";
 
 export const runtime = "nodejs";
@@ -194,9 +194,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Conversation is too long. Start a new chat to continue." }, { status: 413 });
   }
 
-  const promptMessages = compactRecentMessages(messages, { maxMessages: 14, maxTotalChars: 22000, maxMessageChars: 6000 });
-  const lastUserMessage = [...promptMessages].reverse().find((message) => message.role === "user")?.content || "";
-  const brain = await retrieveMemory(request, lastUserMessage);
+  const promptMessages = compactRecentMessages(messages, { maxMessages: 10, maxTotalChars: 14000, maxMessageChars: 4500 });
+  const userTurns = promptMessages.filter((message) => message.role === "user");
+  const lastUserMessage = userTurns[userTurns.length - 1]?.content || "";
+  const previousUserMessage = userTurns[userTurns.length - 2]?.content || "";
+  const retrievalQuery = buildRetrievalQuery(lastUserMessage, previousUserMessage);
+  const brain = await retrieveMemory(request, retrievalQuery);
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
   const clientFallbacks = Array.isArray(value.fallbackModels)
