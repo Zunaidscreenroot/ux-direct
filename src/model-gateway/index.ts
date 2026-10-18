@@ -348,7 +348,7 @@ export async function chatCompletion(
     inputPriceInrPerMillion:isOpenRouterAuto?autoInputUsdCap*usdToInrRate:modelPolicy.inputPriceInrPerMillion,
     outputPriceInrPerMillion:isOpenRouterAuto?autoOutputUsdCap*usdToInrRate:modelPolicy.outputPriceInrPerMillion};
   try{
-    const headers:Record<string,string>={"Content-Type":"application/json",...(provider.apiKey?(provider.apiKeyHeader?{[provider.apiKeyHeader]:provider.apiKey}:{Authorization:"Bearer "+provider.apiKey}:{}),...provider.headers};
+    const headers:Record<string,string>={"Content-Type":"application/json",...(provider.apiKey?(provider.apiKeyHeader?{[provider.apiKeyHeader]:provider.apiKey}:{Authorization:"Bearer "+provider.apiKey}):{}),...provider.headers};
     const providerUrl=trimSlash(provider.baseUrl)+"/chat/completions";
     const providerBody=JSON.stringify({
       model,
