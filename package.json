@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "cf:build": "opennextjs-cloudflare build"
   },
   "dependencies": {
     "next": "^15.5.0",
@@ -25,6 +26,8 @@
     "eslint": "^9.30.0",
     "eslint-config-next": "^15.5.0",
     "typescript": "^5.8.3",
-    "tsx": "^4.20.3"
+    "tsx": "^4.20.3",
+    "@opennextjs/cloudflare": "latest",
+    "wrangler": "latest"
   }
 }
