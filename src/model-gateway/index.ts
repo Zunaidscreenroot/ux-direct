@@ -342,11 +342,9 @@ export async function chatCompletion(
   const timeout=setTimeout(()=>controller.abort(),options.timeoutMs??45_000);
   const abort=()=>controller.abort();request.signal?.addEventListener("abort",abort,{once:true});
   const usdToInrRate=settings.usdToInrRate||97;
-  const autoInputUsdCap=Math.max(0,Number.isFinite(Number(process.env.OPENROUTER_AUTO_MAX_INPUT_USD_PER_1M))?Number(process.env.OPENROUTER_AUTO_MAX_INPUT_USD_PER_1M):0.10);
-  const autoOutputUsdCap=Math.max(0,Number.isFinite(Number(process.env.OPENROUTER_AUTO_MAX_OUTPUT_USD_PER_1M))?Number(process.env.OPENROUTER_AUTO_MAX_OUTPUT_USD_PER_1M):0.30);
   const rates={billable,
-    inputPriceInrPerMillion:isOpenRouterAuto?autoInputUsdCap*usdToInrRate:modelPolicy.inputPriceInrPerMillion,
-    outputPriceInrPerMillion:isOpenRouterAuto?autoOutputUsdCap*usdToInrRate:modelPolicy.outputPriceInrPerMillion};
+    inputPriceInrPerMillion:modelPolicy.inputPriceInrPerMillion,
+    outputPriceInrPerMillion:modelPolicy.outputPriceInrPerMillion};
   try{
     const headers:Record<string,string>={"Content-Type":"application/json",...(provider.apiKey?(provider.apiKeyHeader?{[provider.apiKeyHeader]:provider.apiKey}:{Authorization:"Bearer "+provider.apiKey}):{}),...provider.headers};
     const providerUrl=trimSlash(provider.baseUrl)+"/chat/completions";
@@ -357,8 +355,9 @@ export async function chatCompletion(
       ...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{}),
       ...(request.response_format?{response_format:request.response_format}:{}),
       ...(isOpenRouterAuto?{
+        // Let OpenRouter's lowest cost tier select an eligible route. Combining
+        // it with a restrictive max_price filter can leave no models and return 404.
         plugins:[{id:"auto-router",cost_tier:"low"}],
-        provider:{max_price:{prompt:autoInputUsdCap,completion:autoOutputUsdCap}},
         usage:{include:true}
       }:{})
     });
@@ -368,7 +367,17 @@ export async function chatCompletion(
     let responseContentType = "unknown content type";
     for (let attempt = 0; attempt < parseAttempts; attempt++) {
       response = await fetchImpl(providerUrl,{method:"POST",headers,body:providerBody,signal:controller.signal});
-      if(!response.ok)throw new GatewayError(`Provider returned HTTP ${response.status}.`,response.status===429?429:502,provider.name);
+      if(!response.ok){
+        let detail="";
+        try{
+          const errorPayload=await response.clone().json() as {error?:{message?:unknown}|string;message?:unknown};
+          const rawMessage=typeof errorPayload.error==="string"?errorPayload.error:
+            errorPayload.error&&typeof errorPayload.error==="object"&&typeof errorPayload.error.message==="string"?errorPayload.error.message:
+            typeof errorPayload.message==="string"?errorPayload.message:"";
+          detail=rawMessage.replace(/\s+/g," ").slice(0,240);
+        }catch{}
+        throw new GatewayError(`Provider returned HTTP ${response.status}.${detail?" "+detail:""}`,response.status===429?429:502,provider.name);
+      }
       responseContentType = (response.headers.get("content-type") || "unknown content type").slice(0,120);
       const responseText = await response.text();
       let parsed: unknown;
