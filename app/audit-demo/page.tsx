@@ -63,6 +63,7 @@ export default function AuditDemoPage() {
     }
     return map;
   }, [report]);
+  const benchmarkSiteCount = new Set(screenshots.map((screenshot) => screenshot.siteName.trim().toLowerCase()).filter(Boolean)).size;
 
   async function runAudit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -193,11 +194,15 @@ export default function AuditDemoPage() {
             </div>
           </section>
 
-          {report.benchmark.length ? <section className="audit-section">
-            <div className="audit-section-title"><div><h2>Competitor benchmark</h2><p>Model-generated comparisons are limited to the screenshot evidence supplied.</p></div></div>
-            <div className="audit-table-wrap"><table className="audit-table"><thead><tr><th>Criterion</th><th>Site</th><th>Relative position</th><th>Evidence</th><th>Opportunity</th></tr></thead>
-              <tbody>{report.benchmark.map((item, index) => <tr key={item.criterion + item.siteName + index}><td>{item.criterion}</td><td>{item.siteName}</td><td><span className={"audit-position audit-position-" + item.relativePosition}>{item.relativePosition.replace("-", " ")}</span></td><td>{item.evidence}</td><td>{item.improvementOpportunity || "—"}</td></tr>)}</tbody></table></div>
-          </section> : null}
+          <section className="audit-section">
+            <div className="audit-section-title"><div><h2>Competitor benchmark</h2><p>Comparisons use only named sites and visible evidence in the supplied screenshots.</p></div></div>
+            {benchmarkSiteCount < 2
+              ? <p style={{ padding: "14px 18px", margin: 0, color: "#748078", fontSize: 11, lineHeight: 1.6 }}>Add screenshots from at least two named sites to compare competitors. For a fair comparison, match the same page type or journey step across sites.</p>
+              : report.benchmark.length
+                ? <div className="audit-table-wrap"><table className="audit-table"><thead><tr><th>Criterion</th><th>Site</th><th>Relative position</th><th>Evidence</th><th>Opportunity</th></tr></thead>
+                    <tbody>{report.benchmark.map((item, index) => <tr key={item.criterion + item.siteName + index}><td>{item.criterion}</td><td>{item.siteName}</td><td><span className={"audit-position audit-position-" + item.relativePosition}>{item.relativePosition.replace("-", " ")}</span></td><td>{item.evidence}</td><td>{item.improvementOpportunity || "—"}</td></tr>)}</tbody></table></div>
+                : <p style={{ padding: "14px 18px", margin: 0, color: "#748078", fontSize: 11, lineHeight: 1.6 }}>No comparable observations were validated from this run. Check that screenshots show equivalent page types and that every site has a clear, unique name; retry with matched pages when appropriate.</p>}
+          </section>
 
           {report.limitations.length ? <section className="audit-limitations"><strong>Not assessed / limitations</strong>{report.limitations.map((limitation, index) => <p key={index}>• {limitation}</p>)}</section> : null}
           <div className="audit-raw-toggle"><button type="button" onClick={() => setShowRaw(!showRaw)}>{showRaw ? "Hide" : "Show"} report JSON</button></div>
