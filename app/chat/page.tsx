@@ -156,6 +156,15 @@ export default function ChatWorkspace() {
     window.history.replaceState(null, "", window.location.pathname + window.location.search + "#" + next);
   }
 
+  function openAuditTool(toolId: AuditTool) {
+    // IA is a first-party UX Direct page, not a route on the separate UX Audit worker.
+    if (toolId === "ia") {
+      window.location.assign("/ia-demo?from=audit");
+      return;
+    }
+    setAuditTool(toolId);
+  }
+
   function newChat() {
     abortRef.current?.abort();
     setBusy(false);
@@ -345,14 +354,14 @@ export default function ChatWorkspace() {
         {activeTab === "audit" && <section className="ud-audit-workspace">
           {!auditTool ? <div className="ud-audit-landing">
             <div className="ud-page-overline">UX INTELLIGENCE · AUDIT</div><h1>Your audit workspace.</h1><p>Discover structure, inspect real screens, and benchmark the experience — all from UX Direct.</p>
-            <div className="ud-audit-tool-grid">{auditTools.map((tool, index) => <button className="ud-audit-tool-card" key={tool.id} onClick={() => setAuditTool(tool.id)}>
+            <div className="ud-audit-tool-grid">{auditTools.map((tool, index) => <button className="ud-audit-tool-card" key={tool.id} onClick={() => openAuditTool(tool.id)}>
               <div className="ud-audit-card-top"><span>{tool.icon}</span><i>0{index + 1}</i></div><h2>{tool.title}</h2><p>{tool.description}</p><b>Open workspace <span>→</span></b>
             </button>)}</div>
             <div className="ud-audit-note"><span>✦</span><p><strong>Evidence first, recommendations second.</strong> UX Direct opens the existing audit engine inside this workspace. Findings continue to use the current audit API and Past Findings flow.</p></div>
           </div> : <div className="ud-audit-embedded">
             <div className="ud-audit-toolbar">
               <button className="ud-audit-back" onClick={() => setAuditTool(null)}>← Audit workspace</button>
-              <div className="ud-audit-tool-switcher">{auditTools.map((tool) => <button className={auditTool === tool.id ? "active" : ""} key={tool.id} onClick={() => setAuditTool(tool.id)}>{tool.title}</button>)}</div>
+              <div className="ud-audit-tool-switcher">{auditTools.map((tool) => <button className={auditTool === tool.id ? "active" : ""} key={tool.id} onClick={() => openAuditTool(tool.id)}>{tool.title}</button>)}</div>
             </div>
             <iframe className="ud-audit-frame" key={auditTool} title={auditToolInfo?.title || "UX Audit"} src={AUDIT_URL + (auditToolInfo?.path || "/") + "?embed=1"} allow="clipboard-read; clipboard-write" />
           </div>}
