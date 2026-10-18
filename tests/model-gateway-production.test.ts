@@ -59,8 +59,9 @@ test("OpenRouter homepage chat stays free-only while internal routing is dynamic
   const env = read(".env.example");
   assert.ok(env.includes("OPENROUTER_MODELS=google/gemma-4-31b-it:free"));
   assert.ok(env.includes("OPENROUTER_AUTO_ROUTING=true"));
-  assert.ok(env.includes("OPENROUTER_AUTO_MAX_INPUT_USD_PER_1M=0.10"));
-  assert.ok(env.includes("OPENROUTER_AUTO_MAX_OUTPUT_USD_PER_1M=0.30"));
+  assert.ok(env.includes("OPENROUTER_AUTO_ROUTING=true"));
+  assert.ok(!env.includes("OPENROUTER_AUTO_MAX_INPUT_USD_PER_1M"));
+  assert.ok(!env.includes("OPENROUTER_AUTO_MAX_OUTPUT_USD_PER_1M"));
   assert.ok(env.includes("ALLOW_PAID_MODELS=false"));
   assert.ok(env.includes("MODEL_GATEWAY_ADMIN_KEY="));
   assert.ok(!env.includes("OPENROUTER_PAID_MODELS"));
