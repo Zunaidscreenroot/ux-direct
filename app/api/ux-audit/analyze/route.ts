@@ -28,12 +28,15 @@ function isPublicHttpsImageUrl(value: string): boolean {
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" || !url.hostname || url.username || url.password || url.href.length > 2048) return false;
-    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    const host = url.hostname.toLowerCase();
+    const parts = host.split(".");
+    const isIpv4 = parts.length === 4 && parts.every((part) =>
+      part.length > 0 && [...part].every((character) => character >= "0" && character <= "9") && Number(part) <= 255
+    );
     if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return false;
-    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(":") || !host.includes(".")) return false;
+    if (isIpv4 || host.includes(":") || !host.includes(".")) return false;
     return true;
-  } catch { return false; }
-}
+
 
 function asText(value: unknown, max = 500): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
