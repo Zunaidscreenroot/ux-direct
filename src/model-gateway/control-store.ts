@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { getCloudflareDatabase, persistentGet, persistentPut } from "@/src/platform/d1-store";
 
 export type GatewayMode = "free" | "paid" | "local" | "mock";
 export type ModulePolicy = { enabled: boolean; mode: GatewayMode; selectedModelKey: string; monthlyBudgetInr: number; maxRequestCostInr: number; allowFallback: boolean };
@@ -22,11 +23,23 @@ function amount(value: unknown, fallback: number, max = 1_000_000_000): number {
 }
 export function modelKey(provider: string, id: string) { return provider + "::" + id; }
 function envScopeKey(env = process.env) {
-  const branch = env.NETLIFY_BRANCH || env.BRANCH || "";
-  if (env.CONTEXT === "production" || (env.NETLIFY === "true" && branch === "main")) return "gateway-control:production";
+  const branch = env.CF_PAGES_BRANCH || env.NETLIFY_BRANCH || env.WORKERS_BRANCH || env.BRANCH || "";
+  if (env.UX_DIRECT_ENV === "production" || env.CONTEXT === "production" || (env.NETLIFY === "true" && branch === "main")) return "gateway-control:production";
   return "gateway-control:preview:" + (branch || env.CONTEXT || "local").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 80);
 }
 async function getStore(): Promise<BlobStore | null> {
+  // Cloudflare D1 is the persistent store on Workers. Netlify Blobs remains a
+  // compatibility fallback for the previous deployment during the cutover.
+  if (getCloudflareDatabase()) {
+    return {
+      get: async (key, options) => {
+        const value = await persistentGet(key);
+        if (value === null) return null;
+        return options.type === "json" ? JSON.parse(value) as unknown : value;
+      },
+      setJSON: async (key, value) => persistentPut(key, JSON.stringify(value)),
+    };
+  }
   if (process.env.NETLIFY !== "true" && !process.env.NETLIFY_BLOBS_CONTEXT) return null;
   if (!storePromise) storePromise = (async () => {
     try {
@@ -124,7 +137,7 @@ export async function saveGatewaySettings(input: unknown): Promise<GatewaySettin
   const store = await getStore();
   if (store) {
     try { await store.setJSON(key, settings); }
-    catch (error) { throw new Error("Could not persist gateway settings to Netlify Blobs: " + (error instanceof Error ? error.message : "unknown error")); }
+    catch (error) { throw new Error("Could not persist gateway settings to configured storage: " + (error instanceof Error ? error.message : "unknown error")); }
   }
   return settings;
 }
