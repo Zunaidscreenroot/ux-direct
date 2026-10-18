@@ -157,7 +157,7 @@ export async function POST(request: Request) {
 
   try {
     const response = await chatCompletionWithFallback({
-      model: process.env.UXD_AUDIT_MODEL || "google/gemma-4-31b-it:free",
+      model: process.env.UXD_AUDIT_MODEL || "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
       providerId: "openrouter",
       moduleId: "vision",
       messages: [
