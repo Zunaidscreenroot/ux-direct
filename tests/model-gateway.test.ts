@@ -48,6 +48,29 @@ test("normalizes a successful OpenAI-compatible response", async () => {
   assert.equal(result.usage?.total_tokens, 5);
 });
 
+test("retries one malformed JSON response on a non-paid route before failing", async () => {
+  let calls = 0;
+  const result = await chatCompletion({
+    model: "gpt-test",
+    messages: [{ role: "user", content: "hello" }]
+  }, {
+    providers,
+    fetchImpl: (async () => {
+      calls += 1;
+      if (calls === 1) return new Response("<html>temporary upstream response</html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" }
+      });
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: "recovered" } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.content, "recovered");
+});
+
 test("surfaces provider failures without leaking credentials", async () => {
   await assert.rejects(() => chatCompletion({
     model: "gpt-test", messages: [{ role: "user", content: "hello" }]
