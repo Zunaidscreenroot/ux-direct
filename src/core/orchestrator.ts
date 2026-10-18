@@ -6,6 +6,7 @@ export async function planUXTask(input: {
   request: string;
   project: TaskProject;
   requestId?: string;
+  memoryContext?: string;
   provider?: ModelProvider;
 }): Promise<{ task: UXTask; plan: Awaited<ReturnType<ModelProvider["plan"]>> }> {
   const provider = input.provider;
