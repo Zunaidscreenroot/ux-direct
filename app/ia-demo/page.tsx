@@ -121,6 +121,12 @@ export default function IADemoPage() {
   const [auditSummary, setAuditSummary] = useState<string | null>(null);
   const [auditFindings, setAuditFindings] = useState<Array<{title:string; severity:string; evidence:string; recommendation:string; confidence:number; hypothesis:boolean; url:string}>>([]);
   const [showFindings, setShowFindings] = useState(true);
+  const [search, setSearch] = useState("");
+  const [auditBusy, setAuditBusy] = useState(false);
+  const [auditError, setAuditError] = useState("");
+  const [auditSummary, setAuditSummary] = useState<string | null>(null);
+  const [auditFindings, setAuditFindings] = useState<Array<{title:string; severity:string; evidence:string; recommendation:string; confidence:number; hypothesis:boolean; url:string}>>([]);
+  const [showFindings, setShowFindings] = useState(true);
   const filteredPages = useMemo(() => {
     const term = search.trim().toLowerCase();
     return term ? pages.filter((page) => page.title.toLowerCase().includes(term) || page.url.toLowerCase().includes(term) || (page.description || "").toLowerCase().includes(term)) : pages;
@@ -162,6 +168,19 @@ export default function IADemoPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function auditIA() {
+    if (!result || result.pages.length === 0 || auditBusy) return;
+    setAuditBusy(true); setAuditError(""); setAuditFindings([]); setAuditSummary(null);
+    try {
+      const response = await fetch("/api/ia/audit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ origin: result.origin, pages: result.pages }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "IA audit failed.");
+      setAuditSummary(typeof payload.summary === "string" ? payload.summary : "IA analysis complete.");
+      setAuditFindings(Array.isArray(payload.findings) ? payload.findings : []);
+    } catch (cause) { setAuditError(cause instanceof Error ? cause.message : "IA audit failed."); }
+    finally { setAuditBusy(false); }
   }
 
   return (
@@ -209,8 +228,13 @@ export default function IADemoPage() {
 
       <section className="ia-canvas" aria-label="Interactive website information architecture">
         <div className="ia-canvas-head">
-          <div><strong>IA map</strong><span>Drag nodes · zoom · pan · select a page</span></div>
+          <div><strong>IA map</strong><span>Drag nodes · zoom · pan · select a page · open source URL</span></div>
           <div className="ia-legend"><span><i style={{ background: "#4f9569" }} /> HTTP 2xx/3xx</span><span><i style={{ background: "#d97757" }} /> HTTP error</span></div>
+        </div>
+        <div className="ia-graph-toolbar">
+          <input aria-label="Search discovered pages" placeholder="Search page names or URLs…" value={search} onChange={(event) => setSearch(event.target.value)} />
+          <span>{filteredPages.length} of {pages.length} pages</span>
+          <button type="button" className="ia-audit-cta" onClick={auditIA} disabled={!result || auditBusy}>{auditBusy ? "Analysing IA…" : "✦ Audit IA with AI"}</button>
         </div>
         <div className="ia-graph-toolbar">
           <input aria-label="Search discovered pages" placeholder="Search page names or URLs…" value={search} onChange={(event) => setSearch(event.target.value)} />
@@ -240,6 +264,15 @@ export default function IADemoPage() {
           </ReactFlow>
         </div>
       </section>
+
+      {auditError ? <div className="ia-error" role="alert">{auditError}</div> : null}
+      {auditSummary ? <section className="ia-findings-wrap">
+        <div className="ia-canvas-head"><div><strong>AI IA audit findings</strong><span>{auditFindings.length} findings · hypotheses are separated from observations</span></div><button type="button" className="ia-toggle" onClick={() => setShowFindings(v => !v)}>{showFindings ? "Hide findings" : "Show findings"}</button></div>
+        {showFindings ? <><p className="ia-summary">{auditSummary}</p>{auditFindings.length ? auditFindings.map((finding, i) => <article className="ia-finding" key={finding.title + "-" + i}>
+          <div className="ia-finding-title"><span className={"ia-severity sev-" + finding.severity.toLowerCase()}>{finding.severity}</span><strong>{finding.title}</strong>{finding.hypothesis ? <span className="ia-hypothesis">Hypothesis</span> : null}<span className="ia-confidence">{Math.round(finding.confidence * 100)}% confidence</span></div>
+          <p>{finding.evidence}</p><p><strong>Recommendation:</strong> {finding.recommendation}</p><a href={finding.url} target="_blank" rel="noreferrer">Open evidence page ↗</a>
+        </article>) : <p className="ia-summary">No validated findings were returned. This does not guarantee there are no IA issues.</p>}</> : null}
+      </section> : null}
 
       {selectedPage ? (
         <section className="ia-page-detail">
@@ -294,7 +327,20 @@ export default function IADemoPage() {
         .ia-table-wrap{overflow:hidden}.ia-table-scroll{overflow:auto}.ia-table{border-collapse:collapse;width:100%;font-size:11px}.ia-table th,.ia-table td{text-align:left;border-bottom:1px solid #edf0eb;padding:12px 16px;white-space:nowrap}.ia-table th{color:#748078;text-transform:uppercase;font-size:9px;letter-spacing:.08em;background:#141c29}.ia-table a{color:#91e9d1}
         .ia-page-select{border:0;background:transparent;padding:0;color:#b9f2e2;font-weight:800;text-align:left}
         .ia-footer{max-width:1400px;margin:28px auto 0;text-align:right;font-size:9px;letter-spacing:.14em;font-weight:800;color:#758078}.ia-footer span{color:#b6c8b4;margin:0 6px}
-        .ia-graph-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid #263245;background:#111925}.ia-graph-toolbar input{flex:1;min-width:220px;height:36px;border:1px solid #2b394e;border-radius:8px;background:#151e2c;color:#f1f6fc;padding:0 10px;font-size:11px}.ia-graph-toolbar>span{color:#8291a7;font-size:10px}.ia-graph-toolbar button,.ia-toggle{border:1px solid #3a6258;border-radius:9px;background:linear-gradient(135deg,#90f1d5,#b5a5ff);color:#0b1720;padding:10px 13px;font-size:11px;font-weight:900}.ia-graph-toolbar button:disabled{opacity:.5;cursor:wait}.ia-findings-wrap{overflow:hidden}.ia-summary{padding:0 18px;color:#a9b7c9;font-size:12px;line-height:1.7}.ia-finding{padding:16px 18px;border-top:1px solid #263245}.ia-finding-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ia-finding-title strong{font-size:12px}.ia-finding p{color:#a8b5c8;font-size:12px;line-height:1.7}.ia-finding a{font-size:11px;color:#93e9d0;text-decoration:none}.ia-severity,.ia-hypothesis,.ia-confidence{font:9px "DM Mono",monospace;border-radius:999px;padding:5px 7px;border:1px solid #314057;color:#aab8ca}.ia-severity.sev-critical,.ia-severity.sev-high{border-color:#6a3c48;background:#2a1920;color:#f3a1b0}.ia-severity.sev-medium{border-color:#6b5437;background:#2b2319;color:#e8c18b}.ia-severity.sev-low{border-color:#31534c;background:#142620;color:#98e6ca}.ia-hypothesis{border-color:#6553a3;background:#201a36;color:#c1b5ff}.ia-confidence{margin-left:auto}.ia-toggle{background:#1a2637;color:#b9c7d8;border-color:#34445b}.ia-page-detail{color:#edf4fc}.ia-page-detail a{color:#91e9d1}.ia-table td{color:#d5deeb}.ia-table th{background:#141c29}.ia-canvas-head{border-bottom-color:#263245}.ia-legend{color:#9aa8bd}
+        .ia-graph-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid #263245;background:#111925}
+        .ia-graph-toolbar input{flex:1;min-width:220px;height:36px;border:1px solid #2b394e;border-radius:8px;background:#151e2c;color:#f1f6fc;padding:0 10px;font-size:11px}
+        .ia-graph-toolbar>span{color:#8291a7;font-size:10px}
+        .ia-graph-toolbar button,.ia-toggle{border:1px solid #3a6258;border-radius:9px;background:linear-gradient(135deg,#90f1d5,#b5a5ff);color:#0b1720;padding:10px 13px;font-size:11px;font-weight:900}
+        .ia-graph-toolbar button:disabled{opacity:.5;cursor:wait}
+        .ia-findings-wrap{overflow:hidden}.ia-summary{padding:0 18px;color:#a9b7c9;font-size:12px;line-height:1.7}
+        .ia-finding{padding:16px 18px;border-top:1px solid #263245}.ia-finding-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ia-finding-title strong{font-size:12px}
+        .ia-finding p{color:#a8b5c8;font-size:12px;line-height:1.7}.ia-finding a{font-size:11px;color:#93e9d0;text-decoration:none}
+        .ia-severity,.ia-hypothesis,.ia-confidence{font:9px "DM Mono",monospace;border-radius:999px;padding:5px 7px;border:1px solid #314057;color:#aab8ca}
+        .ia-severity.sev-critical,.ia-severity.sev-high{border-color:#6a3c48;background:#2a1920;color:#f3a1b0}
+        .ia-severity.sev-medium{border-color:#6b5437;background:#2b2319;color:#e8c18b}.ia-severity.sev-low{border-color:#31534c;background:#142620;color:#98e6ca}
+        .ia-hypothesis{border-color:#6553a3;background:#201a36;color:#c1b5ff}.ia-confidence{margin-left:auto}
+        .ia-toggle{background:#1a2637;color:#b9c7d8;border-color:#34445b}.ia-page-detail{color:#edf4fc}.ia-page-detail a{color:#91e9d1}
+        .ia-table td{color:#d5deeb}.ia-table th{background:#141c29}.ia-canvas-head{border-bottom-color:#263245}.ia-legend{color:#9aa8bd}.ia-graph-toolbar input{flex:1;min-width:220px;height:36px;border:1px solid #2b394e;border-radius:8px;background:#151e2c;color:#f1f6fc;padding:0 10px;font-size:11px}.ia-graph-toolbar>span{color:#8291a7;font-size:10px}.ia-graph-toolbar button,.ia-toggle{border:1px solid #3a6258;border-radius:9px;background:linear-gradient(135deg,#90f1d5,#b5a5ff);color:#0b1720;padding:10px 13px;font-size:11px;font-weight:900}.ia-graph-toolbar button:disabled{opacity:.5;cursor:wait}.ia-findings-wrap{overflow:hidden}.ia-summary{padding:0 18px;color:#a9b7c9;font-size:12px;line-height:1.7}.ia-finding{padding:16px 18px;border-top:1px solid #263245}.ia-finding-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ia-finding-title strong{font-size:12px}.ia-finding p{color:#a8b5c8;font-size:12px;line-height:1.7}.ia-finding a{font-size:11px;color:#93e9d0;text-decoration:none}.ia-severity,.ia-hypothesis,.ia-confidence{font:9px "DM Mono",monospace;border-radius:999px;padding:5px 7px;border:1px solid #314057;color:#aab8ca}.ia-severity.sev-critical,.ia-severity.sev-high{border-color:#6a3c48;background:#2a1920;color:#f3a1b0}.ia-severity.sev-medium{border-color:#6b5437;background:#2b2319;color:#e8c18b}.ia-severity.sev-low{border-color:#31534c;background:#142620;color:#98e6ca}.ia-hypothesis{border-color:#6553a3;background:#201a36;color:#c1b5ff}.ia-confidence{margin-left:auto}.ia-toggle{background:#1a2637;color:#b9c7d8;border-color:#34445b}.ia-page-detail{color:#edf4fc}.ia-page-detail a{color:#91e9d1}.ia-table td{color:#d5deeb}.ia-table th{background:#141c29}.ia-canvas-head{border-bottom-color:#263245}.ia-legend{color:#9aa8bd}
         @media(max-width:750px){.ia-workbench{padding-top:24px}.ia-controls input{min-width:100%}.ia-page-detail{grid-template-columns:1fr 1fr}.ia-origin{margin-left:0;width:100%}}
       `}</style>
     </main>
