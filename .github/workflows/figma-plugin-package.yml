@@ -1,0 +1,44 @@
+name: Package UX Direct Figma plugin
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "figma-plugin/**"
+      - ".github/workflows/figma-plugin-package.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: figma-plugin-package
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate manifest JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('figma-plugin/manifest.json', 'utf8'))"
+
+      - name: Validate plugin code syntax
+        run: node --check figma-plugin/code.js
+
+      - name: Package import-ready plugin files
+        run: |
+          mkdir -p dist
+          cd figma-plugin
+          zip -q ../dist/ux-direct-figma-plugin-cloudflare.zip manifest.json code.js ui.html README.md
+
+      - name: Upload plugin ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-direct-figma-plugin-cloudflare
+          path: dist/ux-direct-figma-plugin-cloudflare.zip
+          if-no-files-found: error
+          retention-days: 30
