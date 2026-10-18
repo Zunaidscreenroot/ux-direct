@@ -183,7 +183,7 @@ export async function POST(request: Request) {
       temperature: 0.15,
       max_tokens: 5000
     });
-    const raw = response.content.trim().replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
+    const raw = response.content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");
     if (start < 0 || end <= start) {
