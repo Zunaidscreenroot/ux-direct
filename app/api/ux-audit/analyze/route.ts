@@ -36,7 +36,8 @@ function isPublicHttpsImageUrl(value: string): boolean {
     if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return false;
     if (isIpv4 || host.includes(":") || !host.includes(".")) return false;
     return true;
-
+  } catch { return false; }
+}
 
 function asText(value: unknown, max = 500): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
