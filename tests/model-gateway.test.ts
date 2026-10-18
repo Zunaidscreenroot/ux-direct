@@ -191,7 +191,7 @@ test("homepage free models stay separate from the dynamic internal OpenRouter ro
   assert.equal(routerEnabled.find(p => p.name === "openrouter-auto")?.kind, "paid");
 });
 
-test("OpenRouter Auto applies its low-cost tier and price ceilings without requiring a monthly budget", async () => {
+test("OpenRouter Auto uses low-cost routing and throughput preference without model filters or a monthly budget", async () => {
   const { chatCompletion } = await import("../src/model-gateway");
   const { saveGatewaySettings, defaultGatewaySettings, modelKey } = await import("../src/model-gateway/control-store");
   const settings = defaultGatewaySettings();
@@ -228,7 +228,10 @@ test("OpenRouter Auto applies its low-cost tier and price ceilings without requi
       }) as typeof fetch
     });
     assert.deepEqual(body.plugins, [{ id: "auto-router", cost_tier: "low" }]);
-    assert.equal("provider" in body, false);
+    assert.deepEqual(body.provider, { sort: "throughput" });
+    assert.equal("max_price" in body, false);
+    assert.equal("allowed_models" in (body.plugins as Array<Record<string, unknown>>)[0], false);
+    assert.equal("excluded_models" in (body.plugins as Array<Record<string, unknown>>)[0], false);
     assert.deepEqual(body.usage, { include: true });
     assert.equal(result.model, "vendor/selected-cheap-model");
     assert.equal(result.content, "IA review complete.");
