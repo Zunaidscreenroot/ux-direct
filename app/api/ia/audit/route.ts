@@ -126,7 +126,7 @@ export async function POST(request: Request) {
       status: typeof page.status === "number" && Number.isFinite(page.status) ? page.status : null,
       description: clipText(page.description, 320) || null,
       headings: Array.isArray(page.headings) ? page.headings.filter((x): x is string => typeof x === "string").slice(0, 10).map(x => clipText(x, 100)) : [],
-      links: Array.isArray(page.links) ? page.links.slice(0, 25).flatMap((linkValue) => {
+      links: Array.isArray(page.links) ? page.links.slice(0, 15).flatMap((linkValue) => {
         const link = asRecord(linkValue);
         const target = publicHttpUrl(link?.url);
         if (!link || !target || target.origin !== origin) return [];
@@ -145,7 +145,7 @@ export async function POST(request: Request) {
     status: page.status,
     description: page.description,
     headings: page.headings,
-    links: (page.links ?? []).map(link => ({ label: link.label, url: link.url })),
+    links: (page.links ?? []).slice(0, 15).map(link => ({ label: link.label, url: link.url })),
     note: "This parent relationship comes from the bounded crawler's traversal path; it is not guaranteed to represent every live navigation menu."
   }));
   const systemPrompt = [
@@ -165,7 +165,7 @@ export async function POST(request: Request) {
     "Review this discovered information architecture for " + origin + ".",
     "Crawl includes " + pages.length + " page records and may be capped; treat omissions as unknown.",
     "Return JSON schema: {\"summary\":\"...\",\"findings\":[{\"title\":\"...\",\"severity\":\"Critical|High|Medium|Low\",\"category\":\"...\",\"evidence\":\"...\",\"recommendation\":\"...\",\"confidence\":0.0,\"hypothesis\":true,\"url\":\"exact supplied page URL\"}]}",
-    "Aim for up to 12 distinct findings. Each evidence string must refer to one or more supplied page titles, paths, HTTP statuses, headings, or links. Do not claim screenshot findings.",
+    "Aim for up to 8 distinct findings. Each evidence string must refer to one or more supplied page titles, paths, HTTP statuses, headings, or links. Do not claim screenshot findings.",
     JSON.stringify({ origin, pageCount: pages.length, pages: evidenceContext })
   ].join("\n\n");
 
@@ -189,8 +189,9 @@ export async function POST(request: Request) {
         { role: "user", content: userPrompt }
       ],
       temperature: 0.15,
-      max_tokens: 5000
-    });
+      max_tokens: 3200,
+      signal: request.signal
+    }, { timeoutMs: 15_000, maxFallbackAttempts: 1 });
     const raw = response.content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");
