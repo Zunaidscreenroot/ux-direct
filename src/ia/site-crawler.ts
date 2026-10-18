@@ -240,7 +240,9 @@ function extractLinks(html: string, pageUrl: string, origin: string): SiteLink[]
     const href = decodeEntities(match[3]).trim();
     const label = decodeEntities(stripTags(match[5])).trim().replace(/\s+/g, " ").slice(0, 140);
     if (!href || /^(?:javascript:|mailto:|tel:|data:)/i.test(href)) continue;
-    const url = normalizeCrawlUrl(new URL(href, pageUrl).href, origin);
+    let absoluteUrl: string;
+    try { absoluteUrl = new URL(href, pageUrl).href; } catch { continue; }
+    const url = normalizeCrawlUrl(absoluteUrl, origin);
     if (!url || seen.has(url) || url === pageUrl) continue;
     seen.add(url);
     results.push({ url, label: label || new URL(url).pathname || "Unlabelled link" });
