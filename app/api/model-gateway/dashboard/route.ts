@@ -26,7 +26,7 @@ export async function GET() {
     { id: "groq", label: "Groq", envName: "GROQ_API_KEY", configured: configuredProviders.has("groq"), keyDetected: Boolean(env.GROQ_API_KEY), tier: env.GROQ_BILLING_MODE === "paid" ? "paid" : "free-tier", secretRequired: true },
     { id: "cerebras", label: "Cerebras", envName: "CEREBRAS_API_KEY", configured: configuredProviders.has("cerebras"), keyDetected: Boolean(env.CEREBRAS_API_KEY), tier: env.CEREBRAS_BILLING_MODE === "paid" ? "paid" : "free-tier", secretRequired: true },
     { id: "openrouter", label: "OpenRouter · homepage free chat", envName: "OPENROUTER_API_KEY", configured: configuredProviders.has("openrouter"), keyDetected: Boolean(env.OPENROUTER_API_KEY), tier: "free-tier", secretRequired: true },
-    { id: "openrouter-paid", label: "OpenRouter · paid internal jobs", envName: "OPENROUTER_PAID_MODELS", configured: configuredProviders.has("openrouter-paid"), keyDetected: Boolean(env.OPENROUTER_API_KEY && env.OPENROUTER_PAID_MODELS), tier: "paid", secretRequired: true },
+    { id: "openrouter-auto", label: "OpenRouter · low-cost internal routing", envName: "OPENROUTER_AUTO_ROUTING", configured: configuredProviders.has("openrouter-auto"), keyDetected: Boolean(env.OPENROUTER_API_KEY && env.OPENROUTER_AUTO_ROUTING === "true"), tier: "router", secretRequired: true },
     { id: "openai", label: "OpenAI (paid)", envName: "OPENAI_API_KEY", configured: configuredProviders.has("openai"), keyDetected: Boolean(env.OPENAI_API_KEY), tier: "paid", secretRequired: true },
     { id: "deepseek", label: "DeepSeek (paid)", envName: "DEEPSEEK_API_KEY", configured: configuredProviders.has("deepseek"), keyDetected: Boolean(env.DEEPSEEK_API_KEY), tier: "paid", secretRequired: true },
   ];
@@ -35,6 +35,8 @@ export async function GET() {
       name: "UX Direct Model Gateway",
       status: providers.some(provider => provider.kind !== "mock") ? "provider-configured" : "awaiting-keys",
       paidModelsEnabled: fullSettings.paidRoutingEnabled && env.ALLOW_PAID_MODELS === "true",
+      openRouterAutoRoutingEnabled: configuredProviders.has("openrouter-auto"),
+      monthlyBudgetAssigned: budget.monthlyBudgetInr > 0,
       monthlyBudgetInr: budget.monthlyBudgetInr,
       pricingConfigured: budget.pricingConfigured,
       gatewayFeeInr: 0
