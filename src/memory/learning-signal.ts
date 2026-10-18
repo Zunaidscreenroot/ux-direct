@@ -1,6 +1,8 @@
 import type { TaskProject } from "@/src/core/types";
 
 const CORRECTION_SIGNAL = [
+  /\b(shared brain|brain|memory|knowledge base)\b.{0,35}\b(train|learn|remember|save|capture)\b/i,
+  /\b(chat|conversation|messages?)\b.{0,45}\b(brain|memory|knowledge base)\b.{0,30}\b(train|learn|remember|save)\b/i,
   /\bremember (this|that|it|this rule)\b/i,
   /\blearn from this\b/i,
   /\btrain (ux direct|the product|yourself|this|the system)\b/i,
@@ -14,6 +16,8 @@ const CORRECTION_SIGNAL = [
 ];
 
 const EXPLICIT_REUSE_INTENT = [
+  /\b(shared brain|brain|memory|knowledge base)\b.{0,35}\b(train|learn|remember|save|capture)\b/i,
+  /\b(chat|conversation|messages?)\b.{0,45}\b(brain|memory|knowledge base)\b.{0,30}\b(train|learn|remember|save)\b/i,
   /\bremember (this|that|it|this rule) (for|in) future\b/i,
   /\b(learn from this|train (ux direct|the product|yourself|this|the system)|save this as a rule|store this as learning)\b/i,
   /\b(for all products|across (all )?products|global rule|every audit|all future tasks|future bfs(i|fi)? audits|future banking audits)\b/i,
@@ -58,10 +62,10 @@ export function resolveLearningScope(candidateScope: unknown, project: TaskProje
 /** Select a conservative scope for chat-originated coaching; client rules never become global by default. */
 export function resolveChatLearningScope(text: string): string {
   const value = text.toLowerCase();
-  if (/\\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\\b/.test(value)) return "project:ujjivan-sfb";
-  if (/\\b(dmi|dmi hfc|dmi finance|dmi wealth|housing finance)\\b/.test(value)) return "project:dmi-finance";
-  if (/\\b(ux audit|uxaudit|audit findings|audit workflow|benchmarking)\\b/.test(value)) return "project:ux-audit";
-  if (/\\b(indian bfs(i|fi)|banking|financial services|insurance|rbi|nbfc|credit bureau)\\b/.test(value)) return "indian-bfsi";
-  if (/\\b(shared brain|cross[- ]product|across products|global memory|chat.{0,20}brain|brain.{0,20}chat)\\b/.test(value)) return "UX_SHARED_BRAIN";
+  if (/\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\b/.test(value)) return "project:ujjivan-sfb";
+  if (/\b(dmi|dmi hfc|dmi finance|dmi wealth|housing finance)\b/.test(value)) return "project:dmi-finance";
+  if (/\b(ux audit|uxaudit|audit findings|audit workflow|benchmarking)\b/.test(value)) return "project:ux-audit";
+  if (/\b(indian bfs(i|fi)|banking|financial services|insurance|rbi|nbfc|credit bureau)\b/.test(value)) return "indian-bfsi";
+  if (/\b(shared brain|cross[- ]product|across products|global memory|chat.{0,20}brain|brain.{0,20}chat)\b/.test(value)) return "UX_SHARED_BRAIN";
   return "project:ux-direct";
 }
