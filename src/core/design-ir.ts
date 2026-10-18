@@ -65,7 +65,7 @@ export const DesignIRSchema = z.object({
     nodeIds: z.array(z.string().trim().min(1).max(120)).max(100).default([]),
     status: z.enum(["covered", "partial", "open"]).default("open"),
   })).max(200).default([]),
-  tokens: DesignTokenSchema.default({}),
+  tokens: DesignTokenSchema.default(() => ({ color: {}, spacing: {}, radius: {}, typography: {} })),
   screens: z.array(DesignNodeSchema).min(1).max(100),
 }).superRefine((ir, ctx) => {
   const ids = new Set<string>();
