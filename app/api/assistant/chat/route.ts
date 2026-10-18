@@ -106,7 +106,7 @@ function learningKeywords(text: string): string[] {
   return [...new Set((text.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) || []).filter((word) => !stop.has(word)))].slice(0, 16);
 }
 
-async function captureChatLearning(text: string): Promise<ChatLearningCapture> {
+async function captureChatLearning(text: string, taskContext = ""): Promise<ChatLearningCapture> {
   const value = text.trim();
   if (value.length < 12 || (!detectCoachingSignal(value) && !detectExplicitTrainingIntent(value))) return { status: "none" };
   // Never persist likely credentials/secrets as training material.
@@ -121,7 +121,7 @@ async function captureChatLearning(text: string): Promise<ChatLearningCapture> {
       title: learningTitle(captured),
       normalizedRule: "Owner-provided reusable guidance to review (original wording preserved): " + captured,
       rationale: "Captured from an explicit chat coaching/correction signal. This remains a draft and must be approved before it affects shared-brain retrieval.",
-      scopeKey: resolveChatLearningScope(captured),
+      scopeKey: resolveChatLearningScope(captured + "\nConversation task context: " + taskContext.slice(0, 1800)),
       feedbackKind: learningKind(captured),
       keywords: learningKeywords(captured),
       originalLanguage: /[\u0900-\u097f]/.test(captured) ? "Hindi" : /\b(yaad|aage se|galat|galti|karo|karna|hoga|chahiye|mein|hai)\b/i.test(captured) ? "Hinglish" : "English",
@@ -241,7 +241,7 @@ export async function POST(request: Request) {
   const retrievalQuery = buildRetrievalQuery(lastUserMessage, previousUserMessage);
   const [brainBase, learning] = await Promise.all([
     retrieveMemory(request, retrievalQuery),
-    captureChatLearning(lastUserMessage),
+    captureChatLearning(lastUserMessage, previousUserMessage),
   ]);
   const brain: BrainContextInfo = { ...brainBase, learningStatus: learning.status, ...(learning.draftId ? { learningDraftId: learning.draftId } : {}) };
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
