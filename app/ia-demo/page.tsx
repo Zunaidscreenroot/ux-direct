@@ -121,12 +121,6 @@ export default function IADemoPage() {
   const [auditSummary, setAuditSummary] = useState<string | null>(null);
   const [auditFindings, setAuditFindings] = useState<Array<{title:string; severity:string; evidence:string; recommendation:string; confidence:number; hypothesis:boolean; url:string}>>([]);
   const [showFindings, setShowFindings] = useState(true);
-  const [search, setSearch] = useState("");
-  const [auditBusy, setAuditBusy] = useState(false);
-  const [auditError, setAuditError] = useState("");
-  const [auditSummary, setAuditSummary] = useState<string | null>(null);
-  const [auditFindings, setAuditFindings] = useState<Array<{title:string; severity:string; evidence:string; recommendation:string; confidence:number; hypothesis:boolean; url:string}>>([]);
-  const [showFindings, setShowFindings] = useState(true);
   const filteredPages = useMemo(() => {
     const term = search.trim().toLowerCase();
     return term ? pages.filter((page) => page.title.toLowerCase().includes(term) || page.url.toLowerCase().includes(term) || (page.description || "").toLowerCase().includes(term)) : pages;
@@ -230,11 +224,6 @@ export default function IADemoPage() {
         <div className="ia-canvas-head">
           <div><strong>IA map</strong><span>Drag nodes · zoom · pan · select a page · open source URL</span></div>
           <div className="ia-legend"><span><i style={{ background: "#4f9569" }} /> HTTP 2xx/3xx</span><span><i style={{ background: "#d97757" }} /> HTTP error</span></div>
-        </div>
-        <div className="ia-graph-toolbar">
-          <input aria-label="Search discovered pages" placeholder="Search page names or URLs…" value={search} onChange={(event) => setSearch(event.target.value)} />
-          <span>{filteredPages.length} of {pages.length} pages</span>
-          <button type="button" className="ia-audit-cta" onClick={auditIA} disabled={!result || auditBusy}>{auditBusy ? "Analysing IA…" : "✦ Audit IA with AI"}</button>
         </div>
         <div className="ia-graph-toolbar">
           <input aria-label="Search discovered pages" placeholder="Search page names or URLs…" value={search} onChange={(event) => setSearch(event.target.value)} />
