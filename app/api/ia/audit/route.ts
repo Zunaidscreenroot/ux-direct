@@ -145,7 +145,7 @@ export async function POST(request: Request) {
     status: page.status,
     description: page.description,
     headings: page.headings,
-    links: page.links.map(link => ({ label: link.label, url: link.url })),
+    links: (page.links ?? []).map(link => ({ label: link.label, url: link.url })),
     note: "This parent relationship comes from the bounded crawler's traversal path; it is not guaranteed to represent every live navigation menu."
   }));
   const systemPrompt = [
