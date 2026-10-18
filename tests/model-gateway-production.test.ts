@@ -5,12 +5,26 @@ import { resolve } from "node:path";
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
-test("gateway UI is added without dropping the live health report or task dashboard", () => {
+test("home opens the unified chat-first workspace instead of the operations dashboard", () => {
   const page = read("app/page.tsx");
-  assert.ok(page.includes('label: "Model Gateway"'));
-  assert.ok(page.includes("Run Plugin Health Check"));
-  assert.ok(page.includes("Run smoke tests"));
-  assert.ok(page.includes('activeTab === "gateway" ? <ModelGatewayPanel />'));
+  const chat = read("app/chat/page.tsx");
+  assert.ok(page.includes('redirect("/chat")'));
+  assert.ok(chat.includes("Message UX Direct"));
+  assert.ok(chat.includes("Audit"));
+  assert.ok(chat.includes("Connections"));
+  assert.ok(chat.includes("ud-brain-orb"));
+  assert.equal(page.includes("ModelGatewayPanel"), false);
+});
+
+test("UX Direct chat only accepts explicit free OpenRouter model IDs and disables provider fallbacks", () => {
+  const route = read("app/api/assistant/chat/route.ts");
+  const status = read("app/api/assistant/status/route.ts");
+  assert.ok(route.includes('model.endsWith(":free")'));
+  assert.ok(route.includes("provider: { allow_fallbacks: false }"));
+  assert.ok(route.includes("OPENROUTER_API_KEY"));
+  assert.ok(status.includes('row.id.endsWith(":free")'));
+  assert.ok(status.includes('model.endsWith(":free")'));
+  assert.ok(status.includes("openrouter.ai/api/v1/models"));
 });
 
 test("production gateway settings writes require the server-side admin key", () => {
@@ -29,13 +43,14 @@ test("task planning is rate-limited and gateway rate limiter supports tighter ro
   assert.ok(limiter.includes("maxRequests = MAX_REQUESTS_PER_WINDOW"));
 });
 
-test("gateway admin secret is entered transiently, not stored in web storage", () => {
-  const page = read("app/page.tsx");
-  assert.ok(page.includes('value={adminKey} onChange={e=>setAdminKey(e.target.value)}'));
-  assert.ok(page.includes('"x-model-gateway-admin-key":adminKey'));
-  assert.ok(page.includes("never saved in browser storage"));
-  assert.equal(page.includes("localStorage.setItem(\"adminKey\""), false);
-  assert.equal(page.includes("sessionStorage.setItem(\"adminKey\""), false);
+test("legacy gateway credentials remain server-only and are not saved in browser storage", () => {
+  const chat = read("app/chat/page.tsx");
+  const settingsRoute = read("app/api/model-gateway/settings/route.ts");
+  assert.equal(chat.includes("MODEL_GATEWAY_ADMIN_KEY"), false);
+  assert.equal(chat.includes("x-model-gateway-admin-key"), false);
+  assert.equal(chat.includes('localStorage.setItem("adminKey"'), false);
+  assert.equal(chat.includes('sessionStorage.setItem("adminKey"'), false);
+  assert.ok(settingsRoute.includes("MODEL_GATEWAY_ADMIN_KEY"));
 });
 
 test("free-first OpenRouter example is pinned to an exact model and never silently turns on paid calls", () => {
