@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
-import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus } from "@/src/connections/connection-status";
+import { getFigmaPluginConnectionStatus } from "@/src/connections/connection-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,17 +43,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "A valid Figma plugin clientId is required." }, { status: 400, headers });
   }
   try {
-    const [chatgpt, figmaPlugin] = await Promise.all([
-      getChatGPTConnectionStatus(),
-      getFigmaPluginConnectionStatus(clientId),
-    ]);
+    const figmaPlugin = await getFigmaPluginConnectionStatus(clientId);
     return NextResponse.json({
       checkedAt: new Date().toISOString(),
       backend: "ok",
-      chatgptConnector: chatgpt,
       figmaPlugin,
       semantics: {
-        chatgpt: "Connected means an authenticated ChatGPT MCP request was received in the last five minutes. ChatGPT does not keep a continuously open tool socket, so this is recent activity, not a persistent socket.",
         figma: "Connected means this approved-file Figma plugin session sent a heartbeat in the last 75 seconds.",
       },
     }, { headers });
