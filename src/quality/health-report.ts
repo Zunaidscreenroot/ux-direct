@@ -1,3 +1,5 @@
+import { summarizeActionCatalogue } from "./figma-action-catalogue";
+
 export type HealthCheckLevel = "availability" | "functional" | "not-tested";
 export type HealthCheckStatus = "success" | "error" | "not-tested";
 
@@ -28,6 +30,8 @@ export type HealthReportAudit = {
   countsMatch: boolean;
   actionCoverageComplete: boolean;
   teamLibraryScopeCorrect: boolean;
+  actionCatalogue: ReturnType<typeof summarizeActionCatalogue>;
+  actionReadinessComplete: boolean;
 };
 
 export type SmokeCheckResult = {
@@ -74,6 +78,9 @@ export function inspectHealthReport(report: PluginHealthReport): HealthReportAud
     && teamLibraryChecks[0].status === "not-tested"
     && /not tested intentionally/i.test(teamLibraryChecks[0].reason);
 
+  const actionCatalogue = summarizeActionCatalogue();
+  const actionReadinessComplete = actionCatalogue.total >= actionCatalogue.target;
+
   const countsMatch = report.passed === computed.passed
     && (report.available ?? 0) === computed.available
     && report.failed === computed.failed
@@ -90,6 +97,7 @@ export function inspectHealthReport(report: PluginHealthReport): HealthReportAud
     );
   }
   if (missingActions.length) issues.push(`Missing functional Figma action checks: ${missingActions.join(", ")}.`);
+  if (!actionReadinessComplete) issues.push(`Action catalogue target not met: ${actionCatalogue.total}/${actionCatalogue.target} action definitions.`);
   if (!teamLibraryScopeCorrect) {
     issues.push("Team Library must appear once as “not tested intentionally”; shared-library APIs must remain out of scope.");
   }
@@ -107,6 +115,8 @@ export function inspectHealthReport(report: PluginHealthReport): HealthReportAud
     countsMatch,
     actionCoverageComplete: missingActions.length === 0,
     teamLibraryScopeCorrect,
+    actionCatalogue,
+    actionReadinessComplete,
   };
 }
 
@@ -156,6 +166,11 @@ export function buildHealthSmokeChecks(input: HealthSmokeInputs): SmokeCheckResu
       name: "Report count integrity",
       status: audit.countsMatch ? "pass" : "fail",
       message: audit.countsMatch ? "Summary totals match the individual check rows." : "One or more summary totals do not match the individual check rows.",
+    },
+    {
+      name: "Action catalogue inventory",
+      status: audit.actionReadinessComplete ? "pass" : "fail",
+      message: `${audit.actionCatalogue.total} action definitions catalogued; target is ${audit.actionCatalogue.target}. Readiness: ${audit.actionCatalogue.counts.implemented} implemented, ${audit.actionCatalogue.counts.partial} partial, ${audit.actionCatalogue.counts.planned} planned, ${audit.actionCatalogue.counts.unsupported} unsupported.`,
     },
     {
       name: "Figma action coverage",
