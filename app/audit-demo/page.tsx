@@ -132,7 +132,7 @@ export default function AuditDemoPage() {
           </div>
           <label className="audit-screens-label" htmlFor="auditScreens">Screenshots to review</label>
           <textarea id="auditScreens" className="audit-screens-input" value={screenshotText} onChange={(event) => setScreenshotText(event.target.value)} rows={5} placeholder={"One screenshot per line:\nUjjivan SFB | Cards page | https://image.thum.io/get/width/1440/https://example.com/cards\nAU SFB | Cards page | https://your-public-r2-url/cards.png"} required />
-          <p className="audit-help">Format: Site name | Page or journey step | Public HTTPS image URL. Use matched page types across sites for useful benchmarking. Screenshot images will be sent to the model provider selected in Model Gateway; do not send confidential client screens to an unapproved provider.</p>
+          <p className="audit-help">Format: Site name | Page or journey step | Public HTTPS image URL. Put the target/reference site first, then add competitor sites using the same page type or journey step. Benchmark positions are relative to the first site. Screenshot images will be sent to the model provider selected in Model Gateway; do not send confidential client screens to an unapproved provider.</p>
           <button className="submit-button" type="submit" disabled={busy}>{busy ? "Auditing screenshots…" : "Run UX audit & benchmark →"}</button>
         </form>
       </section>
@@ -195,7 +195,7 @@ export default function AuditDemoPage() {
           </section>
 
           <section className="audit-section">
-            <div className="audit-section-title"><div><h2>Competitor benchmark</h2><p>Comparisons use only named sites and visible evidence in the supplied screenshots.</p></div></div>
+            <div className="audit-section-title"><div><h2>Competitor benchmark</h2><p>Competitor positions are compared with the first site listed as the reference, using only visible screenshot evidence.</p></div></div>
             {benchmarkSiteCount < 2
               ? <p style={{ padding: "14px 18px", margin: 0, color: "#748078", fontSize: 11, lineHeight: 1.6 }}>Add screenshots from at least two named sites to compare competitors. For a fair comparison, match the same page type or journey step across sites.</p>
               : report.benchmark.length

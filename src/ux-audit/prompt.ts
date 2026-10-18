@@ -29,7 +29,8 @@ Evidence and annotation rules:
 - Add up to 3 positives only when there is concrete evidence of a real strength.
 - For financial products, pay close attention to transparency, consent, fees, eligibility, risk, identity information, user control, misleading urgency, and clear recovery.
 - Separate observation from inference. Mark uncertainty in the wording and use confidence between 0 and 1.
-- Benchmark only named sites/pages that are represented by supplied screenshots. Compare like-for-like page types or journey steps; return "not-comparable" rather than guessing when evidence does not match.
+- Benchmark reference rule: the first unique site listed is the target/reference. For each benchmark row, siteName must be another supplied site and relativePosition describes that site’s visible implementation compared with the reference on the same criterion. Do not emit a self-comparison for the reference site.
+- Benchmark only named sites/pages represented by supplied screenshots. Compare like-for-like page types or journey steps; return "not-comparable" rather than guessing when evidence does not match. If fewer than two distinct sites or no matching page types exist, return an empty benchmark array.
 - Never claim a competitor has a feature that is not visible in its supplied evidence.
 - Return only valid JSON matching the requested schema. No markdown fences or explanatory text.`;
 
@@ -48,6 +49,7 @@ export function buildAuditUserPrompt(input: {
     `Platform: ${input.platform}`,
     `Screenshots supplied: ${input.screenshots.length}`,
     `Sites represented: ${distinctSites.join(", ")}`,
+    `Benchmark reference site (first unique site listed): ${distinctSites[0] || "not specified"}`,
     "",
     "Screenshots are provided as image parts in the same order as this list:",
     ...input.screenshots.map((s, index) =>
