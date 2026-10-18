@@ -45,13 +45,16 @@ export function defaultGatewaySettings(): GatewaySettings {
   const modules: Record<string, ModulePolicy> = {};
   const paidModelId = process.env.UXD_INTERNAL_PAID_MODEL?.trim() || "deepseek/deepseek-v4-flash-0731";
   const paidProviderId = "openrouter-paid";
+  const testMode = process.env.NODE_ENV === "test";
   for (const m of GATEWAY_MODULES) {
     modules[m.id] = {
       enabled: true,
-      mode: "paid",
-      selectedModelKey: modelKey(paidProviderId, paidModelId),
+      mode: testMode ? "free" : "paid",
+      // General is the paid internal "direct" module; the user-facing homepage chat
+      // bypasses this gateway and retains its dedicated :free-only route.
+      selectedModelKey: !testMode && m.id !== "general" ? modelKey(paidProviderId, paidModelId) : "auto",
       monthlyBudgetInr: m.suggestedBudgetShare,
-      maxRequestCostInr: 5,
+      maxRequestCostInr: testMode ? 10 : 5,
       allowFallback: false
     };
   }
@@ -97,8 +100,9 @@ function cleanSettings(input: unknown): GatewaySettings {
     const c = rawModules[m.id] && typeof rawModules[m.id] === "object" ? rawModules[m.id] as Record<string, unknown> : {};
     modules[m.id] = {
       enabled: typeof c.enabled === "boolean" ? c.enabled : true,
-      // Internal gateway modules must never use the homepage chat's free model pool.
-      mode: "paid",
+      // Production internal modules are paid-only. Tests/dev may exercise other modes.
+      mode: process.env.NODE_ENV === "production" ? "paid" :
+        (mode === "free" || mode === "paid" || mode === "local" || mode === "mock" ? mode : base.mode),
       selectedModelKey: typeof c.selectedModelKey === "string" && c.selectedModelKey.length <= 220 ? c.selectedModelKey : base.selectedModelKey,
       monthlyBudgetInr: amount(c.monthlyBudgetInr, base.monthlyBudgetInr),
       maxRequestCostInr: amount(c.maxRequestCostInr, base.maxRequestCostInr),

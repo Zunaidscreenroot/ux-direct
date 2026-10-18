@@ -27,7 +27,8 @@ test("IA crawler stays on the audited origin, deduplicates pages and preserves p
   assert.equal(result.pages[1].parentUrl, "https://example.com/");
   assert.equal(result.pages.some((page) => page.url.includes("competitor.example")), false);
   assert.equal(result.pages.some((page) => page.url.endsWith(".pdf")), false);
-  assert.equal(calls.length, 3);
+  // Root fetch + three bounded sitemap probes + two discovered pages.
+  assert.equal(calls.length, 6);
 });
 
 test("IA crawler rejects private and IP-literal hosts before fetching", async () => {

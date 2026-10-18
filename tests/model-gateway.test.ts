@@ -1,4 +1,7 @@
 import { test } from "node:test";
+
+// Ensure provider-adapter tests exercise stubbed free/local modes, never live paid routing.
+process.env.NODE_ENV = "test";
 import assert from "node:assert/strict";
 import { chatCompletion, GatewayError, estimateChatContentChars, isValidChatContent, resolveProvider, type ProviderConfig } from "../src/model-gateway";
 

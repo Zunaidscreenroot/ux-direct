@@ -1,8 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { POST } from "../app/api/tasks/plan/route";
+import { defaultGatewaySettings, saveGatewaySettings } from "../src/model-gateway/control-store";
+
+process.env.NODE_ENV = "test";
 
 test("task planning endpoint returns a zero-cost plan for a valid DMI task", async () => {
+  const settings = defaultGatewaySettings();
+  settings.paidRoutingEnabled = false;
+  settings.modules.reasoning = { ...settings.modules.reasoning, mode: "free", selectedModelKey: "auto", allowFallback: false };
+  await saveGatewaySettings(settings);
   const request = new Request("http://localhost/api/tasks/plan", {
     method: "POST",
     headers: { "content-type": "application/json" },
