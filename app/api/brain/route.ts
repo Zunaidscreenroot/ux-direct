@@ -117,7 +117,8 @@ export async function POST(request: Request) {
         const result = await saveBrainEvalCase({
           scopeKey: body.scopeKey, capability: body.capability, title: body.title, query: body.query,
           expectedBehavior: body.expectedBehavior, forbiddenBehaviors: body.forbiddenBehaviors,
-          expectedMemoryIds: body.expectedMemoryIds, activate: body.activate === true,
+          expectedMemoryIds: body.expectedMemoryIds, expectedKnowledgeChunkIds: body.expectedKnowledgeChunkIds,
+          activate: body.activate === true,
         });
         return NextResponse.json({ ok: true, evalCase: result }, { status: 201, headers: { "Cache-Control": "no-store" } });
       }
