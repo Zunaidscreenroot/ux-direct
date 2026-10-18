@@ -68,3 +68,13 @@ test("OpenRouter homepage chat stays free-only while internal routing is dynamic
   assert.ok(!env.includes("UXD_INTERNAL_PAID_MODEL"));
   assert.ok(!env.includes("MODEL_GATEWAY_MONTHLY_BUDGET_INR=3000"));
 });
+
+
+test("IA audit server and browser allow a long-running model response without a 15-second override", () => {
+  const route = read("app/api/ia/audit/route.ts");
+  const page = read("app/ia-demo/page.tsx");
+  assert.ok(route.includes("timeoutMs: 120_000"));
+  assert.equal(route.includes("timeoutMs: 15_000"), false);
+  assert.ok(page.includes("controller.abort(), 135_000"));
+  assert.equal(page.includes("controller.abort(), 35_000"), false);
+});
