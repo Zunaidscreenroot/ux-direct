@@ -34,8 +34,6 @@ OPENROUTER_API_KEY=...
 OPENROUTER_MODELS=provider/model-name:free
 # Internal UX/IA analysis uses dynamic low-cost routing instead of a fixed model ID.
 OPENROUTER_AUTO_ROUTING=true
-OPENROUTER_AUTO_MAX_INPUT_USD_PER_1M=0.10
-OPENROUTER_AUTO_MAX_OUTPUT_USD_PER_1M=0.30
 # Optional:
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 ```
