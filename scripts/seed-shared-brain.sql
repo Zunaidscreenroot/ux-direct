@@ -100,6 +100,58 @@ SELECT
 FROM all_docs d
 ON CONFLICT (document_id, chunk_index) DO NOTHING;
 
+
+-- Retrieval regression suite. These cases evaluate deterministic database retrieval;
+-- they do not call an LLM and therefore incur no inference-token cost.
+WITH eval_seed(scope_key, title, input, expected_behavior, expected_memory_title, forbidden_behaviors, expected_document_title) AS (
+  VALUES
+    ('UX_SHARED_BRAIN','Shared brain retrieval contract','How should UX Direct shared brain persist and retrieve approved memories across UX Audit?','Retrieve the approved shared-brain ownership and retrieval contract.','Shared brain ownership and retrieval contract',ARRAY[]::text[],NULL::text),
+    ('UX_SHARED_BRAIN','Past Findings separation','Should client-specific Past Findings be mixed into the cross-product Knowledge Base?','Keep client-specific Past Findings separate from generalized approved Knowledge Base rules.','Past Findings versus Knowledge Base',ARRAY[]::text[],NULL::text),
+    ('UX_SHARED_BRAIN','Retrieval status observability','How do I know whether a chat actually retrieved useful shared memory?','Return the rule requiring per-request retrieval status and result counts.','Show actual memory retrieval status',ARRAY[]::text[],NULL::text),
+    ('UX_SHARED_BRAIN','Cost-aware retrieval','How do we limit prompt tokens and avoid model calls for memory retrieval?','Retrieve compact relevant context using deterministic Postgres search without an LLM call.','Cost-aware memory retrieval',ARRAY[]::text[],NULL::text),
+    ('indian-bfsi','Indian BFSI transparency','How should a loan page show charges, eligibility, disclosures, and transparency?','Retrieve guidance requiring clear costs, eligibility, disclosures and evidence-based claims.','Indian BFSI transparency and consent guardrails',ARRAY[]::text[],NULL::text),
+    ('indian-bfsi','Consent and customer control','How should a banking app request data consent and allow recovery and customer control?','Retrieve specific consent and customer-control guidance.','Consent and customer control',ARRAY[]::text[],NULL::text),
+    ('project:ux-audit','Audit IA-first workflow','For UX Audit, should IA discovery happen before screen findings and page-level evidence?','Retrieve the IA-first workflow and page-level evidence rule.','Audit information architecture before screen findings',ARRAY[]::text[],NULL::text),
+    ('project:ux-audit','Specific audit findings','How should severity and UX recommendations remain specific and non-duplicated?','Retrieve guidance requiring specific evidence, severity, recommendations and validation.','Evidence and findings must stay specific',ARRAY[]::text[],NULL::text),
+    ('project:ux-direct','Free-first model recovery','Which model fallback policy protects UX Direct cost and avoids paid routing?','Retrieve the bounded free-first fallback and no-paid-routing rule.','Free-first model recovery',ARRAY[]::text[],NULL::text),
+    ('project:ux-direct','Initial client focus','What is UX Direct initial client focus and scope policy for DMI and Ujjivan?','Retrieve the initial client focus and keep each client context scoped.','Initial client focus for UX Direct',ARRAY[]::text[],NULL::text),
+    ('project:dmi-finance','DMI journey checks','In DMI HFC or DMI Wealth loan journey, what identity consent OTP verification error and recovery states should be checked?','Retrieve DMI journey checks without leaking Ujjivan-specific guidance.','DMI financial journey design checks',ARRAY['Ujjivan SFB website revamp checks']::text[],NULL::text),
+    ('project:ujjivan-sfb','Ujjivan website revamp','For Ujjivan SFB website revamp, what navigation CTA hierarchy responsive and competitor benchmarking should be reviewed?','Retrieve Ujjivan website revamp checks without leaking DMI-specific guidance.','Ujjivan SFB website revamp checks',ARRAY['DMI financial journey design checks']::text[],NULL::text),
+    ('UX_SHARED_BRAIN','RAG is retrieval, not fine-tuning','How does the RAG Knowledge Base supply context without training or fine-tuning the model?','Retrieve the approved reference distinguishing RAG retrieval from model fine-tuning.',NULL,ARRAY[]::text[],'RAG Knowledge Base, Not Model Fine-Tuning'),
+    ('indian-bfsi','BFSI consent knowledge reference','Indian BFSI UX guidelines about consent transparency fees privacy and customer control','Retrieve the approved Indian BFSI consent and transparency reference.',NULL,ARRAY[]::text[],'Indian BFSI UX guardrails: clarity, consent, and customer control')
+),
+resolved AS (
+  SELECT e.*, m.id AS expected_memory_id, d.id AS expected_document_id
+  FROM eval_seed e
+  LEFT JOIN public.uxd_memory_items m
+    ON m.title = e.expected_memory_title AND m.status = 'approved'
+  LEFT JOIN public.uxd_knowledge_documents d
+    ON d.title = e.expected_document_title AND d.status = 'approved'
+  WHERE (e.expected_memory_title IS NULL OR m.id IS NOT NULL)
+    AND (e.expected_document_title IS NULL OR d.id IS NOT NULL)
+)
+INSERT INTO public.uxd_brain_eval_cases
+  (scope_key, capability, title, input, expected_behavior, forbidden_behaviors,
+   expected_memory_ids, expected_knowledge_chunk_ids, status, source, metadata, updated_at)
+SELECT
+  r.scope_key, 'retrieval', r.title, r.input, r.expected_behavior, r.forbidden_behaviors,
+  CASE WHEN r.expected_memory_id IS NULL THEN ARRAY[]::uuid[] ELSE ARRAY[r.expected_memory_id] END,
+  ARRAY[]::uuid[],
+  'approved', 'owner-approved-regression-suite',
+  jsonb_build_object(
+    'suite','shared-brain-rag-v1',
+    'expectedDocumentIds', CASE WHEN r.expected_document_id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(r.expected_document_id::text) END
+  ),
+  now()
+FROM resolved r
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.uxd_brain_eval_cases existing
+  WHERE existing.scope_key = r.scope_key
+    AND existing.capability = 'retrieval'
+    AND existing.title = r.title
+);
+
+
 COMMIT;
 
 -- Simple verification. The search function itself only returns approved, in-scope content.
