@@ -181,7 +181,13 @@ function fuseResults(pools: Array<{ kind: "memory" | "knowledge"; rows: any[] }>
       const key = pool.kind + ":" + id;
       const prior = combined.get(key);
       const rrf = 1 / (60 + idx + 1);
-      const content = String(row.content || "").trim().slice(0, 9000);
+      const baseContent = String(row.content || "").trim();
+      const structured = row.structured_data && typeof row.structured_data === "object" ? row.structured_data as Record<string, unknown> : {};
+      const rationale = pool.kind === "memory" && typeof structured.rationale === "string" ? structured.rationale.trim() : "";
+      const examples = pool.kind === "memory" && Array.isArray(structured.examples)
+        ? structured.examples.filter((example: unknown): example is string => typeof example === "string").slice(0, 2).map((example: string) => "Calibration example (not evidence): " + example.trim().slice(0, 260))
+        : [];
+      const content = [baseContent, rationale ? "Rationale: " + rationale : "", ...examples].filter(Boolean).join("\\n").slice(0, 9000);
       const item: BrainContextItem = prior || {
         id,
         kind: pool.kind,
@@ -337,8 +343,10 @@ export async function saveBrainFeedback(input: BrainFeedbackInput) {
   if (Array.isArray(existingMemory) && existingMemory[0]?.id) {
     memoryItemId = String(existingMemory[0].id);
   } else {
-    const memoryPayload = {
+    const ruleEmbedding = await embedText([title, normalizedRule, rationale, keywords.join(" ")].filter(Boolean).join("\\n"));
+  const memoryPayload = {
       project_key: scopeKey, memory_type: "coaching_rule", title, content: normalizedRule,
+      ...(ruleEmbedding ? { embedding: vectorLiteral(ruleEmbedding.vector), embedding_model: ruleEmbedding.model } : {}),
       structured_data: {
         rationale, feedbackKind: input.feedbackKind, examples, originalLanguage: feedback.original_language,
         sourceProduct, sourceFeedbackId: saved.id, sourceAuditRef: feedback.source_audit_ref,
@@ -400,12 +408,15 @@ export async function reviewBrainFeedback(input: { feedbackId: unknown; action: 
 
   if (status === "approved" && !memoryId) {
     const dedupeKey = normalizeDedupeKey(row.scope_key as BrainScope, row.normalized_rule);
+    const ruleEmbedding = await embedText([row.title, row.normalized_rule, row.rationale || "", ...(Array.isArray(row.keywords) ? row.keywords : [])].filter(Boolean).join("\\n"));
+    const sourceProduct = ["ux-direct", "ux-audit", "figma-plugin", "chatgpt", "system"].includes(String(row.source_product)) ? String(row.source_product) : "chatgpt";
     const created = await supabaseRequest("uxd_memory_items", {
       method: "POST", headers: { Prefer: "return=representation" },
       body: JSON.stringify({
         project_key: row.scope_key, memory_type: "coaching_rule", title: row.title, content: row.normalized_rule,
+        ...(ruleEmbedding ? { embedding: vectorLiteral(ruleEmbedding.vector), embedding_model: ruleEmbedding.model } : {}),
         structured_data: { rationale: row.rationale, feedbackKind: row.feedback_kind, examples: row.examples, sourceFeedbackId: row.id, sourceProduct: row.source_product },
-        tags: row.keywords || [], source: "chatgpt-coaching", source_product: row.source_product,
+        tags: row.keywords || [], source: sourceProduct === "ux-audit" ? "ux-audit" : sourceProduct === "figma-plugin" ? "figma-plugin" : "chatgpt-coaching", source_product: sourceProduct,
         source_reference: row.source_audit_ref || String(row.id), dedupe_key: dedupeKey,
         confidence: 0.8, status: "draft", usage_count: 0,
       }),
