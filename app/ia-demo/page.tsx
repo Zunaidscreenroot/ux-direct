@@ -210,7 +210,7 @@ export default function IADemoPage() {
     <main className="ia-workbench">
       <header className="ia-head">
         <div>
-          <Link href="/chat" className="ia-back">← UX Direct cockpit</Link>
+          <Link href="/chat#audit" className="ia-back">← Audit workspace</Link>
           <div className="eyebrow" style={{ marginTop: 24 }}><span className="pulse" /> INFORMATION ARCHITECTURE</div>
           <h1>Information architecture <em>studio.</em></h1>
           <p className="intro">Discover your site structure, inspect the real page hierarchy, then let AI review the architecture for evidence-backed findability risks.</p>
