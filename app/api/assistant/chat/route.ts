@@ -22,8 +22,8 @@ type BrainContextInfo = {
 
 const MAX_MESSAGES = 100;
 const MAX_TOTAL_CHARS = 80000;
-const MAX_MODEL_ATTEMPTS = 2;
-const FIRST_TEXT_TIMEOUT_MS = 5500;
+const MAX_MODEL_ATTEMPTS = 3;
+const FIRST_TEXT_TIMEOUT_MS = 9000;
 const FALLBACK_HEDGE_DELAY_MS = 900;
 const SYSTEM_PROMPT = [
   "You are UX Direct, a thoughtful senior product UX partner.",
@@ -348,6 +348,22 @@ export async function POST(request: Request) {
     } catch (error) {
       lastError = error instanceof Error ? error.message : "Free model failed before producing text.";
       lastStatus = typeof error === "object" && error !== null && "status" in error ? Number((error as { status: unknown }).status) : 502;
+    }
+  }
+
+  // Only reach extra candidates after the primary/hedged pair both fail.
+  // This keeps the common path to at most two concurrent OpenRouter requests.
+  while (!winner && attempts.length < candidates.length) {
+    const nextAttempt = startAttempt(candidates[attempts.length]);
+    attempts.push(nextAttempt);
+    try {
+      winner = await nextAttempt.promise;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Free model attempt failed.";
+      lastError = (lastError + " | " + message).slice(0, 800);
+      lastStatus = typeof error === "object" && error !== null && "status" in error
+        ? Number((error as { status: unknown }).status)
+        : 502;
     }
   }
 
