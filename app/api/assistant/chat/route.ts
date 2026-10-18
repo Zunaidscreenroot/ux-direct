@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { buildBrainSystemPrompt, buildRetrievalQuery, resolveBrainScopes } from "@/src/memory/chat-context";
 import { retrieveBrainContext, saveBrainFeedback } from "@/src/memory/shared-brain";
 import { detectCoachingSignal, detectExplicitTrainingIntent, resolveChatLearningScope } from "@/src/memory/learning-signal";
-import { collectFreeModelCandidates, hasAssistantTextDelta, isFreeModelId } from "@/src/providers/openrouter-chat";
+import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,9 +22,8 @@ type BrainContextInfo = {
 
 const MAX_MESSAGES = 100;
 const MAX_TOTAL_CHARS = 80000;
-const MAX_MODEL_ATTEMPTS = 3;
-const FIRST_TEXT_TIMEOUT_MS = 9000;
-const FALLBACK_HEDGE_DELAY_MS = 900;
+const ROUTER_MODEL = "openrouter/auto";
+const FIRST_TEXT_TIMEOUT_MS = 30_000;
 const SYSTEM_PROMPT = [
   "You are UX Direct, a thoughtful senior product UX partner.",
   "Focus on evidence-led UX, information architecture, user journeys, interaction design, accessibility, and measurable business hypotheses.",
@@ -208,10 +207,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400 });
   }
   const value = body as Record<string, unknown>;
-  const model = typeof value.model === "string" ? value.model.trim() : "";
-  if (!model.endsWith(":free") || !isFreeModelId(model)) {
-    return NextResponse.json({ error: "UX Direct chat only accepts an explicit OpenRouter model ending in :free. Paid models and automatic routing are blocked." }, { status: 400 });
-  }
+  // Let OpenRouter choose the model dynamically; never pin a stale provider/model ID from the browser.
+  const model = ROUTER_MODEL;
   if (!Array.isArray(value.messages) || value.messages.length < 1 || value.messages.length > MAX_MESSAGES) {
     return NextResponse.json({ error: "messages must contain between 1 and " + MAX_MESSAGES + " entries." }, { status: 400 });
   }
@@ -246,16 +243,8 @@ export async function POST(request: Request) {
   const brain: BrainContextInfo = { ...brainBase, learningStatus: learning.status, ...(learning.draftId ? { learningDraftId: learning.draftId } : {}) };
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const clientFallbacks = Array.isArray(value.fallbackModels)
-    ? value.fallbackModels.filter((entry): entry is string => typeof entry === "string" && isFreeModelId(entry)).slice(0, 12)
-    : [];
-  const configuredModels = [
-    clientFallbacks.join(","),
-    process.env.UX_DIRECT_CHAT_FALLBACK_MODELS || "",
-    process.env.OPENROUTER_MODELS || "",
-  ];
-  const candidates = collectFreeModelCandidates(model, configuredModels, [], MAX_MODEL_ATTEMPTS);
-  let lastError = "No usable response was returned by the available free OpenRouter models.";
+  const candidates = [model];
+  let lastError = "No usable response was returned by OpenRouter Auto Router.";
   let lastStatus = 502;
   const origin = new URL(request.url).origin;
 
@@ -271,14 +260,16 @@ export async function POST(request: Request) {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
             "HTTP-Referer": origin,
-            "X-Title": "UX Direct",
+            "X-OpenRouter-Title": "UX Direct",
           },
           body: JSON.stringify({
             model: currentModel,
             messages: [{ role: "system", content: systemContent }, ...promptMessages],
             stream: true,
             temperature: 0.4,
-            provider: { allow_fallbacks: false },
+            plugins: [{ id: "auto-router", cost_tier: "low" }],
+            provider: { sort: "throughput" },
+            usage: { include: true },
           }),
           cache: "no-store",
           signal: controller.signal,
@@ -288,20 +279,20 @@ export async function POST(request: Request) {
           const status = providerResponse.status;
           const message = [401, 403].includes(status)
             ? "OpenRouter rejected the configured API key or account access (HTTP " + status + ")."
-            : "Free model " + currentModel + " returned HTTP " + status + (details ? ": " + details : ".");
+            : "OpenRouter Auto Router (requested as " + currentModel + ") returned HTTP " + status + (details ? ": " + details : ".");
           throw Object.assign(new Error(message), { status });
         }
         const probe = await probeForFirstText(providerResponse);
         if (!probe.hasText) {
           if (probe.reader) await probe.reader.cancel().catch(() => {});
-          throw Object.assign(new Error("Free model " + currentModel + " returned an empty text stream before its first token."), { status: 502 });
+          throw Object.assign(new Error("OpenRouter Auto Router returned an empty text stream before its first token."), { status: 502 });
         }
         // Stop the startup timer once the first visible text arrives; let the full answer stream without an app-imposed timeout.
         clearTimeout(timer);
         return { model: currentModel, probe, controller };
       } catch (error) {
         if (controller.signal.aborted) {
-          throw Object.assign(new Error("Free model " + currentModel + " did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
+          throw Object.assign(new Error("OpenRouter Auto Router did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
         }
         throw error;
       } finally {
@@ -311,60 +302,15 @@ export async function POST(request: Request) {
     return { controller, promise };
   };
 
-  const firstAttempt = startAttempt(candidates[0]);
+  const attempts = [startAttempt(model)];
   let winner: { model: string; probe: ProbedStream; controller: AbortController } | null = null;
-  const firstOutcome = firstAttempt.promise.then(
-    (value) => ({ kind: "ready" as const, value }),
-    (error) => ({ kind: "failed" as const, error }),
-  );
-  let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
-  const hedgePromise = new Promise<{ kind: "hedge" }>((resolve) => {
-    hedgeTimer = setTimeout(() => resolve({ kind: "hedge" }), FALLBACK_HEDGE_DELAY_MS);
-  });
-  const early = await Promise.race([firstOutcome, hedgePromise]);
-  if (hedgeTimer) clearTimeout(hedgeTimer);
-  const attempts = [firstAttempt];
-
-  if (early.kind === "ready") {
-    winner = early.value;
-  } else if (candidates.length > 1) {
-    // Hedge with a second free model if the primary has not produced visible text quickly.
-    const secondAttempt = startAttempt(candidates[1]);
-    attempts.push(secondAttempt);
-    try {
-      winner = await Promise.any(attempts.map((attempt) => attempt.promise));
-    } catch (error) {
-      const errors = error instanceof AggregateError ? error.errors : [error];
-      lastError = errors.map((item) => item instanceof Error ? item.message : "Free model attempt failed.").join(" | ").slice(0, 800);
-      const statuses = errors.map((item) => typeof item === "object" && item !== null && "status" in item ? Number((item as { status: unknown }).status) : 502);
-      lastStatus = statuses[statuses.length - 1] || 502;
-    }
-  } else if (early.kind === "failed") {
-    lastError = early.error instanceof Error ? early.error.message : "Free model failed before producing text.";
-    lastStatus = typeof early.error === "object" && early.error !== null && "status" in early.error ? Number((early.error as { status: unknown }).status) : 502;
-  } else {
-    try {
-      winner = await firstAttempt.promise;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : "Free model failed before producing text.";
-      lastStatus = typeof error === "object" && error !== null && "status" in error ? Number((error as { status: unknown }).status) : 502;
-    }
-  }
-
-  // Only reach extra candidates after the primary/hedged pair both fail.
-  // This keeps the common path to at most two concurrent OpenRouter requests.
-  while (!winner && attempts.length < candidates.length) {
-    const nextAttempt = startAttempt(candidates[attempts.length]);
-    attempts.push(nextAttempt);
-    try {
-      winner = await nextAttempt.promise;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Free model attempt failed.";
-      lastError = (lastError + " | " + message).slice(0, 800);
-      lastStatus = typeof error === "object" && error !== null && "status" in error
-        ? Number((error as { status: unknown }).status)
-        : 502;
-    }
+  try {
+    winner = await attempts[0].promise;
+  } catch (error) {
+    lastError = error instanceof Error ? error.message : "OpenRouter Auto Router failed before producing text.";
+    lastStatus = typeof error === "object" && error !== null && "status" in error
+      ? Number((error as { status: unknown }).status)
+      : 502;
   }
 
   if (winner) {
@@ -375,9 +321,9 @@ export async function POST(request: Request) {
   }
 
   for (const attempt of attempts) attempt.controller.abort();
-  const userMessage = "No usable response was returned by the available free OpenRouter models. " + lastError;
+  const userMessage = "OpenRouter Auto Router failed. " + lastError;
   return NextResponse.json(
-    { error: userMessage, attemptedModels: candidates.slice(0, MAX_MODEL_ATTEMPTS) },
+    { error: userMessage, attemptedModels: candidates },
     { status: lastStatus === 429 ? 429 : 502, headers: brainHeaders(brain) },
   );
 }
