@@ -10,7 +10,7 @@ import { getGatewaySettings } from "@/src/model-gateway/control-store";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
-import { retrieveBrainContext } from "@/src/memory/shared-brain";
+import { retrieveBrainContext, resolveTaskBrainScope } from "@/src/memory/shared-brain";
 
 const requestSchema = z.object({
   title: z.string().trim().min(1).max(160),
@@ -97,16 +97,8 @@ export async function POST(request: Request) {
   let brainContext: Awaited<ReturnType<typeof retrieveBrainContext>> | null = null;
   if (selectedProvider !== mockProvider) {
     try {
-      const taskText = `${parsed.data.title}\\n${parsed.data.request}\\n${parsed.data.project}`;
-      const looksBfsi = /(bfsi|bank|banking|financial services|finance|loan|credit|upi|insurance|nbfc|dmi|ujjivan|sfb)/i.test(taskText);
-      const looksAudit = /(ux audit|audit|benchmark|usability review|heuristic review|critique)/i.test(taskText);
-      const productScope = /\b(dmi|dmi hfc|dmi finance)\b/i.test(taskText) ? "DMI_HFC"
-        : /\b(ujjivan|ujjivan sfb)\b/i.test(taskText) ? "UJJIVAN_SFB"
-        : looksBfsi ? "INDIA_BFCI_SHARED" : null;
-      const scopeKey = parsed.data.project === "express-computers"
-        ? "EXPRESS_COMPUTERS"
-        : looksAudit ? "UX_AUDIT" : productScope || "UX_DIRECT";
-      const relatedScopes = looksAudit && productScope && productScope !== scopeKey ? [productScope] : [];
+      const taskText = `${parsed.data.title}\n${parsed.data.request}\n${parsed.data.project}`;
+      const scopeKey = resolveTaskBrainScope(parsed.data.project, parsed.data.title, parsed.data.request);
       brainContext = await retrieveBrainContext({
         query: taskText,
         scopeKey,
