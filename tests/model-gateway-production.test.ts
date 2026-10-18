@@ -18,15 +18,18 @@ test("home opens the unified chat-first workspace instead of the operations dash
   assert.equal(page.includes("ModelGatewayPanel"), false);
 });
 
-test("UX Direct chat only accepts explicit free OpenRouter model IDs and disables provider fallbacks", () => {
+test("UX Direct chat uses OpenRouter Auto with low-cost routing and throughput preference", () => {
   const route = read("app/api/assistant/chat/route.ts");
   const status = read("app/api/assistant/status/route.ts");
-  assert.ok(route.includes('model.endsWith(":free")'));
-  assert.ok(route.includes("provider: { allow_fallbacks: false }"));
+  assert.ok(route.includes('const ROUTER_MODEL = "openrouter/auto"'));
+  assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
+  assert.ok(route.includes('provider: { sort: "throughput" }'));
+  assert.ok(route.includes("FIRST_TEXT_TIMEOUT_MS = 30_000"));
   assert.ok(route.includes("OPENROUTER_API_KEY"));
-  assert.ok(status.includes('row.id.endsWith(":free")'));
-  assert.ok(status.includes('model.endsWith(":free")'));
-  assert.ok(status.includes("openrouter.ai/api/v1/models"));
+  assert.equal(route.includes('provider: { allow_fallbacks: false }'), false);
+  assert.equal(route.includes('model.endsWith(":free")'), false);
+  assert.ok(status.includes('defaultModel: "openrouter/auto"'));
+  assert.equal(status.includes("openrouter.ai/api/v1/models"), false);
 });
 
 test("production gateway settings writes require the server-side admin key", () => {
@@ -55,7 +58,7 @@ test("legacy gateway credentials remain server-only and are not saved in browser
   assert.ok(settingsRoute.includes("MODEL_GATEWAY_ADMIN_KEY"));
 });
 
-test("OpenRouter homepage chat stays free-only while internal routing is dynamic and cost-sensitive", () => {
+test("The configured free-model catalog stays available separately from dynamic low-cost routing", () => {
   const env = read(".env.example");
   assert.ok(env.includes("OPENROUTER_MODELS=google/gemma-4-31b-it:free"));
   assert.ok(env.includes("OPENROUTER_AUTO_ROUTING=true"));
