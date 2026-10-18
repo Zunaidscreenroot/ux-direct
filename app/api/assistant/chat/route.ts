@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { collectFreeModelCandidates, hasAssistantTextDelta, isFreeModelId } from "@/src/providers/openrouter-chat";
+import { collectFreeModelCandidates, compactRecentMessages, hasAssistantTextDelta, isFreeModelId } from "@/src/providers/openrouter-chat";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,15 +14,17 @@ type BrainContextInfo = {
   durationMs: number;
 };
 
-const MAX_MESSAGES = 80;
+const MAX_MESSAGES = 100;
 const MAX_TOTAL_CHARS = 80000;
-const MAX_MODEL_ATTEMPTS = 3;
-const MODEL_ATTEMPT_TIMEOUT_MS = 12000;
+const MAX_MODEL_ATTEMPTS = 2;
+const MODEL_ATTEMPT_TIMEOUT_MS = 8000;
+const TOTAL_MODEL_BUDGET_MS = 12000;
 const SYSTEM_PROMPT = [
   "You are UX Direct, a thoughtful senior product UX partner.",
   "Focus on evidence-led UX, information architecture, user journeys, interaction design, accessibility, and measurable business hypotheses.",
   "Prioritize Indian BFSI when relevant, especially DMI Finance, DMI Housing Finance, DMI Wealth, and Ujjivan Small Finance Bank.",
   "Be conversational like a helpful design colleague. Answer directly, explain trade-offs, and ask a follow-up only when a missing detail genuinely blocks the work.",
+  "Be concise by default. Answer the question first, avoid repeating the prompt, and reserve long structured explanations for requests that need them.",
   "Never invent evidence, claim you inspected a website when you did not, or treat a hypothesis as a measured business outcome.",
   "For UX findings, distinguish observed evidence, interpretation, severity, recommendation, and validation.",
   "Only use retrieved approved shared-brain context when it is relevant. Current user instructions and direct evidence take precedence.",
@@ -60,14 +62,14 @@ async function retrieveMemory(request: Request, query: string): Promise<BrainCon
       method: "POST",
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
-        query: query.slice(0, 6000),
+        query: query.slice(0, 3000),
         scopeKeys: ["UX_SHARED_BRAIN", "indian-bfsi", "project:ux-direct", "project:ux-audit", "project:dmi-finance", "project:ujjivan-sfb"],
-        limit: 6,
-        maxChars: 3000,
+        limit: 4,
+        maxChars: 1800,
         includeKnowledge: true,
       }),
       cache: "no-store",
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(1800),
     });
     if (!response.ok) {
       return { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: Date.now() - startedAt };
@@ -152,26 +154,6 @@ function forwardProbedStream(probe: ProbedStream, brain: BrainContextInfo, model
   return new Response(body, { headers });
 }
 
-async function discoverFreeModels(endpoint: string, key: string): Promise<string[]> {
-  try {
-    const response = await fetch(endpoint.replace(/\/+$/, "") + "/models", {
-      headers: { Authorization: "Bearer " + key, Accept: "application/json" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(4000),
-    });
-    if (!response.ok) return [];
-    const payload = await response.json() as { data?: unknown };
-    if (!Array.isArray(payload.data)) return [];
-    return payload.data.flatMap((item) => {
-      if (!item || typeof item !== "object") return [];
-      const id = (item as Record<string, unknown>).id;
-      return isFreeModelId(id) ? [id] : [];
-    });
-  } catch {
-    return [];
-  }
-}
-
 export async function POST(request: Request) {
   const key = process.env.OPENROUTER_API_KEY?.trim();
   if (!key) {
@@ -211,24 +193,32 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Conversation is too long. Start a new chat to continue." }, { status: 413 });
   }
 
-  const lastUserMessage = [...messages].reverse().find((message) => message.role === "user")?.content || "";
+  const promptMessages = compactRecentMessages(messages, { maxMessages: 14, maxTotalChars: 22000, maxMessageChars: 6000 });
+  const lastUserMessage = [...promptMessages].reverse().find((message) => message.role === "user")?.content || "";
   const brain = await retrieveMemory(request, lastUserMessage);
   const systemContent = brain.contextText
     ? SYSTEM_PROMPT + "\n\nAPPROVED SHARED KNOWLEDGE CONTEXT (use only when relevant):\n" + brain.contextText
     : SYSTEM_PROMPT;
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
+  const clientFallbacks = Array.isArray(value.fallbackModels)
+    ? value.fallbackModels.filter((entry): entry is string => typeof entry === "string" && isFreeModelId(entry)).slice(0, 12)
+    : [];
   const configuredModels = [
+    clientFallbacks.join(","),
     process.env.UX_DIRECT_CHAT_FALLBACK_MODELS || "",
     process.env.OPENROUTER_MODELS || "",
   ];
-  let candidates = collectFreeModelCandidates(model, configuredModels, [], MAX_MODEL_ATTEMPTS);
-  let discoveryAttempted = false;
+  const candidates = collectFreeModelCandidates(model, configuredModels, [], MAX_MODEL_ATTEMPTS);
   let lastError = "No usable response was returned by a free model.";
   let lastStatus = 502;
   const origin = new URL(request.url).origin;
+  const modelDeadline = Date.now() + TOTAL_MODEL_BUDGET_MS;
 
   for (let index = 0; index < candidates.length && index < MAX_MODEL_ATTEMPTS; index += 1) {
+    const remainingMs = modelDeadline - Date.now();
+    if (remainingMs < 750) break;
     const currentModel = candidates[index];
+    const attemptTimeoutMs = Math.min(MODEL_ATTEMPT_TIMEOUT_MS, remainingMs);
     let providerResponse: Response | null = null;
     try {
       providerResponse = await fetch(endpoint, {
@@ -242,14 +232,14 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           model: currentModel,
-          messages: [{ role: "system", content: systemContent }, ...messages],
+          messages: [{ role: "system", content: systemContent }, ...promptMessages],
           stream: true,
-          temperature: 0.5,
-          max_tokens: 2200,
+          temperature: 0.4,
+          max_tokens: 1400,
           provider: { allow_fallbacks: false },
         }),
         cache: "no-store",
-        signal: AbortSignal.timeout(MODEL_ATTEMPT_TIMEOUT_MS),
+        signal: AbortSignal.timeout(attemptTimeoutMs),
       });
     } catch (error) {
       lastStatus = 502;
@@ -278,11 +268,6 @@ export async function POST(request: Request) {
       if ([401, 403].includes(providerResponse.status)) break;
     }
 
-    if (!discoveryAttempted && index === 0 && candidates.length < MAX_MODEL_ATTEMPTS) {
-      discoveryAttempted = true;
-      const liveFreeModels = await discoverFreeModels(endpoint.slice(0, -"/chat/completions".length), key);
-      candidates = collectFreeModelCandidates(model, configuredModels, liveFreeModels, MAX_MODEL_ATTEMPTS);
-    }
   }
 
   const userMessage = "No usable response was returned by the available free OpenRouter models. " + lastError;

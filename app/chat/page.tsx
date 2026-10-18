@@ -3,6 +3,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import "./chat.css";
 import { ThinkingOrb } from "thinking-orbs";
+import { compactRecentMessages } from "@/src/providers/openrouter-chat";
 
 type Role = "user" | "assistant";
 type BrainTrace = {
@@ -146,7 +147,11 @@ export default function ChatWorkspace() {
       const response = await fetch("/api/assistant/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-        body: JSON.stringify({ model: selectedModel, messages: conversation.map((message) => ({ role: message.role, content: message.content })) }),
+        body: JSON.stringify({
+          model: selectedModel,
+          fallbackModels: status.freeModels.map((model) => model.id).filter((id) => id !== selectedModel && id.endsWith(":free")).slice(0, 12),
+          messages: compactRecentMessages(conversation, { maxMessages: 14, maxTotalChars: 22000, maxMessageChars: 6000 }),
+        }),
         signal: controller.signal,
       });
       const headerStatus = response.headers.get("X-UXD-Brain-Status");

@@ -4,6 +4,43 @@ export function isFreeModelId(value: unknown): value is string {
   return typeof value === "string" && FREE_MODEL_ID.test(value.trim());
 }
 
+export type ChatPromptMessage = { role: "user" | "assistant"; content: string };
+export type ChatPromptLimits = { maxMessages?: number; maxTotalChars?: number; maxMessageChars?: number };
+
+function trimPromptContent(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  if (limit <= 24) return value.slice(-limit);
+  const marker = "\n[context trimmed]\n";
+  const payloadLength = limit - marker.length;
+  const headLength = Math.ceil(payloadLength * 0.72);
+  const tailLength = payloadLength - headLength;
+  return value.slice(0, headLength) + marker + value.slice(-tailLength);
+}
+
+/** Keep a bounded recent conversation window while preserving the newest user input. */
+export function compactRecentMessages(
+  messages: ChatPromptMessage[],
+  limits: ChatPromptLimits = {},
+): ChatPromptMessage[] {
+  const maxMessages = Math.max(1, Math.min(20, Math.floor(limits.maxMessages ?? 14)));
+  const maxTotalChars = Math.max(1000, Math.min(24000, Math.floor(limits.maxTotalChars ?? 22000)));
+  const maxMessageChars = Math.max(500, Math.min(8000, Math.floor(limits.maxMessageChars ?? 6000)));
+  const recent = messages.slice(-maxMessages);
+  const selected: ChatPromptMessage[] = [];
+  let totalChars = 0;
+
+  for (let index = recent.length - 1; index >= 0; index -= 1) {
+    const remaining = maxTotalChars - totalChars;
+    if (remaining <= 0) break;
+    const limit = Math.min(maxMessageChars, remaining);
+    const content = trimPromptContent(recent[index].content, limit);
+    if (!content.trim()) continue;
+    selected.push({ role: recent[index].role, content });
+    totalChars += content.length;
+  }
+  return selected.reverse();
+}
+
 export function collectFreeModelCandidates(
   primary: string,
   configuredModels: string[],
