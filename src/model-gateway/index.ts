@@ -13,7 +13,7 @@ export type ChatMessage = { role: ChatRole; content: ChatContent };
 /** Extract only textual content for limits and safe telemetry; image URLs are never logged. */
 export function chatContentText(content: ChatContent): string {
   if (typeof content === "string") return content;
-  return content.filter((part): part is ChatTextPart => part.type === "text").map(part => part.text).join("\\n");
+  return content.filter((part): part is ChatTextPart => part.type === "text").map(part => part.text).join("\n");
 }
 
 /**
