@@ -35,6 +35,7 @@ const reviewSchema = z.object({
   feedbackId: z.string().uuid(),
   decision: z.enum(["approve","reject","archive"]),
   reviewNote: z.string().max(1000).optional(),
+  sourceProduct: z.enum(["ux-direct","ux-audit","figma-plugin","chatgpt","local-model","benchmark","knowledge-ingestion"]).optional(),
 }).strict();
 
 const saveSchema = z.object({ action: z.literal("save"), feedback: feedbackSchema }).strict();
@@ -53,7 +54,7 @@ export async function POST(request: Request) {
       const feedback = await listBrainFeedback(input);
       return Response.json({ feedback, count: feedback.length }, { headers: brainNoStoreHeaders() });
     }
-    const result = await reviewBrainFeedback({ feedbackId: input.feedbackId, action: input.decision, reviewNote: input.reviewNote });
+    const result = await reviewBrainFeedback({ feedbackId: input.feedbackId, action: input.decision, reviewNote: input.reviewNote, expectedSourceProduct: input.sourceProduct });
     return Response.json({ result }, { headers: brainNoStoreHeaders() });
   } catch (error) {
     return errorResponse(error, "Shared-brain feedback request failed.");
