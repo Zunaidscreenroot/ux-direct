@@ -17,7 +17,8 @@ function publicUrl(value: string): URL | null {
     if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return null;
     if (isIpv4 || host.includes(":") || !host.includes(".")) return null;
     return url;
-
+  } catch { return null; }
+}
 
 function rateAllowed(request: Request): boolean {
   const origin = request.headers.get("origin");
