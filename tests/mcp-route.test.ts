@@ -51,6 +51,8 @@ test("tool list exposes status, safe UX planning, and shared brain operations", 
     assert.deepEqual(body.result.tools.map((tool: { name: string }) => tool.name), [
       "ux_direct_status",
       "ux_direct_connection_status",
+      "ux_direct_figma_plugin_queue_health_check",
+      "ux_direct_figma_plugin_health_check_status",
       "ux_direct_plan_task",
       "ux_direct_brain_search",
       "ux_direct_brain_save_feedback",
