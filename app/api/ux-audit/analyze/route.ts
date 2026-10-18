@@ -157,16 +157,18 @@ export async function POST(request: Request) {
 
   try {
     const response = await chatCompletionWithFallback({
-      model: process.env.UXD_AUDIT_MODEL || "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-      providerId: "openrouter",
-      moduleId: "vision",
+      // Let the configured gateway choose a vision-capable model dynamically.
+      // This keeps UX audits on the same low-cost/throughput route as other internal work,
+      // while homepage chat remains on its separate free-only model pool.
+      model: "uxd/vision",
       messages: [
         { role: "system", content: UX_AUDIT_SYSTEM_PROMPT },
         { role: "user", content: imageParts }
       ],
       max_tokens: 6000,
-      temperature: 0.15
-    });
+      temperature: 0.15,
+      signal: request.signal
+    }, { timeoutMs: 120_000 });
     let jsonText = response.content.trim();
     jsonText = jsonText.replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
     const start = jsonText.indexOf("{");
