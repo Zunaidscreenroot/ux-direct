@@ -29,7 +29,10 @@ export function isValidChatContent(value: unknown): value is ChatContent {
       if (typeof image.url !== "string" || typeof image.detail === "string" && !["auto", "low", "high"].includes(image.detail)) return false;
       try {
         const url = new URL(image.url);
-        return url.protocol === "https:" && !url.username && !url.password;
+        const host = url.hostname.toLowerCase().replace(/^\\[|\\]$/g, "");
+        const blockedHost = host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") ||
+          host.endsWith(".internal") || /^\\d{1,3}(?:\\.\\d{1,3}){3}$/.test(host) || host.includes(":") || !host.includes(".");
+        return url.protocol === "https:" && !url.username && !url.password && !blockedHost && url.href.length <= 2048;
       } catch { return false; }
     }
     return false;
