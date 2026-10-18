@@ -53,4 +53,4 @@ This repository is being initialized. Start with a small, testable vertical slic
 
 ## Getting started
 
-The application scaffold and implementation plan will be added incrementally. See [Architecture](docs/architecture.md), [MVP plan](docs/mvp-plan.md), [Model Gateway](docs/model-gateway.md), and the [free-first provider setup](docs/model-gateway-providers.md). The gateway is a zero-fee application module; leave paid model keys blank until the mock/local/free-tier test checklist passes.
+The application scaffold and implementation plan will be added incrementally. See [Architecture](docs/architecture.md), [Shared Product Brain](docs/shared-product-brain.md), [MVP plan](docs/mvp-plan.md), [Model Gateway](docs/model-gateway.md), and the [free-first provider setup](docs/model-gateway-providers.md). The gateway is a zero-fee application module; leave paid model keys blank until the mock/local/free-tier test checklist passes.
