@@ -39,9 +39,15 @@ These use cases validate the product; they do not limit its future capabilities.
 
 A real task should result in editable, product-consistent design output plus rationale, requirement coverage, key edge states, QA findings, and a clear list of unresolved assumptions. Evaluate quality, cost, latency, reliability, and the amount of human intervention.
 
+## Shared Brain
+
+UX Direct owns the persistent, model-agnostic memory used by UX Direct, UX Audit and the Figma plugin. ChatGPT can turn natural-language or Hindi/Hinglish coaching into a draft rule; the rule becomes active only after explicit approval. The shared brain stores approved reusable knowledge and source-backed references, while client audit reports stay in the separate Past findings store.
+
+The backend now includes scoped retrieval, keyword search, optional vector embeddings, bounded context injection, deduplication/idempotency, validity dates and a retrieval evaluation harness. This is external memory/retrieval—not a model-weight fine-tune—and it must remain evidence-led. See [Shared Brain architecture](docs/shared-brain-memory.md) for the lifecycle, scope rules, cost controls and open-source concepts adopted.
+
 ## Development status
 
-This repository is being initialized. Start with a small, testable vertical slice rather than attempting every capability at once. Keep architecture extensible and measure each addition against real Express Computers and DMI Finance work.
+The first shared-memory vertical slice is implemented behind the backend API and MCP tools. Validate with real owner corrections and subsequent audits before making claims about accuracy or token savings. Keep work measurable against actual UX Direct/Figma and UX Audit tasks.
 
 ## Security
 
@@ -53,4 +59,4 @@ This repository is being initialized. Start with a small, testable vertical slic
 
 ## Getting started
 
-The application scaffold and implementation plan will be added incrementally. See [Architecture](docs/architecture.md), [MVP plan](docs/mvp-plan.md), [Model Gateway](docs/model-gateway.md), and the [free-first provider setup](docs/model-gateway-providers.md). The gateway is a zero-fee application module; leave paid model keys blank until the mock/local/free-tier test checklist passes.
+The application scaffold and implementation plan will be added incrementally. See [Architecture](docs/architecture.md), [Shared Brain](docs/shared-brain-memory.md), [MVP plan](docs/mvp-plan.md), [Model Gateway](docs/model-gateway.md), and the [free-first provider setup](docs/model-gateway-providers.md). The gateway is a zero-fee application module; leave paid model keys blank until the mock/local/free-tier test checklist passes.
