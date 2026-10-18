@@ -50,5 +50,5 @@ export type TaskPlan = {
 export type ModelProvider = {
   id: string;
   mode: "mock" | "local" | "remote";
-  plan(request: { title: string; request: string; project: TaskProject; requestId?: string }): Promise<TaskPlan>;
+  plan(request: { title: string; request: string; project: TaskProject; requestId?: string; memoryContext?: string }): Promise<TaskPlan>;
 };
