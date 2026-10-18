@@ -86,6 +86,20 @@ export async function GET(request: Request) {
   const defaultModel = configuredDefault || maxVisible[0]?.id;
   const auditReachable = auditResult.status === "fulfilled" && auditResult.value.ok;
   const brainReachable = brainResult.status === "fulfilled" && brainResult.value.ok;
+  let brainDiagnostics: Record<string, unknown> = {};
+  if (brainReachable && brainResult.status === "fulfilled") {
+    try {
+      const payload = await brainResult.value.json() as Record<string, unknown>;
+      brainDiagnostics = {
+        ...(payload.retrievalRegressionTests && typeof payload.retrievalRegressionTests === "object"
+          ? { retrievalRegressionTests: payload.retrievalRegressionTests }
+          : {}),
+        ...(typeof payload.semanticVectorSearch === "string" ? { semanticVectorSearch: payload.semanticVectorSearch } : {}),
+      };
+    } catch {
+      brainDiagnostics = {};
+    }
+  }
   const connected = keyOk && maxVisible.length > 0;
   return NextResponse.json({
     connected,
@@ -95,6 +109,6 @@ export async function GET(request: Request) {
     checkedAt: new Date().toISOString(),
     ...(connected ? {} : { error: keyError || (models.length ? "No free models are available." : "No usable OpenRouter free models were returned.") }),
     uxAudit: { reachable: auditReachable, baseUrl: auditBase, ...(auditReachable ? {} : { error: "Could not reach the UX Audit Worker." }) },
-    brain: { reachable: brainReachable, ...(brainReachable ? {} : { error: "Shared-brain health check failed or its server key is not configured." }) },
+    brain: { reachable: brainReachable, ...brainDiagnostics, ...(brainReachable ? {} : { error: "Shared-brain health check failed or its server key is not configured." }) },
   }, { headers: corsHeaders(origin) });
 }
