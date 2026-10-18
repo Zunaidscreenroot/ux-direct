@@ -122,7 +122,7 @@ function toolScope(name: string): string {
 }
 
 function claimHasScope(claims: DirectMcpClaims, required: string): boolean {
-  const granted = new Set(String(claims.scope || "").split(/\\s+/).filter(Boolean));
+  const granted = new Set(String(claims.scope || "").split(/\s+/).filter(Boolean));
   return granted.has(required) || granted.has("*");
 }
 
