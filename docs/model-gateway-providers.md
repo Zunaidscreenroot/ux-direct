@@ -28,7 +28,7 @@ The Model Gateway dashboard is available from the main UX Direct navigation. `GE
 
 The ledger persists to Netlify Blobs in the Netlify runtime and falls back to best-effort in-process memory in local/unsupported runtimes. Read-modify-write budget checks are not transactional, so simultaneous paid requests can race the cap. Add concurrency-safe budget reservations before production paid traffic.
 
-No monthly gateway budget is assigned by default; leave `MODEL_GATEWAY_MONTHLY_BUDGET_INR` blank unless you deliberately set one. Internal Auto Router uses a low-cost routing tier plus per-token price ceilings (default $0.10/M input and $0.30/M output), not a monthly budget. This caps the price rate for each request, not aggregate monthly spend. OpenRouter bills according to the model it actually selects. Direct provider routes remain disabled unless deliberately enabled and supplied with exact pricing and budget controls.
+No monthly gateway budget is assigned by default; leave `MODEL_GATEWAY_MONTHLY_BUDGET_INR` blank unless you deliberately set one. Internal Auto Router asks OpenRouter for its low-cost band and prefers the highest-throughput compatible provider for the selected model. It sends no fixed model allowlist, model exclusions, or per-token price ceiling. OpenRouter bills according to the model it actually selects, so low-cost routing is a preference rather than a spend cap. Direct provider routes remain disabled unless deliberately enabled and supplied with exact pricing and budget controls.
 
 ## Environment configuration
 
@@ -98,11 +98,11 @@ The `routeTask()` helper prefers local/free models for classification, extractio
 
 Each module has an on/off switch and routing policy. Monthly and per-request budgets are unset by default; the internal Auto Router instead enforces per-token price ceilings. Fixed-model/direct-provider routes still require deliberate pricing and budget configuration. The usage ledger records the model actually returned by OpenRouter and the provider-reported cost when available.
 
-Routing is strict: a disabled module or incompatible route is blocked instead of silently selecting a hard-coded model. Auto Router chooses dynamically within OpenRouter's available candidates, using its low-cost tier plus request price ceilings. This is a provider router, not a live benchmark run by UX Direct.
+Routing is strict: a disabled module or incompatible route is blocked instead of silently selecting a hard-coded model. Auto Router chooses dynamically from its available candidates using the low-cost tier and a throughput preference for the selected model's provider endpoint. No explicit model allowlist or per-token price ceiling is sent on this route. This is a provider router, not a live benchmark run by UX Direct.
 
 
 ## Additional available free and paid choices
 
 The curated OpenRouter free catalogue was refreshed from its official Free Models collection on 2026-10-11, with free routing IDs for NVIDIA Nemotron 3 Ultra, Nemotron 3.5 Lightning, Nemotron 3 Super, Nemotron Nano Omni, Poolside Laguna S 2.1, Thinking Machines Inkling and Cohere North Mini Code. Free endpoints are subject to availability, throughput and provider data terms. Some listed endpoints explicitly mention input logging or model-improvement use; do not route confidential client data through them unless the relevant terms are approved. Catalog visibility is not a guarantee that the user's account has the model enabled; the exact ID must be present in `OPENROUTER_MODELS`.
 
-Internal analysis does not pin a named model. Auto Router reports the model used for every completed request, so the routing choice remains visible in the usage ledger.
+Internal analysis does not pin a named model. Auto Router reports the model used for every completed request, so the routing choice remains visible in the usage ledger. Internal Auto Router requests allow up to 120 seconds for complex analysis and prefer throughput for the selected model's compatible provider endpoints.
