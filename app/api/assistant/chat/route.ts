@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { buildBrainSystemPrompt, buildRetrievalQuery, resolveBrainScopes } from "@/src/memory/chat-context";
-import { collectFreeModelCandidates, compactRecentMessages, hasAssistantTextDelta, isFreeModelId } from "@/src/providers/openrouter-chat";
+import { retrieveBrainContext, saveBrainFeedback } from "@/src/memory/shared-brain";
+import { detectCoachingSignal, detectExplicitTrainingIntent, resolveChatLearningScope } from "@/src/memory/learning-signal";
+import { collectFreeModelCandidates, hasAssistantTextDelta, isFreeModelId } from "@/src/providers/openrouter-chat";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,13 +16,15 @@ type BrainContextInfo = {
   memoryCount: number;
   knowledgeChunkCount: number;
   durationMs: number;
+  learningStatus?: "none" | "draft_saved" | "skipped_sensitive" | "failed";
+  learningDraftId?: string;
 };
 
 const MAX_MESSAGES = 100;
 const MAX_TOTAL_CHARS = 80000;
 const MAX_MODEL_ATTEMPTS = 2;
-const MODEL_ATTEMPT_TIMEOUT_MS = 8000;
-const TOTAL_MODEL_BUDGET_MS = 12000;
+const FIRST_TEXT_TIMEOUT_MS = 5500;
+const FALLBACK_HEDGE_DELAY_MS = 900;
 const SYSTEM_PROMPT = [
   "You are UX Direct, a thoughtful senior product UX partner.",
   "Focus on evidence-led UX, information architecture, user journeys, interaction design, accessibility, and measurable business hypotheses.",
@@ -42,57 +47,91 @@ function brainHeaders(brain: BrainContextInfo, model?: string): Headers {
     "X-UXD-Brain-Memories": String(brain.memoryCount),
     "X-UXD-Brain-References": String(brain.knowledgeChunkCount),
     "X-UXD-Brain-Latency-Ms": String(Math.max(0, Math.round(brain.durationMs))),
+    "X-UXD-Learning-Status": brain.learningStatus || "none",
   });
+  if (brain.learningDraftId) headers.set("X-UXD-Learning-Draft-Id", brain.learningDraftId);
   if (model) headers.set("X-UXD-Model", model);
   return headers;
 }
 
-async function retrieveMemory(request: Request, query: string): Promise<BrainContextInfo> {
+async function retrieveMemory(_request: Request, query: string): Promise<BrainContextInfo> {
   const startedAt = Date.now();
-  const token = process.env.UX_DIRECT_BRAIN_API_KEY;
-  if (!token) {
-    return { contextText: "", status: "disabled", memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
-  }
   if (!query.trim()) {
     return { contextText: "", status: "empty", memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
   }
 
   try {
-    const endpoint = new URL("/api/brain/retrieve", request.url);
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        query: query.slice(0, 3000),
-        scopeKeys: resolveBrainScopes(query),
-        limit: 3,
-        maxChars: 1500,
-        includeKnowledge: true,
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(1800),
+    // Same-Worker direct retrieval avoids an extra HTTP hop to our own brain API.
+    const context = await retrieveBrainContext({
+      query: query.slice(0, 3000),
+      scopeKeys: resolveBrainScopes(query),
+      limit: 3,
+      maxChars: 1800,
+      includeKnowledge: true,
     });
-    if (!response.ok) {
-      return { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: Date.now() - startedAt };
-    }
-    const payload = await response.json() as {
-      contextText?: unknown;
-      retrieval?: { status?: unknown; memoryCount?: unknown; knowledgeChunkCount?: unknown };
-    };
-    const contextText = typeof payload.contextText === "string" ? payload.contextText.slice(0, 1800) : "";
-    const reportedStatus = payload.retrieval?.status;
-    const status: BrainStatus = reportedStatus === "complete" || reportedStatus === "empty" || reportedStatus === "degraded"
-      ? reportedStatus
-      : contextText ? "complete" : "empty";
     return {
-      contextText,
-      status,
-      memoryCount: safeCount(payload.retrieval?.memoryCount),
-      knowledgeChunkCount: safeCount(payload.retrieval?.knowledgeChunkCount),
+      contextText: context.contextText.slice(0, 5200),
+      status: context.retrieval.status,
+      memoryCount: safeCount(context.retrieval.memoryCount),
+      knowledgeChunkCount: safeCount(context.retrieval.knowledgeChunkCount),
       durationMs: Date.now() - startedAt,
     };
   } catch {
     return { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: Date.now() - startedAt };
+  }
+}
+
+type ChatLearningCapture = {
+  status: "none" | "draft_saved" | "skipped_sensitive" | "failed";
+  draftId?: string;
+};
+
+function learningKind(text: string): "cost_optimization" | "duplicate_finding" | "severity_calibration" | "accessibility" | "design_system" | "general" {
+  if (/\b(cost|token|budget|slow|faster|latency|model|inference|spend)\b/i.test(text)) return "cost_optimization";
+  if (/\b(duplicate|repeated|repeat|same finding|overlap)\b/i.test(text)) return "duplicate_finding";
+  if (/\b(severity|critical|major|minor|high priority|low priority)\b/i.test(text)) return "severity_calibration";
+  if (/\b(accessibility|keyboard|contrast|screen reader|wcag|accessible)\b/i.test(text)) return "accessibility";
+  if (/\b(design system|component|design token|consisten)\b/i.test(text)) return "design_system";
+  return "general";
+}
+
+function learningTitle(text: string): string {
+  const cleaned = text.trim().replace(/\s+/g, " ");
+  const firstSentence = cleaned.split(/[.!?\n]/)[0]?.trim() || cleaned;
+  return ("Chat learning · " + firstSentence).slice(0, 180);
+}
+
+function learningKeywords(text: string): string[] {
+  const stop = new Set(["remember","please","should","could","would","from","this","that","with","your","into","when","then","aage","se","mein","me","hai","hoga","karna","karo","chat","brain","train","relevant","lagega"]);
+  return [...new Set((text.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) || []).filter((word) => !stop.has(word)))].slice(0, 16);
+}
+
+async function captureChatLearning(text: string): Promise<ChatLearningCapture> {
+  const value = text.trim();
+  if (value.length < 12 || (!detectCoachingSignal(value) && !detectExplicitTrainingIntent(value))) return { status: "none" };
+  // Never persist likely credentials/secrets as training material.
+  if (/\b(api[_ -]?key|password\s*[:=]|secret\s*[:=]|private key|recovery phrase|bearer\s+[A-Za-z0-9._-]{20,})\b/i.test(value)) {
+    return { status: "skipped_sensitive" };
+  }
+  const captured = value.slice(0, 2400);
+  try {
+    const saved = await saveBrainFeedback({
+      rawFeedback: captured,
+      summary: captured.slice(0, 500),
+      title: learningTitle(captured),
+      normalizedRule: "Owner-provided reusable guidance to review (original wording preserved): " + captured,
+      rationale: "Captured from an explicit chat coaching/correction signal. This remains a draft and must be approved before it affects shared-brain retrieval.",
+      scopeKey: resolveChatLearningScope(captured),
+      feedbackKind: learningKind(captured),
+      keywords: learningKeywords(captured),
+      originalLanguage: /[\u0900-\u097f]/.test(captured) ? "Hindi" : /\b(yaad|aage se|galat|galti|karo|karna|hoga|chahiye|mein|hai)\b/i.test(captured) ? "Hinglish" : "English",
+      sourceProduct: "ux-direct",
+      idempotencyKey: "uxd-chat-learning-" + createHash("sha256").update(captured).digest("hex"),
+      metadata: { capturedFrom: "ux-direct-chat", captureVersion: 1, requiresOwnerApproval: true, inferenceCalls: 0 },
+    });
+    return { status: "draft_saved", draftId: saved.id };
+  } catch {
+    return { status: "failed" };
   }
 }
 
@@ -194,12 +233,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Conversation is too long. Start a new chat to continue." }, { status: 413 });
   }
 
-  const promptMessages = compactRecentMessages(messages, { maxMessages: 10, maxTotalChars: 14000, maxMessageChars: 4500 });
+  // Conversational chat has no app-imposed output-token ceiling or history compaction.
+  const promptMessages = messages;
   const userTurns = promptMessages.filter((message) => message.role === "user");
   const lastUserMessage = userTurns[userTurns.length - 1]?.content || "";
   const previousUserMessage = userTurns[userTurns.length - 2]?.content || "";
   const retrievalQuery = buildRetrievalQuery(lastUserMessage, previousUserMessage);
-  const brain = await retrieveMemory(request, retrievalQuery);
+  const [brainBase, learning] = await Promise.all([
+    retrieveMemory(request, retrievalQuery),
+    captureChatLearning(lastUserMessage),
+  ]);
+  const brain: BrainContextInfo = { ...brainBase, learningStatus: learning.status, ...(learning.draftId ? { learningDraftId: learning.draftId } : {}) };
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
   const clientFallbacks = Array.isArray(value.fallbackModels)
@@ -211,67 +255,108 @@ export async function POST(request: Request) {
     process.env.OPENROUTER_MODELS || "",
   ];
   const candidates = collectFreeModelCandidates(model, configuredModels, [], MAX_MODEL_ATTEMPTS);
-  let lastError = "No usable response was returned by a free model.";
+  let lastError = "No usable response was returned by the available free OpenRouter models.";
   let lastStatus = 502;
   const origin = new URL(request.url).origin;
-  const modelDeadline = Date.now() + TOTAL_MODEL_BUDGET_MS;
 
-  for (let index = 0; index < candidates.length && index < MAX_MODEL_ATTEMPTS; index += 1) {
-    const remainingMs = modelDeadline - Date.now();
-    if (remainingMs < 750) break;
-    const currentModel = candidates[index];
-    const attemptTimeoutMs = Math.min(MODEL_ATTEMPT_TIMEOUT_MS, remainingMs);
-    let providerResponse: Response | null = null;
-    try {
-      providerResponse = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer " + key,
-          "Content-Type": "application/json",
-          Accept: "text/event-stream",
-          "HTTP-Referer": origin,
-          "X-Title": "UX Direct",
-        },
-        body: JSON.stringify({
-          model: currentModel,
-          messages: [{ role: "system", content: systemContent }, ...promptMessages],
-          stream: true,
-          temperature: 0.4,
-          max_tokens: 1100,
-          provider: { allow_fallbacks: false },
-        }),
-        cache: "no-store",
-        signal: AbortSignal.timeout(attemptTimeoutMs),
-      });
-    } catch (error) {
-      lastStatus = 502;
-      lastError = "Free model " + currentModel + " timed out or could not be reached (" +
-        (error instanceof Error ? error.name : "request error") + ").";
-    }
-
-    if (providerResponse?.ok) {
+  const startAttempt = (currentModel: string) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FIRST_TEXT_TIMEOUT_MS);
+    const promise = (async (): Promise<{ model: string; probe: ProbedStream; controller: AbortController }> => {
       try {
+        const providerResponse = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer " + key,
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+            "HTTP-Referer": origin,
+            "X-Title": "UX Direct",
+          },
+          body: JSON.stringify({
+            model: currentModel,
+            messages: [{ role: "system", content: systemContent }, ...promptMessages],
+            stream: true,
+            temperature: 0.4,
+            provider: { allow_fallbacks: false },
+          }),
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!providerResponse.ok) {
+          const details = (await providerResponse.text().catch(() => "")).replace(/[\r\n]+/g, " ").trim().slice(0, 260);
+          const status = providerResponse.status;
+          const message = [401, 403].includes(status)
+            ? "OpenRouter rejected the configured API key or account access (HTTP " + status + ")."
+            : "Free model " + currentModel + " returned HTTP " + status + (details ? ": " + details : ".");
+          throw Object.assign(new Error(message), { status });
+        }
         const probe = await probeForFirstText(providerResponse);
-        if (probe.hasText) return forwardProbedStream(probe, brain, currentModel);
-        if (probe.reader) await probe.reader.cancel().catch(() => {});
-        lastStatus = 502;
-        lastError = "Free model " + currentModel + " returned an empty text stream.";
+        if (!probe.hasText) {
+          if (probe.reader) await probe.reader.cancel().catch(() => {});
+          throw Object.assign(new Error("Free model " + currentModel + " returned an empty text stream before its first token."), { status: 502 });
+        }
+        // Stop the startup timer once the first visible text arrives; let the full answer stream without an app-imposed timeout.
+        clearTimeout(timer);
+        return { model: currentModel, probe, controller };
       } catch (error) {
-        lastStatus = 502;
-        lastError = "Free model " + currentModel + " failed while streaming (" +
-          (error instanceof Error ? error.name : "stream error") + ").";
+        if (controller.signal.aborted) {
+          throw Object.assign(new Error("Free model " + currentModel + " did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
+        }
+        throw error;
+      } finally {
+        clearTimeout(timer);
       }
-    } else if (providerResponse) {
-      lastStatus = providerResponse.status;
-      const details = (await providerResponse.text().catch(() => "")).replace(/[\r\n]+/g, " ").trim().slice(0, 260);
-      lastError = [401, 403].includes(providerResponse.status)
-        ? "OpenRouter rejected the configured API key or account access (HTTP " + providerResponse.status + ")."
-        : "Free model " + currentModel + " returned HTTP " + providerResponse.status + (details ? ": " + details : ".");
-      if ([401, 403].includes(providerResponse.status)) break;
-    }
+    })();
+    return { controller, promise };
+  };
 
+  const firstAttempt = startAttempt(candidates[0]);
+  let winner: { model: string; probe: ProbedStream; controller: AbortController } | null = null;
+  const firstOutcome = firstAttempt.promise.then(
+    (value) => ({ kind: "ready" as const, value }),
+    (error) => ({ kind: "failed" as const, error }),
+  );
+  const early = await Promise.race([
+    firstOutcome,
+    new Promise<{ kind: "hedge" }>((resolve) => setTimeout(() => resolve({ kind: "hedge" }), FALLBACK_HEDGE_DELAY_MS)),
+  ]);
+  const attempts = [firstAttempt];
+
+  if (early.kind === "ready") {
+    winner = early.value;
+  } else if (candidates.length > 1) {
+    // Hedge with a second free model if the primary has not produced visible text quickly.
+    const secondAttempt = startAttempt(candidates[1]);
+    attempts.push(secondAttempt);
+    try {
+      winner = await Promise.any(attempts.map((attempt) => attempt.promise));
+    } catch (error) {
+      const errors = error instanceof AggregateError ? error.errors : [error];
+      lastError = errors.map((item) => item instanceof Error ? item.message : "Free model attempt failed.").join(" | ").slice(0, 800);
+      const statuses = errors.map((item) => typeof item === "object" && item !== null && "status" in item ? Number((item as { status: unknown }).status) : 502);
+      lastStatus = statuses[statuses.length - 1] || 502;
+    }
+  } else if (early.kind === "failed") {
+    lastError = early.error instanceof Error ? early.error.message : "Free model failed before producing text.";
+    lastStatus = typeof early.error === "object" && early.error !== null && "status" in early.error ? Number((early.error as { status: unknown }).status) : 502;
+  } else {
+    try {
+      winner = await firstAttempt.promise;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "Free model failed before producing text.";
+      lastStatus = typeof error === "object" && error !== null && "status" in error ? Number((error as { status: unknown }).status) : 502;
+    }
   }
 
+  if (winner) {
+    for (const attempt of attempts) {
+      if (attempt.controller !== winner.controller) attempt.controller.abort();
+    }
+    return forwardProbedStream(winner.probe, brain, winner.model);
+  }
+
+  for (const attempt of attempts) attempt.controller.abort();
   const userMessage = "No usable response was returned by the available free OpenRouter models. " + lastError;
   return NextResponse.json(
     { error: userMessage, attemptedModels: candidates.slice(0, MAX_MODEL_ATTEMPTS) },
