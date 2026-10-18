@@ -214,7 +214,7 @@ export async function POST(request: Request) {
       max_tokens: 3200,
       response_format: { type: "json_object" },
       signal: request.signal
-    }, { timeoutMs: 15_000, maxFallbackAttempts: 1 });
+    }, { timeoutMs: 120_000, maxFallbackAttempts: 1 });
     const raw = response.content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");
