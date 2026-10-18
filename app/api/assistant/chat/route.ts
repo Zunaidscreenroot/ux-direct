@@ -113,7 +113,7 @@ async function captureChatLearning(text: string): Promise<ChatLearningCapture> {
   if (/\b(api[_ -]?key|password\s*[:=]|secret\s*[:=]|private key|recovery phrase|bearer\s+[A-Za-z0-9._-]{20,})\b/i.test(value)) {
     return { status: "skipped_sensitive" };
   }
-  const captured = value.slice(0, 2400);
+  const captured = value.slice(0, 2250);
   try {
     const saved = await saveBrainFeedback({
       rawFeedback: captured,
@@ -317,10 +317,12 @@ export async function POST(request: Request) {
     (value) => ({ kind: "ready" as const, value }),
     (error) => ({ kind: "failed" as const, error }),
   );
-  const early = await Promise.race([
-    firstOutcome,
-    new Promise<{ kind: "hedge" }>((resolve) => setTimeout(() => resolve({ kind: "hedge" }), FALLBACK_HEDGE_DELAY_MS)),
-  ]);
+  let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
+  const hedgePromise = new Promise<{ kind: "hedge" }>((resolve) => {
+    hedgeTimer = setTimeout(() => resolve({ kind: "hedge" }), FALLBACK_HEDGE_DELAY_MS);
+  });
+  const early = await Promise.race([firstOutcome, hedgePromise]);
+  if (hedgeTimer) clearTimeout(hedgeTimer);
   const attempts = [firstAttempt];
 
   if (early.kind === "ready") {
