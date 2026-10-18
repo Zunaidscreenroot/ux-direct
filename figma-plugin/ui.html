@@ -36,12 +36,11 @@
   </style>
 </head>
 <body>
-  <header><div class="brand"><span class="mark">ux</span> UX Direct</div><span class="pill">CHATGPT ↔ FIGMA</span></header>
+  <header><div class="brand"><span class="mark">ux</span> UX Direct</div><span class="pill">BACKEND ↔ FIGMA PLUGIN</span></header>
   <div class="connection" aria-live="polite"><span id="connectionDot" class="dot"></span><strong id="connectionText">Checking backend connection…</strong></div>
-  <div class="connection" aria-live="polite"><span id="chatgptConnectionDot" class="dot"></span><strong id="chatgptConnectionText">ChatGPT connection: checking recent activity…</strong></div>
   <div class="connection" aria-live="polite"><span id="figmaConnectionDot" class="dot"></span><strong id="figmaConnectionText">Figma session: waiting for heartbeat…</strong></div>
   <h1>Conversational Copilot</h1>
-  <p class="sub">Describe your UX task in natural language. UX Direct prepares a structured plan, checks the current product context, and reports connection status for ChatGPT and this Figma plugin session.</p>
+  <p class="sub">Describe your UX task in natural language. UX Direct prepares a structured plan, checks the current product context, and reports backend and Figma plugin session status.</p>
   <label for="project">Project</label>
   <select id="project"><option value="general">General UX</option><option value="express-computers">Express Computers</option><option value="dmi-finance">DMI Finance</option></select>
   <label for="prompt">Your brief</label>
@@ -129,34 +128,18 @@
       const response = await fetch(url, { method: "GET", headers: { "Accept": "application/json" }, cache: "no-store" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Connection status returned " + response.status);
-
-      const chatgpt = data.chatgptConnector || {};
-      if (chatgpt.state === "connected") {
-        $("chatgptConnectionDot").className = "dot ok";
-        const seen = chatgpt.lastActivityAt ? new Date(chatgpt.lastActivityAt).toLocaleTimeString() : "just now";
-        $("chatgptConnectionText").textContent = "ChatGPT connector recently active · " + seen;
-      } else if (chatgpt.state === "idle") {
-        $("chatgptConnectionDot").className = "dot";
-        $("chatgptConnectionText").textContent = "ChatGPT connector idle · no authenticated request in the last 5 minutes";
-      } else {
-        $("chatgptConnectionDot").className = "dot";
-        $("chatgptConnectionText").textContent = "ChatGPT connector waiting · connect and call UX Direct from ChatGPT";
-      }
-
       const figma = data.figmaPlugin || {};
       if (figma.connected) {
         $("figmaConnectionDot").className = "dot ok";
-        $("figmaConnectionText").textContent = "This Figma plugin session connected · heartbeat verified";
+        $("figmaConnectionText").textContent = "Figma plugin session connected · heartbeat verified";
       } else {
         $("figmaConnectionDot").className = "dot";
-        $("figmaConnectionText").textContent = "This Figma session is not registered as online";
+        $("figmaConnectionText").textContent = "Figma session waiting for backend heartbeat…";
       }
     } catch (error) {
-      $("chatgptConnectionDot").className = "dot";
-      $("chatgptConnectionText").textContent = "ChatGPT status unavailable · check backend and reconnect";
       $("figmaConnectionDot").className = "dot";
-      $("figmaConnectionText").textContent = "Figma session status unavailable";
-      console.warn("[UX Direct connection status]", error);
+      $("figmaConnectionText").textContent = "Figma session status unavailable · backend connection needs attention";
+      console.warn("[UX Direct Figma session status]", error);
     }
   }
 
