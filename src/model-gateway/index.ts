@@ -329,9 +329,35 @@ export async function chatCompletion(
   const rates={billable,inputPriceInrPerMillion:modelPolicy.inputPriceInrPerMillion,outputPriceInrPerMillion:modelPolicy.outputPriceInrPerMillion};
   try{
     const headers:Record<string,string>={"Content-Type":"application/json",...(provider.apiKey?(provider.apiKeyHeader?{[provider.apiKeyHeader]:provider.apiKey}:{Authorization:`Bearer ${provider.apiKey}`}):{}),...provider.headers};
-    const response=await fetchImpl(`${trimSlash(provider.baseUrl)}/chat/completions`,{method:"POST",headers,body:JSON.stringify({model,messages:request.messages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{})}),signal:controller.signal});
-    if(!response.ok)throw new GatewayError(`Provider returned HTTP ${response.status}.`,response.status===429?429:502,provider.name);
-    let payload:ProviderChatPayload;try{payload=await response.json() as ProviderChatPayload;}catch{throw new GatewayError("Provider returned invalid JSON.",502,provider.name);}
+    const providerUrl = `${trimSlash(provider.baseUrl)}/chat/completions`;
+    const providerBody = JSON.stringify({model,messages:request.messages,...(request.temperature!==undefined?{temperature:request.temperature}:{}),...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{})});
+    let response: Response | undefined;
+    let payload: ProviderChatPayload | undefined;
+    const parseAttempts = billable ? 1 : 2;
+    let responseContentType = "unknown content type";
+    for (let attempt = 0; attempt < parseAttempts; attempt++) {
+      response = await fetchImpl(providerUrl,{method:"POST",headers,body:providerBody,signal:controller.signal});
+      if(!response.ok)throw new GatewayError(`Provider returned HTTP ${response.status}.`,response.status===429?429:502,provider.name);
+      responseContentType = (response.headers.get("content-type") || "unknown content type").slice(0,120);
+      const responseText = await response.text();
+      let parsed: unknown;
+      try { parsed = JSON.parse(responseText.replace(/^\\uFEFF/, "")); }
+      catch {
+        if (attempt + 1 < parseAttempts) continue;
+        throw new GatewayError(
+          `Provider returned invalid JSON from its chat-completions endpoint after ${parseAttempts} attempt${parseAttempts === 1 ? "" : "s"} (HTTP ${response.status}; content type: ${responseContentType}). ${billable ? "Automatic retries are disabled for paid routes." : "Retry the analysis or choose another configured model."}`,
+          502, provider.name
+        );
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new GatewayError("Provider returned JSON but not a valid chat-completions object.",502,provider.name);
+      }
+      payload = parsed as ProviderChatPayload;
+      break;
+    }
+    if (!response || !payload) {
+      throw new GatewayError("Provider returned no usable chat-completions payload.",502,provider.name);
+    }
     const content=payload.choices?.[0]?.message?.content;
     if(typeof content!=="string")throw new GatewayError("Provider response did not contain choices[0].message.content.",502,provider.name);
     const latencyMs=Date.now()-started;const tokenUsage=usageStore.tokenUsageValues(payload.usage);
@@ -385,16 +411,54 @@ export async function chatCompletionWithFallback(
     const moduleId = request.moduleId ?? TASK_MODULES[request.model] ?? "general";
     const settings = await getGatewaySettings();
     const policy = settings.modules[moduleId];
-    if (!policy?.enabled || !policy.allowFallback || policy.mode !== "free" || !policy.selectedModelKey.startsWith("gemini::")) throw primaryError;
-    const generalPolicy = settings.modules.general;
-    if (!generalPolicy?.enabled || generalPolicy.mode !== "free" || generalPolicy.selectedModelKey !== "auto") throw primaryError;
-    const primaryModel = policy.selectedModelKey.slice("gemini::".length);
+    const automaticTaskFallback = Boolean(
+      TASK_MODULES[request.model] && policy?.enabled && policy.allowFallback &&
+      policy.mode === "free" && policy.selectedModelKey === "auto"
+    );
+    const configuredGeminiFallback = Boolean(
+      policy?.enabled && policy.allowFallback && policy.mode === "free" &&
+      policy.selectedModelKey.startsWith("gemini::")
+    );
+    if (!automaticTaskFallback && !configuredGeminiFallback) throw primaryError;
     const status = primaryError instanceof GatewayError ? primaryError.status : (typeof primaryError === "object" && primaryError !== null && "status" in primaryError && typeof primaryError.status === "number" ? primaryError.status : 502);
     if (![408, 429, 500, 502, 503, 504].includes(status)) throw primaryError;
     const providers = options.providers ?? providersFromEnv();
+    let lastError: unknown = primaryError;
+
+    // For auto-selected task aliases, fail over only to explicitly configured,
+    // non-paid models when the module's free-mode policy permits fallback.
+    if (automaticTaskFallback) {
+      const catalog = getModelCatalog(providers);
+      let primaryEntry: ModelCatalogEntry | undefined;
+      try { primaryEntry = chooseModuleModel(moduleId, policy!, catalog, settings); } catch { /* Preserve the original provider failure. */ }
+      const moduleTasks = GATEWAY_MODULES.find(item => item.id === moduleId)?.tasks ?? [];
+      const score = (entry: ModelCatalogEntry) => entry.tasks.some(task =>
+        moduleTasks.some(wanted => task.toLowerCase().includes(wanted.toLowerCase()) || wanted.toLowerCase().includes(task.toLowerCase()))
+      ) ? 1 : 0;
+      const candidates = catalog.filter(entry =>
+        entry.configured && entry.provider !== "mock" &&
+        entry.id !== primaryEntry?.id &&
+        (entry.tier === "free-tier" || entry.id.endsWith(":free"))
+      ).sort((a, b) =>
+        Number(a.provider === primaryEntry?.provider) - Number(b.provider === primaryEntry?.provider) ||
+        score(b) - score(a) ||
+        a.label.localeCompare(b.label)
+      ).slice(0, 3);
+      for (const entry of candidates) {
+        try {
+          return await chatCompletion({ ...request, model: entry.id, providerId: entry.provider, moduleId }, options);
+        } catch (error) { lastError = error; }
+      }
+      throw lastError instanceof Error ? lastError : primaryError;
+    }
+
+    // Preserve the existing explicit Gemini selection behavior: it may move only
+    // to another configured free-tier Gemini model, never to paid routing.
+    const generalPolicy = settings.modules.general;
+    if (!generalPolicy?.enabled || generalPolicy.mode !== "free" || generalPolicy.selectedModelKey !== "auto") throw primaryError;
+    const primaryModel = policy!.selectedModelKey.slice("gemini::".length);
     const gemini = providers.find(provider => provider.name === "gemini" && provider.kind === "free-tier");
     if (!gemini || gemini.models.length < 2) throw primaryError;
-    let lastError: unknown = primaryError;
     for (const model of gemini.models) {
       if (model === primaryModel || model === request.model) continue;
       try { return await chatCompletion({ ...request, model, providerId: "gemini", moduleId: undefined }, options); }
