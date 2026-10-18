@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ux-direct",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "UX_DIRECT_ENV": "production"
+  },
+  "d1_databases": [
+    {
+      "binding": "UX_DIRECT_STATE",
+      "database_name": "ux-direct-state",
+      "database_id": "85f849e4-cf2a-412a-970d-477065bb380c",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
