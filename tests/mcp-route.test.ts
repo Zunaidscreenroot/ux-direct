@@ -42,13 +42,31 @@ test("authenticated client can initialize", async () => {
   }
 });
 
-test("tool list only exposes status and safe UX planning", async () => {
+test("tool list exposes status, safe UX planning, and shared brain operations", async () => {
   const original = process.env.UX_DIRECT_MCP_API_KEY;
   process.env.UX_DIRECT_MCP_API_KEY = validKey;
   try {
     const response = await POST(request({ jsonrpc: "2.0", id: 2, method: "tools/list" }, { key: validKey }));
     const body = await response.json();
-    assert.deepEqual(body.result.tools.map((tool: { name: string }) => tool.name), ["ux_direct_status", "ux_direct_connection_status", "ux_direct_plan_task"]);
+    assert.deepEqual(body.result.tools.map((tool: { name: string }) => tool.name), [
+      "ux_direct_status",
+      "ux_direct_connection_status",
+      "ux_direct_plan_task",
+      "ux_direct_brain_search",
+      "ux_direct_brain_save_feedback",
+      "ux_direct_brain_list_feedback",
+      "ux_direct_brain_review_feedback",
+      "ux_direct_brain_add_reference",
+      "ux_direct_brain_list_references",
+      "ux_direct_brain_review_reference",
+      "ux_direct_brain_add_eval_case",
+      "ux_direct_brain_review_eval_case",
+      "ux_direct_brain_run_retrieval_evals",
+    ]);
+    const brainSave = body.result.tools.find((tool: { name: string }) => tool.name === "ux_direct_brain_save_feedback");
+    assert.ok(brainSave.inputSchema.properties.rawFeedback);
+    assert.ok(brainSave.inputSchema.properties.normalizedRule);
+    assert.equal(brainSave.inputSchema.properties.sourceProduct.enum.includes("figma-plugin"), true);
     const planner = body.result.tools.find((tool: { name: string }) => tool.name === "ux_direct_plan_task");
     assert.deepEqual(planner.inputSchema.properties.project.enum, ["general", "express-computers"]);
   } finally {
