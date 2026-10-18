@@ -43,7 +43,7 @@ test("makes disabled retrieval explicit so the assistant cannot imply memory was
   });
   assert.match(prompt, /RAG_STATUS=disabled/);
   assert.match(prompt, /service credentials are missing/);
-  assert.match(prompt, /Do not claim stored knowledge was consulted/);
+  assert.match(prompt, /Do not claim that stored knowledge was consulted/);
 });
 
 test("makes retrieval failures explicit while preserving safe conversational fallback", () => {
