@@ -5,13 +5,13 @@ export type ModulePolicy = { enabled: boolean; mode: GatewayMode; selectedModelK
 export type ModelPolicy = { monthlyBudgetInr: number; maxRequestCostInr: number; inputPriceInrPerMillion: number; outputPriceInrPerMillion: number };
 export type GatewaySettings = { version: 1; globalMonthlyBudgetInr: number; usdToInrRate: number; paidRoutingEnabled: boolean; modules: Record<string, ModulePolicy>; models: Record<string, ModelPolicy>; updatedAt?: string };
 export const GATEWAY_MODULES = [
-  { id: "reasoning", label: "Reasoning & task planning", description: "Paid low-cost reasoning for internal product workflows.", alias: "uxd/reasoning", tasks: ["reasoning", "task planning", "analysis"], suggestedBudgetShare: 180 },
-  { id: "classification", label: "Classification", description: "Classify and route internal work using a budgeted paid model.", alias: "uxd/classify", tasks: ["classification", "intent", "routing"], suggestedBudgetShare: 80 },
+  { id: "reasoning", label: "Reasoning & task planning", description: "OpenRouter-managed low-cost reasoning for internal product workflows.", alias: "uxd/reasoning", tasks: ["reasoning", "task planning", "analysis"], suggestedBudgetShare: 180 },
+  { id: "classification", label: "Classification", description: "Classify and route internal work through OpenRouter's low-cost router.", alias: "uxd/classify", tasks: ["classification", "intent", "routing"], suggestedBudgetShare: 80 },
   { id: "extraction", label: "Structured extraction", description: "Extract fields, requirements, rules and entities.", alias: "uxd/extract", tasks: ["extraction", "structured output", "requirements"], suggestedBudgetShare: 80 },
   { id: "summarization", label: "Summarization", description: "Summarize briefs, notes, research and references.", alias: "uxd/summarize", tasks: ["summaries", "summarization", "long context"], suggestedBudgetShare: 80 },
   { id: "vision", label: "Visual / screen analysis", description: "Interpret screenshots, UI states and visual references.", alias: "uxd/vision", tasks: ["vision", "visual analysis", "screenshots"], suggestedBudgetShare: 100 },
   { id: "critique", label: "UX critique & quality review", description: "Review UX decisions, accessibility, edge cases and consistency.", alias: "uxd/critique", tasks: ["critique", "reasoning", "quality"], suggestedBudgetShare: 120 },
-  { id: "ia-audit", label: "IA architecture review", description: "Paid, bounded analysis of sitemap structure and findability risks.", alias: "uxd/ia-audit", tasks: ["information architecture", "reasoning", "structured output"], suggestedBudgetShare: 250 },
+  { id: "ia-audit", label: "IA architecture review", description: "Evidence-backed analysis of sitemap structure and findability risks, routed by OpenRouter.", alias: "uxd/ia-audit", tasks: ["information architecture", "reasoning", "structured output"], suggestedBudgetShare: 250 },
   { id: "general", label: "General gateway calls", description: "Reserved for the homepage chat, which uses its own explicit free-only route.", alias: "direct", tasks: ["general", "chat"], suggestedBudgetShare: 50 }
 ] as const;
 type BlobStore = { get(key: string, options: { type: "json" }): Promise<unknown>; setJSON(key: string, value: unknown): Promise<void> };
@@ -39,22 +39,20 @@ async function getStore(): Promise<BlobStore | null> {
   return storePromise;
 }
 function pricePolicy(inputUsd = 0, outputUsd = 0, fx = 97): ModelPolicy {
-  return { monthlyBudgetInr: 500, maxRequestCostInr: 50, inputPriceInrPerMillion: Number((inputUsd * fx).toFixed(4)), outputPriceInrPerMillion: Number((outputUsd * fx).toFixed(4)) };
+  return { monthlyBudgetInr: 0, maxRequestCostInr: 0, inputPriceInrPerMillion: Number((inputUsd * fx).toFixed(4)), outputPriceInrPerMillion: Number((outputUsd * fx).toFixed(4)) };
 }
 export function defaultGatewaySettings(): GatewaySettings {
   const modules: Record<string, ModulePolicy> = {};
-  const paidModelId = process.env.UXD_INTERNAL_PAID_MODEL?.trim() || "deepseek/deepseek-v4-flash-0731";
-  const paidProviderId = "openrouter-paid";
+  const autoRouterKey = modelKey("openrouter-auto", "openrouter/auto");
   const testMode = process.env.NODE_ENV === "test";
   for (const m of GATEWAY_MODULES) {
     modules[m.id] = {
       enabled: true,
       mode: testMode ? "free" : "paid",
-      // General is the paid internal "direct" module; the user-facing homepage chat
-      // bypasses this gateway and retains its dedicated :free-only route.
-      selectedModelKey: !testMode && m.id !== "general" ? modelKey(paidProviderId, paidModelId) : "auto",
-      monthlyBudgetInr: m.suggestedBudgetShare,
-      maxRequestCostInr: testMode ? 10 : 5,
+      // Internal work uses OpenRouter Auto Router; homepage chat keeps its separate :free-only pool.
+      selectedModelKey: !testMode && m.id !== "general" ? autoRouterKey : "auto",
+      monthlyBudgetInr: 0,
+      maxRequestCostInr: 0,
       allowFallback: false
     };
   }
@@ -69,22 +67,20 @@ export function defaultGatewaySettings(): GatewaySettings {
     [modelKey("groq", "openai/gpt-oss-20b")]: pricePolicy(.075, .3),
     [modelKey("deepseek", "deepseek-flash")]: pricePolicy(.30, 1.20),
     [modelKey("deepseek", "deepseek-v4-pro")]: pricePolicy(1.32, 3.96),
-    [modelKey("openrouter-paid", "deepseek/deepseek-v4-flash-0731")]: { ...pricePolicy(0.01208, 0.1436), monthlyBudgetInr: 1000, maxRequestCostInr: 5 },
+    [modelKey("openrouter-auto", "openrouter/auto")]: pricePolicy(),
     [modelKey("openrouter", "apodex/apodex-1.1-mini:free")]: pricePolicy(),
     [modelKey("ollama", "qwen2.5:7b")]: pricePolicy(),
     [modelKey("ollama", "gemma4:31b")]: pricePolicy(),
     [modelKey("cerebras", "gpt-oss-120b")]: pricePolicy(),
     [modelKey("openai", "gpt-4o-mini")]: pricePolicy(.15, .6)
   };
-  const paidRoutesConfigured = process.env.ALLOW_PAID_MODELS === "true" &&
-    Boolean(process.env.OPENROUTER_API_KEY?.trim()) &&
-    (process.env.OPENROUTER_PAID_MODELS || "").split(",").map(value => value.trim()).includes(paidModelId) &&
-    Number(process.env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "0") > 0;
+  const autoRouterConfigured = process.env.OPENROUTER_AUTO_ROUTING === "true" &&
+    Boolean(process.env.OPENROUTER_API_KEY?.trim());
   return {
     version: 1,
-    globalMonthlyBudgetInr: Math.min(1000, Math.max(1, Number(process.env.MODEL_GATEWAY_MONTHLY_BUDGET_INR) || 1000)),
+    globalMonthlyBudgetInr: Math.min(1_000_000_000, Math.max(0, Number(process.env.MODEL_GATEWAY_MONTHLY_BUDGET_INR) || 0)),
     usdToInrRate: 97,
-    paidRoutingEnabled: Boolean(paidRoutesConfigured),
+    paidRoutingEnabled: Boolean(autoRouterConfigured),
     modules,
     models
   };
@@ -99,12 +95,14 @@ function cleanSettings(input: unknown): GatewaySettings {
     const base = defaults.modules[m.id];
     const c = rawModules[m.id] && typeof rawModules[m.id] === "object" ? rawModules[m.id] as Record<string, unknown> : {};
     const mode = c.mode;
+    const requestedModelKey = typeof c.selectedModelKey === "string" && c.selectedModelKey.length <= 220 ? c.selectedModelKey : base.selectedModelKey;
     modules[m.id] = {
       enabled: typeof c.enabled === "boolean" ? c.enabled : true,
-      // Production internal modules are paid-only. Tests/dev may exercise other modes.
+      // Production internal modules use OpenRouter's cost-optimized router; tests/dev may exercise other modes.
       mode: process.env.NODE_ENV === "production" ? "paid" :
         (mode === "free" || mode === "paid" || mode === "local" || mode === "mock" ? mode : base.mode),
-      selectedModelKey: typeof c.selectedModelKey === "string" && c.selectedModelKey.length <= 220 ? c.selectedModelKey : base.selectedModelKey,
+      // Migrate previous fixed OpenRouter selections to the dynamic router alias.
+      selectedModelKey: requestedModelKey.startsWith("openrouter-paid::") ? base.selectedModelKey : requestedModelKey,
       monthlyBudgetInr: amount(c.monthlyBudgetInr, base.monthlyBudgetInr),
       maxRequestCostInr: amount(c.maxRequestCostInr, base.maxRequestCostInr),
       allowFallback: typeof c.allowFallback === "boolean" ? c.allowFallback : base.allowFallback
@@ -126,7 +124,7 @@ function cleanSettings(input: unknown): GatewaySettings {
     version: 1,
     globalMonthlyBudgetInr: amount(raw.globalMonthlyBudgetInr, defaults.globalMonthlyBudgetInr),
     usdToInrRate: Math.min(250, Math.max(1, amount(raw.usdToInrRate, 97))),
-    paidRoutingEnabled: typeof raw.paidRoutingEnabled === "boolean" ? raw.paidRoutingEnabled : false,
+    paidRoutingEnabled: defaults.paidRoutingEnabled || raw.paidRoutingEnabled === true,
     modules, models, updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : undefined
   };
 }
