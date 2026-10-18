@@ -16,6 +16,16 @@ export function chatContentText(content: ChatContent): string {
   return content.filter((part): part is ChatTextPart => part.type === "text").map(part => part.text).join("\\n");
 }
 
+/**
+ * Conservative budget estimate: count each high-detail image as 8,000 input
+ * tokens (32,000 character-equivalents) unless provider-reported usage is available.
+ * This intentionally errs high so image audits cannot bypass paid-request caps.
+ */
+export function estimateChatContentChars(content: ChatContent): number {
+  if (typeof content === "string") return content.length;
+  return content.reduce((total, part) => total + (part.type === "text" ? part.text.length : 32_000), 0);
+}
+
 /** Validate OpenAI-compatible text and image_url content before sending it to a provider. */
 export function isValidChatContent(value: unknown): value is ChatContent {
   if (typeof value === "string") return value.length <= 200_000;
@@ -250,8 +260,9 @@ export async function chatCompletion(
   if (!request.model?.trim()) throw new GatewayError("A model is required.",400);
   if (!Array.isArray(request.messages)||request.messages.length===0) throw new GatewayError("At least one chat message is required.",400);
   if(request.messages.some(m=>!m||!["system","user","assistant"].includes(m.role)||!isValidChatContent(m.content)))throw new GatewayError("Messages must contain supported roles and valid text/image content.",400);
-  const promptChars=request.messages.reduce((n,m)=>n+chatContentText(m.content).length,0);
-  if(promptChars>200_000)throw new GatewayError("Request content exceeds the 200,000-character limit.",413);
+  const promptTextChars=request.messages.reduce((n,m)=>n+chatContentText(m.content).length,0);
+  if(promptTextChars>200_000)throw new GatewayError("Request text exceeds the 200,000-character limit.",413);
+  const promptChars=request.messages.reduce((n,m)=>n+estimateChatContentChars(m.content),0);
 
   const providers=options.providers??providersFromEnv();
   const settings=await getGatewaySettings();
