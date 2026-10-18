@@ -14,7 +14,7 @@ export function buildRetrievalQuery(currentUserMessage: string, previousUserMess
   const current = currentUserMessage.trim();
   const previous = previousUserMessage.trim();
   if (!previous || !current) return (current || previous).slice(0, 3000);
-  const isFollowUp = current.length <= 80
+  const isFollowUp = current.length <= 45
     || /^(yes|yep|yeah|ok|okay|proceed|continue|go ahead|do it|fix it|implement|make it|try again|check again|same|that|this|please)\b/i.test(current);
   return isFollowUp
     ? (previous.slice(0, 2300) + "\nFollow-up: " + current).slice(0, 3000)
