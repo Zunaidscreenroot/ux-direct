@@ -62,4 +62,4 @@ The design follows the useful ideas—not a new runtime dependency—from:
 - [pgvector](https://github.com/pgvector/pgvector): PostgreSQL-native vector search when evaluations justify semantic retrieval.
 - [agent-memory-toolkit](https://github.com/autosre-ai/agentmemory): hybrid retrieval and explicit memory tiers.
 
-These projects are research references. This implementation stays in the existing TypeScript + Supabase/Postgres stack to avoid adding a separate Python memory service or new recurring hosting costs.
+These projects are research references. This implementation uses the existing TypeScript + Neon Postgres stack, with Cloudflare R2 for large binary assets such as screenshots. The shared brain remains model-independent and does not introduce a separate Python memory service or new recurring hosting costs.
