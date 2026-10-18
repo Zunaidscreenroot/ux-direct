@@ -263,6 +263,12 @@ test("validates multimodal screenshot content before sending it to a model", () 
   assert.equal(isValidChatContent([
     { type: "image_url", image_url: { url: "https://service.internal/screen.png" } }
   ]), false);
+  assert.equal(isValidChatContent([
+    { type: "image_url", image_url: { url: "https://192.168.1.10/screen.png" } }
+  ]), false);
+  assert.equal(isValidChatContent([
+    { type: "image_url", image_url: { url: "https://[::1]/screen.png" } }
+  ]), false);
 });
 
 test("paid-request estimates include conservative cost allowance for screenshots", () => {
