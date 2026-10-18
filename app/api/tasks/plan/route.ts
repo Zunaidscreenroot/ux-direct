@@ -99,14 +99,18 @@ export async function POST(request: Request) {
     try {
       const taskText = `${parsed.data.title}\\n${parsed.data.request}\\n${parsed.data.project}`;
       const looksBfsi = /(bfsi|bank|banking|financial services|finance|loan|credit|upi|insurance|nbfc|dmi|ujjivan|sfb)/i.test(taskText);
+      const looksAudit = /(ux audit|audit|benchmark|usability review|heuristic review|critique)/i.test(taskText);
+      const productScope = /\b(dmi|dmi hfc|dmi finance)\b/i.test(taskText) ? "DMI_HFC"
+        : /\b(ujjivan|ujjivan sfb)\b/i.test(taskText) ? "UJJIVAN_SFB"
+        : looksBfsi ? "INDIA_BFCI_SHARED" : null;
       const scopeKey = parsed.data.project === "express-computers"
         ? "EXPRESS_COMPUTERS"
-        : /\b(dmi|dmi hfc|dmi finance)\b/i.test(taskText) ? "DMI_HFC"
-        : /\b(ujjivan|ujjivan sfb)\b/i.test(taskText) ? "UJJIVAN_SFB"
-        : looksBfsi ? "INDIA_BFCI_SHARED" : "UX_DIRECT";
+        : looksAudit ? "UX_AUDIT" : productScope || "UX_DIRECT";
+      const relatedScopes = looksAudit && productScope && productScope !== scopeKey ? [productScope] : [];
       brainContext = await retrieveBrainContext({
         query: taskText,
         scopeKey,
+        relatedScopes,
         maxResults: 6,
         maxContextChars: 3000,
       });
