@@ -399,6 +399,8 @@ export default function Home() {
             <span aria-hidden="true">{item.icon}</span>{item.label}
           </button>
         ))}
+        <Link className="nav-item" href="/ia-demo"><span aria-hidden="true">⌘</span>IA discovery</Link>
+        <Link className="nav-item" href="/audit-demo"><span aria-hidden="true">◎</span>UX audit & benchmark</Link>
         <div className="sidebar-bottom">
           <div className="status-dot" style={{ background: backendHealthy ? "#26966b" : "#d9a84d" }} />
           <div><strong>{backendHealthy ? "Backend reachable" : "Connection status"}</strong><span>{backendHealthy ? "Health check passed" : "Check Connections"}</span></div>
