@@ -151,7 +151,8 @@ export async function POST(request: Request) {
 
   try {
     const response = await chatCompletionWithFallback({
-      model: "uxd/vision",
+      model: process.env.UXD_AUDIT_MODEL || "google/gemma-4-31b-it:free",
+      providerId: "openrouter",
       moduleId: "vision",
       messages: [
         { role: "system", content: UX_AUDIT_SYSTEM_PROMPT },
