@@ -196,14 +196,35 @@ export default function IADemoPage() {
   async function auditIA() {
     if (!result || result.pages.length === 0 || auditBusy) return;
     setAuditBusy(true); setAuditError(""); setAuditFindings([]); setAuditSummary(null);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 35_000);
     try {
-      const response = await fetch("/api/ia/audit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ origin: result.origin, pages: result.pages }) });
+      // Keep the payload focused; the server and model need a useful representative
+      // link sample, not every raw outgoing link emitted by the crawler.
+      const auditPages = result.pages.map((page) => ({
+        ...page,
+        links: (page.links || []).slice(0, 18),
+        headings: (page.headings || []).slice(0, 8)
+      }));
+      const response = await fetch("/api/ia/audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ origin: result.origin, pages: auditPages }),
+        signal: controller.signal,
+        cache: "no-store"
+      });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "IA audit failed.");
       setAuditSummary(typeof payload.summary === "string" ? payload.summary : "IA analysis complete.");
       setAuditFindings(Array.isArray(payload.findings) ? payload.findings : []);
-    } catch (cause) { setAuditError(cause instanceof Error ? cause.message : "IA audit failed."); }
-    finally { setAuditBusy(false); }
+    } catch (cause) {
+      setAuditError(controller.signal.aborted
+        ? "IA analysis timed out after 35 seconds. Please retry; the request has been cancelled."
+        : cause instanceof Error ? cause.message : "IA audit failed.");
+    } finally {
+      window.clearTimeout(timeoutId);
+      setAuditBusy(false);
+    }
   }
 
   return (
