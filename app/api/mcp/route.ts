@@ -248,7 +248,7 @@ const TOOLS = [
 ];
 
 async function callBrainAction(request: Request, payload: Record<string, unknown>) {
-  const key = process.env.UX_DIRECT_BRAIN_API_KEY;
+  const key = process.env.UX_DIRECT_BRAIN_API_KEY || process.env.UX_DIRECT_MCP_API_KEY;
   if (!key || key.length < 32) return toolText({ error: "UX Shared Brain is not configured on the server." }, true);
   const response = await fetch(new URL("/api/brain", request.url), {
     method: "POST",
