@@ -342,8 +342,8 @@ export async function chatCompletion(
   const timeout=setTimeout(()=>controller.abort(),options.timeoutMs??45_000);
   const abort=()=>controller.abort();request.signal?.addEventListener("abort",abort,{once:true});
   const usdToInrRate=settings.usdToInrRate||97;
-  const autoInputUsdCap=Math.max(0,Number.isFinite(Number(process.env.OPENROUTER_AUTO_MAX_INPUT_USD_PER_1M))?Number(process.env.OPENROUTER_AUTO_MAX_INPUT_USD_PER_1M):0.20);
-  const autoOutputUsdCap=Math.max(0,Number.isFinite(Number(process.env.OPENROUTER_AUTO_MAX_OUTPUT_USD_PER_1M))?Number(process.env.OPENROUTER_AUTO_MAX_OUTPUT_USD_PER_1M):0.50);
+  const autoInputUsdCap=Math.max(0,Number.isFinite(Number(process.env.OPENROUTER_AUTO_MAX_INPUT_USD_PER_1M))?Number(process.env.OPENROUTER_AUTO_MAX_INPUT_USD_PER_1M):0.10);
+  const autoOutputUsdCap=Math.max(0,Number.isFinite(Number(process.env.OPENROUTER_AUTO_MAX_OUTPUT_USD_PER_1M))?Number(process.env.OPENROUTER_AUTO_MAX_OUTPUT_USD_PER_1M):0.30);
   const rates={billable,
     inputPriceInrPerMillion:isOpenRouterAuto?autoInputUsdCap*usdToInrRate:modelPolicy.inputPriceInrPerMillion,
     outputPriceInrPerMillion:isOpenRouterAuto?autoOutputUsdCap*usdToInrRate:modelPolicy.outputPriceInrPerMillion};
