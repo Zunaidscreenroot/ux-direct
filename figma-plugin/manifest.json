@@ -9,7 +9,7 @@
   ],
   "networkAccess": {
     "allowedDomains": [
-      "https://ux-direct-1qzrcpr0p-screenroot.vercel.app"
+      "https://ux-direct-git-feat-uxd-learning-loop-design-screenroot.vercel.app"
     ],
     "reasoning": "UX Direct sends the user's prompt and selected node metadata to its backend to create a task plan. It does not upload file contents or modify the design in this MVP."
   },
