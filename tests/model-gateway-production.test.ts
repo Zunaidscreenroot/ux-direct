@@ -78,3 +78,30 @@ test("IA audit server and browser allow a long-running model response without a 
   assert.ok(page.includes("controller.abort(), 135_000"));
   assert.equal(page.includes("controller.abort(), 35_000"), false);
 });
+
+
+test("screenshot UX audits use the dynamic gateway and carry long-running cancellation through", () => {
+  const route = read("app/api/ux-audit/analyze/route.ts");
+  const env = read(".env.example");
+  assert.ok(route.includes('model: "uxd/vision"'));
+  assert.ok(route.includes("timeoutMs: 120_000"));
+  assert.ok(route.includes("signal: request.signal"));
+  assert.equal(route.includes("UXD_AUDIT_MODEL"), false);
+  assert.equal(route.includes("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"), false);
+  assert.equal(env.includes("UXD_AUDIT_MODEL="), false);
+});
+
+test("competitor benchmarks validate named sites and explain missing comparison evidence", () => {
+  const route = read("app/api/ux-audit/analyze/route.ts");
+  const page = read("app/audit-demo/page.tsx");
+  assert.ok(route.includes("new Map(input.screenshots.map"));
+  assert.ok(route.includes("const hasMultipleSites = allowedSites.size >= 2"));
+  assert.ok(page.includes("benchmarkSiteCount < 2"));
+  assert.ok(page.includes("No comparable observations were validated from this run."));
+});
+
+test("Lighthouse benchmarking allows enough time for page load and measurements", () => {
+  const route = read("app/api/ux-audit/lighthouse/route.ts");
+  assert.ok(route.includes("controller.abort(), 90_000"));
+  assert.equal(route.includes("controller.abort(), 25_000"), false);
+});
