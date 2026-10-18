@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chatCompletion, GatewayError, resolveProvider, type ProviderConfig } from "../src/model-gateway";
+import { chatCompletion, GatewayError, estimateChatContentChars, isValidChatContent, resolveProvider, type ProviderConfig } from "../src/model-gateway";
 
 const providers: ProviderConfig[] = [
   { name: "openai", baseUrl: "https://example.test/v1", apiKey: "test-key", models: ["gpt-test"] },
@@ -246,4 +246,34 @@ test("direct provider billing tier is explicit and paid providers stay unavailab
   assert.equal(getModelCatalog(paidEnabled).find(model => model.provider === "gemini" && model.id === "gemini-3.1-flash-lite")?.tier, "paid");
   const free = providersFromEnv({ ...base, GEMINI_BILLING_MODE: "free-tier", ALLOW_PAID_MODELS: "false" });
   assert.equal(free.find(provider => provider.name === "gemini")?.kind, "free-tier");
+});
+
+test("validates multimodal screenshot content before sending it to a model", () => {
+  assert.equal(isValidChatContent("Review this screenshot."), true);
+  assert.equal(isValidChatContent([
+    { type: "text", text: "Audit this screen." },
+    { type: "image_url", image_url: { url: "https://images.example.com/screen.png", detail: "high" } }
+  ]), true);
+  assert.equal(isValidChatContent([
+    { type: "image_url", image_url: { url: "http://images.example.com/screen.png" } }
+  ]), false);
+  assert.equal(isValidChatContent([
+    { type: "image_url", image_url: { url: "https://127.0.0.1/screen.png" } }
+  ]), false);
+  assert.equal(isValidChatContent([
+    { type: "image_url", image_url: { url: "https://service.internal/screen.png" } }
+  ]), false);
+  assert.equal(isValidChatContent([
+    { type: "image_url", image_url: { url: "https://192.168.1.10/screen.png" } }
+  ]), false);
+  assert.equal(isValidChatContent([
+    { type: "image_url", image_url: { url: "https://[::1]/screen.png" } }
+  ]), false);
+});
+
+test("paid-request estimates include conservative cost allowance for screenshots", () => {
+  assert.equal(estimateChatContentChars([
+    { type: "text", text: "audit" },
+    { type: "image_url", image_url: { url: "https://images.example.com/screen.png" } }
+  ]), 32_005);
 });

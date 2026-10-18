@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { chatCompletionWithFallback, GatewayError, type ChatMessage } from "@/src/model-gateway";
+import { chatCompletionWithFallback, GatewayError, isValidChatContent, type ChatMessage } from "@/src/model-gateway";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 import { GATEWAY_MODULES } from "@/src/model-gateway/control-store";
 
@@ -56,8 +56,8 @@ export async function POST(request: Request) {
   for (const item of value.messages) {
     if (!item || typeof item !== "object") return NextResponse.json({ error: "Invalid message entry." }, { status: 400 });
     const message = item as Record<string, unknown>;
-    if (!["system", "user", "assistant"].includes(String(message.role)) || typeof message.content !== "string") {
-      return NextResponse.json({ error: "Each message requires a supported role and string content." }, { status: 400 });
+    if (!["system", "user", "assistant"].includes(String(message.role)) || !isValidChatContent(message.content)) {
+      return NextResponse.json({ error: "Each message requires a supported role and valid text/image content." }, { status: 400 });
     }
     messages.push({ role: message.role as ChatMessage["role"], content: message.content });
   }

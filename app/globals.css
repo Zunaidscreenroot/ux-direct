@@ -20,7 +20,7 @@ button { cursor: pointer; }
 .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; background: var(--green); border-radius: 11px; font-size: 15px; letter-spacing: -1.5px; }
 .sidebar-label, .section-kicker, .eyebrow, .count, footer { font-family: 'DM Mono', monospace; letter-spacing: 1.2px; font-size: 10px; }
 .sidebar-label { color: #8a948d; padding: 0 11px 12px; }
-.nav-item { width: 100%; border: 0; background: transparent; color: #65716b; display: flex; align-items: center; gap: 12px; padding: 12px 13px; margin: 2px 0; border-radius: 9px; text-align: left; font-size: 13px; }
+.nav-item { text-decoration: none; width: 100%; border: 0; background: transparent; color: #65716b; display: flex; align-items: center; gap: 12px; padding: 12px 13px; margin: 2px 0; border-radius: 9px; text-align: left; font-size: 13px; }
 .nav-item span { font-size: 17px; width: 18px; text-align: center; }
 .nav-item.active { background: white; color: var(--ink); font-weight: 700; box-shadow: 0 1px 3px #1c30200b; }
 .sidebar-bottom { margin-top: auto; border-top: 1px solid #e0e6dd; padding: 19px 8px 2px; display: flex; align-items: flex-start; gap: 10px; }
