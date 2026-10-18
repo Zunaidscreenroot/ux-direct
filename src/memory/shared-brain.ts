@@ -494,18 +494,27 @@ export async function runBrainRetrievalEvals(limit = 50) {
     const expected = Array.isArray(item.expected_memory_ids) ? item.expected_memory_ids.map(String) : [];
     const retrievedIds = retrieval.memories.map(memory => memory.id);
     const missingExpected = expected.filter(id => !retrievedIds.includes(id));
+    const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata as Record<string, unknown> : {};
+    const expectedDocumentIds = Array.isArray(metadata.expectedDocumentIds) ? metadata.expectedDocumentIds.filter((value): value is string => typeof value === "string") : [];
+    const retrievedDocumentIds = [...new Set(retrieval.knowledge.map(chunk => chunk.document_id))];
+    const missingExpectedDocuments = expectedDocumentIds.filter(id => !retrievedDocumentIds.includes(id));
     const forbidden = Array.isArray(item.forbidden_behaviors) ? item.forbidden_behaviors.filter((phrase): phrase is string => typeof phrase === "string") : [];
     const contextLower = retrieval.contextText.toLowerCase();
     const forbiddenMatches = forbidden.filter(phrase => contextLower.includes(phrase.toLowerCase()));
-    const recall = expected.length ? (expected.length - missingExpected.length) / expected.length : null;
-    const passed = missingExpected.length === 0 && forbiddenMatches.length === 0;
+    const expectedTotal = expected.length + expectedDocumentIds.length;
+    const missingTotal = missingExpected.length + missingExpectedDocuments.length;
+    const recall = expectedTotal ? (expectedTotal - missingTotal) / expectedTotal : null;
+    const passed = missingTotal === 0 && forbiddenMatches.length === 0;
     const summary = {
       caseId: item.id,
       title: item.title,
       passed,
-      expectedCount: expected.length,
-      retrievedCount: retrievedIds.length,
-      missingExpected,
+      expectedMemoryCount: expected.length,
+      retrievedMemoryCount: retrievedIds.length,
+      missingExpectedMemories: missingExpected,
+      expectedDocumentCount: expectedDocumentIds.length,
+      retrievedDocumentIds,
+      missingExpectedDocuments,
       forbiddenMatches,
       recallAtK: recall,
       retrievalStatus: retrieval.retrieval.status,
