@@ -225,7 +225,7 @@ export async function retrieveBrainContext(input: {
   }
 }
 
-export async function saveBrainFeedback(input: BrainFeedbackInput) {
+export async function saveBrainFeedback(input: BrainFeedbackInput): Promise<Record<string, unknown> & { id: string; duplicate: boolean }> {
   const rawFeedback = textValue(input.rawFeedback, 12000, "rawFeedback", true);
   const title = textValue(input.title, 180, "title", true);
   const normalizedRule = textValue(input.normalizedRule, 2400, "normalizedRule", true);
@@ -264,12 +264,12 @@ export async function saveBrainFeedback(input: BrainFeedbackInput) {
       body: JSON.stringify(payload),
     });
     const row = Array.isArray(created) ? created[0] : created && typeof created === "object" ? created as Record<string, unknown> : null;
-    if (row && typeof row.id === "string") return { ...(row as Record<string, unknown>), duplicate: false };
+    if (row && typeof row.id === "string") return { ...(row as Record<string, unknown>), id: row.id, duplicate: false };
   } catch (error) {
     // A concurrent retry can win the partial unique index between our read and insert.
     const duplicate = await supabaseRequest(existingPath).catch(() => null);
     const found = Array.isArray(duplicate) ? duplicate[0] : null;
-    if (found) return { ...(found as Record<string, unknown>), duplicate: true };
+    if (found) return { ...(found as Record<string, unknown>), id: String(found.id), duplicate: true };
     throw error;
   }
   throw new Error("Could not confirm whether coaching feedback was saved.");
