@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { discoverSiteMap } from "@/src/ia/site-crawler";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const requestCounts = new Map<string, { count: number; windowStart: number }>();
