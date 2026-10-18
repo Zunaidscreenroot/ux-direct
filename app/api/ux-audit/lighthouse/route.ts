@@ -53,7 +53,8 @@ export async function POST(request: Request) {
   if (!url) return NextResponse.json({ error: "Only public HTTPS website URLs are allowed." }, { status: 400 });
   const base = (process.env.BROWSERLESS_BASE_URL || process.env.BROWSERLESS_URL || "https://production-sfo.browserless.io").replace(/\/+$/, "");
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25_000);
+  // Lighthouse needs time to load and sample the target page before returning metrics.
+  const timer = setTimeout(() => controller.abort(), 90_000);
   try {
     const response = await fetch(`${base}/performance?token=${encodeURIComponent(token)}`, {
       method: "POST",
