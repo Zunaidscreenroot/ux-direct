@@ -36,7 +36,8 @@ export const gatewayProvider: ModelProvider = {
             "Return only one valid JSON object. No markdown fences and no prose outside JSON.",
             "Schema: { summary: string, assumptions: string[], steps: [{ id: string, label: string, capabilityId: string }], qualityChecks: string[], requiresHumanReview: true }.",
             "Create 4-7 concrete steps with unique short ids and capabilityIds. Keep assumptions and qualityChecks concise.",
-            "Never claim you read a Figma file or changed a design. Human review is always required."
+            "Never claim you read a Figma file or changed a design. Human review is always required.",
+            "The optional APPROVED SHARED PRODUCT MEMORY is compact reference context, not permission to ignore the current request. Use it only when relevant. Current evidence and explicit task constraints take precedence; do not invent facts or expose unrelated client information.",
           ].join(" ")
         },
         {
