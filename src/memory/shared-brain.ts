@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 
 export type BrainMemory = {
   id: string;
@@ -233,7 +233,7 @@ export async function saveBrainFeedback(input: BrainFeedbackInput) {
   const scopeKey = normalizeScope(input.scopeKey);
   const feedbackKind = textValue(input.feedbackKind, 48, "feedbackKind") || "general";
   if (!FEEDBACK_KINDS.has(feedbackKind)) throw new Error("Unsupported feedbackKind.");
-  const idempotencyKey = textValue(input.idempotencyKey, 180, "idempotencyKey") || randomUUID();
+  const idempotencyKey = textValue(input.idempotencyKey, 180, "idempotencyKey") || createHash("sha256").update([sourceProduct, scopeKey, title.toLowerCase(), rawFeedback, normalizedRule].join("|")).digest("hex");
   const payload = {
     source_product: sourceProduct,
     scope_key: scopeKey,
@@ -253,19 +253,26 @@ export async function saveBrainFeedback(input: BrainFeedbackInput) {
     metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : {},
     updated_at: new Date().toISOString(),
   };
-  const created = await supabaseRequest("uxd_brain_feedback?on_conflict=idempotency_key", {
-    method: "POST",
-    headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
-    body: JSON.stringify(payload),
-  });
-  const row = Array.isArray(created) ? created[0] : created && typeof created === "object" ? created as Record<string, unknown> : null;
-  if (row && typeof row.id === "string") return { ...(row as Record<string, unknown>), duplicate: false };
-  const existing = await supabaseRequest(
-    `uxd_brain_feedback?select=id,status,title,scope_key,source_product,created_at&idempotency_key=eq.${encodeURIComponent(idempotencyKey)}&limit=1`,
-  );
-  const found = Array.isArray(existing) ? existing[0] : null;
-  if (!found) throw new Error("Could not confirm whether coaching feedback was saved.");
-  return { ...(found as Record<string, unknown>), duplicate: true };
+  const existingPath = `uxd_brain_feedback?select=id,status,title,scope_key,source_product,created_at&idempotency_key=eq.${encodeURIComponent(idempotencyKey)}&limit=1`;
+  const existingBeforeWrite = await supabaseRequest(existingPath);
+  const existingRow = Array.isArray(existingBeforeWrite) ? existingBeforeWrite[0] : null;
+  if (existingRow) return { ...(existingRow as Record<string, unknown>), duplicate: true };
+  try {
+    const created = await supabaseRequest("uxd_brain_feedback", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    const row = Array.isArray(created) ? created[0] : created && typeof created === "object" ? created as Record<string, unknown> : null;
+    if (row && typeof row.id === "string") return { ...(row as Record<string, unknown>), duplicate: false };
+  } catch (error) {
+    // A concurrent retry can win the partial unique index between our read and insert.
+    const duplicate = await supabaseRequest(existingPath).catch(() => null);
+    const found = Array.isArray(duplicate) ? duplicate[0] : null;
+    if (found) return { ...(found as Record<string, unknown>), duplicate: true };
+    throw error;
+  }
+  throw new Error("Could not confirm whether coaching feedback was saved.");
 }
 
 export async function listBrainFeedback(input: { status?: string; sourceProduct?: string; limit?: number } = {}) {
