@@ -25,7 +25,7 @@ test("injects approved shared context and retrieval telemetry into the system pr
 });
 
 test("makes empty retrieval explicit rather than silently omitting RAG", () => {
-  const prompt = buildBrainSystemPrompt({
+  const prompt = buildBrainSystemPrompt("BASE SYSTEM", {
     ...base,
     status: "empty",
     contextText: "",
@@ -36,7 +36,7 @@ test("makes empty retrieval explicit rather than silently omitting RAG", () => {
 });
 
 test("makes disabled retrieval explicit so the assistant cannot imply memory was consulted", () => {
-  const prompt = buildBrainSystemPrompt({
+  const prompt = buildBrainSystemPrompt("BASE SYSTEM", {
     ...base,
     status: "disabled",
     contextText: "",
@@ -47,7 +47,7 @@ test("makes disabled retrieval explicit so the assistant cannot imply memory was
 });
 
 test("makes retrieval failures explicit while preserving safe conversational fallback", () => {
-  const prompt = buildBrainSystemPrompt({
+  const prompt = buildBrainSystemPrompt("BASE SYSTEM", {
     ...base,
     status: "degraded",
     contextText: "",
