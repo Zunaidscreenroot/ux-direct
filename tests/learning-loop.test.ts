@@ -44,6 +44,7 @@ test("task lifecycle rejects invalid transitions and caps retries", () => {
   task = transitionTask(task, "validating", "draft produced", "2026-10-18T00:00:02.000Z");
   task = transitionTask(task, "failed", "verification failed", "2026-10-18T00:00:03.000Z");
   task = transitionTask(task, "queued", "retry requested", "2026-10-18T00:00:04.000Z");
+  task = transitionTask(task, "planning", "retry queued for planning", "2026-10-18T00:00:04.500Z");
   assert.throws(() => transitionTask(task, "running", "retry", "2026-10-18T00:00:05.000Z"), /retry limit/);
   assert.throws(() => transitionTask(task, "completed", "illegal", "2026-10-18T00:00:06.000Z"), /Invalid task transition/);
 });
