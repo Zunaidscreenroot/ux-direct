@@ -13,6 +13,20 @@
     .mark { display:grid; place-items:center; width:28px; height:28px; border-radius:9px; background:#242424; color:#fff; font-weight:800; }
     .pill { border:1px solid var(--figma-color-border); border-radius:999px; padding:5px 8px; color:var(--figma-color-text-secondary); font-size:10px; white-space:nowrap; }
     .connection { display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px solid var(--figma-color-border); border-radius:9px; margin-bottom:12px; font-size:11px; }
+    .cockpit { border:1px solid var(--figma-color-border); border-radius:14px; padding:12px; margin-bottom:16px; background:var(--figma-color-bg-secondary); }
+    .cockpit-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:10px; }
+    .eyebrow { color:var(--figma-color-text-tertiary); font-size:9px; font-weight:800; letter-spacing:1px; }
+    .cockpit-head h2 { font-size:15px; line-height:1.2; margin:3px 0; }
+    .cockpit-head p { color:var(--figma-color-text-secondary); font-size:10px; line-height:1.4; margin:0; }
+    .refresh-button { white-space:nowrap; padding:7px 9px; font-size:10px; }
+    .health-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+    .health-card { min-width:0; border:1px solid var(--figma-color-border); background:var(--figma-color-bg); border-radius:10px; padding:9px; }
+    .health-title { display:flex; align-items:center; gap:6px; color:var(--figma-color-text-secondary); font-size:10px; font-weight:750; margin-bottom:7px; }
+    .health-card strong { display:block; overflow-wrap:anywhere; font-size:11px; line-height:1.35; }
+    .health-card small { display:block; color:var(--figma-color-text-tertiary); font-size:9px; line-height:1.35; margin-top:5px; overflow-wrap:anywhere; }
+    .cockpit-footnote { font-size:9px; line-height:1.4; color:var(--figma-color-text-tertiary); margin:9px 0 0; }
+    .conversation-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:4px; }
+    .mode-chip { border:1px solid var(--figma-color-border); border-radius:999px; padding:5px 8px; color:var(--figma-color-text-secondary); font-size:9px; white-space:nowrap; }
     .dot { width:7px; height:7px; border-radius:50%; background:#d6a23e; }
     .dot.ok { background:#26966b; }
     h1 { font-size:20px; line-height:1.2; margin:8px 0; letter-spacing:-.5px; }
@@ -37,15 +51,43 @@
 </head>
 <body>
   <header><div class="brand"><span class="mark">ux</span> UX Direct</div><span class="pill">CHATGPT ↔ FIGMA</span></header>
-  <div class="connection" aria-live="polite"><span id="connectionDot" class="dot"></span><strong id="connectionText">Checking backend connection…</strong></div>
-  <div class="connection" aria-live="polite"><span id="chatgptConnectionDot" class="dot"></span><strong id="chatgptConnectionText">ChatGPT connection: checking recent activity…</strong></div>
-  <div class="connection" aria-live="polite"><span id="figmaConnectionDot" class="dot"></span><strong id="figmaConnectionText">Figma session: waiting for heartbeat…</strong></div>
-  <h1>Conversational Copilot</h1>
-  <p class="sub">Describe your UX task in natural language. UX Direct prepares a structured plan, checks the current product context, and reports connection status for ChatGPT and this Figma plugin session.</p>
+  <section class="cockpit" aria-label="Live connection cockpit">
+    <div class="cockpit-head">
+      <div><div class="eyebrow">LIVE SYSTEMS</div><h2>Connection cockpit</h2><p>Refresh to verify each live service. No secrets are displayed.</p></div>
+      <button id="refreshCockpit" class="secondary refresh-button" type="button">↻ Refresh</button>
+    </div>
+    <div class="health-grid">
+      <article class="health-card" aria-live="polite">
+        <div class="health-title"><span id="connectionDot" class="dot"></span> Cloudflare backend</div>
+        <strong id="connectionText">Checking backend…</strong>
+        <small id="backendMeta">Health endpoint and R2 plugin bridge</small>
+      </article>
+      <article class="health-card" aria-live="polite">
+        <div class="health-title"><span id="openrouterConnectionDot" class="dot"></span> OpenRouter</div>
+        <strong id="openrouterConnectionText">Checking provider…</strong>
+        <small id="openrouterMeta">API authentication and free-model availability</small>
+      </article>
+      <article class="health-card" aria-live="polite">
+        <div class="health-title"><span id="chatgptConnectionDot" class="dot"></span> ChatGPT · MCP</div>
+        <strong id="chatgptConnectionText">Checking recent activity…</strong>
+        <small id="chatgptMeta">Authenticated MCP activity within the last 5 minutes</small>
+      </article>
+      <article class="health-card" aria-live="polite">
+        <div class="health-title"><span id="figmaConnectionDot" class="dot"></span> Figma bridge</div>
+        <strong id="figmaConnectionText">Waiting for heartbeat…</strong>
+        <small id="figmaMeta">This plugin session heartbeat (75-second window)</small>
+      </article>
+    </div>
+    <p class="cockpit-footnote">ChatGPT/MCP is shown as active only after an authenticated request. To test MCP → Figma, ask ChatGPT to run the UX Direct MCP native plugin health check; its command is delivered over this plugin heartbeat.</p>
+  </section>
+  <div class="conversation-head">
+    <h1>Conversational Cockpit</h1><span id="modeChip" class="mode-chip">AI · Shared Brain</span>
+  </div>
+  <p class="sub">Tell UX Direct what you want to improve. It uses configured model reasoning and approved shared memory to prepare a reviewable plan. Figma edits remain off until explicitly implemented.</p>
   <label for="project">Project</label>
   <select id="project"><option value="general">General UX</option><option value="express-computers">Express Computers</option><option value="dmi-finance">DMI Finance</option></select>
-  <label for="prompt">Your brief</label>
-  <textarea id="prompt" maxlength="8000" placeholder="Example: Analyse the selected DMI screen and plan a VKYC entry point. Reuse approved patterns and cover consent, loading, error and retry states."></textarea>
+  <label for="prompt">Message UX Direct</label>
+  <textarea id="prompt" maxlength="8000" placeholder="Ask about the selected frame, request a UX critique, map a journey, or plan a design improvement…"></textarea>
   <section class="selection" aria-live="polite" style="margin-top:10px">
     <strong>Native Plugin API health</strong>
     <p id="healthSummary" class="muted" style="margin:7px 0">Not tested yet. Run a check to verify available plugin APIs.</p>
@@ -53,7 +95,7 @@
     <div id="healthResults" style="margin-top:8px"></div>
   </section>
   <div class="selection" aria-live="polite"><strong>Selected Figma context</strong><div id="selection" class="muted" style="margin-top:6px">Reading current selection…</div><button id="refresh" class="secondary" style="margin-top:9px">Refresh selection</button></div>
-  <button id="submit" class="primary">Ask UX Direct ↗</button>
+  <button id="submit" class="primary">Send message ↗</button>
   <div id="status" class="status" role="status">Ready. No Figma changes will be made.</div>
   <div id="result" class="result" hidden></div>
   <footer>Planning sends prompt text and selected-node metadata only. UXD API Test Lab and its test fixtures are created once and reused. Test nodes, components, variables, and the storage probe are intentionally preserved between runs; no per-run cleanup is performed. No Figma REST API or OAuth access is used.</footer>
@@ -121,6 +163,35 @@
       return { ok: false, error: detail };
     }
   }
+  async function refreshOpenRouterStatus() {
+    const dot = $("openrouterConnectionDot");
+    const label = $("openrouterConnectionText");
+    const meta = $("openrouterMeta");
+    dot.className = "dot";
+    label.textContent = "Verifying API key…";
+    try {
+      const response = await fetch(API + "/api/assistant/status", {
+        method: "GET", headers: { "Accept": "application/json" }, cache: "no-store"
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Provider status returned " + response.status);
+      if (data.connected) {
+        dot.className = "dot ok";
+        label.textContent = "Connected · authenticated";
+        meta.textContent = data.defaultModel ? "Default free model: " + data.defaultModel : "OpenRouter key verified; free route available";
+      } else {
+        label.textContent = "Not verified";
+        meta.textContent = data.error || "No available free model was confirmed.";
+      }
+      return Boolean(data.connected);
+    } catch (error) {
+      label.textContent = "Status unavailable";
+      meta.textContent = error && error.message ? error.message : "Could not verify OpenRouter.";
+      console.warn("[UX Direct OpenRouter status]", error);
+      return false;
+    }
+  }
+
   async function refreshConnectionStatus() {
     const fileKey = verifiedFileKey || currentSelection.fileKey;
     if (!fileKey || fileKey !== ALLOWED_FILE_KEY) return;
@@ -134,22 +205,27 @@
       if (chatgpt.state === "connected") {
         $("chatgptConnectionDot").className = "dot ok";
         const seen = chatgpt.lastActivityAt ? new Date(chatgpt.lastActivityAt).toLocaleTimeString() : "just now";
-        $("chatgptConnectionText").textContent = "ChatGPT connector recently active · " + seen;
+        $("chatgptConnectionText").textContent = "Connected · recent MCP request";
+        $("chatgptMeta").textContent = "Last authenticated MCP activity: " + seen;
       } else if (chatgpt.state === "idle") {
         $("chatgptConnectionDot").className = "dot";
-        $("chatgptConnectionText").textContent = "ChatGPT connector idle · no authenticated request in the last 5 minutes";
+        $("chatgptConnectionText").textContent = "Idle · make an MCP call";
+        $("chatgptMeta").textContent = "No authenticated ChatGPT request in the last 5 minutes."; 
       } else {
         $("chatgptConnectionDot").className = "dot";
-        $("chatgptConnectionText").textContent = "ChatGPT connector waiting · connect and call UX Direct from ChatGPT";
+        $("chatgptConnectionText").textContent = "Waiting for MCP activity";
+        $("chatgptMeta").textContent = "Call a UX Direct tool in ChatGPT to verify the connector."; 
       }
 
       const figma = data.figmaPlugin || {};
       if (figma.connected) {
         $("figmaConnectionDot").className = "dot ok";
-        $("figmaConnectionText").textContent = "This Figma plugin session connected · heartbeat verified";
+        $("figmaConnectionText").textContent = "Connected · heartbeat verified";
+        $("figmaMeta").textContent = "This plugin session is visible to MCP commands."; 
       } else {
         $("figmaConnectionDot").className = "dot";
-        $("figmaConnectionText").textContent = "This Figma session is not registered as online";
+        $("figmaConnectionText").textContent = "Offline · no fresh heartbeat";
+        $("figmaMeta").textContent = "Reopen the plugin in the approved file."; 
       }
     } catch (error) {
       $("chatgptConnectionDot").className = "dot";
@@ -161,13 +237,14 @@
   }
 
   let heartbeatTimer = null;
+  let openRouterRefreshTimer = null;
   async function startPluginSession() {
     await sendTelemetry("Plugin opened", "success", "UX Direct plugin UI initialized in Figma.");
     const connection = await checkConnection();
     const bridge = connection
       ? await syncPluginBridge()
       : { ok: false, error: "Cloudflare Workers health check failed." };
-    await refreshConnectionStatus();
+    await Promise.allSettled([refreshConnectionStatus(), refreshOpenRouterStatus()]);
     $("runHealth").disabled = false;
     $("healthSummary").textContent = connection && bridge.ok
       ? "Cloudflare Workers and persistent plugin bridge connected. Run the native API self-test when ready."
@@ -179,9 +256,12 @@
       void syncPluginBridge();
       void refreshConnectionStatus();
     }, 30000);
+    if (openRouterRefreshTimer) window.clearInterval(openRouterRefreshTimer);
+    openRouterRefreshTimer = window.setInterval(() => { void refreshOpenRouterStatus(); }, 90000);
   }
   window.addEventListener("pagehide", () => {
     if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+    if (openRouterRefreshTimer) window.clearInterval(openRouterRefreshTimer);
     const fileKey = verifiedFileKey || currentSelection.fileKey;
     if (!fileKey || fileKey !== ALLOWED_FILE_KEY) return;
     const body = JSON.stringify({ mode: "disconnect", fileKey, clientId: pluginClientId, sessionToken: pluginSessionToken });
@@ -217,6 +297,17 @@
       return null;
     }
   }
+  async function refreshCockpit() {
+    const button = $("refreshCockpit");
+    if (button) { button.disabled = true; button.textContent = "Checking…"; }
+    try {
+      await Promise.allSettled([checkConnection(), syncPluginBridge(), refreshConnectionStatus(), refreshOpenRouterStatus()]);
+    } finally {
+      if (button) { button.disabled = false; button.textContent = "↻ Refresh"; }
+    }
+  }
+  $("refreshCockpit").addEventListener("click", () => { void refreshCockpit(); });
+
   parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
   $("refresh").addEventListener("click", () => {
     void sendTelemetry("Selection refresh clicked", "info", "User requested a fresh selected-layer snapshot.");
@@ -333,7 +424,10 @@
       }
       renderPlan(data);
       const learningStatus = data.learningCapture && data.learningCapture.status === "draft-saved" ? " · Correction stored in shared brain as a draft" : data.learningCapture && data.learningCapture.status === "approved" ? " · Correction learned into shared brain" : data.learningCapture && data.learningCapture.status === "failed" ? " · Shared-brain save failed; plan still completed" : "";
-      status("Response received · " + (data.mode || "unknown") + " mode · ₹" + (data.cost && data.cost.amount != null ? data.cost.amount : "?") + " API cost · Request " + (data.requestId || "recorded") + ". No Figma changes made." + learningStatus);
+      const diagnostics = data.diagnostics || {};
+      const providerLabel = diagnostics.provider || data.mode || "unknown";
+      status("Response received · " + providerLabel + " · ₹" + (data.cost && data.cost.amount != null ? data.cost.amount : "?") + " reported API cost · Request " + (data.requestId || "recorded") + ". No Figma changes made." + learningStatus);
+      if ($("modeChip")) $("modeChip").textContent = data.mode === "gateway" ? "AI · " + providerLabel : "Mock · no inference";
       await sendTelemetry("Task response received", "success", "Planning response returned to the plugin UI.", { requestId: data.requestId, project: $("project").value, durationMs, mode: data.mode });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -351,7 +445,19 @@
       const detail = document.createElement("small"); detail.textContent = step.capabilityId || "Planned capability";
       item.append(title, detail); root.appendChild(item);
     });
-    const rationale = document.createElement("p"); rationale.textContent = "Why this plan: the current mock planner creates a deterministic task breakdown. Model-based reasoning and Figma edits are not enabled yet."; root.appendChild(rationale);
+    const rationale = document.createElement("p");
+    const diagnostics = data.diagnostics || {};
+    const brain = diagnostics.sharedBrain || {};
+    const provider = diagnostics.provider || "unknown provider";
+    const model = diagnostics.model || "model not reported";
+    const brainSummary = brain.status === "complete"
+      ? "Shared Brain: " + (brain.memoryCount || 0) + " memories, " + (brain.knowledgeChunkCount || 0) + " reference chunks retrieved."
+      : "Shared Brain: " + (brain.status || "not reported") + ".";
+    rationale.textContent = data.mode === "gateway"
+      ? "Why this plan: generated using " + provider + " (" + model + "). " + brainSummary + " Reported API cost: ₹" + (data.cost && data.cost.amount != null ? data.cost.amount : "?") + ". Planning only; no Figma changes were made."
+      : "Why this plan: deterministic mock mode returned the result; no model inference was used. " + brainSummary;
+    root.appendChild(rationale);
+    if ($("modeChip")) $("modeChip").textContent = data.mode === "gateway" ? "AI · " + provider : "Mock · no inference";
     const checksTitle = document.createElement("strong"); checksTitle.textContent = "Quality checks"; root.appendChild(checksTitle);
     const checks = document.createElement("ul");
     (data.plan && data.plan.qualityChecks || []).forEach((check) => { const li = document.createElement("li"); li.textContent = check; checks.appendChild(li); });
