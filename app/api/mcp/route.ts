@@ -227,7 +227,7 @@ const TOOLS = [
   {
     name: "ux_direct_brain_review_feedback",
     description: "Approve a saved coaching lesson into canonical shared memory, reject it, or archive it. Approve only after the owner explicitly confirms the lesson should become active. Archive a wrong/outdated rule instead of silently replacing it. Approval activates the short normalized rule for future retrieval; it does not fine-tune model weights.",
-    inputSchema: { type: "object", properties: { feedbackId: { type: "string", format: "uuid" }, decision: { type: "string", enum: ["approve","reject","archive"] }, reviewNote: { type: "string", maxLength: 1000 } }, required: ["feedbackId","decision"], additionalProperties: false },
+    inputSchema: { type: "object", properties: { feedbackId: { type: "string", format: "uuid" }, decision: { type: "string", enum: ["approve","reject","archive"] }, reviewNote: { type: "string", maxLength: 1000 }, sourceProduct: { type: "string", enum: ["ux-direct","ux-audit","figma-plugin","chatgpt","local-model","benchmark","knowledge-ingestion"] } }, required: ["feedbackId","decision"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   },
   {
@@ -457,7 +457,7 @@ async function callTool(name: string, args: unknown, request: Request) {
     if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
     const input = args as Record<string, unknown>;
     if (!["approve","reject","archive"].includes(String(input.decision))) return toolText({ error: "decision must be approve, reject, or archive." }, true);
-    const result = await reviewBrainFeedback({ feedbackId: String(input.feedbackId || ""), action: input.decision as "approve" | "reject" | "archive", reviewNote: typeof input.reviewNote === "string" ? input.reviewNote : undefined });
+    const result = await reviewBrainFeedback({ feedbackId: String(input.feedbackId || ""), action: input.decision as "approve" | "reject" | "archive", reviewNote: typeof input.reviewNote === "string" ? input.reviewNote : undefined, expectedSourceProduct: typeof input.sourceProduct === "string" ? input.sourceProduct : undefined });
     return toolText(result);
   }
 
