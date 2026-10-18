@@ -207,7 +207,8 @@ export default function IADemoPage() {
     if (!result || result.pages.length === 0 || auditBusy) return;
     setAuditBusy(true); setAuditError(""); setAuditFindings([]); setAuditSummary(null);
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 35_000);
+    // Allow the server-side IA model call up to 120 seconds, plus a small response margin.
+    const timeoutId = window.setTimeout(() => controller.abort(), 135_000);
     try {
       // Keep the payload focused; the server and model need a useful representative
       // link sample, not every raw outgoing link emitted by the crawler.
@@ -230,7 +231,7 @@ export default function IADemoPage() {
       setAuditFindings(Array.isArray(payload.findings) ? payload.findings : []);
     } catch (cause) {
       setAuditError(controller.signal.aborted
-        ? "IA analysis timed out after 35 seconds. Please retry; the request has been cancelled."
+        ? "IA analysis timed out after 135 seconds. Please retry; the request has been cancelled."
         : cause instanceof Error ? cause.message : "IA audit failed.");
     } finally {
       window.clearTimeout(timeoutId);
