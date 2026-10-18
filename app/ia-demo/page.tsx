@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Background, Controls, Handle, MiniMap, Position, ReactFlow,
@@ -128,6 +128,12 @@ export default function IADemoPage() {
   const graph = useMemo(() => buildGraph(filteredPages), [filteredPages]);
   const [nodes, setNodes, onNodesChange] = useNodesState<SiteNode>(graph.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(graph.edges);
+
+  useEffect(() => {
+    const next = buildGraph(filteredPages);
+    setNodes(next.nodes);
+    setEdges(next.edges);
+  }, [filteredPages, setNodes, setEdges]);
 
   // Refresh React Flow state when the crawler result changes.
   const loadGraph = (nextPages: PageRecord[]) => {
