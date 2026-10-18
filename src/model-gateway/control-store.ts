@@ -95,7 +95,6 @@ function cleanSettings(input: unknown): GatewaySettings {
   for (const m of GATEWAY_MODULES) {
     const base = defaults.modules[m.id];
     const c = rawModules[m.id] && typeof rawModules[m.id] === "object" ? rawModules[m.id] as Record<string, unknown> : {};
-    const mode = c.mode;
     modules[m.id] = {
       enabled: typeof c.enabled === "boolean" ? c.enabled : true,
       // Internal gateway modules must never use the homepage chat's free model pool.

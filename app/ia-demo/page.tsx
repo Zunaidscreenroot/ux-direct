@@ -265,7 +265,7 @@ export default function IADemoPage() {
           </label>
           <button className="submit-button" type="submit" disabled={busy}>{busy ? "Discovering…" : "Discover IA →"}</button>
         </div>
-        <p className="ia-note">Prefers the site's nested HTML sitemap for the published hierarchy, then inspects a bounded page sample for HTTP status and headings. If no sitemap is found, the viewer labels the result as an observed crawl path instead. Public HTML only.</p>
+        <p className="ia-note">Prefers the site&apos;s nested HTML sitemap for the published hierarchy, then inspects a bounded page sample for HTTP status and headings. If no sitemap is found, the viewer labels the result as an observed crawl path instead. Public HTML only.</p>
       </form>
 
       {error ? <div className="ia-error" role="alert">{error}</div> : null}
