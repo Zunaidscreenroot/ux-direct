@@ -3,6 +3,24 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
+function corsHeaders(origin: string | null): Record<string, string> {
+  return {
+    ...(origin && ALLOWED_ORIGINS.has(origin) ? { "Access-Control-Allow-Origin": origin } : {}),
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Accept, Content-Type",
+    "Cache-Control": "no-store",
+    "Vary": "Origin",
+  };
+}
+export async function OPTIONS(request: Request) {
+  const origin = request.headers.get("origin");
+  if (!origin || !ALLOWED_ORIGINS.has(origin)) {
+    return NextResponse.json({ error: "Figma plugin origin required." }, { status: 403, headers: corsHeaders(origin) });
+  }
+  return new Response(null, { status: 204, headers: corsHeaders(origin) });
+}
+
 type OpenRouterModel = { id?: unknown; name?: unknown; context_length?: unknown };
 
 function freeModelList(payload: unknown) {
@@ -21,7 +39,11 @@ function freeModelList(payload: unknown) {
   return Array.from(unique.values());
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const origin = request.headers.get("origin");
+  if (origin && origin !== new URL(request.url).origin && !ALLOWED_ORIGINS.has(origin)) {
+    return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: corsHeaders(origin) });
+  }
   const key = process.env.OPENROUTER_API_KEY?.trim();
   const auditBase = (process.env.UX_AUDIT_BASE_URL?.trim() || "https://uxaudit.zunaid-cb7.workers.dev").replace(/\/+$/, "");
   const [keyResult, modelsResult, auditResult, brainResult] = await Promise.allSettled([
@@ -74,5 +96,5 @@ export async function GET() {
     ...(connected ? {} : { error: keyError || (models.length ? "No free models are available." : "No usable OpenRouter free models were returned.") }),
     uxAudit: { reachable: auditReachable, baseUrl: auditBase, ...(auditReachable ? {} : { error: "Could not reach the UX Audit Worker." }) },
     brain: { reachable: brainReachable, ...(brainReachable ? {} : { error: "Shared-brain health check failed or its server key is not configured." }) },
-  }, { headers: { "Cache-Control": "no-store" } });
+  }, { headers: corsHeaders(origin) });
 }
