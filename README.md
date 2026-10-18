@@ -54,3 +54,8 @@ This repository is being initialized. Start with a small, testable vertical slic
 ## Getting started
 
 The application scaffold and implementation plan will be added incrementally. See [Architecture](docs/architecture.md), [Shared Product Brain](docs/shared-product-brain.md), [MVP plan](docs/mvp-plan.md), [Model Gateway](docs/model-gateway.md), and the [free-first provider setup](docs/model-gateway-providers.md). The gateway is a zero-fee application module; leave paid model keys blank until the mock/local/free-tier test checklist passes.
+
+
+## Cloudflare deployment
+
+A staged migration from Vercel to Cloudflare Workers is being prepared on the `cloudflare-migration` branch. Use the [Cloudflare migration guide](docs/cloudflare-migration.md) for the OpenNext setup, D1 resources, secret configuration, validation commands, and cutover checklist. The current production deployment must remain active until the Cloudflare Worker passes the end-to-end checks.

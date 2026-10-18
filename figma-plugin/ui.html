@@ -58,7 +58,7 @@
   <div id="result" class="result" hidden></div>
   <footer>Planning sends prompt text and selected-node metadata only. UXD API Test Lab and its test fixtures are created once and reused. Test nodes, components, variables, and the storage probe are intentionally preserved between runs; no per-run cleanup is performed. No Figma REST API or OAuth access is used.</footer>
 <script>
-  const API = "https://ux-direct-1qzrcpr0p-screenroot.vercel.app";
+  const API = "https://ux-direct.zunaid-cb7.workers.dev";
   const $ = (id) => document.getElementById(id);
   const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
   let verifiedFileKey = null;
@@ -100,7 +100,7 @@
     return data;
   }
   async function syncPluginBridge() {
-    // Heartbeat requests use the same Netlify production origin as the health check.
+    // Heartbeat requests use the same Cloudflare production origin as the health check.
     // Native API checks remain local/manual and never start automatically on open.
     try {
       const heartbeat = await bridgeRequest({ mode: "heartbeat" });
@@ -111,13 +111,13 @@
         parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: command.commandId } }, "*");
       }
       $("connectionDot").className = "dot ok";
-      $("connectionText").textContent = "Netlify production connected · plugin bridge online";
+      $("connectionText").textContent = "Cloudflare production connected · plugin bridge online";
       return { ok: true, error: "" };
     } catch (error) {
       const detail = error && error.message ? error.message : "Unknown bridge error";
-      console.warn("[UX Direct Netlify bridge]", error);
+      console.warn("[UX Direct Cloudflare bridge]", error);
       $("connectionDot").className = "dot";
-      $("connectionText").textContent = "Netlify reachable · plugin bridge unavailable";
+      $("connectionText").textContent = "Cloudflare reachable · plugin bridge unavailable";
       return { ok: false, error: detail };
     }
   }
@@ -166,14 +166,14 @@
     const connection = await checkConnection();
     const bridge = connection
       ? await syncPluginBridge()
-      : { ok: false, error: "Netlify production health check failed." };
+      : { ok: false, error: "Cloudflare production health check failed." };
     await refreshConnectionStatus();
     $("runHealth").disabled = false;
     $("healthSummary").textContent = connection && bridge.ok
-      ? "Netlify production and persistent plugin bridge connected. Run the native API self-test when ready."
+      ? "Cloudflare production and persistent plugin bridge connected. Run the native API self-test when ready."
       : connection
-        ? "Netlify health check passed, but plugin bridge is unavailable: " + bridge.error
-        : "Could not verify the Netlify production backend. Check the connection before proceeding.";
+        ? "Cloudflare health check passed, but plugin bridge is unavailable: " + bridge.error
+        : "Could not verify the Cloudflare production backend. Check the connection before proceeding.";
     // Bridge heartbeat is sufficient for liveness; do not emit a separate telemetry POST each interval.
     heartbeatTimer = window.setInterval(() => {
       void syncPluginBridge();
@@ -201,19 +201,19 @@
       const fileKey = verifiedFileKey || currentSelection.fileKey;
       if (!fileKey || fileKey !== ALLOWED_FILE_KEY) throw new Error("Approved Figma file scope is not verified.");
       const response = await fetch(API + "/api/health?fileKey=" + encodeURIComponent(fileKey), { method: "GET" });
-      if (!response.ok) throw new Error("Netlify backend returned " + response.status);
+      if (!response.ok) throw new Error("Cloudflare backend returned " + response.status);
       const data = await response.json();
-      if (!data || data.status !== "ok" || !data.deployment || data.deployment.platform !== "netlify") {
-        throw new Error("The endpoint did not identify itself as the Netlify backend.");
+      if (!data || data.status !== "ok" || !data.deployment || data.deployment.platform !== "cloudflare") {
+        throw new Error("The endpoint did not identify itself as the Cloudflare backend.");
       }
       $("connectionDot").className = "dot ok";
       $("connectionText").textContent = "UX Direct backend reachable · " + data.deployment.host;
-      await sendTelemetry("Netlify backend connection check completed", "success", "Plugin reached the Netlify production health endpoint.");
+      await sendTelemetry("Cloudflare backend connection check completed", "success", "Plugin reached the Cloudflare production health endpoint.");
       return data;
     } catch (error) {
       $("connectionDot").className = "dot";
-      $("connectionText").textContent = "Netlify production not verified";
-      await sendTelemetry("Netlify backend connection check failed", "error", "Netlify request failed: " + (error && error.message ? error.message : "Unknown connection error"));
+      $("connectionText").textContent = "Cloudflare production not verified";
+      await sendTelemetry("Cloudflare backend connection check failed", "error", "Cloudflare request failed: " + (error && error.message ? error.message : "Unknown connection error"));
       return null;
     }
   }
@@ -280,11 +280,11 @@
           checks: message.checks
         }
       }).then(() => {
-        if (message.commandId) status("Dashboard-requested health check completed. Results synced to Netlify.");
+        if (message.commandId) status("Dashboard-requested health check completed. Results synced to Cloudflare.");
         else status("Native API health check completed. Results synced to UX Direct.");
       }).catch((error) => {
-        console.warn("[UX Direct Netlify health-report sync]", error);
-        status("Native API test finished, but its report could not be saved to Netlify: " + (error && error.message ? error.message : "Unknown bridge error"));
+        console.warn("[UX Direct Cloudflare health-report sync]", error);
+        status("Native API test finished, but its report could not be saved to Cloudflare: " + (error && error.message ? error.message : "Unknown bridge error"));
       });
       return;
     }
@@ -311,7 +311,7 @@
     void sendTelemetry("Plan CTA clicked", "info", "User clicked Plan with UX Direct.");
     const prompt = $("prompt").value.trim();
     if (prompt.length < 5) { status("Add a little more detail to your brief (at least 5 characters)."); return; }
-    $("submit").disabled = true; $("result").hidden = true; status("Sending task to Netlify production backend…");
+    $("submit").disabled = true; $("result").hidden = true; status("Sending task to Cloudflare production backend…");
     const startedAt = Date.now();
     await sendTelemetry("Task request started", "info", "A planning request was initiated from the Figma plugin.", { project: $("project").value });
     try {
@@ -328,7 +328,7 @@
       const data = await response.json();
       const durationMs = Date.now() - startedAt;
       if (!response.ok) {
-        await sendTelemetry("Task request failed", "error", "Netlify backend rejected request: " + (data.error || "HTTP " + response.status), { requestId: data.requestId, project: $("project").value, durationMs });
+        await sendTelemetry("Task request failed", "error", "Cloudflare backend rejected request: " + (data.error || "HTTP " + response.status), { requestId: data.requestId, project: $("project").value, durationMs });
         throw new Error((data.error || "Backend returned " + response.status) + (data.requestId ? " · Request ID " + data.requestId : ""));
       }
       renderPlan(data);
@@ -337,7 +337,7 @@
       await sendTelemetry("Task response received", "success", "Planning response returned to the plugin UI.", { requestId: data.requestId, project: $("project").value, durationMs, mode: data.mode });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      status("Netlify request could not be completed. " + message);
+      status("Cloudflare request could not be completed. " + message);
       await sendTelemetry("Task request failed", "error", "Request failed: " + message);
     } finally { $("submit").disabled = false; }
   });

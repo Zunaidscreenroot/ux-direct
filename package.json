@@ -8,7 +8,14 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf:typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "cf:d1:migrate:local": "wrangler d1 migrations apply ux-direct-state --local",
+    "cf:d1:migrate:remote": "wrangler d1 migrations apply ux-direct-state --remote",
+    "cf:d1:migrate:preview": "wrangler d1 migrations apply ux-direct-state-preview --remote"
   },
   "dependencies": {
     "next": "^15.5.0",
@@ -24,6 +31,8 @@
     "eslint": "^9.30.0",
     "eslint-config-next": "^15.5.0",
     "typescript": "^5.8.3",
-    "tsx": "^4.20.3"
+    "tsx": "^4.20.3",
+    "@opennextjs/cloudflare": "^1.20.12",
+    "wrangler": "^4.151.1"
   }
 }

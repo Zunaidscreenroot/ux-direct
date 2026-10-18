@@ -1,4 +1,5 @@
 import { getStore } from "@netlify/blobs";
+import { getCloudflareDatabase, persistentGet, persistentList, persistentPut } from "@/src/platform/d1-store";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { recordOperationalEvent } from "@/src/observability/event-log";
@@ -61,9 +62,22 @@ function isPluginRequest(request: Request): boolean {
   return !!origin && PLUGIN_ORIGINS.has(origin);
 }
 const STORE_NAME = "ux-direct-plugin-bridge";
-function bridgeStore() {
-  // Netlify Functions provide site identity and Blobs authorization automatically.
-  return getStore(STORE_NAME, { region: "us-east-2", consistency: "strong" });
+type BridgeStore = {
+  list(options: { prefix: string }): Promise<{ blobs: Array<{ key: string }> }>;
+  get(key: string, options: { type: "text" }): Promise<string | null>;
+  set(key: string, value: string, options?: { metadata?: Record<string, string> }): Promise<unknown>;
+};
+function bridgeStore(): BridgeStore {
+  // D1 is the Cloudflare production store. Each row is a single atomic upsert;
+  // the previous Netlify Blobs store remains available during migration rollback.
+  if (getCloudflareDatabase()) {
+    return {
+      list: async ({ prefix }) => ({ blobs: (await persistentList(prefix)).map((key) => ({ key })) }),
+      get: async (key) => persistentGet(key),
+      set: async (key, value) => persistentPut(key, value),
+    };
+  }
+  return getStore(STORE_NAME, { region: "us-east-2", consistency: "strong" }) as unknown as BridgeStore;
 }
 async function readJson<T>(pathname: string): Promise<T | null> {
   const store = bridgeStore();
@@ -129,8 +143,8 @@ export async function GET(request: Request) {
     }
     return NextResponse.json({ error: "Unsupported bridge mode." }, { status: 400, headers });
   } catch (error) {
-    console.error("[ux-direct-bridge] Netlify Blobs read failed", error);
-    return NextResponse.json({ error: "Could not read bridge state from Netlify Blobs storage." }, { status: 500, headers });
+    console.error("[ux-direct-bridge] Persistent storage read failed", error);
+    return NextResponse.json({ error: "Could not read bridge state from configured persistent storage." }, { status: 500, headers });
   }
 }
 
@@ -265,7 +279,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Unsupported bridge mode." }, { status: 400, headers });
   } catch (error) {
-    console.error("[ux-direct-bridge] Netlify Blobs request failed", error);
-    return NextResponse.json({ error: "Bridge request failed while reading or writing Netlify Blobs storage." }, { status: 500, headers });
+    console.error("[ux-direct-bridge] Persistent storage request failed", error);
+    return NextResponse.json({ error: "Bridge request failed while reading or writing configured persistent storage." }, { status: 500, headers });
   }
 }
