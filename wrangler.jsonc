@@ -23,8 +23,20 @@
       "binding": "UX_DIRECT_STATE",
       "database_name": "ux-direct-state",
       "database_id": "85f849e4-cf2a-412a-970d-477065bb380c",
-      "migrations_dir": "migrations",
-      "preview_database_id": "156ac74e-ffe0-4667-be59-e724d279680d"
+      "migrations_dir": "migrations"
     }
-  ]
+  ],
+  "previews": {
+    "vars": {
+      "UX_DIRECT_ENV": "preview"
+    },
+    "d1_databases": [
+      {
+        "binding": "UX_DIRECT_STATE",
+        "database_name": "ux-direct-state-preview",
+        "database_id": "156ac74e-ffe0-4667-be59-e724d279680d",
+        "migrations_dir": "migrations"
+      }
+    ]
+  }
 }
