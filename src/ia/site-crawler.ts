@@ -90,12 +90,16 @@ function parsePublicWebUrl(value: string): URL | null {
 
 function isBlockedHost(host: string): boolean {
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return true;
-  // Block literal IPs; public domain URLs are sufficient for this website auditing workflow.
-  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(":")) return true;
+  // Block literal IPv4 and IPv6 destinations before any outbound request.
+  const hostParts = host.split(".");
+  const isIpv4 = hostParts.length === 4 && hostParts.every((part) =>
+    part.length > 0 && [...part].every((character) => character >= "0" && character <= "9") && Number(part) <= 255
+  );
+  if (isIpv4 || host.includes(":")) return true;
   if (!host.includes(".")) return true;
   if (host === "0.0.0.0" || host.endsWith(".test") || host.endsWith(".invalid")) return true;
   return false;
-}
+
 
 function normalizePath(pathname: string): string {
   return pathname.replace(/\/{2,}/g, "/") || "/";
