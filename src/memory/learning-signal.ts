@@ -7,7 +7,7 @@ const CORRECTION_SIGNAL = [
   /\b(save|store) this (as a rule|for future|as learning)\b/i,
   /\b(don't|do not) repeat (this|that|this mistake)\b/i,
   /\byou (got|did|made|missed|ignored) .{0,80}\b(wrong|incorrect|mistake|missed)\b/i,
-  /\b(you should have|should have done|not what i asked|that's not right|this is wrong|that was wrong|incorrect output|missed the point)\b/i,
+  /\b(you should have|should have done|not what i asked|that\'s not right|this is wrong|this was wrong|that was wrong|that should have been|no,? i meant|i asked .{0,100} but|i said .{0,100} but|instead you|you missed|not like this|that is not how|incorrect output|missed the point)\b/i,
   /\b(aisa|aesa|aise) (hona|karna) chahiye tha\b/i,
   /\b(galat|galti|ghalat) (tha|thi|hai|ki|kardi|kar diya|kar di)\b/i,
   /\b(yaad rakhna|yaad rakho|seekh lo|is se seekho|aage se|aglay? baar|agli baar|dobara mat|future mein|future me|hamesha aisa)\b/i,
