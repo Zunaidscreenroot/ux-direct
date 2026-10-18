@@ -64,6 +64,12 @@ test("tool list exposes status, safe UX planning, and shared brain operations", 
       "ux_direct_brain_add_eval_case",
       "ux_direct_brain_review_eval_case",
       "ux_direct_brain_run_retrieval_evals",
+      "ux_direct_uxaudit_status",
+      "ux_direct_uxaudit_discover_site",
+      "ux_direct_uxaudit_run_page_audit",
+      "ux_direct_uxaudit_get_session_report",
+      "ux_direct_uxaudit_generate_improved_ia",
+      "ux_direct_uxaudit_run_benchmark",
     ]);
     const brainSave = body.result.tools.find((tool: { name: string }) => tool.name === "ux_direct_brain_save_feedback");
     assert.ok(brainSave.inputSchema.properties.rawFeedback);

@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
 import { NextResponse } from "next/server";
 import { addBrainKnowledgeDocument, listBrainFeedback, listBrainKnowledgeDocuments, reviewBrainEvalCase, reviewBrainFeedback, reviewBrainKnowledgeDocument, retrieveBrainContext, runBrainRetrievalEvals, saveBrainEvalCase, saveBrainFeedback } from "@/src/memory/shared-brain";
@@ -127,6 +127,197 @@ async function postBridgeCommand(request: Request, body: Record<string, unknown>
   }
   return result as Record<string, unknown>;
 }
+
+/* eslint-disable @typescript-eslint/no-explicit-any -- UX Audit APIs return external JSON/SSE payloads normalized below. */
+const DEFAULT_UX_AUDIT_ORIGIN = "https://uxaudit.zunaid-cb7.workers.dev";
+
+function uxauditOrigin(): string {
+  const configured = process.env.UX_AUDIT_BASE_URL?.trim() || DEFAULT_UX_AUDIT_ORIGIN;
+  let parsed: URL;
+  try { parsed = new URL(configured); } catch { throw new Error("UX_AUDIT_BASE_URL must be a valid HTTPS URL."); }
+  if (parsed.protocol !== "https:") throw new Error("UX Audit must be called over HTTPS.");
+  return parsed.origin;
+}
+
+async function requestUxAudit(
+  path: string,
+  options: { method?: "GET" | "POST"; body?: unknown; timeoutMs?: number } = {},
+): Promise<any> {
+  const endpoint = new URL(path.startsWith("/") ? path : "/" + path, uxauditOrigin());
+  const method = options.method || (options.body === undefined ? "GET" : "POST");
+  const headers: Record<string, string> = { Accept: "application/json, text/event-stream" };
+  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  const response = await fetch(endpoint.toString(), {
+    method,
+    headers,
+    ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+    cache: "no-store",
+    signal: AbortSignal.timeout(options.timeoutMs ?? 55_000),
+  });
+  const raw = await response.text();
+  let parsed: any = null;
+  try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = raw; }
+  if (!response.ok) {
+    const detail = parsed && typeof parsed === "object" && typeof parsed.error === "string"
+      ? parsed.error
+      : "UX Audit returned HTTP " + response.status + ".";
+    throw new Error(String(detail).slice(0, 700));
+  }
+  return parsed;
+}
+
+function requirePublicAuditUrl(raw: unknown): URL {
+  if (typeof raw !== "string" || !raw.trim()) throw new Error("url is required.");
+  let target: URL;
+  try { target = new URL(raw.trim()); } catch { throw new Error("url must be an absolute HTTP/HTTPS URL."); }
+  if (target.protocol !== "https:" && target.protocol !== "http:") throw new Error("Only public HTTP/HTTPS URLs are supported.");
+  if (target.username || target.password) throw new Error("URLs containing credentials are not supported.");
+  const host = target.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) throw new Error("Local/private hostnames cannot be audited.");
+  if (/^(10\.|127\.|0\.|169\.254\.|192\.168\.|224\.|239\.)/.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:")) {
+    throw new Error("Private or loopback IP addresses cannot be audited.");
+  }
+  return target;
+}
+
+function parseUxAuditStream(raw: unknown): { page?: any; auditId?: string; error?: string } {
+  if (typeof raw !== "string") return { error: "UX Audit returned a non-text audit stream." };
+  let page: any;
+  let auditId: string | undefined;
+  let streamError = "";
+  for (const frame of raw.split(/\r?\n\r?\n/)) {
+    const line = frame.split(/\r?\n/).find((part) => part.startsWith("data: "));
+    if (!line) continue;
+    try {
+      const event = JSON.parse(line.slice(6));
+      if (event?.type === "result") {
+        const payload = event.payload || event.result || {};
+        page = payload.page || payload.result?.pages?.[0] || payload.pages?.[0];
+        auditId = typeof payload.auditId === "string" ? payload.auditId : undefined;
+      }
+      if (event?.type === "error") streamError = String(event.error || "AI audit failed.");
+    } catch {}
+  }
+  return streamError ? { error: streamError } : { page, auditId };
+}
+
+function compactUxAuditPage(page: any) {
+  if (!page || typeof page !== "object") return page;
+  const { screenshot, ...metadata } = page;
+  return {
+    ...metadata,
+    screenshotAvailable: typeof screenshot === "string" && screenshot.startsWith("data:image/"),
+    findings: Array.isArray(page.findings) ? page.findings.map((finding: any) => ({
+      id: finding.id,
+      severity: finding.severity,
+      category: finding.category,
+      title: finding.title,
+      description: finding.description,
+      recommendation: finding.recommendation,
+      uxPerspective: finding.uxPerspective,
+      businessAnalysis: finding.businessAnalysis,
+      evidence: finding.evidence,
+    })) : [],
+  };
+}
+
+function warningsForUxAuditPages(pages: any[]) {
+  const deep = pages.filter((page) => Number(page.depth) >= 3);
+  const other = pages.filter((page) => page.category === "Other Pages");
+  const about = pages.filter((page) => page.category === "About Us");
+  return [
+    ...(deep.length ? [{ id: "deep-page-hierarchy", title: "Deep page hierarchy", detail: deep.length + " URLs are three or more levels deep. Review whether priority journeys can be brought closer to the top level.", urls: deep.map((page) => page.url) }] : []),
+    ...(about.length >= 4 ? [{ id: "about-us-sprawl", title: "About Us sprawl", detail: about.length + " About Us pages were discovered. Review overlap and grouping.", urls: about.map((page) => page.url) }] : []),
+    ...(other.length ? [{ id: "unclear-page-grouping", title: "Unclear page grouping", detail: other.length + " pages could not be classified confidently from their URL or title.", urls: other.map((page) => page.url) }] : []),
+  ];
+}
+
+async function runUxAuditPage(input: Record<string, unknown>) {
+  const target = requirePublicAuditUrl(input.url);
+  const mode = input.mode === "mobile" ? "mobile" : "desktop";
+  const viewport = mode === "mobile" ? { width: 393, height: 852 } : { width: 1440, height: 900 };
+  const projectName = typeof input.projectName === "string" && input.projectName.trim()
+    ? input.projectName.trim().slice(0, 200)
+    : target.hostname;
+  let page: any;
+  let auditId: string | undefined;
+  const screenshotDataUrl = typeof input.screenshotDataUrl === "string" ? input.screenshotDataUrl.trim() : "";
+  if (screenshotDataUrl) {
+    if (screenshotDataUrl.length > 21 * 1024 * 1024 || !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(screenshotDataUrl)) {
+      throw new Error("screenshotDataUrl must be a PNG/JPEG/WebP base64 data URL of at most 15 MB decoded size. Do not upload a CDN/403 error page as evidence.");
+    }
+    const pathname = target.pathname.split("/").filter(Boolean);
+    const title = typeof input.title === "string" && input.title.trim()
+      ? input.title.trim().slice(0, 160)
+      : pathname.length ? pathname[pathname.length - 1].replace(/[-_]/g, " ") : "Homepage";
+    const raw = await requestUxAudit("/api/audit-screenshot", {
+      method: "POST",
+      timeoutMs: 70_000,
+      body: { url: target.href, projectName, title, screenshot: screenshotDataUrl, auditMode: mode, viewport },
+    });
+    const parsed = parseUxAuditStream(raw);
+    if (parsed.error) throw new Error(parsed.error);
+    page = parsed.page;
+    auditId = parsed.auditId;
+  } else {
+    const result = await requestUxAudit("/api/audit-url", {
+      method: "POST",
+      timeoutMs: 70_000,
+      body: {
+        url: target.href,
+        projectName,
+        auditMode: mode,
+        verifiedModels: [{ provider: "OpenRouter", model: "openrouter/auto", tier: "paid" }],
+      },
+    });
+    page = result?.page;
+    auditId = typeof result?.auditId === "string" ? result.auditId : undefined;
+  }
+  if (!page || !Array.isArray(page.findings)) throw new Error("UX Audit finished without a valid findings report.");
+  const discovery = await requestUxAudit("/api/discover", {
+    method: "POST",
+    timeoutMs: 22_000,
+    body: { url: target.origin },
+  }).catch(() => ({ root: target.origin, title: target.hostname, pages: [{ url: target.origin, title: "Homepage", category: "Home", depth: 0 }] }));
+  const pageList = Array.isArray(discovery.pages) && discovery.pages.length
+    ? discovery.pages.slice(0, 120)
+    : [{ url: target.origin, title: "Homepage", category: "Home", depth: 0 }];
+  const sessionId = randomUUID();
+  let sessionSaved = false;
+  try {
+    await requestUxAudit("/api/ia-session", {
+      method: "POST",
+      timeoutMs: 22_000,
+      body: {
+        id: sessionId,
+        root: discovery.root || target.origin,
+        title: discovery.title || target.hostname,
+        discovery: { root: discovery.root || target.origin, title: discovery.title || target.hostname, pages: pageList, note: discovery.note || "Created by UX Direct MCP." },
+        selected_urls: [target.href],
+        audited_pages: [page],
+        stage: "results",
+        project_name: projectName,
+      },
+    });
+    sessionSaved = true;
+  } catch (error) {
+    console.warn("[ux-direct-mcp] UX Audit session save failed.", error instanceof Error ? error.message.slice(0, 160) : "");
+  }
+  const findings = page.findings.map((finding: any) => ({
+    id: finding.id, url: page.url || target.href, pageTitle: page.title || target.hostname,
+    severity: finding.severity, category: finding.category, title: finding.title,
+    description: finding.description, recommendation: finding.recommendation,
+    uxPerspective: finding.uxPerspective, businessAnalysis: finding.businessAnalysis, evidence: finding.evidence,
+  }));
+  return {
+    url: target.href, mode, viewport, projectName, title: page.title || target.hostname,
+    auditId: auditId || null, sessionId: sessionSaved ? sessionId : null, sessionSaved,
+    findingCount: findings.length, findings, report: compactUxAuditPage(page),
+    nextSteps: sessionSaved ? ["Use ux_direct_uxaudit_generate_improved_ia with the sessionId.", "Retrieve approved learning through ux_direct_brain_search before deciding on recommendations."] : ["Audit completed but IA session saving failed; the findings are included in this response."],
+  };
+}
+
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 const TOOLS = [
   {
@@ -265,6 +456,61 @@ const TOOLS = [
     description: "Run deterministic tests against approved brain retrieval cases; reports recall and forbidden phrase matches. Uses no model inference and should be preferred for routine regression checks.",
     inputSchema: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 100 } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  },
+  {
+    name: "ux_direct_uxaudit_status",
+    description: "Check the UX Audit service and OpenRouter connectivity without running inference. Read-only.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "ux_direct_uxaudit_discover_site",
+    description: "Discover a public website's linked pages, sitemap URLs, labels, categories and URL depth before an IA review. No screenshot inference.",
+    inputSchema: { type: "object", properties: { url: { type: "string", minLength: 8, maxLength: 1800, description: "Website root URL, for example https://www.ujjivansfb.bank.in/." } }, required: ["url"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "ux_direct_uxaudit_run_page_audit",
+    description: "Run an evidence-led desktop or mobile UX audit through UX Audit, then save the result to Past Findings and a recent IA session. Desktop is 1440 px wide; mobile is 393×852 CSS px. May incur OpenRouter model costs. If automated capture is blocked, supply screenshotDataUrl from the actual page, never a CDN/403 error screenshot.",
+    inputSchema: { type: "object", properties: {
+      url: { type: "string", minLength: 8, maxLength: 1800, description: "Exact page URL to audit." },
+      mode: { type: "string", enum: ["desktop", "mobile"], description: "Desktop (1440 px wide) or mobile (393×852 CSS px)." },
+      projectName: { type: "string", maxLength: 200, description: "Client or project label, e.g. Ujjivan Small Finance Bank." },
+      title: { type: "string", maxLength: 160, description: "Optional title for a supplied screenshot." },
+      screenshotDataUrl: { type: "string", maxLength: 22020096, description: "Optional PNG/JPEG/WebP base64 data URL of the actual website screenshot." },
+    }, required: ["url"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: "ux_direct_uxaudit_get_session_report",
+    description: "Retrieve a recent saved UX Audit IA session and its findings by UUID. Sessions usually expire after 30 minutes; the underlying audit remains in Past Findings.",
+    inputSchema: { type: "object", properties: { sessionId: { type: "string", format: "uuid" } }, required: ["sessionId"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "ux_direct_uxaudit_generate_improved_ia",
+    description: "Create a reviewable, task-oriented improved information architecture from a saved discovery session and its findings. Does not change the live website.",
+    inputSchema: { type: "object", properties: {
+      sessionId: { type: "string", format: "uuid" },
+      targetUrl: { type: "string", maxLength: 1800 },
+      findingId: { type: "string", maxLength: 180 },
+      issueTitle: { type: "string", maxLength: 180 },
+    }, required: ["sessionId"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: "ux_direct_uxaudit_run_benchmark",
+    description: "Audit a client homepage and up to three competitor homepages in desktop or mobile mode, then return a comparable evidence-based snapshot. Runs at most two website audits concurrently; each successful audit is preserved in Past Findings. Finding counts are not a normalized quality score and model calls may incur cost.",
+    inputSchema: { type: "object", properties: {
+      clientName: { type: "string", minLength: 1, maxLength: 200 },
+      clientUrl: { type: "string", minLength: 8, maxLength: 1800 },
+      competitors: { type: "array", minItems: 1, maxItems: 3, items: { type: "object", properties: {
+        name: { type: "string", minLength: 1, maxLength: 200 },
+        url: { type: "string", minLength: 8, maxLength: 1800 },
+      }, required: ["name", "url"], additionalProperties: false } },
+      mode: { type: "string", enum: ["desktop", "mobile"], description: "Run one comparable viewport per invocation. Call once for desktop and again for mobile when both are needed." },
+    }, required: ["clientName", "clientUrl", "competitors"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
 ];
 
@@ -518,6 +764,152 @@ async function callTool(name: string, args: unknown, request: Request) {
     return toolText({ ...(await runBrainRetrievalEvals(typeof input.limit === "number" ? input.limit : 50)), modelInferenceCalls: 0, paidModelCalls: 0 });
   }
 
+
+  /* eslint-disable @typescript-eslint/no-explicit-any -- Normalize the UX Audit API payload contract at the MCP boundary. */
+  if (name === "ux_direct_uxaudit_status") {
+    const result = await requestUxAudit("/api/openrouter-status", { method: "GET", timeoutMs: 12_000 });
+    return toolText({ service: "UX Audit", checkedAt: new Date().toISOString(), openRouter: result, baseUrl: uxauditOrigin() });
+  }
+
+  if (name === "ux_direct_uxaudit_discover_site") {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
+    const input = args as Record<string, unknown>;
+    const target = requirePublicAuditUrl(input.url);
+    const result = await requestUxAudit("/api/discover", { method: "POST", timeoutMs: 22_000, body: { url: target.href } });
+    return toolText({ ...result, source: "UX Audit via UX Direct MCP", modelInferenceCalls: 0 });
+  }
+
+  if (name === "ux_direct_uxaudit_run_page_audit") {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
+    return toolText(await runUxAuditPage(args as Record<string, unknown>));
+  }
+
+  if (name === "ux_direct_uxaudit_get_session_report") {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
+    const input = args as Record<string, unknown>;
+    const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId)) return toolText({ error: "Provide a valid session UUID." }, true);
+    const result = await requestUxAudit("/api/ia-session?id=" + encodeURIComponent(sessionId), { method: "GET", timeoutMs: 20_000 });
+    if (!result?.session) return toolText({ error: "UX Audit session was not found or has expired." }, true);
+    const session = result.session;
+    const reports = Array.isArray(session.audited_pages) ? session.audited_pages : [];
+    return toolText({
+      sessionId: session.id, root: session.root, title: session.title, stage: session.stage,
+      projectName: session.project_name, discovery: session.discovery,
+      auditedPages: reports.map((page: any) => compactUxAuditPage(page)),
+      selectedUrls: session.selected_urls || [],
+    });
+  }
+
+  if (name === "ux_direct_uxaudit_generate_improved_ia") {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
+    const input = args as Record<string, unknown>;
+    const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId)) return toolText({ error: "Provide a valid session UUID." }, true);
+    const loaded = await requestUxAudit("/api/ia-session?id=" + encodeURIComponent(sessionId), { method: "GET", timeoutMs: 20_000 });
+    const session = loaded?.session;
+    if (!session?.discovery || !Array.isArray(session.discovery.pages) || !session.discovery.pages.length) return toolText({ error: "The saved session has no discovered pages. Run IA discovery or a page audit first." }, true);
+    const pages = session.discovery.pages.slice(0, 120);
+    const findings = (Array.isArray(session.audited_pages) ? session.audited_pages : []).flatMap((report: any) =>
+      (Array.isArray(report.findings) ? report.findings : []).map((finding: any) => ({
+        id: String(report.url || "") + "::" + String(finding.id || finding.title || "finding"),
+        sourceId: String(finding.id || ""), url: String(report.url || ""), title: String(finding.title || "UX finding"),
+        category: String(finding.category || "Visual design"), severity: String(finding.severity || "medium"),
+        description: String(finding.description || ""), recommendation: String(finding.recommendation || ""),
+      })),
+    ).slice(0, 100);
+    const payload = {
+      root: session.root || session.discovery.root,
+      websiteTitle: session.discovery.title || session.title || session.root,
+      projectName: session.project_name || "Website",
+      pages: pages.map((page: any) => ({ url: page.url, title: page.title, category: page.category, depth: Number(page.depth || 0) })),
+      findings,
+      iaWarnings: warningsForUxAuditPages(pages),
+      targetUrl: typeof input.targetUrl === "string" ? input.targetUrl : "",
+      focusFindingId: typeof input.findingId === "string" ? input.findingId : "",
+      focusIssueTitle: typeof input.issueTitle === "string" ? input.issueTitle : "",
+    };
+    const result = await requestUxAudit("/api/generate-improved-ia", { method: "POST", timeoutMs: 65_000, body: payload });
+    if (!result?.proposal) return toolText({ error: "The IA generator returned no proposal.", result }, true);
+    return toolText({ sessionId, proposal: result.proposal, changesLiveWebsite: false });
+  }
+
+  if (name === "ux_direct_uxaudit_run_benchmark") {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
+    const input = args as Record<string, unknown>;
+    const clientName = typeof input.clientName === "string" ? input.clientName.trim().slice(0, 200) : "";
+    if (!clientName) return toolText({ error: "clientName is required." }, true);
+    const clientUrl = requirePublicAuditUrl(input.clientUrl);
+    const competitorInput = Array.isArray(input.competitors) ? input.competitors.slice(0, 3) : [];
+    if (!competitorInput.length) return toolText({ error: "At least one competitor is required." }, true);
+    const competitors = competitorInput.map((raw: any, index: number) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Each competitor needs a name and URL.");
+      const name = typeof raw.name === "string" ? raw.name.trim().slice(0, 200) : "";
+      if (!name) throw new Error("Competitor " + (index + 1) + " needs a name.");
+      return { name, url: requirePublicAuditUrl(raw.url) };
+    });
+    const mode = input.mode === "mobile" ? "mobile" : "desktop";
+    const entries = [{ name: clientName, url: clientUrl }, ...competitors.map((competitor: any) => ({ name: competitor.name, url: competitor.url }))];
+    const canonical = entries.map((entry) => entry.url.origin.toLowerCase());
+    if (new Set(canonical).size !== canonical.length) return toolText({ error: "Use a unique homepage URL for each institution." }, true);
+    const output: any[] = new Array(entries.length);
+    let nextIndex = 0;
+    await Promise.all(Array.from({ length: Math.min(2, entries.length) }, async () => {
+      while (true) {
+        const index = nextIndex++;
+        if (index >= entries.length) return;
+        const entry = entries[index];
+        try {
+          const result = await requestUxAudit("/api/audit-url", {
+            method: "POST",
+            timeoutMs: 70_000,
+            body: {
+              url: entry.url.origin + "/",
+              projectName: entry.name,
+              auditMode: mode,
+              verifiedModels: [{ provider: "OpenRouter", model: "openrouter/auto", tier: "paid" }],
+            },
+          });
+          const page = result?.page;
+          if (!page || !Array.isArray(page.findings)) throw new Error("Audit completed without a findings report.");
+          const findings = page.findings.map((finding: any) => ({
+            severity: finding.severity, category: finding.category, title: finding.title,
+            description: finding.description, recommendation: finding.recommendation,
+            uxPerspective: finding.uxPerspective, businessAnalysis: finding.businessAnalysis, evidence: finding.evidence,
+          }));
+          output[index] = {
+            name: entry.name, url: entry.url.origin + "/", mode,
+            viewport: mode === "mobile" ? { width: 393, height: 852 } : { width: 1440, height: 900 },
+            auditId: typeof result.auditId === "string" ? result.auditId : null,
+            findingCount: findings.length,
+            severityCounts: {
+              high: findings.filter((finding: any) => String(finding.severity).toLowerCase() === "high").length,
+              medium: findings.filter((finding: any) => String(finding.severity).toLowerCase() === "medium").length,
+              low: findings.filter((finding: any) => String(finding.severity).toLowerCase() === "low").length,
+            },
+            categories: [...new Set(findings.map((finding: any) => finding.category))],
+            findings,
+          };
+        } catch (error) {
+          output[index] = {
+            name: entry.name, url: entry.url.origin + "/", mode,
+            error: error instanceof Error ? error.message.slice(0, 600) : "Website audit failed.",
+          };
+        }
+      }
+    }));
+    return toolText({
+      mode,
+      client: clientName,
+      sitesProcessed: output.filter(Boolean).length,
+      successfulSites: output.filter((item) => item && !item.error).length,
+      reports: output,
+      interpretation: "Compare like-for-like findings and evidence, not raw counts alone. Site complexity, capture quality and page content can affect findings. Run this tool once in desktop mode and again in mobile mode to compare both experiences. Every successful audit is preserved in Past Findings.",
+    });
+  }
+
+
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   return toolText({ error: "Unknown UX Direct tool: " + name }, true);
 }
 
@@ -599,7 +991,7 @@ export async function POST(request: Request) {
           protocolVersion: PROTOCOL_VERSIONS.has(requested) ? requested : "2025-11-25",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "ux-direct", version: "0.1.0" },
-          instructions: "UX Direct offers health checks, connection status, reviewable UX task planning, a controlled Figma plugin API self-test, and a shared product brain. When the owner naturally corrects product behavior or says what the product should learn, interpret the correction yourself in its original language, preserve their wording, and save a short reusable rule with the correct scope and source product. Never ask the owner to use or paste a special coaching instruction. A lesson remains a draft until reviewed; when the owner explicitly asks to train or store the rule for future use, save it and approve it in the shared brain, otherwise leave it as a draft. Never put client-specific past findings into global shared knowledge; only generalizable lessons may be approved globally. Retrieve relevant approved memory before UX planning or Figma tasks; current evidence and task constraints take precedence. All products, including UX Audit, use the same brain. Use general for BFSI website revamp work and express-computers for Express Computers work. DMI-specific project data is not exposed through this connector.",
+          instructions: "UX Direct is the single brain and MCP control center. It provides shared-brain search/training plus UX Audit operations for public-site IA discovery, desktop/mobile screenshot auditing, report retrieval, improved IA proposals, and multi-site benchmarking. Use UX Direct shared-brain retrieval before analysis; UX Audit persists client-specific findings in Past Findings and retrieves relevant approved shared rules. Never promote client-specific raw findings into global memory; only validated generalizable lessons belong in the shared brain. Preserve Hindi/Hinglish feedback, save reusable lessons as drafts by default, and approve only when the owner explicitly asks to train or activate the rule. Audit work may incur OpenRouter costs. Figma plugin tools remain available but must not be used unless the owner asks for Figma work. Current screenshot evidence takes precedence over remembered rules.",
         }, headers);
       }
       case "ping":

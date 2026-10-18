@@ -1,0 +1,40 @@
+name: Deploy UX Direct to Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-ux-direct
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Type-check
+        run: npm run typecheck
+      - name: Build for Cloudflare Workers
+        run: npx opennextjs-cloudflare build
+      - name: Deploy (requires repository secret)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: cb73bfd260a197b57210ae47f427db06
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::warning::Deployment skipped: add a CLOUDFLARE_API_TOKEN repository secret with Workers deployment permissions."
+            exit 0
+          fi
+          npx opennextjs-cloudflare deploy -- --keep-vars
