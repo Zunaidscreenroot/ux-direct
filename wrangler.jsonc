@@ -28,5 +28,6 @@
   },
   "observability": {
     "enabled": true
-  }
+  },
+  "previews": {}
 }
