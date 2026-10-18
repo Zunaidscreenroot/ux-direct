@@ -234,7 +234,7 @@ const TOOLS = [
       scopeKey: { type: "string", enum: ["UX_SHARED_BRAIN","UX_DIRECT","UX_AUDIT","EXPRESS_COMPUTERS","DMI_HFC","UJJIVAN_SFB","INDIA_BFCI_SHARED"] },
       capability: { type: "string", maxLength: 80 }, title: { type: "string", minLength: 1, maxLength: 240 }, query: { type: "string", minLength: 1, maxLength: 8000 },
       expectedBehavior: { type: "string", maxLength: 2000 }, forbiddenBehaviors: { type: "array", items: { type: "string" }, maxItems: 30 },
-      expectedMemoryIds: { type: "array", items: { type: "string" }, maxItems: 20 }, activate: { type: "boolean" }
+      expectedMemoryIds: { type: "array", items: { type: "string", format: "uuid" }, maxItems: 20 }, expectedKnowledgeChunkIds: { type: "array", items: { type: "string", format: "uuid" }, maxItems: 20 }, activate: { type: "boolean" }
     }, required: ["scopeKey","title","query"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   },
@@ -246,7 +246,7 @@ const TOOLS = [
   },
   {
     name: "ux_direct_brain_run_evals",
-    description: "Run approved golden retrieval cases without calling an AI model. Reports expected-memory recall@K, forbidden context hits and retrieval/token-budget metrics.",
+    description: "Run approved golden retrieval cases without calling an AI model. Reports expected-memory and expected-knowledge recall@K, forbidden context hits and retrieval/token-budget metrics.",
     inputSchema: { type: "object", properties: { scopeKey: { type: "string", enum: ["UX_SHARED_BRAIN","UX_DIRECT","UX_AUDIT","EXPRESS_COMPUTERS","DMI_HFC","UJJIVAN_SFB","INDIA_BFCI_SHARED"] }, limit: { type: "integer", minimum: 1, maximum: 100 } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   }
