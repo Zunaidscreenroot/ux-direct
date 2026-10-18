@@ -168,7 +168,7 @@ test("internal routing stays blocked until OpenRouter routing is enabled", async
     moduleId: "critique",
     messages: [{ role: "user", content: "Review this screen." }]
   }, { providers: configured }), (error: unknown) =>
-    error instanceof GatewayError && error.status === 403 && /Paid routing is locked/.test(error.message));
+    error instanceof GatewayError && error.status === 403 && /Model routing is disabled/.test(error.message));
 });
 
 
