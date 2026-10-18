@@ -2,6 +2,7 @@
 
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import "./chat.css";
+import { ThinkingOrb } from "thinking-orbs";
 
 type Role = "user" | "assistant";
 type ChatMessage = { id: string; role: Role; content: string };
@@ -236,10 +237,8 @@ export default function ChatWorkspace() {
 
         {activeTab === "chat" && <section className="ud-chat-workspace">
           {messages.length === 0 ? <div className="ud-welcome">
-            <div className="ud-brain-orb" aria-label="Animated UX Direct intelligence globe" role="img">
-              <div className="ud-orb-halo" /><div className="ud-orb-ring ud-ring-a" /><div className="ud-orb-ring ud-ring-b" /><div className="ud-orb-ring ud-ring-c" />
-              <div className="ud-orb-latitude ud-lat-a" /><div className="ud-orb-latitude ud-lat-b" /><div className="ud-orb-latitude ud-lat-c" />
-              <div className="ud-orb-core"><span>UX</span><i /><b /></div><div className="ud-orb-spark ud-spark-a" /><div className="ud-orb-spark ud-spark-b" /><div className="ud-orb-spark ud-spark-c" />
+            <div className="ud-thinking-orb" aria-label="UX Direct thinking orb">
+              <ThinkingOrb state={busy ? "working" : statusBusy ? "connecting" : messages.length ? "solving" : "breathing"} size={96} theme="dark" />
             </div>
             <div className="ud-welcome-kicker"><span /> YOUR AI UX PARTNER</div>
             <h1>Think it through.<br /><em>Make it better.</em></h1>
