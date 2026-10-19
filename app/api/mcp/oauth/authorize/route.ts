@@ -1,7 +1,6 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { CHATGPT_CIMD_CLIENT_ID, getMcpIssuer, getMcpSecret, readMcpEnv, htmlEscape, signMcpPayload, verifyMcpPayload, MCP_SCOPES, isChatGptCimdClientId } from "@/lib/mcp-oauth";
 export const runtime = "nodejs";
-type AuthorizeInput = { clientId: string; redirectUri: string; state: string; scope: string; challenge: string; method: string; clientName: string; resource: string };
 type OAuthClientMetadata = {
   client_id?: unknown;
   client_name?: unknown;
