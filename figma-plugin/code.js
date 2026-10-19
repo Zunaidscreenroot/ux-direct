@@ -1036,7 +1036,28 @@ async function writeCanvasCommand(payload) {
     if (Number.isFinite(spec.cornerRadius) && "cornerRadius" in node) node.cornerRadius = Math.max(0, Math.min(512, spec.cornerRadius));
     if (typeof spec.clipsContent === "boolean" && "clipsContent" in node) node.clipsContent = spec.clipsContent;
     if (typeof spec.layoutMode === "string" && "layoutMode" in node) node.layoutMode = spec.layoutMode;
-    if (Number.isFinite(spec.itemSpacing) && "itemSpacing" in node) node.itemSpacing = Math.max(-100, Math.min(1000, spec.itemSpacing));
+    ["itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
+      "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"].forEach(function (key) {
+      if (spec[key] !== undefined && key in node) node[key] = spec[key];
+    });
+    if (node.type === "TEXT") {
+      if (typeof spec.textAlignHorizontal === "string") node.textAlignHorizontal = spec.textAlignHorizontal;
+      if (typeof spec.textAlignVertical === "string") node.textAlignVertical = spec.textAlignVertical;
+      if (typeof spec.textAutoResize === "string") node.textAutoResize = spec.textAutoResize;
+    }
+    if (["shadowColor", "shadowBlur", "shadowX", "shadowY", "shadowSpread"].some(function (key) { return spec[key] !== undefined; })) {
+      if (!("effects" in node)) throw new Error("This node type does not support effects.");
+      var shadow = parseHexColor(typeof spec.shadowColor === "string" ? spec.shadowColor : "#000000");
+      node.effects = [{
+        type: "DROP_SHADOW",
+        color: { r: shadow.r, g: shadow.g, b: shadow.b, a: 0.16 },
+        offset: { x: Number.isFinite(spec.shadowX) ? spec.shadowX : 0, y: Number.isFinite(spec.shadowY) ? spec.shadowY : 4 },
+        radius: Number.isFinite(spec.shadowBlur) ? Math.max(0, Math.min(200, spec.shadowBlur)) : 12,
+        spread: Number.isFinite(spec.shadowSpread) ? Math.max(-200, Math.min(200, spec.shadowSpread)) : 0,
+        visible: true,
+        blendMode: "NORMAL"
+      }];
+    }
   }
 
   if (payload.operation === "create-elements") {
@@ -1121,7 +1142,7 @@ async function writeCanvasCommand(payload) {
       if (!("clipsContent" in targetNode)) throw new Error("This node type does not support clipping content.");
       targetNode.clipsContent = patch.clipsContent;
     }
-    var textPatch = ["text", "fontFamily", "fontStyle", "fontSize"].some(function (key) { return patch[key] !== undefined; });
+    var textPatch = ["text", "fontFamily", "fontStyle", "fontSize", "textAlignHorizontal", "textAlignVertical", "textAutoResize", "textCase", "textDecoration"].some(function (key) { return patch[key] !== undefined; });
     if (textPatch) {
       await loadAndSetTextFont(targetNode, patch);
       if (typeof patch.text === "string") targetNode.characters = patch.text.slice(0, 5000);
@@ -1138,6 +1159,27 @@ async function writeCanvasCommand(payload) {
     if (typeof patch.textAutoResize === "string") {
       if (targetNode.type !== "TEXT") throw new Error("textAutoResize can only be used on TEXT nodes.");
       targetNode.textAutoResize = patch.textAutoResize;
+    }
+    if (typeof patch.textCase === "string") {
+      if (targetNode.type !== "TEXT") throw new Error("textCase can only be used on TEXT nodes.");
+      targetNode.textCase = patch.textCase;
+    }
+    if (typeof patch.textDecoration === "string") {
+      if (targetNode.type !== "TEXT") throw new Error("textDecoration can only be used on TEXT nodes.");
+      targetNode.textDecoration = patch.textDecoration;
+    }
+    if (["shadowColor", "shadowBlur", "shadowX", "shadowY", "shadowSpread"].some(function (key) { return patch[key] !== undefined; })) {
+      if (!("effects" in targetNode)) throw new Error("This node type does not support effects.");
+      var shadow = parseHexColor(typeof patch.shadowColor === "string" ? patch.shadowColor : "#000000");
+      targetNode.effects = [{
+        type: "DROP_SHADOW",
+        color: { r: shadow.r, g: shadow.g, b: shadow.b, a: 0.16 },
+        offset: { x: Number.isFinite(patch.shadowX) ? patch.shadowX : 0, y: Number.isFinite(patch.shadowY) ? patch.shadowY : 4 },
+        radius: Number.isFinite(patch.shadowBlur) ? Math.max(0, Math.min(200, patch.shadowBlur)) : 12,
+        spread: Number.isFinite(patch.shadowSpread) ? Math.max(-200, Math.min(200, patch.shadowSpread)) : 0,
+        visible: true,
+        blendMode: "NORMAL"
+      }];
     }
     var layoutKeys = ["layoutMode", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
       "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"];
@@ -1205,7 +1247,7 @@ async function writeCanvasCommand(payload) {
     var ungroupTarget = requireCanvasNode(payload.nodeId, "ungroup-node");
     if (ungroupTarget.type !== "GROUP") throw new Error("ungroup-node requires a GROUP node.");
     var ungroupedIds = ungroupTarget.children.map(function (node) { return node.id; });
-    figma.ungroup([ungroupTarget]);
+    figma.ungroup(ungroupTarget);
     return { ok: true, operation: "ungroup-node", fileKey: figma.fileKey, pageName: figma.currentPage.name, ungroupedIds: ungroupedIds };
   }
 
@@ -1264,6 +1306,29 @@ async function writeCanvasCommand(payload) {
     figma.currentPage.name = pageName;
     return { ok: true, operation: "rename-page", fileKey: figma.fileKey,
       page: { id: figma.currentPage.id, previousName: previousPageName, name: figma.currentPage.name } };
+  }
+
+  if (payload.operation === "apply-style") {
+    var styleTarget = requireCanvasNode(payload.nodeId, "apply-style");
+    var styleKind = payload.styleKind;
+    var styleList;
+    if (styleKind === "paint") styleList = await figma.getLocalPaintStylesAsync();
+    else if (styleKind === "text") styleList = await figma.getLocalTextStylesAsync();
+    else if (styleKind === "effect") styleList = await figma.getLocalEffectStylesAsync();
+    else if (styleKind === "grid") styleList = await figma.getLocalGridStylesAsync();
+    else throw new Error("styleKind must be paint, text, effect, or grid.");
+    var chosenStyle = styleList.find(function (item) {
+      return (payload.styleId && item.id === payload.styleId) || (!payload.styleId && payload.styleName && item.name === payload.styleName);
+    });
+    if (!chosenStyle) throw new Error("Local " + styleKind + " style was not found by the supplied ID/name.");
+    var styleProperty = styleKind === "paint" ? "fillStyleId" :
+      styleKind === "text" ? "textStyleId" :
+      styleKind === "effect" ? "effectStyleId" : "gridStyleId";
+    if (!(styleProperty in styleTarget)) throw new Error("This node type cannot accept a " + styleKind + " style.");
+    if (styleKind === "text" && styleTarget.type !== "TEXT") throw new Error("Text styles can only be applied to TEXT nodes.");
+    styleTarget[styleProperty] = chosenStyle.id;
+    return { ok: true, operation: "apply-style", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      style: { id: chosenStyle.id, name: chosenStyle.name, type: styleKind }, node: nodeSummary(styleTarget) };
   }
 
   if (payload.operation === "export-svg") {
