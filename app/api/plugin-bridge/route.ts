@@ -82,6 +82,10 @@ const CANVAS_READ_PAYLOAD = z.object({
   scope: z.enum(["selection", "current-page"]).default("selection"),
   maxDepth: z.number().int().min(0).max(4).default(2),
   maxNodes: z.number().int().min(1).max(100).default(60),
+  queryName: z.string().trim().min(1).max(120).optional(),
+  queryType: z.string().trim().min(1).max(80).optional(),
+  includePages: z.boolean().optional(),
+  includeStyles: z.boolean().optional(),
 }).strict();
 const CANVAS_PATCH = z.object({
   name: z.string().trim().min(1).max(120).optional(),
@@ -255,7 +259,7 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   if (value.operation !== "batch" && value.actions) {
     ctx.addIssue({ code: "custom", path: ["actions"], message: "actions is supported only for batch." });
   }
-  if (value.operation === "batch" && value.actions && value.actions.some((step) => step.operation === "export-svg") && value.actions.length > 1) {
+  if (value.operation === "batch" && value.actions && value.actions.some((step) => ["export-svg", "export-node"].includes(step.operation)) && value.actions.length > 1) {
     ctx.addIssue({ code: "custom", path: ["actions"], message: "SVG export must be a standalone command to preserve the result size limit." });
   }
   if (value.operation === "update-node" && value.elements) {
