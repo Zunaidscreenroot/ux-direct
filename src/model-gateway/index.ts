@@ -87,7 +87,7 @@ function providerTextContent(value: unknown): string {
       if (Array.isArray(item.content)) return providerTextContent(item.content);
       if (Array.isArray(item.parts)) return providerTextContent(item.parts);
       return "";
-    }).filter(Boolean).join("\n").trim();
+    }).filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
   }
   if (value && typeof value === "object") {
     const item = value as Record<string, unknown>;
