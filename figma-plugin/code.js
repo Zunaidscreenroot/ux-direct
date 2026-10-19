@@ -1060,6 +1060,36 @@ async function writeCanvasCommand(payload) {
     }
   }
 
+  if (payload.operation === "batch") {
+    if (!Array.isArray(payload.actions) || payload.actions.length < 1 || payload.actions.length > 40) {
+      throw new Error("batch requires 1 to 40 validated actions.");
+    }
+    if (payload.actions.some(function (step) { return step && step.operation === "export-svg"; }) && payload.actions.length > 1) {
+      throw new Error("SVG export must be a standalone command to preserve the result-size limit.");
+    }
+    var batchResults = [];
+    for (var batchIndex = 0; batchIndex < payload.actions.length; batchIndex++) {
+      assertUxDirectFileScope("canvas batch step " + (batchIndex + 1));
+      var step = payload.actions[batchIndex];
+      if (!step || typeof step !== "object" || Array.isArray(step) || typeof step.operation !== "string" || step.operation === "batch") {
+        return { ok: false, operation: "batch", state: batchResults.length ? "partial" : "failed",
+          completedCount: batchResults.length, failedIndex: batchIndex, error: "Invalid or nested batch action.",
+          results: batchResults };
+      }
+      try {
+        var stepResult = await writeCanvasCommand(Object.assign({}, step, { confirm: true }));
+        batchResults.push({ index: batchIndex, operation: step.operation, result: stepResult });
+      } catch (batchError) {
+        return { ok: false, operation: "batch", state: batchResults.length ? "partial" : "failed",
+          completedCount: batchResults.length, failedIndex: batchIndex, failedOperation: step.operation,
+          error: batchError && batchError.message ? String(batchError.message).slice(0, 900) : "Batch step failed.",
+          results: batchResults };
+      }
+    }
+    return { ok: true, operation: "batch", state: "completed", fileKey: figma.fileKey,
+      pageName: figma.currentPage.name, completedCount: batchResults.length, results: batchResults };
+  }
+
   if (payload.operation === "create-elements") {
     if (!Array.isArray(payload.elements) || payload.elements.length < 1 || payload.elements.length > 20) {
       throw new Error("create-elements requires 1 to 20 validated elements.");
