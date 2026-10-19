@@ -37,7 +37,7 @@ export async function GET(request: Request) {
       oauthRequired: false,
       oauthConfigured: figmaOAuthConfigured,
       status: "native_plugin_bridge",
-      note: "Figma document access uses the installed plugin's native Figma Plugin APIs. The MCP server exposes bounded selection/current-page reads and restricted create/update writes through the authenticated plugin command bridge; execution results must be checked by command ID. The locally imported plugin must include the current bridge command handler. Live plugin reachability is reported separately."
+      note: "Figma document access uses the installed UX Direct plugin native Figma Plugin APIs. The MCP bridge exposes bounded selection/current-page/name/type-filtered reads, page/style/viewport metadata, and explicitly confirmed canvas writes for node creation/editing, layout/typography/paint/effects, clone/delete/reorder/reparent/group/ungroup/flatten/boolean operations, components/variants/instances, selection/viewport, page create/rename/switch, local styles, image fills, bounded PNG/PDF/SVG export, and sequential batches. Writes stay within the approved Figma file; node IDs resolve on the active page; batches report partial failures. Execution results must be verified by command ID, and the locally imported plugin must include the current bridge command handler. Live plugin reachability is reported separately.",
     },
     capabilities: {
       taskPlanning: true,
