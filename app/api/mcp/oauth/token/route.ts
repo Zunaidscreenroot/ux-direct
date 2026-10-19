@@ -1,5 +1,5 @@
 import { randomUUID, timingSafeEqual, createHash } from "node:crypto";
-import { getMcpIssuer, signMcpPayload, verifyMcpPayload, getMcpSecret } from "@/lib/mcp-oauth";
+import { getMcpIssuer, signMcpPayload, verifyMcpPayload, getMcpSecret, isChatGptCimdClientId } from "@/lib/mcp-oauth";
 export const runtime = "nodejs";
 function badGrant(description = "The grant could not be validated.") {
   return Response.json({ error: "invalid_grant", error_description: description }, { status: 400, headers: { "Cache-Control": "no-store" } });
@@ -26,7 +26,9 @@ export async function POST(request: Request) {
     const clientId = String(form.get("client_id") || "");
     const resource = String(form.get("resource") || issuer + "/api/mcp");
     if (resource !== issuer + "/api/mcp") return badGrant("The resource identifier does not match this MCP server.");
-    if (!clientId.startsWith("uxmcp_") || !verifyMcpPayload(clientId.slice(6), "client")) {
+    const registeredDcrClient = clientId.startsWith("uxmcp_") && Boolean(verifyMcpPayload(clientId.slice(6), "client"));
+    const trustedCimdClient = isChatGptCimdClientId(clientId);
+    if (!registeredDcrClient && !trustedCimdClient) {
       return Response.json({ error: "invalid_client" }, { status: 401, headers: { "Cache-Control": "no-store" } });
     }
     if (grantType === "authorization_code") {

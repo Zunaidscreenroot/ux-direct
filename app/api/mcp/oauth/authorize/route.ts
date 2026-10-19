@@ -1,20 +1,66 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { getMcpIssuer, getMcpSecret, readMcpEnv, htmlEscape, signMcpPayload, verifyMcpPayload, MCP_SCOPES } from "@/lib/mcp-oauth";
+import { CHATGPT_CIMD_CLIENT_ID, getMcpIssuer, getMcpSecret, readMcpEnv, htmlEscape, signMcpPayload, verifyMcpPayload, MCP_SCOPES, isChatGptCimdClientId } from "@/lib/mcp-oauth";
 export const runtime = "nodejs";
+type OAuthClientMetadata = {
+  client_id?: unknown;
+  client_name?: unknown;
+  redirect_uris?: unknown;
+  token_endpoint_auth_method?: unknown;
+  token_endpoint_auth_methods_supported?: unknown;
+};
 type AuthorizeInput = { clientId: string; redirectUri: string; state: string; scope: string; challenge: string; method: string; clientName: string; resource: string };
-function getInput(values: URLSearchParams | FormData): AuthorizeInput | null {
+const CHATGPT_STABLE_REDIRECT_URI = "https://chatgpt.com/connector_platform_oauth_redirect";
+
+async function resolveOAuthClient(clientId: string): Promise<OAuthClientMetadata | null> {
+  if (clientId.startsWith("uxmcp_")) {
+    return verifyMcpPayload(clientId.slice(6), "client") as OAuthClientMetadata | null;
+  }
+  if (!isChatGptCimdClientId(clientId)) return null;
+
+  // Resolve only the known ChatGPT CIMD URL. Never fetch an arbitrary client_id URL.
+  try {
+    const response = await fetch(CHATGPT_CIMD_CLIENT_ID, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      redirect: "error",
+      cache: "no-store",
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok || !(response.headers.get("content-type") || "").toLowerCase().includes("application/json")) return null;
+    const raw = await response.text();
+    if (raw.length > 16_384) return null;
+    const metadata = JSON.parse(raw) as OAuthClientMetadata;
+    const redirects = Array.isArray(metadata.redirect_uris)
+      ? metadata.redirect_uris.filter((value): value is string => typeof value === "string")
+      : [];
+    const methods = Array.isArray(metadata.token_endpoint_auth_methods_supported)
+      ? metadata.token_endpoint_auth_methods_supported.filter((value): value is string => typeof value === "string")
+      : [];
+    if (metadata.client_id !== CHATGPT_CIMD_CLIENT_ID ||
+        !redirects.includes(CHATGPT_STABLE_REDIRECT_URI) ||
+        (!methods.includes("none") && metadata.token_endpoint_auth_method !== "none")) return null;
+    return metadata;
+  } catch {
+    return null;
+  }
+}
+
+async function getInput(values: URLSearchParams | FormData): Promise<AuthorizeInput | null> {
   const val = (key: string) => String(values.get(key) || "");
   const clientId = val("client_id");
-  const client = verifyMcpPayload(clientId.startsWith("uxmcp_") ? clientId.slice(6) : "", "client");
+  const client = await resolveOAuthClient(clientId);
   const redirectUri = val("redirect_uri"), state = val("state");
   const scope = val("scope") || "ux:read ux:execute ux:learn offline_access";
   const challenge = val("code_challenge"), method = val("code_challenge_method"), resource = val("resource");
   const redirects = Array.isArray(client?.redirect_uris) ? client.redirect_uris.filter((x): x is string => typeof x === "string") : [];
   const requested = [...new Set([...scope.split(/\s+/).filter(Boolean), "ux:learn"])];
   if (!client || !redirects.includes(redirectUri) || val("response_type") !== "code" || method !== "S256" ||
-      !/^[A-Za-z0-9_-]{43,128}$/.test(challenge) || state.length > 2048 ||
+      !/^[A-Za-z0-9_-]{43,128}$/.test(challenge) || !state || state.length > 2048 ||
       requested.some(value => !(MCP_SCOPES as readonly string[]).includes(value))) return null;
-  return { clientId, redirectUri, state, scope: [...new Set(requested)].join(" "), challenge, method, clientName: String(client.client_name || "ChatGPT MCP client"), resource };
+  return {
+    clientId, redirectUri, state, scope: [...new Set(requested)].join(" "),
+    challenge, method, clientName: String(client.client_name || "ChatGPT MCP client"), resource,
+  };
 }
 function htmlPage(issuer: string, input: AuthorizeInput, error = ""): Response {
   const hidden = [
@@ -46,7 +92,7 @@ export async function GET(request: Request) {
   try {
     getMcpSecret();
     const issuer = getMcpIssuer(request);
-    const input = getInput(new URL(request.url).searchParams);
+    const input = await getInput(new URL(request.url).searchParams);
     if (!input) return new Response("Invalid OAuth authorization request. Restart the connection from ChatGPT.", { status: 400, headers: { "Cache-Control": "no-store" } });
     const resource = input.resource || issuer + "/api/mcp";
     if (resource !== issuer + "/api/mcp") return new Response("The OAuth resource does not match this MCP server.", { status: 400, headers: { "Cache-Control": "no-store" } });
@@ -61,7 +107,7 @@ export async function POST(request: Request) {
     getMcpSecret();
     const form = await request.formData();
     console.info("[ux-direct] mcp_oauth_authorize_post_received");
-    const input = getInput(form);
+    const input = await getInput(form);
     if (!input || form.get("consent") !== "yes") {
       console.warn("[ux-direct] mcp_oauth_authorize_invalid_form");
       return new Response("Invalid authorization request or consent was not provided.", { status: 400 });
