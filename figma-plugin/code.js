@@ -1597,7 +1597,7 @@ async function runCanvasCommand(command) {
   var errorText = null;
   try {
     if (!command || typeof command.commandId !== "string") throw new Error("Invalid canvas command envelope.");
-    if (command.action === "read-canvas") result = readCanvasCommand(command.payload);
+    if (command.action === "read-canvas") result = await readCanvasCommand(command.payload);
     else if (command.action === "write-canvas") result = await writeCanvasCommand(command.payload);
     else throw new Error("Unsupported canvas command action.");
   } catch (error) {
