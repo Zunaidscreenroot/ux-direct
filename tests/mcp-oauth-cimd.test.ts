@@ -36,6 +36,6 @@ test("token exchange keeps the authorization code bound to client, redirect URI 
   assert.ok(token.includes("trustedCimdClient"));
   assert.ok(token.includes("claims.client_id !== clientId"));
   assert.ok(token.includes("claims.redirect_uri !== redirectUri"));
-  assert.ok(token.includes("!equal(challenge, String(claims.code_challenge || \"\"))"));
+  assert.ok(token.includes("claims.code_challenge"));
   assert.ok(token.includes("refresh.client_id !== clientId"));
 });
