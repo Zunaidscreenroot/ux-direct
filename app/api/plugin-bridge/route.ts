@@ -119,7 +119,7 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   operation: z.enum([
     "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
     "group-nodes", "ungroup-node", "create-component", "create-instance",
-    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg",
+    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style",
   ]),
   confirm: z.literal(true),
   target: z.enum(["current-page", "selection", "test-lab"]).optional(),
