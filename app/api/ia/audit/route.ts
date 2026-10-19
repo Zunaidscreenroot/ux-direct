@@ -5,6 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_PAGES = 120;
+const MAX_AI_PAGES = 30;
 const rateWindows = new Map<string, { count: number; since: number }>();
 
 type PageInput = {
@@ -112,7 +113,7 @@ export async function POST(request: Request) {
   const originUrl = publicHttpUrl(input?.origin);
   if (!input || !originUrl) return NextResponse.json({ error: "Provide a valid public website origin and discovered pages." }, { status: 400 });
   if (!Array.isArray(input.pages) || input.pages.length < 1 || input.pages.length > MAX_PAGES) {
-    return NextResponse.json({ error: "Provide 1–30 discovered pages. Run discovery again with the page cap set to 30 for a broader review." }, { status: 400 });
+    return NextResponse.json({ error: "Provide 1–120 discovered pages. Reduce the discovery page cap if AI analysis keeps failing on a very large site." }, { status: 400 });
   }
 
   const origin = originUrl.origin;
@@ -149,8 +150,15 @@ export async function POST(request: Request) {
   }
   if (!pages.length) return NextResponse.json({ error: "No valid discovered pages matched the supplied website origin." }, { status: 400 });
   
-  const allowedUrls = new Set(pages.map(page => page.url));
-  const evidenceContext = pages.map(page => ({
+  // Keep the model input bounded while preserving the full discovered map in the UI.
+  // Prefer shallower, inspected pages so the AI sees the main hierarchy and verified evidence first.
+  const analysisPages = pages.length > MAX_AI_PAGES
+    ? [...pages].sort((a, b) =>
+        a.depth - b.depth || Number(b.inspected === true) - Number(a.inspected === true)
+      ).slice(0, MAX_AI_PAGES)
+    : pages;
+  const allowedUrls = new Set(analysisPages.map(page => page.url));
+  const evidenceContext = analysisPages.map(page => ({
     url: page.url,
     title: page.title,
     documentTitle: page.documentTitle,
@@ -185,10 +193,10 @@ export async function POST(request: Request) {
 
   const userPrompt = [
     "Review this discovered information architecture for " + origin + ".",
-    "Crawl includes " + pages.length + " page records and may be capped; treat omissions as unknown.",
+    "AI analysis uses " + analysisPages.length + " page records from " + pages.length + " discovered pages; omitted records are outside this bounded sample and must be treated as unknown.",
     "Return JSON schema: {\"summary\":\"...\",\"findings\":[{\"title\":\"...\",\"severity\":\"Critical|High|Medium|Low\",\"category\":\"...\",\"evidence\":\"...\",\"recommendation\":\"...\",\"confidence\":0.0,\"hypothesis\":true,\"url\":\"exact supplied page URL\"}]}",
     "Aim for up to 8 distinct findings. Every structural recommendation must cite exact supplied paths and explain how the proposed placement helps a real banking task. Do not claim screenshot, analytics or user-testing evidence.",
-    JSON.stringify({ origin, pageCount: pages.length, pages: evidenceContext })
+    JSON.stringify({ origin, pageCount: analysisPages.length, discoveredPageCount: pages.length, pages: evidenceContext })
   ].join("\n\n");
 
   try {
@@ -211,7 +219,7 @@ export async function POST(request: Request) {
         { role: "user", content: userPrompt }
       ],
       temperature: 0.15,
-      max_tokens: 3200,
+      max_tokens: 4800,
       response_format: { type: "json_object" },
       signal: request.signal
     }, { timeoutMs: 120_000, maxFallbackAttempts: 1 });
@@ -234,14 +242,19 @@ export async function POST(request: Request) {
     return NextResponse.json({
       summary: clipText(parsedRecord.summary, 1600) || "The model returned no IA summary.",
       findings,
-      pagesReviewed: pages.length,
+      pagesReviewed: analysisPages.length,
+      pagesDiscovered: pages.length,
+      analysisSampled: analysisPages.length < pages.length,
       findingsRejected: Math.max(0, parsedRecord.findings.length - findings.length),
       model: response.model,
       provider: response.provider,
       latencyMs: response.latencyMs,
       limitations: [
         "Findings are based on a bounded HTML crawl, not usability testing or web analytics.",
-        "Hypotheses require validation; missing pages in a capped crawl are not evidence of an orphaned page."
+        "Hypotheses require validation; missing pages in a capped crawl are not evidence of an orphaned page.",
+        ...(analysisPages.length < pages.length
+          ? ["AI reviewed " + analysisPages.length + " of " + pages.length + " discovered pages to keep model context reliable; the full map remains available for inspection."]
+          : [])
       ]
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
