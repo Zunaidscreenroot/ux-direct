@@ -57,6 +57,8 @@ const CANVAS_ELEMENT = z.object({
   textAlignHorizontal: z.enum(["LEFT", "CENTER", "RIGHT", "JUSTIFIED"]).optional(),
   textAlignVertical: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
   textAutoResize: z.enum(["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"]).optional(),
+  textCase: z.enum(["ORIGINAL", "UPPER", "LOWER", "TITLE"]).optional(),
+  textDecoration: z.enum(["NONE", "UNDERLINE", "STRIKETHROUGH"]).optional(),
   shadowColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   shadowBlur: z.number().finite().min(0).max(200).optional(),
   shadowX: z.number().finite().min(-200).max(200).optional(),
