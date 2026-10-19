@@ -1340,6 +1340,30 @@ async function writeCanvasCommand(payload) {
     return { ok: true, operation: "delete-node", fileKey: figma.fileKey, pageName: figma.currentPage.name, deleted: deleted };
   }
 
+  if (payload.operation === "reparent-node") {
+    var reparentTarget = requireCanvasNode(payload.nodeId, "reparent-node");
+    var newParent = payload.parentNodeId === figma.currentPage.id
+      ? figma.currentPage
+      : findPageNode(payload.parentNodeId);
+    if (!newParent) throw new Error("parentNodeId must identify a container on the current page.");
+    if (newParent === reparentTarget) throw new Error("A node cannot be parented to itself.");
+    if (typeof newParent.insertChild !== "function" || !Array.isArray(newParent.children)) {
+      throw new Error("parentNodeId must be a page, frame, component, component set, or group that can contain children.");
+    }
+    var ancestor = newParent;
+    while (ancestor) {
+      if (ancestor.id === reparentTarget.id) throw new Error("Reparenting would create a cycle.");
+      ancestor = ancestor.parent;
+    }
+    var insertAt = Number.isInteger(payload.index)
+      ? Math.max(0, Math.min(newParent.children.length, payload.index))
+      : newParent.children.length;
+    newParent.insertChild(insertAt, reparentTarget);
+    return { ok: true, operation: "reparent-node", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(reparentTarget), parent: { id: newParent.id, name: newParent.name, type: newParent.type },
+      index: newParent.children.indexOf(reparentTarget) };
+  }
+
   if (payload.operation === "reorder-node") {
     var reorderTarget = requireCanvasNode(payload.nodeId, "reorder-node");
     var reorderParent = reorderTarget.parent;
@@ -1468,6 +1492,15 @@ async function writeCanvasCommand(payload) {
     figma.viewport.scrollAndZoomIntoView(zoomNodes);
     return { ok: true, operation: "zoom-to-nodes", fileKey: figma.fileKey, pageName: figma.currentPage.name,
       nodes: zoomNodes.map(nodeSummary), viewport: { zoom: figma.viewport.zoom, bounds: figma.viewport.bounds } };
+  }
+
+  if (payload.operation === "set-current-page") {
+    var targetPage = figma.root.children.find(function (page) { return page.id === payload.pageId; });
+    if (!targetPage) throw new Error("pageId must identify a page in the approved Figma file.");
+    var previousPage = { id: figma.currentPage.id, name: figma.currentPage.name };
+    await figma.setCurrentPageAsync(targetPage);
+    return { ok: true, operation: "set-current-page", fileKey: figma.fileKey,
+      previousPage: previousPage, page: { id: figma.currentPage.id, name: figma.currentPage.name } };
   }
 
   if (payload.operation === "create-page") {
