@@ -39,16 +39,25 @@ function startScopedPlugin() {
   figma.showUI(__html__, { width: 380, height: 720, themeColors: true });
 function getSelectionSummary() {
   assertUxDirectFileScope("reading selection metadata");
-  return figma.currentPage.selection.map(function (node) {
-    return { id: node.id, name: node.name, type: node.type, visible: node.visible,
-      childCount: "children" in node ? node.children.length : undefined };
-  });
+  var selectedNodes = figma.currentPage.selection;
+  return {
+    selectionCount: selectedNodes.length,
+    selection: selectedNodes.slice(0, 100).map(function (node) {
+      return {
+        id: node.id, name: node.name, type: node.type, visible: node.visible,
+        childCount: "children" in node ? node.children.length : undefined,
+        bounds: { x: node.x, y: node.y, width: node.width, height: node.height }
+      };
+    })
+  };
 }
 function sendSelection() {
   assertUxDirectFileScope("sending Figma context");
   figma.ui.postMessage({ type: "scope-approved", fileKey: figma.fileKey });
+  var summary = getSelectionSummary();
   figma.ui.postMessage({ type: "selection", fileKey: figma.fileKey,
-    pageName: figma.currentPage.name, selection: getSelectionSummary() });
+    pageId: figma.currentPage.id, pageName: figma.currentPage.name,
+    selectionCount: summary.selectionCount, selection: summary.selection });
 }
 var selectionChangeListenerRegistered = false;
 figma.on("selectionchange", sendSelection);
