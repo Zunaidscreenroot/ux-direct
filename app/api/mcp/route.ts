@@ -26,6 +26,7 @@ type BridgeSession = {
     issuedAt?: string;
     completedAt?: string;
     failure?: string;
+    result?: unknown;
   };
   healthReport?: {
     passed?: number;
@@ -112,6 +113,7 @@ function toolScope(name: string): string {
   ].includes(name)) return "ux:learn";
   if ([
     "ux_direct_figma_plugin_queue_health_check",
+    "ux_direct_figma_canvas_write",
     "ux_direct_plan_task",
     "ux_direct_brain_run_retrieval_evals",
     "ux_direct_uxaudit_run_page_audit",
@@ -177,7 +179,12 @@ async function postBridgeCommand(request: Request, body: Record<string, unknown>
   const origin = new URL(request.url).origin;
   const response = await fetch(new URL("/api/plugin-bridge", request.url), {
     method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json", origin },
+    headers: {
+      "content-type": "application/json", accept: "application/json", origin,
+      ...(body.mode === "command" && process.env.UX_DIRECT_MCP_OAUTH_SECRET
+        ? { "x-ux-direct-internal": process.env.UX_DIRECT_MCP_OAUTH_SECRET }
+        : {}),
+    },
     body: JSON.stringify(body),
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
@@ -193,6 +200,34 @@ async function postBridgeCommand(request: Request, body: Record<string, unknown>
     throw new Error("Plugin bridge returned an invalid command response.");
   }
   return result as Record<string, unknown>;
+}
+
+async function requireOnlinePluginSession(request: Request) {
+  const snapshot = await fetchBridgeSnapshot(request);
+  const session = (snapshot.sessions ?? []).find((item) => item.isOnline === true && typeof item.clientId === "string");
+  if (!session?.clientId) {
+    throw new Error("No active allowlisted Figma plugin session is online. Open UX Direct in the approved Figma file and retry.");
+  }
+  return session;
+}
+
+async function queueFigmaCanvasCommand(
+  request: Request,
+  action: "read-canvas" | "write-canvas",
+  payload: Record<string, unknown>,
+) {
+  const session = await requireOnlinePluginSession(request);
+  const queued = await postBridgeCommand(request, {
+    mode: "command", clientId: session.clientId, action, payload,
+  });
+  return {
+    status: "queued",
+    commandId: queued.commandId,
+    action,
+    pluginSession: { clientId: session.clientId, lastHeartbeatAt: session.lastHeartbeatAt ?? null },
+    nextStep: "Call ux_direct_figma_canvas_command_status with this commandId to retrieve the verified result.",
+    expiresInSeconds: 240,
+  };
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- UX Audit APIs return external JSON/SSE payloads normalized below. */
@@ -415,6 +450,81 @@ const TOOLS = [
       },
       required: ["commandId"],
       additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "ux_direct_figma_canvas_read",
+    description: "Read the currently selected layers or a bounded tree of the active Figma page through the open UX Direct plugin. This queues a native Plugin API command; retrieve the result with ux_direct_figma_canvas_command_status. Reads are limited to the exact allowlisted Figma file and do not mutate the canvas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scope: { type: "string", enum: ["selection", "current-page"], description: "Read selected layers or the active page's layer tree." },
+        maxDepth: { type: "integer", minimum: 0, maximum: 4, description: "Maximum descendant depth; defaults to 2." },
+        maxNodes: { type: "integer", minimum: 1, maximum: 100, description: "Maximum total nodes returned; defaults to 60." }
+      },
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "ux_direct_figma_canvas_write",
+    description: "Execute a narrowly scoped native Figma Plugin API write in the allowlisted file. Supported: create 1–20 frames, rectangles, ellipses or text; update a current-page node's name, visibility, position, size or rotation. Requires confirm=true and should only be called for a specific edit the owner explicitly requested. Use target=test-lab for safe bridge smoke tests, selection for an explicitly selected container, or current-page for the active page. Retrieve execution verification with ux_direct_figma_canvas_command_status. Deletes, arbitrary code, variables, component-library imports and bulk replacement are not supported.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        operation: { type: "string", enum: ["create-elements", "update-node"] },
+        confirm: { type: "boolean", const: true, description: "Must be true only after the owner explicitly requests this specific write." },
+        target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
+        elements: {
+          type: "array", minItems: 1, maxItems: 20,
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT"] },
+              name: { type: "string", minLength: 1, maxLength: 80 },
+              x: { type: "number", minimum: -10000, maximum: 10000 },
+              y: { type: "number", minimum: -10000, maximum: 10000 },
+              width: { type: "number", minimum: 1, maximum: 4096 },
+              height: { type: "number", minimum: 1, maximum: 4096 },
+              text: { type: "string", maxLength: 5000 },
+              fontSize: { type: "number", minimum: 8, maximum: 72 },
+              color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }
+            },
+            required: ["type", "name"],
+            additionalProperties: false
+          }
+        },
+        nodeId: { type: "string", minLength: 1, maxLength: 100 },
+        patch: {
+          type: "object",
+          properties: {
+            name: { type: "string", minLength: 1, maxLength: 120 },
+            visible: { type: "boolean" },
+            x: { type: "number", minimum: -10000, maximum: 10000 },
+            y: { type: "number", minimum: -10000, maximum: 10000 },
+            width: { type: "number", minimum: 1, maximum: 4096 },
+            height: { type: "number", minimum: 1, maximum: 4096 },
+            rotation: { type: "number", minimum: -360, maximum: 360 }
+          },
+          additionalProperties: false
+        }
+      },
+      required: ["operation", "confirm"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "ux_direct_figma_canvas_command_status",
+    description: "Retrieve the status, failure reason or actual result of a queued Figma canvas read/write command. Requires a commandId returned by ux_direct_figma_canvas_read or ux_direct_figma_canvas_write.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        commandId: { type: "string", minLength: 8, maxLength: 100, pattern: "^[A-Za-z0-9_-]{8,100}$" }
+      },
+      required: ["commandId"],
+      additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -691,6 +801,75 @@ async function callTool(name: string, args: unknown, request: Request) {
         checkedAt: report.checkedAt ?? null,
         checks: (report.checks ?? []).slice(0, 60),
       } : null,
+    });
+  }
+
+  if (name === "ux_direct_figma_canvas_read") {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
+    const input = args as Record<string, unknown>;
+    const scope = input.scope === undefined ? "selection" : input.scope;
+    const maxDepth = input.maxDepth === undefined ? 2 : input.maxDepth;
+    const maxNodes = input.maxNodes === undefined ? 60 : input.maxNodes;
+    if (scope !== "selection" && scope !== "current-page") return toolText({ error: "scope must be selection or current-page." }, true);
+    if (!Number.isInteger(maxDepth) || (maxDepth as number) < 0 || (maxDepth as number) > 4) return toolText({ error: "maxDepth must be an integer from 0 to 4." }, true);
+    if (!Number.isInteger(maxNodes) || (maxNodes as number) < 1 || (maxNodes as number) > 100) return toolText({ error: "maxNodes must be an integer from 1 to 100." }, true);
+    try {
+      return toolText(await queueFigmaCanvasCommand(request, "read-canvas", {
+        scope, maxDepth, maxNodes,
+      }));
+    } catch (error) {
+      return toolText({ status: "error", error: error instanceof Error ? error.message : "Could not queue Figma canvas read." }, true);
+    }
+  }
+
+  if (name === "ux_direct_figma_canvas_write") {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
+    const input = args as Record<string, unknown>;
+    if (input.confirm !== true) return toolText({ error: "Write blocked: confirm=true is required after an explicit request for this specific canvas edit." }, true);
+    if (input.operation !== "create-elements" && input.operation !== "update-node") return toolText({ error: "operation must be create-elements or update-node." }, true);
+    const payload: Record<string, unknown> = {
+      operation: input.operation, confirm: true,
+      ...(input.target === undefined ? {} : { target: input.target }),
+      ...(input.elements === undefined ? {} : { elements: input.elements }),
+      ...(input.nodeId === undefined ? {} : { nodeId: input.nodeId }),
+      ...(input.patch === undefined ? {} : { patch: input.patch }),
+    };
+    if (input.operation === "create-elements") {
+      if (!Array.isArray(input.elements) || input.elements.length < 1 || input.elements.length > 20) return toolText({ error: "create-elements requires 1–20 elements." }, true);
+      if (input.target !== undefined && !["current-page", "selection", "test-lab"].includes(String(input.target))) return toolText({ error: "target must be current-page, selection, or test-lab." }, true);
+      const allowedTypes = new Set(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT"]);
+      for (const item of input.elements) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return toolText({ error: "Each element must be an object." }, true);
+        const element = item as Record<string, unknown>;
+        if (!allowedTypes.has(String(element.type)) || typeof element.name !== "string" || !element.name.trim()) return toolText({ error: "Each element requires a supported type and non-empty name." }, true);
+        if (element.type === "TEXT" && typeof element.text !== "string") return toolText({ error: "TEXT elements require text content." }, true);
+      }
+    } else {
+      if (typeof input.nodeId !== "string" || !input.nodeId.trim()) return toolText({ error: "update-node requires nodeId." }, true);
+      if (!input.patch || typeof input.patch !== "object" || Array.isArray(input.patch) || !Object.keys(input.patch as Record<string, unknown>).length) return toolText({ error: "update-node requires a non-empty patch." }, true);
+    }
+    try {
+      return toolText(await queueFigmaCanvasCommand(request, "write-canvas", payload));
+    } catch (error) {
+      return toolText({ status: "error", error: error instanceof Error ? error.message : "Could not queue Figma canvas write." }, true);
+    }
+  }
+
+  if (name === "ux_direct_figma_canvas_command_status") {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
+    const input = args as Record<string, unknown>;
+    const commandId = typeof input.commandId === "string" ? input.commandId.trim() : "";
+    if (!/^[A-Za-z0-9_-]{8,100}$/.test(commandId)) return toolText({ error: "Provide a valid commandId returned by a Figma canvas read/write tool." }, true);
+    const snapshot = await fetchBridgeSnapshot(request);
+    const session = (snapshot.sessions ?? []).find((item) => item.latestCommand?.commandId === commandId);
+    const command = session?.latestCommand;
+    if (!command) return toolText({ commandId, status: "not_found", message: "No matching active canvas command was found. It may have expired or been replaced by another plugin command." });
+    return toolText({
+      commandId, action: command.action ?? null, status: command.status ?? "unknown",
+      issuedAt: command.issuedAt ?? null, completedAt: command.completedAt ?? null,
+      failure: command.failure ?? null,
+      result: command.status === "completed" ? command.result ?? null : null,
+      pluginSession: { clientId: session?.clientId ?? null, isOnline: session?.isOnline === true, lastHeartbeatAt: session?.lastHeartbeatAt ?? null },
     });
   }
 
@@ -1045,7 +1224,7 @@ export async function POST(request: Request) {
           protocolVersion: PROTOCOL_VERSIONS.has(requested) ? requested : "2025-11-25",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "ux-direct", version: "0.1.0" },
-          instructions: "UX Direct is the single brain and MCP control center. It provides shared-brain search/training plus UX Audit operations for public-site IA discovery, desktop/mobile screenshot auditing, report retrieval, improved IA proposals, and multi-site benchmarking. Use UX Direct shared-brain retrieval before analysis; UX Audit persists client-specific findings in Past Findings and retrieves relevant approved shared rules. Never promote client-specific raw findings into global memory; only validated generalizable lessons belong in the shared brain. Preserve Hindi/Hinglish feedback, save reusable lessons as drafts by default, and approve only when the owner explicitly asks to train or activate the rule. Audit work may incur OpenRouter costs. Figma plugin connectivity uses the installed plugin's native Figma Plugin APIs; Figma OAuth is not required for that path. Available Figma MCP actions currently cover connection inspection and native API diagnostics only. Do not claim general-purpose Figma document read/write execution until dedicated commands are exposed, executed by the plugin, and verified. Use Figma actions only when the owner asks for Figma work. Current screenshot evidence takes precedence over remembered rules.",
+          instructions: "UX Direct is the single brain and MCP control center. It provides shared-brain search/training plus UX Audit operations for public-site IA discovery, desktop/mobile screenshot auditing, report retrieval, improved IA proposals, and multi-site benchmarking. Use UX Direct shared-brain retrieval before analysis; UX Audit persists client-specific findings in Past Findings and retrieves relevant approved shared rules. Never promote client-specific raw findings into global memory; only validated generalizable lessons belong in the shared brain. Preserve Hindi/Hinglish feedback, save reusable lessons as drafts by default, and approve only when the owner explicitly asks to train or activate the rule. Audit work may incur OpenRouter costs. Figma plugin connectivity uses the installed plugin's native Figma Plugin APIs; Figma OAuth is not required for that path. Figma MCP actions support bounded canvas reads and explicitly confirmed creation or property updates through the active allowlisted plugin session; command status must be checked to verify execution. Writes are restricted to creating frames, rectangles, ellipses and text, or updating a current-page node's name, visibility, position, size or rotation. No deletion, arbitrary code execution or broad replacement is exposed. Use write actions only when the owner requests that specific edit; use target=test-lab for safe write smoke tests. Current screenshot evidence takes precedence over remembered rules.",
         }, headers);
       }
       case "ping":

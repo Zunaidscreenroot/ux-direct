@@ -51,7 +51,7 @@ Use the least expensive model that can reliably complete a task. Cheap/local mod
 - Require extra safeguards for deletion, broad replacement, or large batch edits.
 - Log operations and verification results.
 - Treat Plugin API, REST API, and external tools as distinct capability surfaces.
-- The current MCP bridge supports plugin heartbeat and native API diagnostics. Do not report general-purpose design read/write execution as available until the corresponding commands are exposed, executed inside the plugin, and verified.
+- The MCP bridge supports heartbeat, native API diagnostics, bounded canvas reads, and restricted writes (node creation or selected property updates). Confirm a command's result before reporting success; expose no delete, arbitrary-code, broad-replacement, or unrestricted cross-file actions.
 - Never promise an operation until its API support, permissions, and execution path are tested.
 
 ## Quality loop

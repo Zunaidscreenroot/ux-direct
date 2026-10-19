@@ -10,6 +10,9 @@ The plugin's production backend is the UX Direct Cloudflare Worker:
 - Manual cockpit refresh plus a low-frequency OpenRouter provider-status refresh.
 - Conversational task planning with provider/model and shared-brain diagnostics in the result.
 - A native Figma API self-test that reports results back through the Cloudflare plugin bridge.
+- Bounded canvas reads for selected layers or the active page tree (up to 100 nodes).
+- Explicitly confirmed, scoped canvas writes: create frames, rectangles, ellipses and text; update node name, visibility, position, size or rotation.
+- Command status and execution results routed back to ChatGPT through the same bridge.
 - Exact allowlist protection for the approved Figma file.
 
 ## Import into Figma Desktop
@@ -38,9 +41,12 @@ Ask ChatGPT to run the UX Direct MCP native plugin health check. The MCP tool qu
 
 The native health test may create or reuse persistent test fixtures on the dedicated test page. It does not navigate away from or intentionally change the user's active working page.
 
-## Current limitations
+## Canvas read/write commands
 
-- Task planning can use OpenRouter model reasoning and approved shared-brain context, but the plugin does not yet expose general-purpose Figma design read/write execution through MCP.
-- The task planner currently sends the brief and selected-node metadata (ID, name, type, visibility, child count); it does not upload full file contents or screenshot pixels and does not inspect the complete layer tree automatically.
-- Planning does not create, delete, move, or edit production Figma design nodes.
-- Figma OAuth is not required for the native Plugin API path.
+- Read: ask ChatGPT to call `ux_direct_figma_canvas_read` with `scope=selection` or `scope=current-page`. Reads are bounded by `maxDepth` (0–4) and `maxNodes` (1–100).
+- Create: `ux_direct_figma_canvas_write` supports up to 20 frame, rectangle, ellipse or text nodes per command. Use `target=test-lab` for smoke tests, `selection` for a selected container, or `current-page` for the active page.
+- Update: the same write tool can update the name, visibility, position, size or rotation of a node on the active page.
+- Verification: use `ux_direct_figma_canvas_command_status` with the returned `commandId`. Do not claim a change succeeded until the status contains a completed result.
+- Writes require `confirm=true` and a specific owner-requested edit. Delete operations, arbitrary code, bulk replacement, page switching, variable writes and Team Library imports are not exposed.
+- The plugin uses an exact file-key allowlist and never reads or writes other Figma files. Read results are bounded and include layer metadata/text only, not screenshot pixels or full file contents.
+- Figma OAuth is not required for the native Plugin API path. The installed development plugin must be reloaded/re-imported after plugin source changes; deploying the Worker alone does not update a locally imported plugin.

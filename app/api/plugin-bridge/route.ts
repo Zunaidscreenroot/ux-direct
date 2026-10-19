@@ -25,10 +25,63 @@ const REPORT = z.object({
   checkedAt: z.string().max(50),
   checks: z.array(CHECK).max(100),
 });
+
+const CANVAS_ELEMENT = z.object({
+  type: z.enum(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT"]),
+  name: z.string().trim().min(1).max(80),
+  x: z.number().finite().min(-10000).max(10000).optional(),
+  y: z.number().finite().min(-10000).max(10000).optional(),
+  width: z.number().finite().min(1).max(4096).optional(),
+  height: z.number().finite().min(1).max(4096).optional(),
+  text: z.string().max(5000).optional(),
+  fontSize: z.number().finite().min(8).max(72).optional(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.type === "TEXT" && typeof value.text !== "string") {
+    ctx.addIssue({ code: "custom", path: ["text"], message: "TEXT elements require text content." });
+  }
+});
+const CANVAS_READ_PAYLOAD = z.object({
+  scope: z.enum(["selection", "current-page"]).default("selection"),
+  maxDepth: z.number().int().min(0).max(4).default(2),
+  maxNodes: z.number().int().min(1).max(100).default(60),
+}).strict();
+const CANVAS_PATCH = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  visible: z.boolean().optional(),
+  x: z.number().finite().min(-10000).max(10000).optional(),
+  y: z.number().finite().min(-10000).max(10000).optional(),
+  width: z.number().finite().min(1).max(4096).optional(),
+  height: z.number().finite().min(1).max(4096).optional(),
+  rotation: z.number().finite().min(-360).max(360).optional(),
+}).strict().refine((value) => Object.values(value).some((item) => item !== undefined), {
+  message: "Provide at least one supported property to update.",
+});
+const CANVAS_WRITE_PAYLOAD = z.object({
+  operation: z.enum(["create-elements", "update-node"]),
+  confirm: z.literal(true),
+  target: z.enum(["current-page", "selection", "test-lab"]).optional(),
+  elements: z.array(CANVAS_ELEMENT).min(1).max(20).optional(),
+  nodeId: z.string().trim().min(1).max(100).optional(),
+  patch: CANVAS_PATCH.optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.operation === "create-elements" && !value.elements) {
+    ctx.addIssue({ code: "custom", path: ["elements"], message: "create-elements requires 1–20 elements." });
+  }
+  if (value.operation === "update-node" && (!value.nodeId || !value.patch)) {
+    ctx.addIssue({ code: "custom", path: ["nodeId"], message: "update-node requires nodeId and a supported patch." });
+  }
+  if (value.operation === "update-node" && value.elements) {
+    ctx.addIssue({ code: "custom", path: ["elements"], message: "update-node cannot include elements." });
+  }
+});
+
 type HealthReport = z.infer<typeof REPORT>;
 type BridgeCommand = {
-  commandId: string; action: "native-api-health-check"; status: "pending" | "claimed" | "completed" | "failed";
-  issuedAt: string; expiresAt: string; completedAt?: string; failure?: string;
+  commandId: string; action: "native-api-health-check" | "read-canvas" | "write-canvas";
+  status: "pending" | "claimed" | "completed" | "failed";
+  issuedAt: string; expiresAt: string; claimedAt?: string; completedAt?: string; failure?: string;
+  payload?: Record<string, unknown>; result?: unknown;
 };
 type Session = {
   clientId: string; sessionToken: string; fileKey: string; status: "online" | "offline";
@@ -131,6 +184,12 @@ export async function POST(request: Request) {
   if (isDashboardCommand ? !isDashboardRequest(request, true) : !isPluginRequest(request)) {
     return NextResponse.json({ error: isDashboardCommand ? "Dashboard origin required to issue a command." : "Figma plugin origin required." }, { status: 403, headers });
   }
+  if (isDashboardCommand) {
+    const internalSecret = process.env.UX_DIRECT_MCP_OAUTH_SECRET;
+    if (!internalSecret || request.headers.get("x-ux-direct-internal") !== internalSecret) {
+      return NextResponse.json({ error: "Internal command authentication failed." }, { status: 403, headers });
+    }
+  }
   if (!isDashboardCommand && !isAllowedFigmaFileKey(body.fileKey)) {
     return NextResponse.json({ error: "Figma plugin request blocked: file key is not allowlisted." }, { status: 403, headers });
   }
@@ -178,6 +237,44 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true }, { headers });
     }
 
+    if (mode === "canvas-result") {
+      const token = z.string().min(20).max(200).safeParse(body.sessionToken);
+      const parsedCommandId = ID.safeParse(body.commandId);
+      const operationError = typeof body.operationError === "string" ? body.operationError.slice(0, 1000) : "";
+      const operationResult = body.operationResult === undefined ? null : body.operationResult;
+      const serializedResult = JSON.stringify(operationResult);
+      if (!token.success || !parsedCommandId.success || serializedResult.length > 60000) {
+        return NextResponse.json({ error: "Canvas result envelope is invalid or too large." }, { status: 400, headers });
+      }
+      const current = await readJson<Session>(path);
+      if (!current || current.sessionToken !== token.data || !isAllowedFigmaFileKey(current.fileKey) || current.fileKey !== body.fileKey) {
+        return NextResponse.json({ error: "Allowlisted plugin session not found or token/file-key mismatch." }, { status: 403, headers });
+      }
+      const command = await readJson<BridgeCommand>(commandPath(clientId));
+      if (!command || command.commandId !== parsedCommandId.data || !["read-canvas", "write-canvas"].includes(command.action) || !["pending", "claimed"].includes(command.status)) {
+        return NextResponse.json({ error: "This canvas command is no longer active." }, { status: 409, headers });
+      }
+      const completed: BridgeCommand = {
+        ...command,
+        status: operationError ? "failed" : "completed",
+        completedAt: new Date().toISOString(),
+        ...(operationError ? { failure: operationError } : { result: operationResult }),
+      };
+      await writeJson(commandPath(clientId), completed);
+      current.latestCommand = completed;
+      current.lastHeartbeatAt = new Date().toISOString();
+      current.status = "online";
+      await writeJson(path, current);
+      recordOperationalEvent({
+        source: "figma-plugin",
+        event: operationError ? "Figma canvas command failed" : "Figma canvas command completed",
+        status: operationError ? "error" : "success",
+        summary: operationError ? "A scoped Figma canvas command returned an error." : "A scoped Figma canvas command completed and returned a verified result.",
+        category: "Figma Canvas", action: command.action, testType: "functional", requestId: command.commandId,
+      });
+      return NextResponse.json({ ok: true, saved: true, status: completed.status }, { headers });
+    }
+
     if (mode === "result") {
       const token = z.string().min(20).max(200).safeParse(body.sessionToken);
       const parsedReport = REPORT.safeParse(body.healthReport);
@@ -215,8 +312,19 @@ export async function POST(request: Request) {
     }
 
     if (mode === "command") {
-      const action = z.literal("native-api-health-check").safeParse(body.action);
+      const action = z.enum(["native-api-health-check", "read-canvas", "write-canvas"]).safeParse(body.action);
       if (!action.success) return NextResponse.json({ error: "Unsupported plugin action." }, { status: 400, headers });
+      let commandPayload: Record<string, unknown> | undefined;
+      if (action.data === "read-canvas") {
+        const parsed = CANVAS_READ_PAYLOAD.safeParse(body.payload ?? {});
+        if (!parsed.success) return NextResponse.json({ error: "Canvas read options are invalid.", issues: parsed.error.issues }, { status: 400, headers });
+        commandPayload = parsed.data;
+      }
+      if (action.data === "write-canvas") {
+        const parsed = CANVAS_WRITE_PAYLOAD.safeParse(body.payload);
+        if (!parsed.success) return NextResponse.json({ error: "Canvas write payload is invalid.", issues: parsed.error.issues }, { status: 400, headers });
+        commandPayload = parsed.data as unknown as Record<string, unknown>;
+      }
       const current = await readJson<Session>(path);
       if (!current || !isAllowedFigmaFileKey(current.fileKey)) return NextResponse.json({ error: "Allowlisted plugin session not found. Open UX Direct in Zunaid_Workspace first." }, { status: 404, headers });
       if (current.status !== "online" || Date.now() - Date.parse(current.lastHeartbeatAt) >= 75000) {
@@ -235,15 +343,18 @@ export async function POST(request: Request) {
       }
       const now = new Date();
       const command: BridgeCommand = {
-        commandId: crypto.randomUUID(), action: "native-api-health-check", status: "pending",
+        commandId: crypto.randomUUID(), action: action.data, status: "pending",
         issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 240000).toISOString(),
+        ...(commandPayload ? { payload: commandPayload } : {}),
       };
       await writeJson(commandPath(clientId), command);
       current.latestCommand = command;
       await writeJson(path, current);
       recordOperationalEvent({
         source: "dashboard", event: "Plugin health check command issued", status: "info",
-        summary: "Dashboard queued a native Figma API health check for the active plugin session.",
+        summary: action.data === "native-api-health-check"
+          ? "Dashboard queued a native Figma API health check for the active plugin session."
+          : "MCP queued a scoped Figma canvas operation for the active plugin session.",
         requestId: command.commandId, action: action.data,
       });
       return NextResponse.json({ ok: true, commandId: command.commandId, status: "pending" }, { headers });
