@@ -473,7 +473,7 @@ const TOOLS = [
   },
   {
     name: "ux_direct_figma_canvas_write",
-    description: "Run explicit, validated native Figma canvas actions through the allowlisted UX Direct plugin. Supports ordered batches of up to 40 actions, frames/shapes/text/vectors, geometry/typography/fills/strokes/auto-layout/effects/image fills, grouping/flattening/boolean operations, component variants and swapping, local styles, selection/viewport control, page creation/rename, SVG/PNG/PDF export. Every write requires confirm=true and is audited; deletion is limited to a node on the current page. No arbitrary code execution, unrestricted document traversal, library publishing, or bulk replacement. Retrieve verified results with ux_direct_figma_canvas_command_status.",
+    description: "Run explicit, validated native Figma canvas actions through the allowlisted UX Direct plugin. Supports ordered batches of up to 40 actions, frames/shapes/text/vectors, geometry/typography/fills/strokes/auto-layout/effects/image fills, grouping/flattening/boolean operations, component variants and swapping, local styles, selection/viewport control, cycle-safe reparenting within the active page, page creation/rename/switching, SVG/PNG/PDF export. Every write requires confirm=true and is audited; deletion is limited to a node on the current page. No arbitrary code execution, unrestricted document traversal, library publishing, or bulk replacement. Retrieve verified results with ux_direct_figma_canvas_command_status.",
     inputSchema: {
       type: "object",
       properties: {
