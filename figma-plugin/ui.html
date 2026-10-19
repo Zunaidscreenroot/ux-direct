@@ -98,7 +98,7 @@
   <button id="submit" class="primary">Send message ↗</button>
   <div id="status" class="status" role="status">Ready. No Figma changes will be made.</div>
   <div id="result" class="result" hidden></div>
-  <footer>Planning sends prompt text and selected-node metadata only. UXD API Test Lab and its test fixtures are created once and reused. Test nodes, components, variables, and the storage probe are intentionally preserved between runs; no per-run cleanup is performed. No Figma REST API or OAuth access is used.</footer>
+  <footer>Task planning sends prompt text and selected-node metadata. Canvas reads are bounded; writes require an explicit request and are restricted to supported node creation/property updates. UXD API Test Lab fixtures are preserved between runs. No Figma REST API or OAuth access is used.</footer>
 <script>
   const API = "https://ux-direct.zunaid-cb7.workers.dev";
   const $ = (id) => document.getElementById(id);
