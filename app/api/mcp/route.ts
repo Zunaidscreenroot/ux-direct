@@ -461,7 +461,11 @@ const TOOLS = [
       properties: {
         scope: { type: "string", enum: ["selection", "current-page"], description: "Read selected layers or the active page's layer tree." },
         maxDepth: { type: "integer", minimum: 0, maximum: 4, description: "Maximum descendant depth; defaults to 2." },
-        maxNodes: { type: "integer", minimum: 1, maximum: 100, description: "Maximum total nodes returned; defaults to 60." }
+        maxNodes: { type: "integer", minimum: 1, maximum: 100, description: "Maximum total nodes returned; defaults to 60." },
+        queryName: { type: "string", minLength: 1, maxLength: 120, description: "Optional case-insensitive node-name search across the current page." },
+        queryType: { type: "string", minLength: 1, maxLength: 80, description: "Optional Figma node type filter, for example COMPONENT, INSTANCE, TEXT, or FRAME." },
+        includePages: { type: "boolean", description: "Include page IDs and names." },
+        includeStyles: { type: "boolean", description: "Include compact IDs/names for local paint, text, effect, and grid styles." }
       },
       additionalProperties: false
     },
@@ -469,11 +473,11 @@ const TOOLS = [
   },
   {
     name: "ux_direct_figma_canvas_write",
-    description: "Run explicit, validated native Figma canvas actions through the allowlisted UX Direct plugin. Supports ordered batches of up to 40 actions, creating frames/shapes/text, editing geometry/typography/fills/strokes/auto-layout/effects, cloning/deleting/reordering/grouping nodes, creating/detaching components and instances, applying local styles, selection/viewport control, page creation/rename, and SVG export. Every write requires confirm=true and is audited; deletion is limited to a node on the current page. No arbitrary code execution, unrestricted document traversal, library publishing, or bulk replacement. Retrieve verified results with ux_direct_figma_canvas_command_status.",
+    description: "Run explicit, validated native Figma canvas actions through the allowlisted UX Direct plugin. Supports ordered batches of up to 40 actions, frames/shapes/text/vectors, geometry/typography/fills/strokes/auto-layout/effects/image fills, grouping/flattening/boolean operations, component variants and swapping, local styles, selection/viewport control, cycle-safe reparenting within the active page, page creation/rename/switching, SVG/PNG/PDF export. Every write requires confirm=true and is audited; deletion is limited to a node on the current page. No arbitrary code execution, unrestricted document traversal, library publishing, or bulk replacement. Retrieve verified results with ux_direct_figma_canvas_command_status.",
     inputSchema: {
       type: "object",
       properties: {
-        operation: { type: "string", enum: ["batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "ungroup-node", "create-component", "create-instance", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"] },
+        operation: { type: "string", enum: ["batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"] },
         confirm: { type: "boolean", const: true, description: "Must be true only after the owner explicitly requests this specific write." },
         target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
         elements: {
@@ -481,7 +485,7 @@ const TOOLS = [
           items: {
             type: "object",
             properties: {
-              type: { type: "string", enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE"] },
+              type: { type: "string", enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR"] },
               name: { type: "string", minLength: 1, maxLength: 80 },
               x: { type: "number", minimum: -10000, maximum: 10000 },
               y: { type: "number", minimum: -10000, maximum: 10000 },
@@ -517,28 +521,64 @@ const TOOLS = [
               shadowBlur: { type: "number", minimum: 0, maximum: 200 },
               shadowX: { type: "number", minimum: -200, maximum: 200 },
               shadowY: { type: "number", minimum: -200, maximum: 200 },
-              shadowSpread: { type: "number", minimum: -200, maximum: 200 }
+              shadowSpread: { type: "number", minimum: -200, maximum: 200 },
+              pointCount: { type: "integer", minimum: 3, maximum: 100 },
+              innerRadius: { type: "number", minimum: 0.01, maximum: 1 },
+              vectorPaths: {
+                type: "array", minItems: 1, maxItems: 5,
+                items: {
+                  type: "object",
+                  properties: {
+                    windingRule: { type: "string", enum: ["EVENODD", "NONZERO"] },
+                    data: { type: "string", minLength: 1, maxLength: 5000 }
+                  },
+                  required: ["windingRule", "data"],
+                  additionalProperties: false
+                }
+              }
             },
             required: ["type", "name"],
             additionalProperties: false
           }
         },
         nodeId: { type: "string", minLength: 1, maxLength: 100 },
+        parentNodeId: { type: "string", minLength: 1, maxLength: 100 },
+        pageId: { type: "string", minLength: 1, maxLength: 100 },
         actions: {
           type: "array", minItems: 1, maxItems: 40,
-          description: "Sequential canvas actions. Batch is non-atomic: completed earlier steps remain if a later action fails. SVG export must be the only step.",
+          description: "Sequential canvas actions. Batch is non-atomic: completed earlier steps remain if a later action fails. Large exports must be standalone steps.",
           items: {
             type: "object",
             properties: {
-              operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "ungroup-node", "create-component", "create-instance", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"] },
+              operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"] },
               target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
               nodeId: { type: "string", minLength: 1, maxLength: 100 },
+        parentNodeId: { type: "string", minLength: 1, maxLength: 100 },
+        pageId: { type: "string", minLength: 1, maxLength: 100 },
               nodeIds: { type: "array", items: { type: "string", minLength: 1, maxLength: 100 }, maxItems: 100 },
               index: { type: "integer", minimum: 0, maximum: 10000 },
               pageName: { type: "string", minLength: 1, maxLength: 120 },
               styleKind: { type: "string", enum: ["paint", "text", "effect", "grid"] },
               styleId: { type: "string", minLength: 1, maxLength: 300 },
               styleName: { type: "string", minLength: 1, maxLength: 240 },
+              booleanOperation: { type: "string", enum: ["UNION", "SUBTRACT", "INTERSECT", "EXCLUDE"] },
+              componentId: { type: "string", minLength: 1, maxLength: 100 },
+              format: { type: "string", enum: ["PNG", "PDF", "SVG_STRING"] },
+              range: {
+                type: "object",
+                properties: {
+                  start: { type: "integer", minimum: 0, maximum: 5000 },
+                  end: { type: "integer", minimum: 1, maximum: 5000 },
+                  fontSize: { type: "number", minimum: 8, maximum: 144 },
+                  lineHeight: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: 1, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
+                  letterSpacing: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: -100, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
+                  fillColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }
+                },
+                required: ["start", "end"],
+                additionalProperties: false
+              },
+              imageBase64: { type: "string", maxLength: 250000 },
+              scaleMode: { type: "string", enum: ["FILL", "FIT", "CROP", "TILE"] },
               elements: { type: "array", minItems: 1, maxItems: 20, items: { type: "object", additionalProperties: true } },
               patch: { type: "object", additionalProperties: true }
             },
@@ -596,7 +636,25 @@ const TOOLS = [
         pageName: { type: "string", minLength: 1, maxLength: 120 },
         styleKind: { type: "string", enum: ["paint", "text", "effect", "grid"] },
         styleId: { type: "string", minLength: 1, maxLength: 300 },
-        styleName: { type: "string", minLength: 1, maxLength: 240 }
+        styleName: { type: "string", minLength: 1, maxLength: 240 },
+        booleanOperation: { type: "string", enum: ["UNION", "SUBTRACT", "INTERSECT", "EXCLUDE"] },
+        componentId: { type: "string", minLength: 1, maxLength: 100 },
+        format: { type: "string", enum: ["PNG", "PDF", "SVG_STRING"] },
+        range: {
+          type: "object",
+          properties: {
+            start: { type: "integer", minimum: 0, maximum: 5000 },
+            end: { type: "integer", minimum: 1, maximum: 5000 },
+            fontSize: { type: "number", minimum: 8, maximum: 144 },
+            lineHeight: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: 1, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
+            letterSpacing: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: -100, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
+            fillColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }
+          },
+          required: ["start", "end"],
+          additionalProperties: false
+        },
+        imageBase64: { type: "string", maxLength: 250000 },
+        scaleMode: { type: "string", enum: ["FILL", "FIT", "CROP", "TILE"] }
       },
       required: ["operation", "confirm"],
       additionalProperties: false
@@ -915,12 +973,23 @@ async function callTool(name: string, args: unknown, request: Request) {
     const scope = input.scope === undefined ? "selection" : input.scope;
     const maxDepth = input.maxDepth === undefined ? 2 : input.maxDepth;
     const maxNodes = input.maxNodes === undefined ? 60 : input.maxNodes;
+    const queryName = input.queryName;
+    const queryType = input.queryType;
+    const includePages = input.includePages === true;
+    const includeStyles = input.includeStyles === true;
     if (scope !== "selection" && scope !== "current-page") return toolText({ error: "scope must be selection or current-page." }, true);
     if (!Number.isInteger(maxDepth) || (maxDepth as number) < 0 || (maxDepth as number) > 4) return toolText({ error: "maxDepth must be an integer from 0 to 4." }, true);
     if (!Number.isInteger(maxNodes) || (maxNodes as number) < 1 || (maxNodes as number) > 100) return toolText({ error: "maxNodes must be an integer from 1 to 100." }, true);
+    if (queryName !== undefined && (typeof queryName !== "string" || !queryName.trim() || queryName.length > 120)) return toolText({ error: "queryName must be a non-empty string up to 120 characters." }, true);
+    if (queryType !== undefined && (typeof queryType !== "string" || !queryType.trim() || queryType.length > 80)) return toolText({ error: "queryType must be a non-empty string up to 80 characters." }, true);
+    if (input.includePages !== undefined && typeof input.includePages !== "boolean") return toolText({ error: "includePages must be boolean." }, true);
+    if (input.includeStyles !== undefined && typeof input.includeStyles !== "boolean") return toolText({ error: "includeStyles must be boolean." }, true);
     try {
       return toolText(await queueFigmaCanvasCommand(request, "read-canvas", {
         scope, maxDepth, maxNodes,
+        ...(queryName === undefined ? {} : { queryName }),
+        ...(queryType === undefined ? {} : { queryType }),
+        includePages, includeStyles,
       }));
     } catch (error) {
       return toolText({ status: "error", error: error instanceof Error ? error.message : "Could not queue Figma canvas read." }, true);
@@ -931,9 +1000,9 @@ async function callTool(name: string, args: unknown, request: Request) {
     if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
     const input = args as Record<string, unknown>;
     const allowedOperations = new Set([
-      "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
-      "group-nodes", "ungroup-node", "create-component", "create-instance",
-      "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style",
+      "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node",
+      "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
+      "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
     ]);
     if (input.confirm !== true) return toolText({ error: "Write blocked: confirm=true is required after an explicit request for this specific canvas action." }, true);
     if (typeof input.operation !== "string" || !allowedOperations.has(input.operation)) {
@@ -944,12 +1013,20 @@ async function callTool(name: string, args: unknown, request: Request) {
       ...(input.target === undefined ? {} : { target: input.target }),
       ...(input.elements === undefined ? {} : { elements: input.elements }),
       ...(input.nodeId === undefined ? {} : { nodeId: input.nodeId }),
+      ...(input.parentNodeId === undefined ? {} : { parentNodeId: input.parentNodeId }),
+      ...(input.pageId === undefined ? {} : { pageId: input.pageId }),
       ...(input.nodeIds === undefined ? {} : { nodeIds: input.nodeIds }),
       ...(input.index === undefined ? {} : { index: input.index }),
       ...(input.pageName === undefined ? {} : { pageName: input.pageName }),
       ...(input.styleKind === undefined ? {} : { styleKind: input.styleKind }),
       ...(input.styleId === undefined ? {} : { styleId: input.styleId }),
       ...(input.styleName === undefined ? {} : { styleName: input.styleName }),
+      ...(input.booleanOperation === undefined ? {} : { booleanOperation: input.booleanOperation }),
+      ...(input.componentId === undefined ? {} : { componentId: input.componentId }),
+      ...(input.format === undefined ? {} : { format: input.format }),
+      ...(input.range === undefined ? {} : { range: input.range }),
+      ...(input.imageBase64 === undefined ? {} : { imageBase64: input.imageBase64 }),
+      ...(input.scaleMode === undefined ? {} : { scaleMode: input.scaleMode }),
       ...(input.patch === undefined ? {} : { patch: input.patch }),
       ...(input.actions === undefined ? {} : { actions: input.actions }),
     };
@@ -957,13 +1034,21 @@ async function callTool(name: string, args: unknown, request: Request) {
       return toolText({ error: "target must be current-page, selection, or test-lab." }, true);
     }
     if (input.operation === "batch" && (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 40)) return toolText({ error: "batch requires 1–40 actions." }, true);
-    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && (step as Record<string, unknown>).operation === "export-svg") && input.actions.length > 1) return toolText({ error: "SVG export must be a standalone command." }, true);
+    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && ["export-svg", "export-node", "create-image-fill"].includes(String((step as Record<string, unknown>).operation))) && input.actions.length > 1) return toolText({ error: "Exports and inline image fills must be standalone commands." }, true);
     if (input.operation !== "batch" && input.actions !== undefined) return toolText({ error: "actions is supported only for batch." }, true);
+    if (input.operation === "batch" && Array.isArray(input.actions)) {
+      const totalCreated = input.actions.reduce((sum, step) => {
+        if (!step || typeof step !== "object" || Array.isArray(step)) return sum;
+        const action = step as Record<string, unknown>;
+        return sum + (action.operation === "create-elements" && Array.isArray(action.elements) ? action.elements.length : 0);
+      }, 0);
+      if (totalCreated > 100) return toolText({ error: "A batch can create at most 100 canvas nodes in total." }, true);
+    }
     if (input.operation === "create-elements") {
       if (!Array.isArray(input.elements) || input.elements.length < 1 || input.elements.length > 20) {
         return toolText({ error: "create-elements requires 1–20 elements." }, true);
       }
-      const allowedTypes = new Set(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE"]);
+      const allowedTypes = new Set(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR"]);
       for (const item of input.elements) {
         if (!item || typeof item !== "object" || Array.isArray(item)) return toolText({ error: "Each element must be an object." }, true);
         const element = item as Record<string, unknown>;
@@ -971,6 +1056,7 @@ async function callTool(name: string, args: unknown, request: Request) {
           return toolText({ error: "Each element requires a supported type and non-empty name." }, true);
         }
         if (element.type === "TEXT" && typeof element.text !== "string") return toolText({ error: "TEXT elements require text content." }, true);
+        if (element.type === "VECTOR" && (!Array.isArray(element.vectorPaths) || element.vectorPaths.length < 1)) return toolText({ error: "VECTOR elements require vectorPaths." }, true);
       }
     }
     if (input.operation === "update-node") {
@@ -979,9 +1065,28 @@ async function callTool(name: string, args: unknown, request: Request) {
         return toolText({ error: "update-node requires a non-empty patch." }, true);
       }
     }
-    const nodeRequired = new Set(["clone-node", "delete-node", "reorder-node", "ungroup-node", "create-component", "create-instance", "detach-instance", "export-svg", "apply-style"]);
+    const nodeRequired = new Set(["clone-node", "delete-node", "reorder-node", "reparent-node", "ungroup-node", "create-component", "create-instance", "swap-component", "detach-instance", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"]);
     if (nodeRequired.has(input.operation) && (typeof input.nodeId !== "string" || !input.nodeId.trim())) {
       return toolText({ error: input.operation + " requires nodeId." }, true);
+    }
+    if ((input.operation === "flatten-nodes" || input.operation === "boolean-operation") && (!Array.isArray(input.nodeIds) || input.nodeIds.length < (input.operation === "flatten-nodes" ? 1 : 2) || input.nodeIds.length > 100)) {
+      return toolText({ error: input.operation + " requires nodeIds." }, true);
+    }
+    if (input.operation === "boolean-operation" && !["UNION", "SUBTRACT", "INTERSECT", "EXCLUDE"].includes(String(input.booleanOperation))) {
+      return toolText({ error: "boolean-operation requires UNION, SUBTRACT, INTERSECT, or EXCLUDE." }, true);
+    }
+    if (input.operation === "create-component-set" && (!Array.isArray(input.nodeIds) || input.nodeIds.length < 2 || input.nodeIds.length > 100)) {
+      return toolText({ error: "create-component-set requires at least two component IDs." }, true);
+    }
+    if (input.operation === "swap-component" && (typeof input.componentId !== "string" || !input.componentId.trim())) return toolText({ error: "swap-component requires componentId." }, true);
+    if (input.operation === "set-text-range" && (!input.range || typeof input.range !== "object" || Array.isArray(input.range))) return toolText({ error: "set-text-range requires a range object." }, true);
+    if (input.operation === "export-node" && !["PNG", "PDF", "SVG_STRING"].includes(String(input.format))) return toolText({ error: "export-node requires format PNG, PDF, or SVG_STRING." }, true);
+    if (input.operation === "create-image-fill" && (typeof input.imageBase64 !== "string" || !input.imageBase64.length)) return toolText({ error: "create-image-fill requires imageBase64." }, true);
+    if (input.operation === "reparent-node" && (typeof input.parentNodeId !== "string" || !input.parentNodeId.trim() || input.parentNodeId === input.nodeId)) {
+      return toolText({ error: "reparent-node requires a different parentNodeId on the current page." }, true);
+    }
+    if (input.operation === "set-current-page" && (typeof input.pageId !== "string" || !input.pageId.trim())) {
+      return toolText({ error: "set-current-page requires pageId from the approved file." }, true);
     }
     if (input.operation === "group-nodes" && (!Array.isArray(input.nodeIds) || input.nodeIds.length < 2 || input.nodeIds.length > 100)) {
       return toolText({ error: "group-nodes requires at least two nodeIds." }, true);
@@ -1371,7 +1476,7 @@ export async function POST(request: Request) {
           protocolVersion: PROTOCOL_VERSIONS.has(requested) ? requested : "2025-11-25",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "ux-direct", version: "0.1.0" },
-          instructions: "UX Direct is the single brain and MCP control center. It provides shared-brain search/training plus UX Audit operations for public-site IA discovery, desktop/mobile screenshot auditing, report retrieval, improved IA proposals, and multi-site benchmarking. Use UX Direct shared-brain retrieval before analysis; UX Audit persists client-specific findings in Past Findings and retrieves relevant approved shared rules. Never promote client-specific raw findings into global memory; only validated generalizable lessons belong in the shared brain. Preserve Hindi/Hinglish feedback, save reusable lessons as drafts by default, and approve only when the owner explicitly asks to train or activate the rule. Audit work may incur OpenRouter costs. Figma plugin connectivity uses the installed plugin's native Figma Plugin APIs; Figma OAuth is not required for that path. Figma MCP actions support bounded canvas reads and explicitly confirmed creation or property updates through the active allowlisted plugin session; command status must be checked to verify execution. Writes are restricted to creating frames, rectangles, ellipses and text, or updating a current-page node's name, visibility, position, size or rotation. No deletion, arbitrary code execution or broad replacement is exposed. Use write actions only when the owner requests that specific edit; use target=test-lab for safe write smoke tests. Current screenshot evidence takes precedence over remembered rules.",
+          instructions: "UX Direct is the single brain and MCP control center. It provides shared-brain search/training plus UX Audit operations for public-site IA discovery, desktop/mobile screenshot auditing, report retrieval, improved IA proposals, and multi-site benchmarking. Use UX Direct shared-brain retrieval before analysis; UX Audit persists client-specific findings in Past Findings and retrieves relevant approved shared rules. Never promote client-specific raw findings into global memory; only validated generalizable lessons belong in the shared brain. Preserve Hindi/Hinglish feedback, save reusable lessons as drafts by default, and approve only when the owner explicitly asks to train or activate the rule. Audit work may incur OpenRouter costs. Figma plugin connectivity uses the installed plugin's native Figma Plugin APIs; Figma OAuth is not required for that path. Figma MCP actions use the installed UX Direct plugin native API and a bounded, authenticated command bridge. Reads can inspect selected/current-page nodes, filter by name/type, return page/style metadata and viewport geometry. Explicitly confirmed write actions cover frame/shape/text/vector creation; node property, text-range, fill/stroke/effect and auto-layout edits; clone/delete/reorder/group/ungroup/flatten/boolean operations; component creation, variants, instances, swap/detach; selection and viewport; page create/rename; local-style application; image fills; PNG/PDF/SVG exports; and sequential batches with explicit partial-failure reporting. Every node mutation is restricted to the allowlisted file and current-page nodes, with bounded payload/result sizes. There is no arbitrary code execution, broad replacement, or Team Library publishing. Check command status to verify every action. Use target=test-lab for safe write smoke tests. Current screenshot evidence takes precedence over remembered rules.",
         }, headers);
       }
       case "ping":

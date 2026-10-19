@@ -883,6 +883,16 @@ async function runNativeApiHealthCheck(commandId) {
     }
   }
 }
+function canvasColorHex(color) {
+  if (!color || typeof color.r !== "number" || typeof color.g !== "number" || typeof color.b !== "number") return null;
+  function ch(n) { return Math.max(0, Math.min(255, Math.round(n * 255))).toString(16).padStart(2, "0"); }
+  return "#" + ch(color.r) + ch(color.g) + ch(color.b).toUpperCase();
+}
+function summarizePaintColors(paints) {
+  if (!Array.isArray(paints)) return [];
+  return paints.filter(function (paint) { return paint && paint.type === "SOLID" && paint.visible !== false && paint.color; })
+    .slice(0, 3).map(function (paint) { return canvasColorHex(paint.color); }).filter(Boolean);
+}
 function summarizeCanvasNode(node, depth, state) {
   if (!node || state.count >= state.maxNodes) { state.truncated = true; return null; }
   state.count += 1;
@@ -893,10 +903,39 @@ function summarizeCanvasNode(node, depth, state) {
   if (typeof node.width === "number") out.width = node.width;
   if (typeof node.height === "number") out.height = node.height;
   if (typeof node.rotation === "number") out.rotation = node.rotation;
+  if (typeof node.opacity === "number") out.opacity = node.opacity;
+  if (typeof node.strokeWeight === "number") out.strokeWeight = node.strokeWeight;
+  if (typeof node.cornerRadius === "number") out.cornerRadius = node.cornerRadius;
+  if (typeof node.clipsContent === "boolean") out.clipsContent = node.clipsContent;
+  if ("fills" in node) {
+    var fills = summarizePaintColors(node.fills);
+    if (fills.length) out.fillColors = fills;
+  }
+  if ("strokes" in node) {
+    var strokes = summarizePaintColors(node.strokes);
+    if (strokes.length) out.strokeColors = strokes;
+  }
+  if (typeof node.layoutMode === "string" && node.layoutMode !== "NONE") {
+    out.layoutMode = node.layoutMode;
+    ["itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
+      "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"].forEach(function (key) {
+      if (node[key] !== undefined && node[key] !== figma.mixed) out[key] = node[key];
+    });
+  }
+  if ("effects" in node && Array.isArray(node.effects) && node.effects.length) {
+    out.effectTypes = node.effects.slice(0, 4).map(function (effect) { return effect.type; });
+  }
   if (node.type === "TEXT" && typeof node.characters === "string") {
     out.text = node.characters.slice(0, 700);
     out.textTruncated = node.characters.length > 700;
     if (typeof node.fontSize === "number") out.fontSize = node.fontSize;
+    if (node.fontName && typeof node.fontName === "object" && node.fontName !== figma.mixed) {
+      if (typeof node.fontName.family === "string") out.fontFamily = node.fontName.family;
+      if (typeof node.fontName.style === "string") out.fontStyle = node.fontName.style;
+    }
+    ["textAlignHorizontal", "textAlignVertical", "textAutoResize", "textCase", "textDecoration"].forEach(function (key) {
+      if (node[key] !== undefined && node[key] !== figma.mixed) out[key] = node[key];
+    });
   }
   if ("children" in node) {
     out.childCount = node.children.length;
@@ -911,26 +950,61 @@ function summarizeCanvasNode(node, depth, state) {
   }
   return out;
 }
-function readCanvasCommand(payload) {
+async function readCanvasCommand(payload) {
   assertUxDirectFileScope("read canvas");
   payload = payload || {};
   var scope = payload.scope === "current-page" ? "current-page" : "selection";
   var maxDepth = Math.max(0, Math.min(4, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
   var maxNodes = Math.max(1, Math.min(100, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
-  var source = scope === "current-page" ? figma.currentPage.children : figma.currentPage.selection;
+  var isSearch = (typeof payload.queryName === "string" && payload.queryName.trim()) ||
+    (typeof payload.queryType === "string" && payload.queryType.trim());
+  var source;
+  if (isSearch) {
+    var nameNeedle = typeof payload.queryName === "string" ? payload.queryName.trim().toLowerCase() : "";
+    var typeNeedle = typeof payload.queryType === "string" ? payload.queryType.trim().toUpperCase() : "";
+    source = figma.currentPage.findAll(function (node) {
+      if (!node || node.type === "PAGE" || node.type === "DOCUMENT") return false;
+      if (nameNeedle && String(node.name || "").toLowerCase().indexOf(nameNeedle) < 0) return false;
+      if (typeNeedle && String(node.type || "").toUpperCase() !== typeNeedle) return false;
+      return true;
+    });
+    scope = "search-current-page";
+  } else {
+    source = scope === "current-page" ? figma.currentPage.children : figma.currentPage.selection;
+  }
   var state = { count: 0, maxNodes: maxNodes, truncated: false };
   var nodes = [];
   for (var i = 0; i < source.length; i++) {
     if (state.count >= state.maxNodes) { state.truncated = true; break; }
-    var item = summarizeCanvasNode(source[i], maxDepth, state);
+    var item = summarizeCanvasNode(source[i], isSearch ? 0 : maxDepth, state);
     if (item) nodes.push(item);
   }
-  return {
+  var result = {
     ok: true, operation: "read-canvas", fileKey: figma.fileKey,
     pageId: figma.currentPage.id, pageName: figma.currentPage.name,
-    scope: scope, maxDepth: maxDepth, maxNodes: maxNodes,
-    nodeCount: state.count, truncated: state.truncated, nodes: nodes
+    scope: scope, maxDepth: isSearch ? 0 : maxDepth, maxNodes: maxNodes,
+    nodeCount: state.count, truncated: state.truncated, nodes: nodes,
+    viewport: { zoom: figma.viewport.zoom, bounds: figma.viewport.bounds }
   };
+  if (payload.includePages === true) {
+    result.pages = figma.root.children.slice(0, 100).map(function (page) { return { id: page.id, name: page.name }; });
+    result.pagesTruncated = figma.root.children.length > 100;
+  }
+  if (payload.includeStyles === true) {
+    var styles = await Promise.all([
+      figma.getLocalPaintStylesAsync(),
+      figma.getLocalTextStylesAsync(),
+      figma.getLocalEffectStylesAsync(),
+      figma.getLocalGridStylesAsync()
+    ]);
+    result.styles = {
+      paint: styles[0].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; }),
+      text: styles[1].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; }),
+      effect: styles[2].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; }),
+      grid: styles[3].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; })
+    };
+  }
+  return result;
 }
 function parseHexColor(hex) {
   if (typeof hex !== "string" || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
@@ -1064,7 +1138,7 @@ async function writeCanvasCommand(payload) {
     if (!Array.isArray(payload.actions) || payload.actions.length < 1 || payload.actions.length > 40) {
       throw new Error("batch requires 1 to 40 validated actions.");
     }
-    if (payload.actions.some(function (step) { return step && step.operation === "export-svg"; }) && payload.actions.length > 1) {
+    if (payload.actions.some(function (step) { return step && ["export-svg", "export-node"].includes(step.operation); }) && payload.actions.length > 1) {
       throw new Error("SVG export must be a standalone command to preserve the result-size limit.");
     }
     var batchResults = [];
@@ -1110,6 +1184,7 @@ async function writeCanvasCommand(payload) {
       else if (type === "POLYGON") node = figma.createPolygon();
       else if (type === "STAR") node = figma.createStar();
       else if (type === "SLICE") node = figma.createSlice();
+      else if (type === "VECTOR") node = figma.createVector();
       else throw new Error("Unsupported element type: " + String(type));
       node.name = spec.name.trim().slice(0, 80);
       var width = Number.isFinite(spec.width) ? spec.width : (type === "TEXT" ? 280 : 160);
@@ -1117,6 +1192,22 @@ async function writeCanvasCommand(payload) {
       width = Math.max(1, Math.min(4096, width));
       height = Math.max(1, Math.min(4096, height));
       if (typeof node.resize === "function") node.resize(width, height);
+      if (type === "VECTOR") {
+        if (!Array.isArray(spec.vectorPaths) || spec.vectorPaths.length < 1 || spec.vectorPaths.length > 20) {
+          throw new Error("VECTOR elements require 1–20 vectorPaths.");
+        }
+        node.vectorPaths = spec.vectorPaths.map(function (path) {
+          if (!path || !["EVENODD", "NONZERO"].includes(path.windingRule) || typeof path.data !== "string" || !path.data.trim()) {
+            throw new Error("Each vector path requires a windingRule and path data.");
+          }
+          return { windingRule: path.windingRule, data: path.data.slice(0, 20000) };
+        });
+      }
+      if (type === "POLYGON" && Number.isInteger(spec.pointCount)) node.pointCount = Math.max(3, Math.min(100, spec.pointCount));
+      if (type === "STAR") {
+        if (Number.isInteger(spec.pointCount)) node.pointCount = Math.max(3, Math.min(100, spec.pointCount));
+        if (Number.isFinite(spec.innerRadius)) node.innerRadius = Math.max(0.01, Math.min(1, spec.innerRadius));
+      }
       if (type === "TEXT") {
         var font = { family: typeof spec.fontFamily === "string" ? spec.fontFamily : "Inter",
           style: typeof spec.fontStyle === "string" ? spec.fontStyle : "Regular" };
@@ -1249,6 +1340,30 @@ async function writeCanvasCommand(payload) {
     return { ok: true, operation: "delete-node", fileKey: figma.fileKey, pageName: figma.currentPage.name, deleted: deleted };
   }
 
+  if (payload.operation === "reparent-node") {
+    var reparentTarget = requireCanvasNode(payload.nodeId, "reparent-node");
+    var newParent = payload.parentNodeId === figma.currentPage.id
+      ? figma.currentPage
+      : findPageNode(payload.parentNodeId);
+    if (!newParent) throw new Error("parentNodeId must identify a container on the current page.");
+    if (newParent === reparentTarget) throw new Error("A node cannot be parented to itself.");
+    if (typeof newParent.insertChild !== "function" || !Array.isArray(newParent.children)) {
+      throw new Error("parentNodeId must be a page, frame, component, component set, or group that can contain children.");
+    }
+    var ancestor = newParent;
+    while (ancestor) {
+      if (ancestor.id === reparentTarget.id) throw new Error("Reparenting would create a cycle.");
+      ancestor = ancestor.parent;
+    }
+    var insertAt = Number.isInteger(payload.index)
+      ? Math.max(0, Math.min(newParent.children.length, payload.index))
+      : newParent.children.length;
+    newParent.insertChild(insertAt, reparentTarget);
+    return { ok: true, operation: "reparent-node", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(reparentTarget), parent: { id: newParent.id, name: newParent.name, type: newParent.type },
+      index: newParent.children.indexOf(reparentTarget) };
+  }
+
   if (payload.operation === "reorder-node") {
     var reorderTarget = requireCanvasNode(payload.nodeId, "reorder-node");
     var reorderParent = reorderTarget.parent;
@@ -1275,6 +1390,39 @@ async function writeCanvasCommand(payload) {
       node: nodeSummary(group), childCount: group.children.length };
   }
 
+  if (payload.operation === "flatten-nodes") {
+    var flattenNodes = findPageNodes(payload.nodeIds || []);
+    if (!flattenNodes.length) throw new Error("flatten-nodes requires one or more current-page nodes.");
+    var flattenParent = flattenNodes[0].parent;
+    if (!flattenParent || typeof flattenParent.insertChild !== "function" ||
+        flattenNodes.some(function (node) { return node.parent !== flattenParent; })) {
+      throw new Error("Flattening requires sibling nodes with the same parent on the current page.");
+    }
+    var flattened = figma.flatten(flattenNodes, flattenParent);
+    return { ok: true, operation: "flatten-nodes", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(flattened), sourceNodeIds: flattenNodes.map(function (node) { return node.id; }) };
+  }
+
+  if (payload.operation === "boolean-operation") {
+    var booleanNodes = findPageNodes(payload.nodeIds || []);
+    if (booleanNodes.length < 2) throw new Error("boolean-operation requires at least two current-page nodes.");
+    var booleanParent = booleanNodes[0].parent;
+    if (!booleanParent || typeof booleanParent.insertChild !== "function" ||
+        booleanNodes.some(function (node) { return node.parent !== booleanParent; })) {
+      throw new Error("Boolean operations require sibling nodes with the same parent on the current page.");
+    }
+    var booleanType = payload.booleanOperation;
+    var booleanResult;
+    if (booleanType === "UNION") booleanResult = figma.union(booleanNodes, booleanParent);
+    else if (booleanType === "SUBTRACT") booleanResult = figma.subtract(booleanNodes, booleanParent);
+    else if (booleanType === "INTERSECT") booleanResult = figma.intersect(booleanNodes, booleanParent);
+    else if (booleanType === "EXCLUDE") booleanResult = figma.exclude(booleanNodes, booleanParent);
+    else throw new Error("booleanOperation must be UNION, SUBTRACT, INTERSECT, or EXCLUDE.");
+    return { ok: true, operation: "boolean-operation", booleanOperation: booleanType,
+      fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(booleanResult), sourceNodeIds: booleanNodes.map(function (node) { return node.id; }) };
+  }
+
   if (payload.operation === "ungroup-node") {
     var ungroupTarget = requireCanvasNode(payload.nodeId, "ungroup-node");
     if (ungroupTarget.type !== "GROUP") throw new Error("ungroup-node requires a GROUP node.");
@@ -1291,6 +1439,19 @@ async function writeCanvasCommand(payload) {
     return { ok: true, operation: "create-component", fileKey: figma.fileKey, pageName: figma.currentPage.name, node: nodeSummary(component) };
   }
 
+  if (payload.operation === "create-component-set") {
+    var variantComponents = findPageNodes(payload.nodeIds || []);
+    if (variantComponents.length < 2) throw new Error("create-component-set requires at least two component nodes.");
+    var variantParent = variantComponents[0].parent;
+    if (!variantParent || typeof variantParent.insertChild !== "function" ||
+        variantComponents.some(function (node) { return node.type !== "COMPONENT" || node.parent !== variantParent; })) {
+      throw new Error("Variant sets require at least two sibling COMPONENT nodes on the current page.");
+    }
+    var variantSet = figma.combineAsVariants(variantComponents, variantParent);
+    return { ok: true, operation: "create-component-set", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(variantSet), componentIds: variantSet.children.map(function (node) { return node.id; }) };
+  }
+
   if (payload.operation === "create-instance") {
     var componentSourceNode = requireCanvasNode(payload.nodeId, "create-instance");
     if (componentSourceNode.type !== "COMPONENT") throw new Error("create-instance requires a COMPONENT node ID.");
@@ -1299,6 +1460,16 @@ async function writeCanvasCommand(payload) {
     instance.x = (componentSourceNode.x || 0) + (componentSourceNode.width || 0) + 24;
     instance.y = componentSourceNode.y || 0;
     return { ok: true, operation: "create-instance", fileKey: figma.fileKey, pageName: figma.currentPage.name, node: nodeSummary(instance) };
+  }
+
+  if (payload.operation === "swap-component") {
+    var swapTarget = requireCanvasNode(payload.nodeId, "swap-component");
+    if (swapTarget.type !== "INSTANCE") throw new Error("swap-component requires an INSTANCE node.");
+    var componentNode = requireCanvasNode(payload.componentId, "swap-component");
+    if (componentNode.type !== "COMPONENT") throw new Error("componentId must point to a COMPONENT node on the current page.");
+    swapTarget.swapComponent(componentNode);
+    return { ok: true, operation: "swap-component", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(swapTarget), componentId: componentNode.id, componentName: componentNode.name };
   }
 
   if (payload.operation === "detach-instance") {
@@ -1323,6 +1494,15 @@ async function writeCanvasCommand(payload) {
       nodes: zoomNodes.map(nodeSummary), viewport: { zoom: figma.viewport.zoom, bounds: figma.viewport.bounds } };
   }
 
+  if (payload.operation === "set-current-page") {
+    var targetPage = figma.root.children.find(function (page) { return page.id === payload.pageId; });
+    if (!targetPage) throw new Error("pageId must identify a page in the approved Figma file.");
+    var previousPage = { id: figma.currentPage.id, name: figma.currentPage.name };
+    await figma.setCurrentPageAsync(targetPage);
+    return { ok: true, operation: "set-current-page", fileKey: figma.fileKey,
+      previousPage: previousPage, page: { id: figma.currentPage.id, name: figma.currentPage.name } };
+  }
+
   if (payload.operation === "create-page") {
     var newPageName = String(payload.pageName || "").trim().slice(0, 120);
     if (!newPageName) throw new Error("create-page requires a pageName.");
@@ -1338,6 +1518,54 @@ async function writeCanvasCommand(payload) {
     figma.currentPage.name = pageName;
     return { ok: true, operation: "rename-page", fileKey: figma.fileKey,
       page: { id: figma.currentPage.id, previousName: previousPageName, name: figma.currentPage.name } };
+  }
+
+  if (payload.operation === "set-text-range") {
+    var rangeTarget = requireCanvasNode(payload.nodeId, "set-text-range");
+    if (rangeTarget.type !== "TEXT") throw new Error("set-text-range requires a TEXT node.");
+    var range = payload.range;
+    if (!range || !Number.isInteger(range.start) || !Number.isInteger(range.end) ||
+        range.start < 0 || range.end <= range.start || range.end > rangeTarget.characters.length) {
+      throw new Error("Text range must satisfy 0 <= start < end <= text length.");
+    }
+    if (Number.isFinite(range.fontSize)) rangeTarget.setRangeFontSize(range.start, range.end, Math.max(8, Math.min(144, range.fontSize)));
+    if (range.lineHeight) rangeTarget.setRangeLineHeight(range.start, range.end, {
+      unit: range.lineHeight.unit, value: Math.max(1, Math.min(500, range.lineHeight.value))
+    });
+    if (range.letterSpacing) rangeTarget.setRangeLetterSpacing(range.start, range.end, {
+      unit: range.letterSpacing.unit, value: Math.max(-100, Math.min(500, range.letterSpacing.value))
+    });
+    if (typeof range.fillColor === "string") rangeTarget.setRangeFills(range.start, range.end, [{
+      type: "SOLID", color: colorValue(range.fillColor)
+    }]);
+    return { ok: true, operation: "set-text-range", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(rangeTarget), range: { start: range.start, end: range.end },
+      applied: Object.keys(range).filter(function (key) { return !["start", "end"].includes(key); }) };
+  }
+
+  if (payload.operation === "create-image-fill") {
+    var imageTarget = requireCanvasNode(payload.nodeId, "create-image-fill");
+    if (!("fills" in imageTarget)) throw new Error("This node type does not support image fills.");
+    if (typeof payload.imageBase64 !== "string" || payload.imageBase64.length < 4 || payload.imageBase64.length > 250000) {
+      throw new Error("imageBase64 must contain a base64-encoded image under 250,000 characters.");
+    }
+    var cleanBase64 = payload.imageBase64.replace(/^data:[^,]*;base64,/, "");
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(cleanBase64) || cleanBase64.length % 4 !== 0) {
+      throw new Error("imageBase64 is not valid base64.");
+    }
+    var binaryImage = atob(cleanBase64);
+    if (!binaryImage.length || binaryImage.length > 180000) throw new Error("Image data must be between 1 byte and 180 KB.");
+    var imageBytes = new Uint8Array(binaryImage.length);
+    for (var imageIndex = 0; imageIndex < binaryImage.length; imageIndex++) imageBytes[imageIndex] = binaryImage.charCodeAt(imageIndex);
+    var imageResource = figma.createImage(imageBytes);
+    imageTarget.fills = [{
+      type: "IMAGE",
+      imageHash: imageResource.hash,
+      scaleMode: ["FILL", "FIT", "CROP", "TILE"].includes(payload.scaleMode) ? payload.scaleMode : "FILL"
+    }];
+    return { ok: true, operation: "create-image-fill", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(imageTarget), imageHash: imageResource.hash, scaleMode: payload.scaleMode || "FILL",
+      imageBytes: imageBytes.length };
   }
 
   if (payload.operation === "apply-style") {
@@ -1363,6 +1591,27 @@ async function writeCanvasCommand(payload) {
       style: { id: chosenStyle.id, name: chosenStyle.name, type: styleKind }, node: nodeSummary(styleTarget) };
   }
 
+  if (payload.operation === "export-node") {
+    var genericExportTarget = requireCanvasNode(payload.nodeId, "export-node");
+    var exportFormat = payload.format;
+    if (!["PNG", "PDF", "SVG_STRING"].includes(exportFormat)) throw new Error("export-node format must be PNG, PDF, or SVG_STRING.");
+    if (exportFormat === "SVG_STRING") {
+      var svgOutput = await genericExportTarget.exportAsync({ format: "SVG_STRING" });
+      if (svgOutput.length > 35000) throw new Error("SVG export exceeds the safe 35 KB response limit; export a smaller node.");
+      return { ok: true, operation: "export-node", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+        node: nodeSummary(genericExportTarget), format: exportFormat, byteLength: svgOutput.length, data: svgOutput };
+    }
+    var exportBytes = await genericExportTarget.exportAsync({ format: exportFormat });
+    if (!(exportBytes instanceof Uint8Array)) throw new Error("Figma did not return encoded bytes for " + exportFormat + ".");
+    if (exportBytes.length > 35000) throw new Error(exportFormat + " export exceeds the safe 35 KB binary response limit; export a smaller node.");
+    var exportBinary = "";
+    for (var exportIndex = 0; exportIndex < exportBytes.length; exportIndex += 1) exportBinary += String.fromCharCode(exportBytes[exportIndex]);
+    var exportBase64 = btoa(exportBinary);
+    if (exportBase64.length > 48000) throw new Error("Encoded export exceeds the safe result envelope.");
+    return { ok: true, operation: "export-node", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(genericExportTarget), format: exportFormat, byteLength: exportBytes.length, base64: exportBase64 };
+  }
+
   if (payload.operation === "export-svg") {
     var exportTarget = requireCanvasNode(payload.nodeId, "export-svg");
     if (typeof exportTarget.exportAsync !== "function") throw new Error("This node type does not support export.");
@@ -1381,7 +1630,7 @@ async function runCanvasCommand(command) {
   var errorText = null;
   try {
     if (!command || typeof command.commandId !== "string") throw new Error("Invalid canvas command envelope.");
-    if (command.action === "read-canvas") result = readCanvasCommand(command.payload);
+    if (command.action === "read-canvas") result = await readCanvasCommand(command.payload);
     else if (command.action === "write-canvas") result = await writeCanvasCommand(command.payload);
     else throw new Error("Unsupported canvas command action.");
   } catch (error) {
