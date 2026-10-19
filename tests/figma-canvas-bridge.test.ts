@@ -20,7 +20,8 @@ test("MCP exposes bounded canvas read, constrained write, and command status too
 test("canvas write tool requires explicit confirmation and supports only named operations", () => {
   assert.ok(mcp.includes('if (input.confirm !== true)'));
   assert.ok(mcp.includes('"clone-node", "delete-node", "reorder-node"'));
-  assert.ok(mcp.includes('"group-nodes", "ungroup-node", "create-component", "create-instance"'));
+  assert.ok(mcp.includes('"group-nodes", "flatten-nodes", "boolean-operation"'));
+  assert.ok(mcp.includes('"create-component", "create-component-set", "create-instance", "swap-component"'));
   assert.ok(mcp.includes('"set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"'));
   assert.ok(mcp.includes('enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR"]'));
   assert.ok(mcp.includes('textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] }'));
