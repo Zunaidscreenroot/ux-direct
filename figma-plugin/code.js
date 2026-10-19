@@ -1110,6 +1110,7 @@ async function writeCanvasCommand(payload) {
       else if (type === "POLYGON") node = figma.createPolygon();
       else if (type === "STAR") node = figma.createStar();
       else if (type === "SLICE") node = figma.createSlice();
+      else if (type === "VECTOR") node = figma.createVector();
       else throw new Error("Unsupported element type: " + String(type));
       node.name = spec.name.trim().slice(0, 80);
       var width = Number.isFinite(spec.width) ? spec.width : (type === "TEXT" ? 280 : 160);
@@ -1117,6 +1118,22 @@ async function writeCanvasCommand(payload) {
       width = Math.max(1, Math.min(4096, width));
       height = Math.max(1, Math.min(4096, height));
       if (typeof node.resize === "function") node.resize(width, height);
+      if (type === "VECTOR") {
+        if (!Array.isArray(spec.vectorPaths) || spec.vectorPaths.length < 1 || spec.vectorPaths.length > 20) {
+          throw new Error("VECTOR elements require 1–20 vectorPaths.");
+        }
+        node.vectorPaths = spec.vectorPaths.map(function (path) {
+          if (!path || !["EVENODD", "NONZERO"].includes(path.windingRule) || typeof path.data !== "string" || !path.data.trim()) {
+            throw new Error("Each vector path requires a windingRule and path data.");
+          }
+          return { windingRule: path.windingRule, data: path.data.slice(0, 20000) };
+        });
+      }
+      if (type === "POLYGON" && Number.isInteger(spec.pointCount)) node.pointCount = Math.max(3, Math.min(100, spec.pointCount));
+      if (type === "STAR") {
+        if (Number.isInteger(spec.pointCount)) node.pointCount = Math.max(3, Math.min(100, spec.pointCount));
+        if (Number.isFinite(spec.innerRadius)) node.innerRadius = Math.max(0.01, Math.min(1, spec.innerRadius));
+      }
       if (type === "TEXT") {
         var font = { family: typeof spec.fontFamily === "string" ? spec.fontFamily : "Inter",
           style: typeof spec.fontStyle === "string" ? spec.fontStyle : "Regular" };
@@ -1275,6 +1292,39 @@ async function writeCanvasCommand(payload) {
       node: nodeSummary(group), childCount: group.children.length };
   }
 
+  if (payload.operation === "flatten-nodes") {
+    var flattenNodes = findPageNodes(payload.nodeIds || []);
+    if (!flattenNodes.length) throw new Error("flatten-nodes requires one or more current-page nodes.");
+    var flattenParent = flattenNodes[0].parent;
+    if (!flattenParent || typeof flattenParent.insertChild !== "function" ||
+        flattenNodes.some(function (node) { return node.parent !== flattenParent; })) {
+      throw new Error("Flattening requires sibling nodes with the same parent on the current page.");
+    }
+    var flattened = figma.flatten(flattenNodes, flattenParent);
+    return { ok: true, operation: "flatten-nodes", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(flattened), sourceNodeIds: flattenNodes.map(function (node) { return node.id; }) };
+  }
+
+  if (payload.operation === "boolean-operation") {
+    var booleanNodes = findPageNodes(payload.nodeIds || []);
+    if (booleanNodes.length < 2) throw new Error("boolean-operation requires at least two current-page nodes.");
+    var booleanParent = booleanNodes[0].parent;
+    if (!booleanParent || typeof booleanParent.insertChild !== "function" ||
+        booleanNodes.some(function (node) { return node.parent !== booleanParent; })) {
+      throw new Error("Boolean operations require sibling nodes with the same parent on the current page.");
+    }
+    var booleanType = payload.booleanOperation;
+    var booleanResult;
+    if (booleanType === "UNION") booleanResult = figma.union(booleanNodes, booleanParent);
+    else if (booleanType === "SUBTRACT") booleanResult = figma.subtract(booleanNodes, booleanParent);
+    else if (booleanType === "INTERSECT") booleanResult = figma.intersect(booleanNodes, booleanParent);
+    else if (booleanType === "EXCLUDE") booleanResult = figma.exclude(booleanNodes, booleanParent);
+    else throw new Error("booleanOperation must be UNION, SUBTRACT, INTERSECT, or EXCLUDE.");
+    return { ok: true, operation: "boolean-operation", booleanOperation: booleanType,
+      fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(booleanResult), sourceNodeIds: booleanNodes.map(function (node) { return node.id; }) };
+  }
+
   if (payload.operation === "ungroup-node") {
     var ungroupTarget = requireCanvasNode(payload.nodeId, "ungroup-node");
     if (ungroupTarget.type !== "GROUP") throw new Error("ungroup-node requires a GROUP node.");
@@ -1291,6 +1341,19 @@ async function writeCanvasCommand(payload) {
     return { ok: true, operation: "create-component", fileKey: figma.fileKey, pageName: figma.currentPage.name, node: nodeSummary(component) };
   }
 
+  if (payload.operation === "create-component-set") {
+    var variantComponents = findPageNodes(payload.nodeIds || []);
+    if (variantComponents.length < 2) throw new Error("create-component-set requires at least two component nodes.");
+    var variantParent = variantComponents[0].parent;
+    if (!variantParent || typeof variantParent.insertChild !== "function" ||
+        variantComponents.some(function (node) { return node.type !== "COMPONENT" || node.parent !== variantParent; })) {
+      throw new Error("Variant sets require at least two sibling COMPONENT nodes on the current page.");
+    }
+    var variantSet = figma.combineAsVariants(variantComponents, variantParent);
+    return { ok: true, operation: "create-component-set", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(variantSet), componentIds: variantSet.children.map(function (node) { return node.id; }) };
+  }
+
   if (payload.operation === "create-instance") {
     var componentSourceNode = requireCanvasNode(payload.nodeId, "create-instance");
     if (componentSourceNode.type !== "COMPONENT") throw new Error("create-instance requires a COMPONENT node ID.");
@@ -1299,6 +1362,16 @@ async function writeCanvasCommand(payload) {
     instance.x = (componentSourceNode.x || 0) + (componentSourceNode.width || 0) + 24;
     instance.y = componentSourceNode.y || 0;
     return { ok: true, operation: "create-instance", fileKey: figma.fileKey, pageName: figma.currentPage.name, node: nodeSummary(instance) };
+  }
+
+  if (payload.operation === "swap-component") {
+    var swapTarget = requireCanvasNode(payload.nodeId, "swap-component");
+    if (swapTarget.type !== "INSTANCE") throw new Error("swap-component requires an INSTANCE node.");
+    var componentNode = requireCanvasNode(payload.componentId, "swap-component");
+    if (componentNode.type !== "COMPONENT") throw new Error("componentId must point to a COMPONENT node on the current page.");
+    swapTarget.swapComponent(componentNode);
+    return { ok: true, operation: "swap-component", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(swapTarget), componentId: componentNode.id, componentName: componentNode.name };
   }
 
   if (payload.operation === "detach-instance") {
@@ -1340,6 +1413,54 @@ async function writeCanvasCommand(payload) {
       page: { id: figma.currentPage.id, previousName: previousPageName, name: figma.currentPage.name } };
   }
 
+  if (payload.operation === "set-text-range") {
+    var rangeTarget = requireCanvasNode(payload.nodeId, "set-text-range");
+    if (rangeTarget.type !== "TEXT") throw new Error("set-text-range requires a TEXT node.");
+    var range = payload.range;
+    if (!range || !Number.isInteger(range.start) || !Number.isInteger(range.end) ||
+        range.start < 0 || range.end <= range.start || range.end > rangeTarget.characters.length) {
+      throw new Error("Text range must satisfy 0 <= start < end <= text length.");
+    }
+    if (Number.isFinite(range.fontSize)) rangeTarget.setRangeFontSize(range.start, range.end, Math.max(8, Math.min(144, range.fontSize)));
+    if (range.lineHeight) rangeTarget.setRangeLineHeight(range.start, range.end, {
+      unit: range.lineHeight.unit, value: Math.max(1, Math.min(500, range.lineHeight.value))
+    });
+    if (range.letterSpacing) rangeTarget.setRangeLetterSpacing(range.start, range.end, {
+      unit: range.letterSpacing.unit, value: Math.max(-100, Math.min(500, range.letterSpacing.value))
+    });
+    if (typeof range.fillColor === "string") rangeTarget.setRangeFills(range.start, range.end, [{
+      type: "SOLID", color: colorValue(range.fillColor)
+    }]);
+    return { ok: true, operation: "set-text-range", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(rangeTarget), range: { start: range.start, end: range.end },
+      applied: Object.keys(range).filter(function (key) { return !["start", "end"].includes(key); }) };
+  }
+
+  if (payload.operation === "create-image-fill") {
+    var imageTarget = requireCanvasNode(payload.nodeId, "create-image-fill");
+    if (!("fills" in imageTarget)) throw new Error("This node type does not support image fills.");
+    if (typeof payload.imageBase64 !== "string" || payload.imageBase64.length < 4 || payload.imageBase64.length > 250000) {
+      throw new Error("imageBase64 must contain a base64-encoded image under 250,000 characters.");
+    }
+    var cleanBase64 = payload.imageBase64.replace(/^data:[^,]*;base64,/, "");
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(cleanBase64) || cleanBase64.length % 4 !== 0) {
+      throw new Error("imageBase64 is not valid base64.");
+    }
+    var binaryImage = atob(cleanBase64);
+    if (!binaryImage.length || binaryImage.length > 180000) throw new Error("Image data must be between 1 byte and 180 KB.");
+    var imageBytes = new Uint8Array(binaryImage.length);
+    for (var imageIndex = 0; imageIndex < binaryImage.length; imageIndex++) imageBytes[imageIndex] = binaryImage.charCodeAt(imageIndex);
+    var imageResource = figma.createImage(imageBytes);
+    imageTarget.fills = [{
+      type: "IMAGE",
+      imageHash: imageResource.hash,
+      scaleMode: ["FILL", "FIT", "CROP", "TILE"].includes(payload.scaleMode) ? payload.scaleMode : "FILL"
+    }];
+    return { ok: true, operation: "create-image-fill", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(imageTarget), imageHash: imageResource.hash, scaleMode: payload.scaleMode || "FILL",
+      imageBytes: imageBytes.length };
+  }
+
   if (payload.operation === "apply-style") {
     var styleTarget = requireCanvasNode(payload.nodeId, "apply-style");
     var styleKind = payload.styleKind;
@@ -1361,6 +1482,27 @@ async function writeCanvasCommand(payload) {
     styleTarget[styleProperty] = chosenStyle.id;
     return { ok: true, operation: "apply-style", fileKey: figma.fileKey, pageName: figma.currentPage.name,
       style: { id: chosenStyle.id, name: chosenStyle.name, type: styleKind }, node: nodeSummary(styleTarget) };
+  }
+
+  if (payload.operation === "export-node") {
+    var genericExportTarget = requireCanvasNode(payload.nodeId, "export-node");
+    var exportFormat = payload.format;
+    if (!["PNG", "PDF", "SVG_STRING"].includes(exportFormat)) throw new Error("export-node format must be PNG, PDF, or SVG_STRING.");
+    if (exportFormat === "SVG_STRING") {
+      var svgOutput = await genericExportTarget.exportAsync({ format: "SVG_STRING" });
+      if (svgOutput.length > 35000) throw new Error("SVG export exceeds the safe 35 KB response limit; export a smaller node.");
+      return { ok: true, operation: "export-node", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+        node: nodeSummary(genericExportTarget), format: exportFormat, byteLength: svgOutput.length, data: svgOutput };
+    }
+    var exportBytes = await genericExportTarget.exportAsync({ format: exportFormat });
+    if (!(exportBytes instanceof Uint8Array)) throw new Error("Figma did not return encoded bytes for " + exportFormat + ".");
+    if (exportBytes.length > 35000) throw new Error(exportFormat + " export exceeds the safe 35 KB binary response limit; export a smaller node.");
+    var exportBinary = "";
+    for (var exportIndex = 0; exportIndex < exportBytes.length; exportIndex += 1) exportBinary += String.fromCharCode(exportBytes[exportIndex]);
+    var exportBase64 = btoa(exportBinary);
+    if (exportBase64.length > 48000) throw new Error("Encoded export exceeds the safe result envelope.");
+    return { ok: true, operation: "export-node", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(genericExportTarget), format: exportFormat, byteLength: exportBytes.length, base64: exportBase64 };
   }
 
   if (payload.operation === "export-svg") {
