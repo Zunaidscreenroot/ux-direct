@@ -115,6 +115,23 @@ const CANVAS_PATCH = z.object({
 }).strict().refine((value) => Object.values(value).some((item) => item !== undefined), {
   message: "Provide at least one supported property to update.",
 });
+const CANVAS_WRITE_STEP = z.object({
+  operation: z.enum([
+    "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+    "group-nodes", "ungroup-node", "create-component", "create-instance",
+    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style",
+  ]),
+  target: z.enum(["current-page", "selection", "test-lab"]).optional(),
+  elements: z.array(CANVAS_ELEMENT).min(1).max(20).optional(),
+  nodeId: z.string().trim().min(1).max(100).optional(),
+  nodeIds: z.array(z.string().trim().min(1).max(100)).max(100).optional(),
+  index: z.number().int().min(0).max(10000).optional(),
+  pageName: z.string().trim().min(1).max(120).optional(),
+  styleKind: z.enum(["paint", "text", "effect", "grid"]).optional(),
+  styleId: z.string().trim().min(1).max(300).optional(),
+  styleName: z.string().trim().min(1).max(240).optional(),
+  patch: CANVAS_PATCH.optional(),
+}).strict();
 const CANVAS_WRITE_PAYLOAD = z.object({
   operation: z.enum([
     "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
@@ -132,6 +149,7 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   styleId: z.string().trim().min(1).max(300).optional(),
   styleName: z.string().trim().min(1).max(240).optional(),
   patch: CANVAS_PATCH.optional(),
+  actions: z.array(CANVAS_WRITE_STEP).min(1).max(40).optional(),
 }).strict().superRefine((value, ctx) => {
   const requiresNode = ["update-node", "clone-node", "delete-node", "reorder-node", "ungroup-node",
     "create-component", "create-instance", "detach-instance", "export-svg", "apply-style"].includes(value.operation);
@@ -164,6 +182,15 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   }
   if (value.operation === "rename-page" && !value.pageName) {
     ctx.addIssue({ code: "custom", path: ["pageName"], message: "rename-page requires pageName." });
+  }
+  if (value.operation === "batch" && !value.actions) {
+    ctx.addIssue({ code: "custom", path: ["actions"], message: "batch requires 1–40 actions." });
+  }
+  if (value.operation !== "batch" && value.actions) {
+    ctx.addIssue({ code: "custom", path: ["actions"], message: "actions is supported only for batch." });
+  }
+  if (value.operation === "batch" && value.actions && value.actions.some((step) => step.operation === "export-svg") && value.actions.length > 1) {
+    ctx.addIssue({ code: "custom", path: ["actions"], message: "SVG export must be a standalone command to preserve the result size limit." });
   }
   if (value.operation === "update-node" && value.elements) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "update-node cannot include elements." });
