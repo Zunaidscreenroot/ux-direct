@@ -27,15 +27,25 @@ const REPORT = z.object({
 });
 
 const CANVAS_ELEMENT = z.object({
-  type: z.enum(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT"]),
+  type: z.enum(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE"]),
   name: z.string().trim().min(1).max(80),
   x: z.number().finite().min(-10000).max(10000).optional(),
   y: z.number().finite().min(-10000).max(10000).optional(),
   width: z.number().finite().min(1).max(4096).optional(),
   height: z.number().finite().min(1).max(4096).optional(),
+  rotation: z.number().finite().min(-360).max(360).optional(),
   text: z.string().max(5000).optional(),
-  fontSize: z.number().finite().min(8).max(72).optional(),
+  fontSize: z.number().finite().min(8).max(144).optional(),
+  fontFamily: z.string().trim().min(1).max(100).optional(),
+  fontStyle: z.string().trim().min(1).max(100).optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  strokeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  strokeWeight: z.number().finite().min(0).max(100).optional(),
+  opacity: z.number().finite().min(0).max(1).optional(),
+  cornerRadius: z.number().finite().min(0).max(512).optional(),
+  clipsContent: z.boolean().optional(),
+  layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]).optional(),
+  itemSpacing: z.number().finite().min(-100).max(1000).optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.type === "TEXT" && typeof value.text !== "string") {
     ctx.addIssue({ code: "custom", path: ["text"], message: "TEXT elements require text content." });
@@ -54,28 +64,82 @@ const CANVAS_PATCH = z.object({
   width: z.number().finite().min(1).max(4096).optional(),
   height: z.number().finite().min(1).max(4096).optional(),
   rotation: z.number().finite().min(-360).max(360).optional(),
+  opacity: z.number().finite().min(0).max(1).optional(),
+  fillColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  strokeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  strokeWeight: z.number().finite().min(0).max(100).optional(),
+  cornerRadius: z.number().finite().min(0).max(512).optional(),
+  clipsContent: z.boolean().optional(),
+  text: z.string().max(5000).optional(),
+  fontFamily: z.string().trim().min(1).max(100).optional(),
+  fontStyle: z.string().trim().min(1).max(100).optional(),
+  fontSize: z.number().finite().min(8).max(144).optional(),
+  textAlignHorizontal: z.enum(["LEFT", "CENTER", "RIGHT", "JUSTIFIED"]).optional(),
+  textAlignVertical: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
+  textAutoResize: z.enum(["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"]).optional(),
+  layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]).optional(),
+  itemSpacing: z.number().finite().min(-100).max(1000).optional(),
+  paddingLeft: z.number().finite().min(0).max(1000).optional(),
+  paddingRight: z.number().finite().min(0).max(1000).optional(),
+  paddingTop: z.number().finite().min(0).max(1000).optional(),
+  paddingBottom: z.number().finite().min(0).max(1000).optional(),
+  primaryAxisAlignItems: z.enum(["MIN", "MAX", "CENTER", "SPACE_BETWEEN"]).optional(),
+  counterAxisAlignItems: z.enum(["MIN", "MAX", "CENTER", "BASELINE"]).optional(),
+  primaryAxisSizingMode: z.enum(["AUTO", "FIXED"]).optional(),
+  counterAxisSizingMode: z.enum(["AUTO", "FIXED"]).optional(),
+  horizontalConstraint: z.enum(["MIN", "CENTER", "MAX", "STRETCH", "SCALE"]).optional(),
+  verticalConstraint: z.enum(["MIN", "CENTER", "MAX", "STRETCH", "SCALE"]).optional(),
 }).strict().refine((value) => Object.values(value).some((item) => item !== undefined), {
   message: "Provide at least one supported property to update.",
 });
 const CANVAS_WRITE_PAYLOAD = z.object({
-  operation: z.enum(["create-elements", "update-node"]),
+  operation: z.enum([
+    "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+    "group-nodes", "ungroup-node", "create-component", "create-instance",
+    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg",
+  ]),
   confirm: z.literal(true),
   target: z.enum(["current-page", "selection", "test-lab"]).optional(),
   elements: z.array(CANVAS_ELEMENT).min(1).max(20).optional(),
   nodeId: z.string().trim().min(1).max(100).optional(),
+  nodeIds: z.array(z.string().trim().min(1).max(100)).max(100).optional(),
+  index: z.number().int().min(0).max(10000).optional(),
+  pageName: z.string().trim().min(1).max(120).optional(),
   patch: CANVAS_PATCH.optional(),
 }).strict().superRefine((value, ctx) => {
+  const requiresNode = ["update-node", "clone-node", "delete-node", "reorder-node", "ungroup-node",
+    "create-component", "create-instance", "detach-instance", "export-svg"].includes(value.operation);
+  if (requiresNode && !value.nodeId) {
+    ctx.addIssue({ code: "custom", path: ["nodeId"], message: value.operation + " requires nodeId." });
+  }
   if (value.operation === "create-elements" && !value.elements) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "create-elements requires 1–20 elements." });
   }
   if (value.operation === "update-node" && (!value.nodeId || !value.patch)) {
-    ctx.addIssue({ code: "custom", path: ["nodeId"], message: "update-node requires nodeId and a supported patch." });
+    ctx.addIssue({ code: "custom", path: ["patch"], message: "update-node requires nodeId and a supported patch." });
+  }
+  if (value.operation === "reorder-node" && value.index === undefined) {
+    ctx.addIssue({ code: "custom", path: ["index"], message: "reorder-node requires index." });
+  }
+  if (value.operation === "group-nodes" && (!value.nodeIds || value.nodeIds.length < 2 || new Set(value.nodeIds).size !== value.nodeIds.length)) {
+    ctx.addIssue({ code: "custom", path: ["nodeIds"], message: "group-nodes requires at least two unique node IDs." });
+  }
+  if (value.operation === "set-selection" && !value.nodeIds) {
+    ctx.addIssue({ code: "custom", path: ["nodeIds"], message: "set-selection requires nodeIds (use an empty array to clear selection)." });
+  }
+  if (value.operation === "zoom-to-nodes" && (!value.nodeIds || value.nodeIds.length < 1)) {
+    ctx.addIssue({ code: "custom", path: ["nodeIds"], message: "zoom-to-nodes requires at least one node ID." });
+  }
+  if (value.operation === "create-page" && !value.pageName) {
+    ctx.addIssue({ code: "custom", path: ["pageName"], message: "create-page requires pageName." });
+  }
+  if (value.operation === "rename-page" && !value.pageName) {
+    ctx.addIssue({ code: "custom", path: ["pageName"], message: "rename-page requires pageName." });
   }
   if (value.operation === "update-node" && value.elements) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "update-node cannot include elements." });
   }
 });
-
 type HealthReport = z.infer<typeof REPORT>;
 type BridgeCommand = {
   commandId: string; action: "native-api-health-check" | "read-canvas" | "write-canvas";
