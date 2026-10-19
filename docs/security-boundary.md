@@ -14,7 +14,7 @@ The only intended workspace label is `zunaid_workspace`. This label is not, by i
 - Never enumerate, read, or modify other company folders/files to discover the desired file.
 - Add negative tests for an empty allowlist, wrong file ID, and wrong workspace.
 
-**Current status:** no file keys have been supplied to this code, so Figma access must remain disabled. The current helper is a security primitive, not a claim that the Figma adapter is already connected.
+**Current status:** the native plugin has one exact allowlisted file key for the approved `Zunaid_Workspace` file. REST-adapter access remains denied unless its separate `FIGMA_ALLOWED_FILE_IDS` and access token are configured. Keep native plugin operations inside the allowlist and verify writes through command results.
 
 ## Paid usage gate
 
