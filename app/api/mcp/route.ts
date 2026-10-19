@@ -969,12 +969,23 @@ async function callTool(name: string, args: unknown, request: Request) {
     const scope = input.scope === undefined ? "selection" : input.scope;
     const maxDepth = input.maxDepth === undefined ? 2 : input.maxDepth;
     const maxNodes = input.maxNodes === undefined ? 60 : input.maxNodes;
+    const queryName = input.queryName;
+    const queryType = input.queryType;
+    const includePages = input.includePages === true;
+    const includeStyles = input.includeStyles === true;
     if (scope !== "selection" && scope !== "current-page") return toolText({ error: "scope must be selection or current-page." }, true);
     if (!Number.isInteger(maxDepth) || (maxDepth as number) < 0 || (maxDepth as number) > 4) return toolText({ error: "maxDepth must be an integer from 0 to 4." }, true);
     if (!Number.isInteger(maxNodes) || (maxNodes as number) < 1 || (maxNodes as number) > 100) return toolText({ error: "maxNodes must be an integer from 1 to 100." }, true);
+    if (queryName !== undefined && (typeof queryName !== "string" || !queryName.trim() || queryName.length > 120)) return toolText({ error: "queryName must be a non-empty string up to 120 characters." }, true);
+    if (queryType !== undefined && (typeof queryType !== "string" || !queryType.trim() || queryType.length > 80)) return toolText({ error: "queryType must be a non-empty string up to 80 characters." }, true);
+    if (input.includePages !== undefined && typeof input.includePages !== "boolean") return toolText({ error: "includePages must be boolean." }, true);
+    if (input.includeStyles !== undefined && typeof input.includeStyles !== "boolean") return toolText({ error: "includeStyles must be boolean." }, true);
     try {
       return toolText(await queueFigmaCanvasCommand(request, "read-canvas", {
         scope, maxDepth, maxNodes,
+        ...(queryName === undefined ? {} : { queryName }),
+        ...(queryType === undefined ? {} : { queryType }),
+        includePages, includeStyles,
       }));
     } catch (error) {
       return toolText({ status: "error", error: error instanceof Error ? error.message : "Could not queue Figma canvas read." }, true);
