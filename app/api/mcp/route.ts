@@ -461,7 +461,11 @@ const TOOLS = [
       properties: {
         scope: { type: "string", enum: ["selection", "current-page"], description: "Read selected layers or the active page's layer tree." },
         maxDepth: { type: "integer", minimum: 0, maximum: 4, description: "Maximum descendant depth; defaults to 2." },
-        maxNodes: { type: "integer", minimum: 1, maximum: 100, description: "Maximum total nodes returned; defaults to 60." }
+        maxNodes: { type: "integer", minimum: 1, maximum: 100, description: "Maximum total nodes returned; defaults to 60." },
+        queryName: { type: "string", minLength: 1, maxLength: 120, description: "Optional case-insensitive node-name search across the current page." },
+        queryType: { type: "string", minLength: 1, maxLength: 80, description: "Optional Figma node type filter, for example COMPONENT, INSTANCE, TEXT, or FRAME." },
+        includePages: { type: "boolean", description: "Include page IDs and names." },
+        includeStyles: { type: "boolean", description: "Include compact IDs/names for local paint, text, effect, and grid styles." }
       },
       additionalProperties: false
     },
@@ -469,11 +473,11 @@ const TOOLS = [
   },
   {
     name: "ux_direct_figma_canvas_write",
-    description: "Run explicit, validated native Figma canvas actions through the allowlisted UX Direct plugin. Supports ordered batches of up to 40 actions, creating frames/shapes/text, editing geometry/typography/fills/strokes/auto-layout/effects, cloning/deleting/reordering/grouping nodes, creating/detaching components and instances, applying local styles, selection/viewport control, page creation/rename, and SVG export. Every write requires confirm=true and is audited; deletion is limited to a node on the current page. No arbitrary code execution, unrestricted document traversal, library publishing, or bulk replacement. Retrieve verified results with ux_direct_figma_canvas_command_status.",
+    description: "Run explicit, validated native Figma canvas actions through the allowlisted UX Direct plugin. Supports ordered batches of up to 40 actions, frames/shapes/text/vectors, geometry/typography/fills/strokes/auto-layout/effects/image fills, grouping/flattening/boolean operations, component variants and swapping, local styles, selection/viewport control, page creation/rename, SVG/PNG/PDF export. Every write requires confirm=true and is audited; deletion is limited to a node on the current page. No arbitrary code execution, unrestricted document traversal, library publishing, or bulk replacement. Retrieve verified results with ux_direct_figma_canvas_command_status.",
     inputSchema: {
       type: "object",
       properties: {
-        operation: { type: "string", enum: ["batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "ungroup-node", "create-component", "create-instance", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"] },
+        operation: { type: "string", enum: ["batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"] },
         confirm: { type: "boolean", const: true, description: "Must be true only after the owner explicitly requests this specific write." },
         target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
         elements: {
@@ -481,7 +485,7 @@ const TOOLS = [
           items: {
             type: "object",
             properties: {
-              type: { type: "string", enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE"] },
+              type: { type: "string", enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR"] },
               name: { type: "string", minLength: 1, maxLength: 80 },
               x: { type: "number", minimum: -10000, maximum: 10000 },
               y: { type: "number", minimum: -10000, maximum: 10000 },
@@ -517,7 +521,21 @@ const TOOLS = [
               shadowBlur: { type: "number", minimum: 0, maximum: 200 },
               shadowX: { type: "number", minimum: -200, maximum: 200 },
               shadowY: { type: "number", minimum: -200, maximum: 200 },
-              shadowSpread: { type: "number", minimum: -200, maximum: 200 }
+              shadowSpread: { type: "number", minimum: -200, maximum: 200 },
+              pointCount: { type: "integer", minimum: 3, maximum: 100 },
+              innerRadius: { type: "number", minimum: 0.01, maximum: 1 },
+              vectorPaths: {
+                type: "array", minItems: 1, maxItems: 20,
+                items: {
+                  type: "object",
+                  properties: {
+                    windingRule: { type: "string", enum: ["EVENODD", "NONZERO"] },
+                    data: { type: "string", minLength: 1, maxLength: 20000 }
+                  },
+                  required: ["windingRule", "data"],
+                  additionalProperties: false
+                }
+              }
             },
             required: ["type", "name"],
             additionalProperties: false
@@ -526,11 +544,11 @@ const TOOLS = [
         nodeId: { type: "string", minLength: 1, maxLength: 100 },
         actions: {
           type: "array", minItems: 1, maxItems: 40,
-          description: "Sequential canvas actions. Batch is non-atomic: completed earlier steps remain if a later action fails. SVG export must be the only step.",
+          description: "Sequential canvas actions. Batch is non-atomic: completed earlier steps remain if a later action fails. Large exports must be standalone steps.",
           items: {
             type: "object",
             properties: {
-              operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "ungroup-node", "create-component", "create-instance", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"] },
+              operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"] },
               target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
               nodeId: { type: "string", minLength: 1, maxLength: 100 },
               nodeIds: { type: "array", items: { type: "string", minLength: 1, maxLength: 100 }, maxItems: 100 },
@@ -539,6 +557,12 @@ const TOOLS = [
               styleKind: { type: "string", enum: ["paint", "text", "effect", "grid"] },
               styleId: { type: "string", minLength: 1, maxLength: 300 },
               styleName: { type: "string", minLength: 1, maxLength: 240 },
+              booleanOperation: { type: "string", enum: ["UNION", "SUBTRACT", "INTERSECT", "EXCLUDE"] },
+              componentId: { type: "string", minLength: 1, maxLength: 100 },
+              format: { type: "string", enum: ["PNG", "PDF", "SVG_STRING"] },
+              range: { type: "object", additionalProperties: false },
+              imageBase64: { type: "string", maxLength: 250000 },
+              scaleMode: { type: "string", enum: ["FILL", "FIT", "CROP", "TILE"] },
               elements: { type: "array", minItems: 1, maxItems: 20, items: { type: "object", additionalProperties: true } },
               patch: { type: "object", additionalProperties: true }
             },
@@ -596,7 +620,25 @@ const TOOLS = [
         pageName: { type: "string", minLength: 1, maxLength: 120 },
         styleKind: { type: "string", enum: ["paint", "text", "effect", "grid"] },
         styleId: { type: "string", minLength: 1, maxLength: 300 },
-        styleName: { type: "string", minLength: 1, maxLength: 240 }
+        styleName: { type: "string", minLength: 1, maxLength: 240 },
+        booleanOperation: { type: "string", enum: ["UNION", "SUBTRACT", "INTERSECT", "EXCLUDE"] },
+        componentId: { type: "string", minLength: 1, maxLength: 100 },
+        format: { type: "string", enum: ["PNG", "PDF", "SVG_STRING"] },
+        range: {
+          type: "object",
+          properties: {
+            start: { type: "integer", minimum: 0, maximum: 5000 },
+            end: { type: "integer", minimum: 1, maximum: 5000 },
+            fontSize: { type: "number", minimum: 8, maximum: 144 },
+            lineHeight: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: 1, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
+            letterSpacing: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: -100, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
+            fillColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }
+          },
+          required: ["start", "end"],
+          additionalProperties: false
+        },
+        imageBase64: { type: "string", maxLength: 250000 },
+        scaleMode: { type: "string", enum: ["FILL", "FIT", "CROP", "TILE"] }
       },
       required: ["operation", "confirm"],
       additionalProperties: false
@@ -932,8 +974,8 @@ async function callTool(name: string, args: unknown, request: Request) {
     const input = args as Record<string, unknown>;
     const allowedOperations = new Set([
       "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
-      "group-nodes", "ungroup-node", "create-component", "create-instance",
-      "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style",
+      "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
+      "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
     ]);
     if (input.confirm !== true) return toolText({ error: "Write blocked: confirm=true is required after an explicit request for this specific canvas action." }, true);
     if (typeof input.operation !== "string" || !allowedOperations.has(input.operation)) {
@@ -950,6 +992,12 @@ async function callTool(name: string, args: unknown, request: Request) {
       ...(input.styleKind === undefined ? {} : { styleKind: input.styleKind }),
       ...(input.styleId === undefined ? {} : { styleId: input.styleId }),
       ...(input.styleName === undefined ? {} : { styleName: input.styleName }),
+      ...(input.booleanOperation === undefined ? {} : { booleanOperation: input.booleanOperation }),
+      ...(input.componentId === undefined ? {} : { componentId: input.componentId }),
+      ...(input.format === undefined ? {} : { format: input.format }),
+      ...(input.range === undefined ? {} : { range: input.range }),
+      ...(input.imageBase64 === undefined ? {} : { imageBase64: input.imageBase64 }),
+      ...(input.scaleMode === undefined ? {} : { scaleMode: input.scaleMode }),
       ...(input.patch === undefined ? {} : { patch: input.patch }),
       ...(input.actions === undefined ? {} : { actions: input.actions }),
     };
@@ -963,7 +1011,7 @@ async function callTool(name: string, args: unknown, request: Request) {
       if (!Array.isArray(input.elements) || input.elements.length < 1 || input.elements.length > 20) {
         return toolText({ error: "create-elements requires 1–20 elements." }, true);
       }
-      const allowedTypes = new Set(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE"]);
+      const allowedTypes = new Set(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR"]);
       for (const item of input.elements) {
         if (!item || typeof item !== "object" || Array.isArray(item)) return toolText({ error: "Each element must be an object." }, true);
         const element = item as Record<string, unknown>;
@@ -971,6 +1019,7 @@ async function callTool(name: string, args: unknown, request: Request) {
           return toolText({ error: "Each element requires a supported type and non-empty name." }, true);
         }
         if (element.type === "TEXT" && typeof element.text !== "string") return toolText({ error: "TEXT elements require text content." }, true);
+        if (element.type === "VECTOR" && (!Array.isArray(element.vectorPaths) || element.vectorPaths.length < 1)) return toolText({ error: "VECTOR elements require vectorPaths." }, true);
       }
     }
     if (input.operation === "update-node") {
@@ -979,10 +1028,23 @@ async function callTool(name: string, args: unknown, request: Request) {
         return toolText({ error: "update-node requires a non-empty patch." }, true);
       }
     }
-    const nodeRequired = new Set(["clone-node", "delete-node", "reorder-node", "ungroup-node", "create-component", "create-instance", "detach-instance", "export-svg", "apply-style"]);
+    const nodeRequired = new Set(["clone-node", "delete-node", "reorder-node", "ungroup-node", "create-component", "create-instance", "swap-component", "detach-instance", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"]);
     if (nodeRequired.has(input.operation) && (typeof input.nodeId !== "string" || !input.nodeId.trim())) {
       return toolText({ error: input.operation + " requires nodeId." }, true);
     }
+    if ((input.operation === "flatten-nodes" || input.operation === "boolean-operation") && (!Array.isArray(input.nodeIds) || input.nodeIds.length < (input.operation === "flatten-nodes" ? 1 : 2) || input.nodeIds.length > 100)) {
+      return toolText({ error: input.operation + " requires nodeIds." }, true);
+    }
+    if (input.operation === "boolean-operation" && !["UNION", "SUBTRACT", "INTERSECT", "EXCLUDE"].includes(String(input.booleanOperation))) {
+      return toolText({ error: "boolean-operation requires UNION, SUBTRACT, INTERSECT, or EXCLUDE." }, true);
+    }
+    if (input.operation === "create-component-set" && (!Array.isArray(input.nodeIds) || input.nodeIds.length < 2 || input.nodeIds.length > 100)) {
+      return toolText({ error: "create-component-set requires at least two component IDs." }, true);
+    }
+    if (input.operation === "swap-component" && (typeof input.componentId !== "string" || !input.componentId.trim())) return toolText({ error: "swap-component requires componentId." }, true);
+    if (input.operation === "set-text-range" && (!input.range || typeof input.range !== "object" || Array.isArray(input.range))) return toolText({ error: "set-text-range requires a range object." }, true);
+    if (input.operation === "export-node" && !["PNG", "PDF", "SVG_STRING"].includes(String(input.format))) return toolText({ error: "export-node requires format PNG, PDF, or SVG_STRING." }, true);
+    if (input.operation === "create-image-fill" && (typeof input.imageBase64 !== "string" || !input.imageBase64.length)) return toolText({ error: "create-image-fill requires imageBase64." }, true);
     if (input.operation === "group-nodes" && (!Array.isArray(input.nodeIds) || input.nodeIds.length < 2 || input.nodeIds.length > 100)) {
       return toolText({ error: "group-nodes requires at least two nodeIds." }, true);
     }
