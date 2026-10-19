@@ -430,9 +430,9 @@ const TOOLS = [
   },
   {
     name: "ux_direct_connection_status",
-    description: "Show whether ChatGPT has recently called the authenticated UX Direct connector and whether the approved Figma plugin is online. ChatGPT state means authenticated MCP activity within five minutes; Figma state means a heartbeat within 75 seconds.",
+    description: "Show whether ChatGPT and the approved Figma plugin are connected, and queue a read-only selection snapshot of the currently selected Figma layers through the UX Direct plugin. Use ux_direct_figma_plugin_health_check_status with the returned commandId to retrieve the actual selection; no separate Figma connector is used. ChatGPT state means authenticated MCP activity within five minutes; Figma state means a heartbeat within 75 seconds.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: "ux_direct_figma_plugin_queue_health_check",
@@ -442,11 +442,11 @@ const TOOLS = [
   },
   {
     name: "ux_direct_figma_plugin_health_check_status",
-    description: "Retrieve the status and results of a previously queued native Figma plugin API self-test by command ID. Read-only.",
+    description: "Retrieve status/results for a queued native Figma plugin API self-test, or the read-only selection command returned by ux_direct_connection_status. For selection reads, the response includes canvasResult when the command completes.",
     inputSchema: {
       type: "object",
       properties: {
-        commandId: { type: "string", minLength: 8, maxLength: 100, pattern: "^[A-Za-z0-9_-]{8,100}$", description: "The commandId returned by ux_direct_figma_plugin_queue_health_check." },
+        commandId: { type: "string", minLength: 8, maxLength: 100, pattern: "^[A-Za-z0-9_-]{8,100}$", description: "The commandId returned by ux_direct_figma_plugin_queue_health_check or the selectionRead field of ux_direct_connection_status." },
       },
       required: ["commandId"],
       additionalProperties: false,
@@ -715,6 +715,17 @@ async function callTool(name: string, args: unknown, request: Request) {
       }),
     ]);
     const backend = await backendResponse.json().catch(() => ({ error: "Health endpoint returned invalid JSON." }));
+    let selectionRead: Record<string, unknown>;
+    try {
+      selectionRead = await queueFigmaCanvasCommand(request, "read-canvas", {
+        scope: "selection", maxDepth: 2, maxNodes: 60,
+      });
+    } catch (error) {
+      selectionRead = {
+        status: "unavailable",
+        error: error instanceof Error ? error.message.slice(0, 500) : "Could not queue a selection read through UX Direct.",
+      };
+    }
     return toolText({
       checkedAt: new Date().toISOString(),
       backend: { reachable: backendResponse.ok, status: backendResponse.ok ? "connected" : "error", details: backend },
@@ -729,6 +740,8 @@ async function callTool(name: string, args: unknown, request: Request) {
         connected: figmaPlugin.connected,
         connectedSessions: figmaPlugin.connectedSessions,
         lastHeartbeatAt: figmaPlugin.lastHeartbeatAt,
+        selectionRead,
+        selectionNote: "Selection is read through the native UX Direct plugin command bridge. If selectionRead.status is queued, use ux_direct_figma_plugin_health_check_status with its commandId to retrieve the selected layers.",
         note: "Connected means at least one allowlisted Figma plugin session sent a heartbeat in the last 75 seconds.",
       },
     });
@@ -784,10 +797,14 @@ async function callTool(name: string, args: unknown, request: Request) {
     }
     return toolText({
       commandId,
+      operation: session?.latestCommand?.action ?? null,
       status: session?.latestCommand?.status ?? (latestReport ? "completed" : "unknown"),
       issuedAt: session?.latestCommand?.issuedAt ?? null,
       completedAt: session?.latestCommand?.completedAt ?? latestReport?.savedAt ?? null,
       failure: session?.latestCommand?.failure ?? null,
+      canvasResult: session?.latestCommand?.action === "read-canvas" && session.latestCommand.status === "completed"
+        ? session.latestCommand.result ?? null
+        : null,
       pluginSession: session ? {
         clientId: session.clientId,
         isOnline: session.isOnline === true,

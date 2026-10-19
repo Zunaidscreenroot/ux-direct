@@ -192,6 +192,11 @@ test("connection-status tool reports ChatGPT and Figma connection semantics", as
     assert.ok(connectionTool);
     assert.match(connectionTool.description, /five minutes/);
     assert.match(connectionTool.description, /75 seconds/);
+    assert.match(connectionTool.description, /selection snapshot/);
+    const healthStatusTool = body.result.tools.find((tool: { name: string }) => tool.name === "ux_direct_figma_plugin_health_check_status");
+    assert.ok(healthStatusTool);
+    assert.match(healthStatusTool.description, /canvasResult/);
+    assert.ok((await import("node:fs")).readFileSync("app/api/mcp/route.ts", "utf8").includes('queueFigmaCanvasCommand(request, "read-canvas"'));
   } finally {
     if (original === undefined) delete process.env.UX_DIRECT_MCP_API_KEY;
     else process.env.UX_DIRECT_MCP_API_KEY = original;
