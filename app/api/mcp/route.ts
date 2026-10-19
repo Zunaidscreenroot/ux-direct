@@ -525,12 +525,12 @@ const TOOLS = [
               pointCount: { type: "integer", minimum: 3, maximum: 100 },
               innerRadius: { type: "number", minimum: 0.01, maximum: 1 },
               vectorPaths: {
-                type: "array", minItems: 1, maxItems: 20,
+                type: "array", minItems: 1, maxItems: 5,
                 items: {
                   type: "object",
                   properties: {
                     windingRule: { type: "string", enum: ["EVENODD", "NONZERO"] },
-                    data: { type: "string", minLength: 1, maxLength: 20000 }
+                    data: { type: "string", minLength: 1, maxLength: 5000 }
                   },
                   required: ["windingRule", "data"],
                   additionalProperties: false
@@ -1028,8 +1028,16 @@ async function callTool(name: string, args: unknown, request: Request) {
       return toolText({ error: "target must be current-page, selection, or test-lab." }, true);
     }
     if (input.operation === "batch" && (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 40)) return toolText({ error: "batch requires 1–40 actions." }, true);
-    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && ["export-svg", "export-node"].includes(String((step as Record<string, unknown>).operation))) && input.actions.length > 1) return toolText({ error: "SVG export must be a standalone command." }, true);
+    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && ["export-svg", "export-node", "create-image-fill"].includes(String((step as Record<string, unknown>).operation))) && input.actions.length > 1) return toolText({ error: "Exports and inline image fills must be standalone commands." }, true);
     if (input.operation !== "batch" && input.actions !== undefined) return toolText({ error: "actions is supported only for batch." }, true);
+    if (input.operation === "batch" && Array.isArray(input.actions)) {
+      const totalCreated = input.actions.reduce((sum, step) => {
+        if (!step || typeof step !== "object" || Array.isArray(step)) return sum;
+        const action = step as Record<string, unknown>;
+        return sum + (action.operation === "create-elements" && Array.isArray(action.elements) ? action.elements.length : 0);
+      }, 0);
+      if (totalCreated > 100) return toolText({ error: "A batch can create at most 100 canvas nodes in total." }, true);
+    }
     if (input.operation === "create-elements") {
       if (!Array.isArray(input.elements) || input.elements.length < 1 || input.elements.length > 20) {
         return toolText({ error: "create-elements requires 1–20 elements." }, true);
