@@ -469,11 +469,11 @@ const TOOLS = [
   },
   {
     name: "ux_direct_figma_canvas_write",
-    description: "Run explicit, validated native Figma canvas actions through the allowlisted UX Direct plugin. Supports creating frames/shapes/text, editing geometry/typography/fills/strokes/auto-layout, cloning/deleting/reordering/grouping nodes, creating/detaching components and instances, selection/viewport control, page creation/rename, and SVG export. Every write requires confirm=true and is audited; deletion is limited to a node on the current page. No arbitrary code execution, unrestricted document traversal, library publishing, or bulk replacement. Retrieve verified results with ux_direct_figma_canvas_command_status.",
+    description: "Run explicit, validated native Figma canvas actions through the allowlisted UX Direct plugin. Supports ordered batches of up to 40 actions, creating frames/shapes/text, editing geometry/typography/fills/strokes/auto-layout/effects, cloning/deleting/reordering/grouping nodes, creating/detaching components and instances, applying local styles, selection/viewport control, page creation/rename, and SVG export. Every write requires confirm=true and is audited; deletion is limited to a node on the current page. No arbitrary code execution, unrestricted document traversal, library publishing, or bulk replacement. Retrieve verified results with ux_direct_figma_canvas_command_status.",
     inputSchema: {
       type: "object",
       properties: {
-        operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "ungroup-node", "create-component", "create-instance", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"] },
+        operation: { type: "string", enum: ["batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "ungroup-node", "create-component", "create-instance", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"] },
         confirm: { type: "boolean", const: true, description: "Must be true only after the owner explicitly requests this specific write." },
         target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
         elements: {
@@ -511,6 +511,8 @@ const TOOLS = [
               textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] },
               textAlignVertical: { type: "string", enum: ["TOP", "CENTER", "BOTTOM"] },
               textAutoResize: { type: "string", enum: ["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"] },
+            textCase: { type: "string", enum: ["ORIGINAL", "UPPER", "LOWER", "TITLE"] },
+            textDecoration: { type: "string", enum: ["NONE", "UNDERLINE", "STRIKETHROUGH"] },
               shadowColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
               shadowBlur: { type: "number", minimum: 0, maximum: 200 },
               shadowX: { type: "number", minimum: -200, maximum: 200 },
@@ -522,6 +524,28 @@ const TOOLS = [
           }
         },
         nodeId: { type: "string", minLength: 1, maxLength: 100 },
+        actions: {
+          type: "array", minItems: 1, maxItems: 40,
+          description: "Sequential canvas actions. Batch is non-atomic: completed earlier steps remain if a later action fails. SVG export must be the only step.",
+          items: {
+            type: "object",
+            properties: {
+              operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "ungroup-node", "create-component", "create-instance", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"] },
+              target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
+              nodeId: { type: "string", minLength: 1, maxLength: 100 },
+              nodeIds: { type: "array", items: { type: "string", minLength: 1, maxLength: 100 }, maxItems: 100 },
+              index: { type: "integer", minimum: 0, maximum: 10000 },
+              pageName: { type: "string", minLength: 1, maxLength: 120 },
+              styleKind: { type: "string", enum: ["paint", "text", "effect", "grid"] },
+              styleId: { type: "string", minLength: 1, maxLength: 300 },
+              styleName: { type: "string", minLength: 1, maxLength: 240 },
+              elements: { type: "array", minItems: 1, maxItems: 20, items: { type: "object", additionalProperties: true } },
+              patch: { type: "object", additionalProperties: true }
+            },
+            required: ["operation"],
+            additionalProperties: false
+          }
+        },
         patch: {
           type: "object",
           properties: {
@@ -907,7 +931,7 @@ async function callTool(name: string, args: unknown, request: Request) {
     if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
     const input = args as Record<string, unknown>;
     const allowedOperations = new Set([
-      "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+      "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
       "group-nodes", "ungroup-node", "create-component", "create-instance",
       "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style",
     ]);
@@ -927,10 +951,14 @@ async function callTool(name: string, args: unknown, request: Request) {
       ...(input.styleId === undefined ? {} : { styleId: input.styleId }),
       ...(input.styleName === undefined ? {} : { styleName: input.styleName }),
       ...(input.patch === undefined ? {} : { patch: input.patch }),
+      ...(input.actions === undefined ? {} : { actions: input.actions }),
     };
     if (input.target !== undefined && !["current-page", "selection", "test-lab"].includes(String(input.target))) {
       return toolText({ error: "target must be current-page, selection, or test-lab." }, true);
     }
+    if (input.operation === "batch" && (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 40)) return toolText({ error: "batch requires 1–40 actions." }, true);
+    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && (step as Record<string, unknown>).operation === "export-svg") && input.actions.length > 1) return toolText({ error: "SVG export must be a standalone command." }, true);
+    if (input.operation !== "batch" && input.actions !== undefined) return toolText({ error: "actions is supported only for batch." }, true);
     if (input.operation === "create-elements") {
       if (!Array.isArray(input.elements) || input.elements.length < 1 || input.elements.length > 20) {
         return toolText({ error: "create-elements requires 1–20 elements." }, true);
