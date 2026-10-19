@@ -9,6 +9,7 @@ on:
     paths:
       - "app/api/mcp/route.ts"
       - "app/api/plugin-bridge/route.ts"
+      - "app/api/health/route.ts"
       - "src/security/figma-access.ts"
       - ".github/workflows/deploy-cloudflare.yml"
 
