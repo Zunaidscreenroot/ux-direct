@@ -44,7 +44,8 @@ test("native plugin checks the approved file before canvas access and caps reads
   assert.ok(plugin.includes('Math.min(4, Number.isInteger(payload.maxDepth)'));
   assert.ok(plugin.includes('Math.min(100, Number.isInteger(payload.maxNodes)'));
   assert.ok(plugin.includes('type === "run-canvas-command"'));
-  assert.ok(plugin.includes('figma.currentPage.findOne(function (item) { return item.id === payload.nodeId; })'));
+  assert.ok(plugin.includes('function findPageNode(id)'));
+  assert.ok(plugin.includes('figma.currentPage.findOne(function (item) { return item.id === id; })'));
 });
 
 test("plugin UI dispatches only recognized command types and reports the result to the bridge", () => {
