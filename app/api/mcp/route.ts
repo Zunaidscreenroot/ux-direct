@@ -560,7 +560,19 @@ const TOOLS = [
               booleanOperation: { type: "string", enum: ["UNION", "SUBTRACT", "INTERSECT", "EXCLUDE"] },
               componentId: { type: "string", minLength: 1, maxLength: 100 },
               format: { type: "string", enum: ["PNG", "PDF", "SVG_STRING"] },
-              range: { type: "object", additionalProperties: false },
+              range: {
+                type: "object",
+                properties: {
+                  start: { type: "integer", minimum: 0, maximum: 5000 },
+                  end: { type: "integer", minimum: 1, maximum: 5000 },
+                  fontSize: { type: "number", minimum: 8, maximum: 144 },
+                  lineHeight: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: 1, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
+                  letterSpacing: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: -100, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
+                  fillColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }
+                },
+                required: ["start", "end"],
+                additionalProperties: false
+              },
               imageBase64: { type: "string", maxLength: 250000 },
               scaleMode: { type: "string", enum: ["FILL", "FIT", "CROP", "TILE"] },
               elements: { type: "array", minItems: 1, maxItems: 20, items: { type: "object", additionalProperties: true } },
@@ -1005,7 +1017,7 @@ async function callTool(name: string, args: unknown, request: Request) {
       return toolText({ error: "target must be current-page, selection, or test-lab." }, true);
     }
     if (input.operation === "batch" && (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 40)) return toolText({ error: "batch requires 1–40 actions." }, true);
-    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && (step as Record<string, unknown>).operation === "export-svg") && input.actions.length > 1) return toolText({ error: "SVG export must be a standalone command." }, true);
+    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && ["export-svg", "export-node"].includes(String((step as Record<string, unknown>).operation))) && input.actions.length > 1) return toolText({ error: "SVG export must be a standalone command." }, true);
     if (input.operation !== "batch" && input.actions !== undefined) return toolText({ error: "actions is supported only for batch." }, true);
     if (input.operation === "create-elements") {
       if (!Array.isArray(input.elements) || input.elements.length < 1 || input.elements.length > 20) {
