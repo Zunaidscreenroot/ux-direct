@@ -46,6 +46,22 @@ const CANVAS_ELEMENT = z.object({
   clipsContent: z.boolean().optional(),
   layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]).optional(),
   itemSpacing: z.number().finite().min(-100).max(1000).optional(),
+  paddingLeft: z.number().finite().min(0).max(1000).optional(),
+  paddingRight: z.number().finite().min(0).max(1000).optional(),
+  paddingTop: z.number().finite().min(0).max(1000).optional(),
+  paddingBottom: z.number().finite().min(0).max(1000).optional(),
+  primaryAxisAlignItems: z.enum(["MIN", "MAX", "CENTER", "SPACE_BETWEEN"]).optional(),
+  counterAxisAlignItems: z.enum(["MIN", "MAX", "CENTER", "BASELINE"]).optional(),
+  primaryAxisSizingMode: z.enum(["AUTO", "FIXED"]).optional(),
+  counterAxisSizingMode: z.enum(["AUTO", "FIXED"]).optional(),
+  textAlignHorizontal: z.enum(["LEFT", "CENTER", "RIGHT", "JUSTIFIED"]).optional(),
+  textAlignVertical: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
+  textAutoResize: z.enum(["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"]).optional(),
+  shadowColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  shadowBlur: z.number().finite().min(0).max(200).optional(),
+  shadowX: z.number().finite().min(-200).max(200).optional(),
+  shadowY: z.number().finite().min(-200).max(200).optional(),
+  shadowSpread: z.number().finite().min(-200).max(200).optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.type === "TEXT" && typeof value.text !== "string") {
     ctx.addIssue({ code: "custom", path: ["text"], message: "TEXT elements require text content." });
@@ -89,6 +105,13 @@ const CANVAS_PATCH = z.object({
   counterAxisSizingMode: z.enum(["AUTO", "FIXED"]).optional(),
   horizontalConstraint: z.enum(["MIN", "CENTER", "MAX", "STRETCH", "SCALE"]).optional(),
   verticalConstraint: z.enum(["MIN", "CENTER", "MAX", "STRETCH", "SCALE"]).optional(),
+  textCase: z.enum(["ORIGINAL", "UPPER", "LOWER", "TITLE"]).optional(),
+  textDecoration: z.enum(["NONE", "UNDERLINE", "STRIKETHROUGH"]).optional(),
+  shadowColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  shadowBlur: z.number().finite().min(0).max(200).optional(),
+  shadowX: z.number().finite().min(-200).max(200).optional(),
+  shadowY: z.number().finite().min(-200).max(200).optional(),
+  shadowSpread: z.number().finite().min(-200).max(200).optional(),
 }).strict().refine((value) => Object.values(value).some((item) => item !== undefined), {
   message: "Provide at least one supported property to update.",
 });
@@ -105,10 +128,13 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   nodeIds: z.array(z.string().trim().min(1).max(100)).max(100).optional(),
   index: z.number().int().min(0).max(10000).optional(),
   pageName: z.string().trim().min(1).max(120).optional(),
+  styleKind: z.enum(["paint", "text", "effect", "grid"]).optional(),
+  styleId: z.string().trim().min(1).max(300).optional(),
+  styleName: z.string().trim().min(1).max(240).optional(),
   patch: CANVAS_PATCH.optional(),
 }).strict().superRefine((value, ctx) => {
   const requiresNode = ["update-node", "clone-node", "delete-node", "reorder-node", "ungroup-node",
-    "create-component", "create-instance", "detach-instance", "export-svg"].includes(value.operation);
+    "create-component", "create-instance", "detach-instance", "export-svg", "apply-style"].includes(value.operation);
   if (requiresNode && !value.nodeId) {
     ctx.addIssue({ code: "custom", path: ["nodeId"], message: value.operation + " requires nodeId." });
   }
@@ -129,6 +155,9 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   }
   if (value.operation === "zoom-to-nodes" && (!value.nodeIds || value.nodeIds.length < 1)) {
     ctx.addIssue({ code: "custom", path: ["nodeIds"], message: "zoom-to-nodes requires at least one node ID." });
+  }
+  if (value.operation === "apply-style" && (!value.styleKind || (!value.styleId && !value.styleName))) {
+    ctx.addIssue({ code: "custom", path: ["styleKind"], message: "apply-style requires styleKind and either styleId or styleName." });
   }
   if (value.operation === "create-page" && !value.pageName) {
     ctx.addIssue({ code: "custom", path: ["pageName"], message: "create-page requires pageName." });
