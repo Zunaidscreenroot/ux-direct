@@ -972,9 +972,76 @@ async function writeCanvasCommand(payload) {
   assertUxDirectFileScope("write canvas");
   payload = payload || {};
   if (payload.confirm !== true) throw new Error("Write blocked: confirm must be true after an explicit user request.");
+  function nodeSummary(node) {
+    return {
+      id: node.id, name: node.name, type: node.type, visible: node.visible,
+      x: typeof node.x === "number" ? node.x : null,
+      y: typeof node.y === "number" ? node.y : null,
+      width: typeof node.width === "number" ? node.width : null,
+      height: typeof node.height === "number" ? node.height : null,
+      rotation: typeof node.rotation === "number" ? node.rotation : null
+    };
+  }
+  function findPageNode(id) {
+    if (typeof id !== "string" || !id.trim()) return null;
+    return figma.currentPage.findOne(function (item) { return item.id === id; }) || null;
+  }
+  function findPageNodes(ids) {
+    if (!Array.isArray(ids)) throw new Error("nodeIds must be an array.");
+    var found = [];
+    var seen = new Set();
+    ids.forEach(function (id) {
+      if (typeof id !== "string" || !id.trim() || seen.has(id)) throw new Error("nodeIds must contain unique non-empty IDs.");
+      seen.add(id);
+      var node = findPageNode(id);
+      if (!node) throw new Error("Node not found on the current page: " + id);
+      found.push(node);
+    });
+    return found;
+  }
+  function requireCanvasNode(nodeId, actionName) {
+    var node = findPageNode(nodeId);
+    if (!node) throw new Error(actionName + ": node not found on the current page. Read the canvas first and use a current-page node ID.");
+    if (node.type === "DOCUMENT" || node.type === "PAGE") throw new Error(actionName + ": document and page roots cannot be modified by this operation.");
+    return node;
+  }
+  function colorValue(hex) {
+    var color = parseHexColor(hex);
+    if (!color) throw new Error("Color must be a six-digit hex value such as #2563EB.");
+    return color;
+  }
+  function setSolidPaint(node, property, hex) {
+    if (!(property in node)) throw new Error("This node type does not support " + property + ".");
+    node[property] = [{ type: "SOLID", color: colorValue(hex) }];
+  }
+  async function loadAndSetTextFont(node, spec) {
+    if (node.type !== "TEXT") throw new Error("Typography and text edits can only be applied to TEXT nodes.");
+    var fontFamily = typeof spec.fontFamily === "string" && spec.fontFamily.trim() ? spec.fontFamily.trim().slice(0, 100) : null;
+    var fontStyle = typeof spec.fontStyle === "string" && spec.fontStyle.trim() ? spec.fontStyle.trim().slice(0, 100) : null;
+    var current = node.fontName;
+    var font = {
+      family: fontFamily || (current && typeof current === "object" && current.family ? current.family : "Inter"),
+      style: fontStyle || (current && typeof current === "object" && current.style ? current.style : "Regular")
+    };
+    await figma.loadFontAsync(font);
+    node.fontName = font;
+    return font;
+  }
+  function applyCreateProperties(node, spec) {
+    if (Number.isFinite(spec.opacity) && "opacity" in node) node.opacity = Math.max(0, Math.min(1, spec.opacity));
+    if (Number.isFinite(spec.rotation) && "rotation" in node) node.rotation = Math.max(-360, Math.min(360, spec.rotation));
+    if (typeof spec.color === "string" && "fills" in node) setSolidPaint(node, "fills", spec.color);
+    if (typeof spec.strokeColor === "string" && "strokes" in node) setSolidPaint(node, "strokes", spec.strokeColor);
+    if (Number.isFinite(spec.strokeWeight) && "strokeWeight" in node) node.strokeWeight = Math.max(0, Math.min(100, spec.strokeWeight));
+    if (Number.isFinite(spec.cornerRadius) && "cornerRadius" in node) node.cornerRadius = Math.max(0, Math.min(512, spec.cornerRadius));
+    if (typeof spec.clipsContent === "boolean" && "clipsContent" in node) node.clipsContent = spec.clipsContent;
+    if (typeof spec.layoutMode === "string" && "layoutMode" in node) node.layoutMode = spec.layoutMode;
+    if (Number.isFinite(spec.itemSpacing) && "itemSpacing" in node) node.itemSpacing = Math.max(-100, Math.min(1000, spec.itemSpacing));
+  }
+
   if (payload.operation === "create-elements") {
     if (!Array.isArray(payload.elements) || payload.elements.length < 1 || payload.elements.length > 20) {
-      throw new Error("Create-elements requires 1 to 20 validated elements.");
+      throw new Error("create-elements requires 1 to 20 validated elements.");
     }
     var parent = await resolveCanvasWriteParent(payload.target || "current-page");
     var created = [];
@@ -982,46 +1049,53 @@ async function writeCanvasCommand(payload) {
       assertUxDirectFileScope("create canvas element");
       var spec = payload.elements[i] || {};
       var type = spec.type;
+      if (typeof spec.name !== "string" || !spec.name.trim()) throw new Error("Every created element requires a name.");
       var node;
       if (type === "FRAME") node = figma.createFrame();
       else if (type === "RECTANGLE") node = figma.createRectangle();
       else if (type === "ELLIPSE") node = figma.createEllipse();
       else if (type === "TEXT") node = figma.createText();
+      else if (type === "LINE") node = figma.createLine();
+      else if (type === "POLYGON") node = figma.createPolygon();
+      else if (type === "STAR") node = figma.createStar();
+      else if (type === "SLICE") node = figma.createSlice();
       else throw new Error("Unsupported element type: " + String(type));
-      node.name = typeof spec.name === "string" && spec.name.trim() ? spec.name.trim() : "UX Direct " + type;
+      node.name = spec.name.trim().slice(0, 80);
       var width = Number.isFinite(spec.width) ? spec.width : (type === "TEXT" ? 280 : 160);
       var height = Number.isFinite(spec.height) ? spec.height : (type === "TEXT" ? 40 : 100);
       width = Math.max(1, Math.min(4096, width));
       height = Math.max(1, Math.min(4096, height));
       if (typeof node.resize === "function") node.resize(width, height);
       if (type === "TEXT") {
-        var font = { family: "Inter", style: "Regular" };
+        var font = { family: typeof spec.fontFamily === "string" ? spec.fontFamily : "Inter",
+          style: typeof spec.fontStyle === "string" ? spec.fontStyle : "Regular" };
         await figma.loadFontAsync(font);
         node.fontName = font;
-        node.fontSize = Number.isFinite(spec.fontSize) ? Math.max(8, Math.min(72, spec.fontSize)) : 14;
-        node.characters = typeof spec.text === "string" ? spec.text.slice(0, 5000) : "";
+        node.fontSize = Number.isFinite(spec.fontSize) ? Math.max(8, Math.min(144, spec.fontSize)) : 14;
+        node.characters = spec.text.slice(0, 5000);
       }
-      var color = parseHexColor(spec.color);
-      if (color && "fills" in node && type !== "TEXT") node.fills = [{ type: "SOLID", color: color }];
-      if (color && type === "TEXT") node.fills = [{ type: "SOLID", color: color }];
+      applyCreateProperties(node, spec);
       parent.appendChild(node);
       node.x = Number.isFinite(spec.x) ? Math.max(-10000, Math.min(10000, spec.x)) : 0;
       node.y = Number.isFinite(spec.y) ? Math.max(-10000, Math.min(10000, spec.y)) : i * (height + 24);
-      created.push({ id: node.id, name: node.name, type: node.type, x: node.x, y: node.y, width: node.width, height: node.height });
+      created.push(nodeSummary(node));
     }
-    return { ok: true, operation: "create-elements", fileKey: figma.fileKey, pageName: parent.type === "PAGE" ? parent.name : (parent.parent && parent.parent.name) || figma.currentPage.name, target: payload.target || "current-page", createdCount: created.length, nodes: created };
+    return { ok: true, operation: "create-elements", fileKey: figma.fileKey,
+      pageName: parent.type === "PAGE" ? parent.name : (parent.parent && parent.parent.name) || figma.currentPage.name,
+      target: payload.target || "current-page", createdCount: created.length, nodes: created };
   }
+
   if (payload.operation === "update-node") {
-    if (typeof payload.nodeId !== "string" || !payload.nodeId.trim()) throw new Error("update-node requires a nodeId.");
     var patch = payload.patch;
-    if (!patch || typeof patch !== "object" || Array.isArray(patch) || Object.keys(patch).length === 0) throw new Error("update-node requires a non-empty property patch.");
-    var targetNode = figma.currentPage.findOne(function (item) { return item.id === payload.nodeId; });
-    if (!targetNode) throw new Error("Node not found on the current page. Read the canvas first and use a current-page node ID.");
+    if (!patch || typeof patch !== "object" || Array.isArray(patch) || Object.keys(patch).length === 0) {
+      throw new Error("update-node requires a non-empty property patch.");
+    }
+    var targetNode = requireCanvasNode(payload.nodeId, "update-node");
     if (typeof patch.name === "string") targetNode.name = patch.name.slice(0, 120);
     if (typeof patch.visible === "boolean") targetNode.visible = patch.visible;
-    if (Number.isFinite(patch.x)) targetNode.x = Math.max(-10000, Math.min(10000, patch.x));
-    if (Number.isFinite(patch.y)) targetNode.y = Math.max(-10000, Math.min(10000, patch.y));
-    if (Number.isFinite(patch.rotation)) targetNode.rotation = patch.rotation;
+    if (Number.isFinite(patch.x) && "x" in targetNode) targetNode.x = Math.max(-10000, Math.min(10000, patch.x));
+    if (Number.isFinite(patch.y) && "y" in targetNode) targetNode.y = Math.max(-10000, Math.min(10000, patch.y));
+    if (Number.isFinite(patch.rotation) && "rotation" in targetNode) targetNode.rotation = Math.max(-360, Math.min(360, patch.rotation));
     if (Number.isFinite(patch.width) || Number.isFinite(patch.height)) {
       if (typeof targetNode.resize !== "function") throw new Error("This node type does not support resizing.");
       targetNode.resize(
@@ -1029,9 +1103,180 @@ async function writeCanvasCommand(payload) {
         Number.isFinite(patch.height) ? Math.max(1, Math.min(4096, patch.height)) : targetNode.height
       );
     }
-    return { ok: true, operation: "update-node", fileKey: figma.fileKey, pageName: figma.currentPage.name, node: { id: targetNode.id, name: targetNode.name, type: targetNode.type, visible: targetNode.visible, x: targetNode.x, y: targetNode.y, width: targetNode.width, height: targetNode.height, rotation: targetNode.rotation } };
+    if (Number.isFinite(patch.opacity)) {
+      if (!("opacity" in targetNode)) throw new Error("This node type does not support opacity.");
+      targetNode.opacity = Math.max(0, Math.min(1, patch.opacity));
+    }
+    if (typeof patch.fillColor === "string") setSolidPaint(targetNode, "fills", patch.fillColor);
+    if (typeof patch.strokeColor === "string") setSolidPaint(targetNode, "strokes", patch.strokeColor);
+    if (Number.isFinite(patch.strokeWeight)) {
+      if (!("strokeWeight" in targetNode)) throw new Error("This node type does not support stroke weight.");
+      targetNode.strokeWeight = Math.max(0, Math.min(100, patch.strokeWeight));
+    }
+    if (Number.isFinite(patch.cornerRadius)) {
+      if (!("cornerRadius" in targetNode)) throw new Error("This node type does not support corner radius.");
+      targetNode.cornerRadius = Math.max(0, Math.min(512, patch.cornerRadius));
+    }
+    if (typeof patch.clipsContent === "boolean") {
+      if (!("clipsContent" in targetNode)) throw new Error("This node type does not support clipping content.");
+      targetNode.clipsContent = patch.clipsContent;
+    }
+    var textPatch = ["text", "fontFamily", "fontStyle", "fontSize"].some(function (key) { return patch[key] !== undefined; });
+    if (textPatch) {
+      await loadAndSetTextFont(targetNode, patch);
+      if (typeof patch.text === "string") targetNode.characters = patch.text.slice(0, 5000);
+      if (Number.isFinite(patch.fontSize)) targetNode.fontSize = Math.max(8, Math.min(144, patch.fontSize));
+    }
+    if (typeof patch.textAlignHorizontal === "string") {
+      if (targetNode.type !== "TEXT") throw new Error("textAlignHorizontal can only be used on TEXT nodes.");
+      targetNode.textAlignHorizontal = patch.textAlignHorizontal;
+    }
+    if (typeof patch.textAlignVertical === "string") {
+      if (targetNode.type !== "TEXT") throw new Error("textAlignVertical can only be used on TEXT nodes.");
+      targetNode.textAlignVertical = patch.textAlignVertical;
+    }
+    if (typeof patch.textAutoResize === "string") {
+      if (targetNode.type !== "TEXT") throw new Error("textAutoResize can only be used on TEXT nodes.");
+      targetNode.textAutoResize = patch.textAutoResize;
+    }
+    var layoutKeys = ["layoutMode", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
+      "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"];
+    var hasLayoutPatch = layoutKeys.some(function (key) { return patch[key] !== undefined; });
+    if (hasLayoutPatch && !("layoutMode" in targetNode)) throw new Error("Auto-layout properties require a frame or component container.");
+    if (patch.layoutMode !== undefined) targetNode.layoutMode = patch.layoutMode;
+    ["itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
+      "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"].forEach(function (key) {
+      if (patch[key] !== undefined) targetNode[key] = patch[key];
+    });
+    if (patch.horizontalConstraint !== undefined || patch.verticalConstraint !== undefined) {
+      if (!("constraints" in targetNode)) throw new Error("Constraints can only be set on nodes that support responsive constraints.");
+      var constraints = Object.assign({}, targetNode.constraints || {});
+      if (patch.horizontalConstraint !== undefined) constraints.horizontal = patch.horizontalConstraint;
+      if (patch.verticalConstraint !== undefined) constraints.vertical = patch.verticalConstraint;
+      targetNode.constraints = constraints;
+    }
+    return { ok: true, operation: "update-node", fileKey: figma.fileKey,
+      pageName: figma.currentPage.name, node: nodeSummary(targetNode) };
   }
-  throw new Error("Unsupported canvas write operation.");
+
+  if (payload.operation === "clone-node") {
+    var cloneSource = requireCanvasNode(payload.nodeId, "clone-node");
+    var cloned = cloneSource.clone();
+    cloned.name = (cloneSource.name + " copy").slice(0, 120);
+    if ("x" in cloned && "x" in cloneSource) cloned.x = cloneSource.x + 24;
+    if ("y" in cloned && "y" in cloneSource) cloned.y = cloneSource.y + 24;
+    return { ok: true, operation: "clone-node", fileKey: figma.fileKey, pageName: figma.currentPage.name, node: nodeSummary(cloned) };
+  }
+
+  if (payload.operation === "delete-node") {
+    var deleteTarget = requireCanvasNode(payload.nodeId, "delete-node");
+    var deleted = { id: deleteTarget.id, name: deleteTarget.name, type: deleteTarget.type };
+    deleteTarget.remove();
+    return { ok: true, operation: "delete-node", fileKey: figma.fileKey, pageName: figma.currentPage.name, deleted: deleted };
+  }
+
+  if (payload.operation === "reorder-node") {
+    var reorderTarget = requireCanvasNode(payload.nodeId, "reorder-node");
+    var reorderParent = reorderTarget.parent;
+    if (!reorderParent || typeof reorderParent.insertChild !== "function" || !Array.isArray(reorderParent.children)) {
+      throw new Error("This node cannot be reordered within its parent.");
+    }
+    var requestedIndex = Math.max(0, Math.min(reorderParent.children.length - 1, payload.index));
+    reorderParent.insertChild(requestedIndex, reorderTarget);
+    return { ok: true, operation: "reorder-node", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      index: reorderParent.children.indexOf(reorderTarget), node: nodeSummary(reorderTarget) };
+  }
+
+  if (payload.operation === "group-nodes") {
+    var groupNodes = findPageNodes(payload.nodeIds);
+    if (groupNodes.length < 2) throw new Error("Select at least two nodes to group.");
+    var groupParent = groupNodes[0].parent;
+    if (!groupParent || typeof groupParent.insertChild !== "function" ||
+        groupNodes.some(function (node) { return node.parent !== groupParent; })) {
+      throw new Error("Grouping requires sibling nodes with the same parent on the current page.");
+    }
+    var group = figma.group(groupNodes, groupParent);
+    group.name = "Group";
+    return { ok: true, operation: "group-nodes", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(group), childCount: group.children.length };
+  }
+
+  if (payload.operation === "ungroup-node") {
+    var ungroupTarget = requireCanvasNode(payload.nodeId, "ungroup-node");
+    if (ungroupTarget.type !== "GROUP") throw new Error("ungroup-node requires a GROUP node.");
+    var ungroupedIds = ungroupTarget.children.map(function (node) { return node.id; });
+    figma.ungroup([ungroupTarget]);
+    return { ok: true, operation: "ungroup-node", fileKey: figma.fileKey, pageName: figma.currentPage.name, ungroupedIds: ungroupedIds };
+  }
+
+  if (payload.operation === "create-component") {
+    var componentSource = requireCanvasNode(payload.nodeId, "create-component");
+    if (componentSource.type !== "FRAME") throw new Error("create-component requires a FRAME node. Convert an eligible frame only.");
+    if (typeof figma.createComponentFromNode !== "function") throw new Error("This Figma runtime does not expose createComponentFromNode.");
+    var component = figma.createComponentFromNode(componentSource);
+    return { ok: true, operation: "create-component", fileKey: figma.fileKey, pageName: figma.currentPage.name, node: nodeSummary(component) };
+  }
+
+  if (payload.operation === "create-instance") {
+    var componentSourceNode = requireCanvasNode(payload.nodeId, "create-instance");
+    if (componentSourceNode.type !== "COMPONENT") throw new Error("create-instance requires a COMPONENT node ID.");
+    var instance = componentSourceNode.createInstance();
+    figma.currentPage.appendChild(instance);
+    instance.x = (componentSourceNode.x || 0) + (componentSourceNode.width || 0) + 24;
+    instance.y = componentSourceNode.y || 0;
+    return { ok: true, operation: "create-instance", fileKey: figma.fileKey, pageName: figma.currentPage.name, node: nodeSummary(instance) };
+  }
+
+  if (payload.operation === "detach-instance") {
+    var instanceTarget = requireCanvasNode(payload.nodeId, "detach-instance");
+    if (instanceTarget.type !== "INSTANCE") throw new Error("detach-instance requires an INSTANCE node.");
+    var detached = instanceTarget.detachInstance();
+    return { ok: true, operation: "detach-instance", fileKey: figma.fileKey, pageName: figma.currentPage.name, node: nodeSummary(detached) };
+  }
+
+  if (payload.operation === "set-selection") {
+    var selectionNodes = findPageNodes(payload.nodeIds || []);
+    figma.currentPage.selection = selectionNodes;
+    return { ok: true, operation: "set-selection", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      selection: selectionNodes.map(nodeSummary) };
+  }
+
+  if (payload.operation === "zoom-to-nodes") {
+    var zoomNodes = findPageNodes(payload.nodeIds || []);
+    if (!zoomNodes.length) throw new Error("zoom-to-nodes requires at least one valid node ID.");
+    figma.viewport.scrollAndZoomIntoView(zoomNodes);
+    return { ok: true, operation: "zoom-to-nodes", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      nodes: zoomNodes.map(nodeSummary), viewport: { zoom: figma.viewport.zoom, bounds: figma.viewport.bounds } };
+  }
+
+  if (payload.operation === "create-page") {
+    var newPageName = String(payload.pageName || "").trim().slice(0, 120);
+    if (!newPageName) throw new Error("create-page requires a pageName.");
+    var newPage = figma.createPage();
+    newPage.name = newPageName;
+    return { ok: true, operation: "create-page", fileKey: figma.fileKey, page: { id: newPage.id, name: newPage.name } };
+  }
+
+  if (payload.operation === "rename-page") {
+    var pageName = String(payload.pageName || "").trim().slice(0, 120);
+    if (!pageName) throw new Error("rename-page requires a pageName.");
+    var previousPageName = figma.currentPage.name;
+    figma.currentPage.name = pageName;
+    return { ok: true, operation: "rename-page", fileKey: figma.fileKey,
+      page: { id: figma.currentPage.id, previousName: previousPageName, name: figma.currentPage.name } };
+  }
+
+  if (payload.operation === "export-svg") {
+    var exportTarget = requireCanvasNode(payload.nodeId, "export-svg");
+    if (typeof exportTarget.exportAsync !== "function") throw new Error("This node type does not support export.");
+    var svg = await exportTarget.exportAsync({ format: "SVG_STRING" });
+    if (typeof svg !== "string") throw new Error("Figma did not return SVG text for this node.");
+    if (svg.length > 48000) throw new Error("SVG export exceeds the 48 KB response limit; export a smaller node.");
+    return { ok: true, operation: "export-svg", fileKey: figma.fileKey,
+      node: nodeSummary(exportTarget), format: "SVG_STRING", byteLength: svg.length, svg: svg };
+  }
+
+  throw new Error("Unsupported canvas write operation: " + String(payload.operation));
 }
 async function runCanvasCommand(command) {
   assertUxDirectFileScope("execute canvas command");
