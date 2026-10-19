@@ -154,13 +154,17 @@ const CANVAS_TEXT_RANGE = z.object({
 });
 const CANVAS_WRITE_STEP = z.object({
   operation: z.enum([
-    "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+    "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node",
     "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
-    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
+    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
   ]),
   target: z.enum(["current-page", "selection", "test-lab"]).optional(),
   elements: z.array(CANVAS_ELEMENT).min(1).max(20).optional(),
   nodeId: z.string().trim().min(1).max(100).optional(),
+  parentNodeId: z.string().trim().min(1).max(100).optional(),
+  pageId: z.string().trim().min(1).max(100).optional(),
+  parentNodeId: z.string().trim().min(1).max(100).optional(),
+  pageId: z.string().trim().min(1).max(100).optional(),
   nodeIds: z.array(z.string().trim().min(1).max(100)).max(100).optional(),
   index: z.number().int().min(0).max(10000).optional(),
   pageName: z.string().trim().min(1).max(120).optional(),
@@ -201,7 +205,7 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   actions: z.array(CANVAS_WRITE_STEP).min(1).max(40).optional(),
 }).strict().superRefine((value, ctx) => {
   const requiresNode = ["update-node", "clone-node", "delete-node", "reorder-node", "ungroup-node",
-    "create-component", "create-instance", "swap-component", "detach-instance", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"].includes(value.operation);
+    "create-component", "create-instance", "swap-component", "detach-instance", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "reparent-node"].includes(value.operation);
   if (requiresNode && !value.nodeId) {
     ctx.addIssue({ code: "custom", path: ["nodeId"], message: value.operation + " requires nodeId." });
   }
@@ -246,6 +250,12 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   }
   if (value.operation === "apply-style" && (!value.styleKind || (!value.styleId && !value.styleName))) {
     ctx.addIssue({ code: "custom", path: ["styleKind"], message: "apply-style requires styleKind and either styleId or styleName." });
+  }
+  if (value.operation === "set-current-page" && !value.pageId) {
+    ctx.addIssue({ code: "custom", path: ["pageId"], message: "set-current-page requires pageId." });
+  }
+  if (value.operation === "reparent-node" && (!value.parentNodeId || value.parentNodeId === value.nodeId)) {
+    ctx.addIssue({ code: "custom", path: ["parentNodeId"], message: "reparent-node requires a different parentNodeId." });
   }
   if (value.operation === "create-page" && !value.pageName) {
     ctx.addIssue({ code: "custom", path: ["pageName"], message: "create-page requires pageName." });
