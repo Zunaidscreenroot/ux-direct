@@ -16,6 +16,7 @@ export async function GET(request: Request) {
       token_endpoint_auth_methods_supported: ["none"],
       code_challenge_methods_supported: ["S256"],
       authorization_response_iss_parameter_supported: true,
+      client_id_metadata_document_supported: true,
       scopes_supported: ["ux:read", "ux:execute", "ux:learn", "offline_access"],
       service_documentation: "https://github.com/Zunaidscreenroot/ux-direct",
     },
