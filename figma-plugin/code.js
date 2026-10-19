@@ -1124,6 +1124,8 @@ async function writeCanvasCommand(payload) {
         node.fontName = font;
         node.fontSize = Number.isFinite(spec.fontSize) ? Math.max(8, Math.min(144, spec.fontSize)) : 14;
         node.characters = spec.text.slice(0, 5000);
+        if (typeof spec.textCase === "string") node.textCase = spec.textCase;
+        if (typeof spec.textDecoration === "string") node.textDecoration = spec.textDecoration;
       }
       applyCreateProperties(node, spec);
       parent.appendChild(node);
