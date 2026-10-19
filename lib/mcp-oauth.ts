@@ -1,6 +1,13 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 export type McpClaims = Record<string, unknown> & { typ: "client" | "code" | "access" | "refresh"; exp?: number };
 export const MCP_SCOPES = ["ux:read", "ux:execute", "ux:learn", "offline_access"] as const;
+
+// ChatGPT can identify itself with its stable Client ID Metadata Document (CIMD).
+export const CHATGPT_CIMD_CLIENT_ID = "https://chatgpt.com/oauth/client.json";
+export function isChatGptCimdClientId(clientId: string): boolean {
+  // Exact URL allowlisting prevents arbitrary remote metadata fetches and SSRF.
+  return clientId === CHATGPT_CIMD_CLIENT_ID;
+}
 export function readMcpEnv(key: string): string {
   const runtime = (globalThis as typeof globalThis & { Netlify?: { env?: { get?: (name: string) => string | undefined } } }).Netlify;
   return runtime?.env?.get?.(key) || process.env[key] || "";
