@@ -64,7 +64,40 @@ export type GatewayRequest = {
   response_format?: { type: "json_object" };
 };
 export type TokenUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: number };
-type ProviderChatPayload = { id?: unknown; model?: unknown; choices?: Array<{ message?: { content?: unknown } }>; usage?: TokenUsage };
+type ProviderChatPayload = {
+  id?: unknown;
+  model?: unknown;
+  choices?: Array<{ message?: { content?: unknown; refusal?: unknown }; finish_reason?: unknown }>;
+  // Some OpenAI-compatible gateways expose a Responses-style text field or output blocks.
+  output_text?: unknown;
+  output?: unknown;
+  usage?: TokenUsage;
+};
+
+/** Normalize only final text. Never substitute private reasoning traces for an answer. */
+function providerTextContent(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value.map(part => {
+      if (typeof part === "string") return part;
+      if (!part || typeof part !== "object" || Array.isArray(part)) return "";
+      const item = part as Record<string, unknown>;
+      const type = typeof item.type === "string" ? item.type : "";
+      if (typeof item.text === "string" && (!type || type === "text" || type === "output_text")) return item.text;
+      if (Array.isArray(item.content)) return providerTextContent(item.content);
+      if (Array.isArray(item.parts)) return providerTextContent(item.parts);
+      return "";
+    }).filter(Boolean).join("\n").trim();
+  }
+  if (value && typeof value === "object") {
+    const item = value as Record<string, unknown>;
+    const type = typeof item.type === "string" ? item.type : "";
+    if (typeof item.text === "string" && (!type || type === "text" || type === "output_text")) return item.text;
+    if (Array.isArray(item.content)) return providerTextContent(item.content);
+    if (Array.isArray(item.parts)) return providerTextContent(item.parts);
+  }
+  return "";
+}
 export type GatewayResponse = {
   id?: string;
   model?: string;
@@ -405,8 +438,23 @@ export async function chatCompletion(
     if (!response || !payload) {
       throw new GatewayError("Provider returned no usable chat-completions payload.",502,provider.name);
     }
-    const content=payload.choices?.[0]?.message?.content;
-    if(typeof content!=="string")throw new GatewayError("Provider response did not contain choices[0].message.content.",502,provider.name);
+    const choice=payload.choices?.[0];
+    const message=choice?.message;
+    const content=providerTextContent(message?.content) ||
+      providerTextContent(payload.output_text) ||
+      providerTextContent(payload.output);
+    if(!content.trim()){
+      const refusal=providerTextContent(message?.refusal);
+      const finishReason=typeof choice?.finish_reason==="string"?choice.finish_reason:"";
+      const finishDetail=finishReason?" (finish_reason="+finishReason+")":"";
+      throw new GatewayError(
+        refusal
+          ? "Provider refused the request; revise the prompt or choose another configured model."
+          : "Provider returned no final answer text"+finishDetail+". The result may have exhausted its output budget or used an unsupported response format; retry with a smaller IA sample or another model.",
+        502,
+        provider.name
+      );
+    }
     const latencyMs=Date.now()-started;const tokenUsage=usageStore.tokenUsageValues(payload.usage);
     const modelUsed=typeof payload.model==="string"?payload.model:model;
     const reportedUsdCost=isOpenRouterAuto&&typeof payload.usage?.cost==="number"&&Number.isFinite(payload.usage.cost)&&payload.usage.cost>=0?payload.usage.cost:null;
