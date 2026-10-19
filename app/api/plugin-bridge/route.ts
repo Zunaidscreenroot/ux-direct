@@ -26,26 +26,6 @@ const REPORT = z.object({
   checks: z.array(CHECK).max(100),
 });
 
-const SELECTION_NODE = z.object({
-  id: z.string().trim().min(1).max(100),
-  name: z.string().max(500),
-  type: z.string().min(1).max(60),
-  visible: z.boolean().optional(),
-  childCount: z.number().int().nonnegative().max(100000).optional(),
-  bounds: z.object({
-    x: z.number().finite().min(-100000).max(100000),
-    y: z.number().finite().min(-100000).max(100000),
-    width: z.number().finite().min(0).max(100000),
-    height: z.number().finite().min(0).max(100000),
-  }).strict().optional(),
-}).strict();
-const SELECTION_SNAPSHOT = z.object({
-  pageId: z.string().min(1).max(100),
-  pageName: z.string().trim().min(1).max(240),
-  selectionCount: z.number().int().nonnegative().max(100000),
-  selection: z.array(SELECTION_NODE).max(100),
-}).strict();
-
 const CANVAS_ELEMENT = z.object({
   type: z.enum(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT"]),
   name: z.string().trim().min(1).max(80),
@@ -107,7 +87,6 @@ type Session = {
   clientId: string; sessionToken: string; fileKey: string; status: "online" | "offline";
   connectedAt: string; lastHeartbeatAt: string; disconnectedAt?: string; lastTestAt?: string;
   latestCommand?: BridgeCommand; healthReport?: HealthReport;
-  selectionSnapshot?: z.infer<typeof SELECTION_SNAPSHOT> & { updatedAt: string };
 };
 const sessionPath = (id: string) => `${PREFIX}/sessions/${id}/session.json`;
 const commandPath = (id: string) => `${PREFIX}/sessions/${id}/command.json`;
@@ -228,17 +207,11 @@ export async function POST(request: Request) {
       if (current && current.sessionToken !== token.data) return NextResponse.json({ error: "Plugin session token mismatch." }, { status: 403, headers });
       if (current && current.fileKey !== body.fileKey) return NextResponse.json({ error: "Plugin session file-key mismatch." }, { status: 403, headers });
       const now = new Date().toISOString();
-      let selectionSnapshot = current?.selectionSnapshot;
-      if (body.selectionSnapshot !== undefined) {
-        const parsedSelection = SELECTION_SNAPSHOT.safeParse(body.selectionSnapshot);
-        if (!parsedSelection.success) return NextResponse.json({ error: "Selection snapshot is invalid.", issues: parsedSelection.error.issues }, { status: 400, headers });
-        selectionSnapshot = { ...parsedSelection.data, updatedAt: now };
-      }
       const session: Session = {
         clientId, sessionToken: token.data, fileKey: ALLOWED_FIGMA_FILE_KEY, status: "online",
         connectedAt: current?.connectedAt ?? now, lastHeartbeatAt: now,
         lastTestAt: current?.lastTestAt, healthReport: current?.healthReport,
-        latestCommand: current?.latestCommand, selectionSnapshot, disconnectedAt: undefined,
+        latestCommand: current?.latestCommand, disconnectedAt: undefined,
       };
       const queued = await readJson<BridgeCommand>(commandPath(clientId));
       let command: BridgeCommand | null = null;
@@ -250,24 +223,6 @@ export async function POST(request: Request) {
       }
       await writeJson(path, session);
       return NextResponse.json({ ok: true, lastHeartbeatAt: now, command }, { headers });
-    }
-
-    if (mode === "selection") {
-      const token = z.string().min(20).max(200).safeParse(body.sessionToken);
-      const parsedSelection = SELECTION_SNAPSHOT.safeParse(body.selectionSnapshot);
-      if (!token.success || !parsedSelection.success) {
-        return NextResponse.json({ error: "Session token or selection snapshot is invalid.", issues: parsedSelection.success ? undefined : parsedSelection.error.issues }, { status: 400, headers });
-      }
-      const current = await readJson<Session>(path);
-      if (!current || current.sessionToken !== token.data || !isAllowedFigmaFileKey(current.fileKey) || current.fileKey !== body.fileKey) {
-        return NextResponse.json({ error: "Allowlisted plugin session not found or token/file-key mismatch." }, { status: 403, headers });
-      }
-      const now = new Date().toISOString();
-      current.selectionSnapshot = { ...parsedSelection.data, updatedAt: now };
-      current.lastHeartbeatAt = now;
-      current.status = "online";
-      await writeJson(path, current);
-      return NextResponse.json({ ok: true, saved: true, updatedAt: now }, { headers });
     }
 
     if (mode === "disconnect") {
