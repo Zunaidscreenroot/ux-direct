@@ -54,7 +54,7 @@ async function getInput(values: URLSearchParams | FormData): Promise<AuthorizeIn
   const scope = val("scope") || "ux:read ux:execute ux:learn offline_access";
   const challenge = val("code_challenge"), method = val("code_challenge_method"), resource = val("resource");
   const redirects = Array.isArray(client?.redirect_uris) ? client.redirect_uris.filter((x): x is string => typeof x === "string") : [];
-  const requested = [...new Set([...scope.split(/\\s+/).filter(Boolean), "ux:learn"])];
+  const requested = [...new Set([...scope.split(/\s+/).filter(Boolean), "ux:learn"])];
   if (!client || !redirects.includes(redirectUri) || val("response_type") !== "code" || method !== "S256" ||
       !/^[A-Za-z0-9_-]{43,128}$/.test(challenge) || !state || state.length > 2048 ||
       requested.some(value => !(MCP_SCOPES as readonly string[]).includes(value))) return null;
