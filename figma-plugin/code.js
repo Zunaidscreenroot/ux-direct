@@ -883,6 +883,16 @@ async function runNativeApiHealthCheck(commandId) {
     }
   }
 }
+function canvasColorHex(color) {
+  if (!color || typeof color.r !== "number" || typeof color.g !== "number" || typeof color.b !== "number") return null;
+  function ch(n) { return Math.max(0, Math.min(255, Math.round(n * 255))).toString(16).padStart(2, "0"); }
+  return "#" + ch(color.r) + ch(color.g) + ch(color.b).toUpperCase();
+}
+function summarizePaintColors(paints) {
+  if (!Array.isArray(paints)) return [];
+  return paints.filter(function (paint) { return paint && paint.type === "SOLID" && paint.visible !== false && paint.color; })
+    .slice(0, 3).map(function (paint) { return canvasColorHex(paint.color); }).filter(Boolean);
+}
 function summarizeCanvasNode(node, depth, state) {
   if (!node || state.count >= state.maxNodes) { state.truncated = true; return null; }
   state.count += 1;
@@ -893,10 +903,39 @@ function summarizeCanvasNode(node, depth, state) {
   if (typeof node.width === "number") out.width = node.width;
   if (typeof node.height === "number") out.height = node.height;
   if (typeof node.rotation === "number") out.rotation = node.rotation;
+  if (typeof node.opacity === "number") out.opacity = node.opacity;
+  if (typeof node.strokeWeight === "number") out.strokeWeight = node.strokeWeight;
+  if (typeof node.cornerRadius === "number") out.cornerRadius = node.cornerRadius;
+  if (typeof node.clipsContent === "boolean") out.clipsContent = node.clipsContent;
+  if ("fills" in node) {
+    var fills = summarizePaintColors(node.fills);
+    if (fills.length) out.fillColors = fills;
+  }
+  if ("strokes" in node) {
+    var strokes = summarizePaintColors(node.strokes);
+    if (strokes.length) out.strokeColors = strokes;
+  }
+  if (typeof node.layoutMode === "string" && node.layoutMode !== "NONE") {
+    out.layoutMode = node.layoutMode;
+    ["itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
+      "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"].forEach(function (key) {
+      if (node[key] !== undefined && node[key] !== figma.mixed) out[key] = node[key];
+    });
+  }
+  if ("effects" in node && Array.isArray(node.effects) && node.effects.length) {
+    out.effectTypes = node.effects.slice(0, 4).map(function (effect) { return effect.type; });
+  }
   if (node.type === "TEXT" && typeof node.characters === "string") {
     out.text = node.characters.slice(0, 700);
     out.textTruncated = node.characters.length > 700;
     if (typeof node.fontSize === "number") out.fontSize = node.fontSize;
+    if (node.fontName && typeof node.fontName === "object" && node.fontName !== figma.mixed) {
+      if (typeof node.fontName.family === "string") out.fontFamily = node.fontName.family;
+      if (typeof node.fontName.style === "string") out.fontStyle = node.fontName.style;
+    }
+    ["textAlignHorizontal", "textAlignVertical", "textAutoResize", "textCase", "textDecoration"].forEach(function (key) {
+      if (node[key] !== undefined && node[key] !== figma.mixed) out[key] = node[key];
+    });
   }
   if ("children" in node) {
     out.childCount = node.children.length;
@@ -911,26 +950,61 @@ function summarizeCanvasNode(node, depth, state) {
   }
   return out;
 }
-function readCanvasCommand(payload) {
+async function readCanvasCommand(payload) {
   assertUxDirectFileScope("read canvas");
   payload = payload || {};
   var scope = payload.scope === "current-page" ? "current-page" : "selection";
   var maxDepth = Math.max(0, Math.min(4, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
   var maxNodes = Math.max(1, Math.min(100, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
-  var source = scope === "current-page" ? figma.currentPage.children : figma.currentPage.selection;
+  var isSearch = (typeof payload.queryName === "string" && payload.queryName.trim()) ||
+    (typeof payload.queryType === "string" && payload.queryType.trim());
+  var source;
+  if (isSearch) {
+    var nameNeedle = typeof payload.queryName === "string" ? payload.queryName.trim().toLowerCase() : "";
+    var typeNeedle = typeof payload.queryType === "string" ? payload.queryType.trim().toUpperCase() : "";
+    source = figma.currentPage.findAll(function (node) {
+      if (!node || node.type === "PAGE" || node.type === "DOCUMENT") return false;
+      if (nameNeedle && String(node.name || "").toLowerCase().indexOf(nameNeedle) < 0) return false;
+      if (typeNeedle && String(node.type || "").toUpperCase() !== typeNeedle) return false;
+      return true;
+    });
+    scope = "search-current-page";
+  } else {
+    source = scope === "current-page" ? figma.currentPage.children : figma.currentPage.selection;
+  }
   var state = { count: 0, maxNodes: maxNodes, truncated: false };
   var nodes = [];
   for (var i = 0; i < source.length; i++) {
     if (state.count >= state.maxNodes) { state.truncated = true; break; }
-    var item = summarizeCanvasNode(source[i], maxDepth, state);
+    var item = summarizeCanvasNode(source[i], isSearch ? 0 : maxDepth, state);
     if (item) nodes.push(item);
   }
-  return {
+  var result = {
     ok: true, operation: "read-canvas", fileKey: figma.fileKey,
     pageId: figma.currentPage.id, pageName: figma.currentPage.name,
-    scope: scope, maxDepth: maxDepth, maxNodes: maxNodes,
-    nodeCount: state.count, truncated: state.truncated, nodes: nodes
+    scope: scope, maxDepth: isSearch ? 0 : maxDepth, maxNodes: maxNodes,
+    nodeCount: state.count, truncated: state.truncated, nodes: nodes,
+    viewport: { zoom: figma.viewport.zoom, bounds: figma.viewport.bounds }
   };
+  if (payload.includePages === true) {
+    result.pages = figma.root.children.slice(0, 100).map(function (page) { return { id: page.id, name: page.name }; });
+    result.pagesTruncated = figma.root.children.length > 100;
+  }
+  if (payload.includeStyles === true) {
+    var styles = await Promise.all([
+      figma.getLocalPaintStylesAsync(),
+      figma.getLocalTextStylesAsync(),
+      figma.getLocalEffectStylesAsync(),
+      figma.getLocalGridStylesAsync()
+    ]);
+    result.styles = {
+      paint: styles[0].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; }),
+      text: styles[1].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; }),
+      effect: styles[2].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; }),
+      grid: styles[3].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; })
+    };
+  }
+  return result;
 }
 function parseHexColor(hex) {
   if (typeof hex !== "string" || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
@@ -1064,7 +1138,7 @@ async function writeCanvasCommand(payload) {
     if (!Array.isArray(payload.actions) || payload.actions.length < 1 || payload.actions.length > 40) {
       throw new Error("batch requires 1 to 40 validated actions.");
     }
-    if (payload.actions.some(function (step) { return step && step.operation === "export-svg"; }) && payload.actions.length > 1) {
+    if (payload.actions.some(function (step) { return step && ["export-svg", "export-node"].includes(step.operation); }) && payload.actions.length > 1) {
       throw new Error("SVG export must be a standalone command to preserve the result-size limit.");
     }
     var batchResults = [];
