@@ -163,8 +163,6 @@ const CANVAS_WRITE_STEP = z.object({
   nodeId: z.string().trim().min(1).max(100).optional(),
   parentNodeId: z.string().trim().min(1).max(100).optional(),
   pageId: z.string().trim().min(1).max(100).optional(),
-  parentNodeId: z.string().trim().min(1).max(100).optional(),
-  pageId: z.string().trim().min(1).max(100).optional(),
   nodeIds: z.array(z.string().trim().min(1).max(100)).max(100).optional(),
   index: z.number().int().min(0).max(10000).optional(),
   pageName: z.string().trim().min(1).max(120).optional(),
@@ -181,14 +179,16 @@ const CANVAS_WRITE_STEP = z.object({
 }).strict();
 const CANVAS_WRITE_PAYLOAD = z.object({
   operation: z.enum([
-    "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+    "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node",
     "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
-    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
+    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
   ]),
   confirm: z.literal(true),
   target: z.enum(["current-page", "selection", "test-lab"]).optional(),
   elements: z.array(CANVAS_ELEMENT).min(1).max(20).optional(),
   nodeId: z.string().trim().min(1).max(100).optional(),
+  parentNodeId: z.string().trim().min(1).max(100).optional(),
+  pageId: z.string().trim().min(1).max(100).optional(),
   nodeIds: z.array(z.string().trim().min(1).max(100)).max(100).optional(),
   index: z.number().int().min(0).max(10000).optional(),
   pageName: z.string().trim().min(1).max(120).optional(),
