@@ -117,7 +117,7 @@ const CANVAS_PATCH = z.object({
 });
 const CANVAS_WRITE_STEP = z.object({
   operation: z.enum([
-    "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+    "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
     "group-nodes", "ungroup-node", "create-component", "create-instance",
     "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style",
   ]),
@@ -134,7 +134,7 @@ const CANVAS_WRITE_STEP = z.object({
 }).strict();
 const CANVAS_WRITE_PAYLOAD = z.object({
   operation: z.enum([
-    "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+    "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
     "group-nodes", "ungroup-node", "create-component", "create-instance",
     "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style",
   ]),
