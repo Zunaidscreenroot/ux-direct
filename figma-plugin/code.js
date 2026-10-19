@@ -883,6 +883,176 @@ async function runNativeApiHealthCheck(commandId) {
     }
   }
 }
+function summarizeCanvasNode(node, depth, state) {
+  if (!node || state.count >= state.maxNodes) { state.truncated = true; return null; }
+  state.count += 1;
+  var out = { id: node.id, name: node.name, type: node.type };
+  if (typeof node.visible === "boolean") out.visible = node.visible;
+  if (typeof node.x === "number") out.x = node.x;
+  if (typeof node.y === "number") out.y = node.y;
+  if (typeof node.width === "number") out.width = node.width;
+  if (typeof node.height === "number") out.height = node.height;
+  if (typeof node.rotation === "number") out.rotation = node.rotation;
+  if (node.type === "TEXT" && typeof node.characters === "string") {
+    out.text = node.characters.slice(0, 700);
+    out.textTruncated = node.characters.length > 700;
+    if (typeof node.fontSize === "number") out.fontSize = node.fontSize;
+  }
+  if ("children" in node) {
+    out.childCount = node.children.length;
+    if (depth > 0) {
+      out.children = [];
+      for (var i = 0; i < node.children.length; i++) {
+        if (state.count >= state.maxNodes) { state.truncated = true; break; }
+        var child = summarizeCanvasNode(node.children[i], depth - 1, state);
+        if (child) out.children.push(child);
+      }
+    }
+  }
+  return out;
+}
+function readCanvasCommand(payload) {
+  assertUxDirectFileScope("read canvas");
+  payload = payload || {};
+  var scope = payload.scope === "current-page" ? "current-page" : "selection";
+  var maxDepth = Math.max(0, Math.min(4, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
+  var maxNodes = Math.max(1, Math.min(100, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
+  var source = scope === "current-page" ? figma.currentPage.children : figma.currentPage.selection;
+  var state = { count: 0, maxNodes: maxNodes, truncated: false };
+  var nodes = [];
+  for (var i = 0; i < source.length; i++) {
+    if (state.count >= state.maxNodes) { state.truncated = true; break; }
+    var item = summarizeCanvasNode(source[i], maxDepth, state);
+    if (item) nodes.push(item);
+  }
+  return {
+    ok: true, operation: "read-canvas", fileKey: figma.fileKey,
+    pageId: figma.currentPage.id, pageName: figma.currentPage.name,
+    scope: scope, maxDepth: maxDepth, maxNodes: maxNodes,
+    nodeCount: state.count, truncated: state.truncated, nodes: nodes
+  };
+}
+function parseHexColor(hex) {
+  if (typeof hex !== "string" || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
+  return {
+    r: parseInt(hex.slice(1, 3), 16) / 255,
+    g: parseInt(hex.slice(3, 5), 16) / 255,
+    b: parseInt(hex.slice(5, 7), 16) / 255
+  };
+}
+async function resolveCanvasWriteParent(target) {
+  assertUxDirectFileScope("resolve canvas write target");
+  if (target === "current-page" || !target) return figma.currentPage;
+  if (target === "selection") {
+    var selected = figma.currentPage.selection;
+    if (selected.length !== 1 || !("children" in selected[0]) || typeof selected[0].appendChild !== "function") {
+      throw new Error("Select exactly one frame or container layer before writing to selection.");
+    }
+    return selected[0];
+  }
+  if (target === "test-lab") {
+    await figma.loadAllPagesAsync();
+    var page = figma.root.children.find(function (item) { return item.name === UXD_API_TEST_LAB_PAGE; }) || null;
+    if (!page) throw new Error("UXD API Test Lab page not found. Run the native Figma API health check first to create it.");
+    await page.loadAsync();
+    var harnessName = "__UXD CANVAS BRIDGE TESTS";
+    var harness = page.children.find(function (item) { return item.type === "FRAME" && item.name === harnessName; }) || null;
+    if (!harness) {
+      harness = figma.createFrame();
+      harness.name = harnessName;
+      harness.resize(900, 600);
+      harness.fills = [{ type: "SOLID", color: { r: 0.96, g: 0.97, b: 0.99 } }];
+      page.appendChild(harness);
+    }
+    return harness;
+  }
+  throw new Error("Unsupported write target. Use current-page, selection, or test-lab.");
+}
+async function writeCanvasCommand(payload) {
+  assertUxDirectFileScope("write canvas");
+  payload = payload || {};
+  if (payload.confirm !== true) throw new Error("Write blocked: confirm must be true after an explicit user request.");
+  if (payload.operation === "create-elements") {
+    if (!Array.isArray(payload.elements) || payload.elements.length < 1 || payload.elements.length > 20) {
+      throw new Error("Create-elements requires 1 to 20 validated elements.");
+    }
+    var parent = await resolveCanvasWriteParent(payload.target || "current-page");
+    var created = [];
+    for (var i = 0; i < payload.elements.length; i++) {
+      assertUxDirectFileScope("create canvas element");
+      var spec = payload.elements[i] || {};
+      var type = spec.type;
+      var node;
+      if (type === "FRAME") node = figma.createFrame();
+      else if (type === "RECTANGLE") node = figma.createRectangle();
+      else if (type === "ELLIPSE") node = figma.createEllipse();
+      else if (type === "TEXT") node = figma.createText();
+      else throw new Error("Unsupported element type: " + String(type));
+      node.name = typeof spec.name === "string" && spec.name.trim() ? spec.name.trim() : "UX Direct " + type;
+      var width = Number.isFinite(spec.width) ? spec.width : (type === "TEXT" ? 280 : 160);
+      var height = Number.isFinite(spec.height) ? spec.height : (type === "TEXT" ? 40 : 100);
+      width = Math.max(1, Math.min(4096, width));
+      height = Math.max(1, Math.min(4096, height));
+      if (typeof node.resize === "function") node.resize(width, height);
+      if (type === "TEXT") {
+        var font = { family: "Inter", style: "Regular" };
+        await figma.loadFontAsync(font);
+        node.fontName = font;
+        node.fontSize = Number.isFinite(spec.fontSize) ? Math.max(8, Math.min(72, spec.fontSize)) : 14;
+        node.characters = typeof spec.text === "string" ? spec.text.slice(0, 5000) : "";
+      }
+      var color = parseHexColor(spec.color);
+      if (color && "fills" in node && type !== "TEXT") node.fills = [{ type: "SOLID", color: color }];
+      if (color && type === "TEXT") node.fills = [{ type: "SOLID", color: color }];
+      parent.appendChild(node);
+      node.x = Number.isFinite(spec.x) ? Math.max(-10000, Math.min(10000, spec.x)) : 0;
+      node.y = Number.isFinite(spec.y) ? Math.max(-10000, Math.min(10000, spec.y)) : i * (height + 24);
+      created.push({ id: node.id, name: node.name, type: node.type, x: node.x, y: node.y, width: node.width, height: node.height });
+    }
+    return { ok: true, operation: "create-elements", fileKey: figma.fileKey, pageName: parent.type === "PAGE" ? parent.name : (parent.parent && parent.parent.name) || figma.currentPage.name, target: payload.target || "current-page", createdCount: created.length, nodes: created };
+  }
+  if (payload.operation === "update-node") {
+    if (typeof payload.nodeId !== "string" || !payload.nodeId.trim()) throw new Error("update-node requires a nodeId.");
+    var patch = payload.patch;
+    if (!patch || typeof patch !== "object" || Array.isArray(patch) || Object.keys(patch).length === 0) throw new Error("update-node requires a non-empty property patch.");
+    var targetNode = figma.currentPage.findOne(function (item) { return item.id === payload.nodeId; });
+    if (!targetNode) throw new Error("Node not found on the current page. Read the canvas first and use a current-page node ID.");
+    if (typeof patch.name === "string") targetNode.name = patch.name.slice(0, 120);
+    if (typeof patch.visible === "boolean") targetNode.visible = patch.visible;
+    if (Number.isFinite(patch.x)) targetNode.x = Math.max(-10000, Math.min(10000, patch.x));
+    if (Number.isFinite(patch.y)) targetNode.y = Math.max(-10000, Math.min(10000, patch.y));
+    if (Number.isFinite(patch.rotation)) targetNode.rotation = patch.rotation;
+    if (Number.isFinite(patch.width) || Number.isFinite(patch.height)) {
+      if (typeof targetNode.resize !== "function") throw new Error("This node type does not support resizing.");
+      targetNode.resize(
+        Number.isFinite(patch.width) ? Math.max(1, Math.min(4096, patch.width)) : targetNode.width,
+        Number.isFinite(patch.height) ? Math.max(1, Math.min(4096, patch.height)) : targetNode.height
+      );
+    }
+    return { ok: true, operation: "update-node", fileKey: figma.fileKey, pageName: figma.currentPage.name, node: { id: targetNode.id, name: targetNode.name, type: targetNode.type, visible: targetNode.visible, x: targetNode.x, y: targetNode.y, width: targetNode.width, height: targetNode.height, rotation: targetNode.rotation } };
+  }
+  throw new Error("Unsupported canvas write operation.");
+}
+async function runCanvasCommand(command) {
+  assertUxDirectFileScope("execute canvas command");
+  var result = null;
+  var errorText = null;
+  try {
+    if (!command || typeof command.commandId !== "string") throw new Error("Invalid canvas command envelope.");
+    if (command.action === "read-canvas") result = readCanvasCommand(command.payload);
+    else if (command.action === "write-canvas") result = await writeCanvasCommand(command.payload);
+    else throw new Error("Unsupported canvas command action.");
+  } catch (error) {
+    errorText = error && error.message ? String(error.message).slice(0, 1000) : "Canvas command failed.";
+  }
+  figma.ui.postMessage({
+    type: "canvas-command-result",
+    commandId: command && command.commandId,
+    result: result,
+    error: errorText
+  });
+}
+
 figma.ui.onmessage = async function (message) {
   if (!message) return;
   if (message.type === "native-api-probe-ack" && message.probeId && UXD_NATIVE_API_PROBE_WAITERS[message.probeId]) {
@@ -893,6 +1063,7 @@ figma.ui.onmessage = async function (message) {
   }
   if (message.type === "get-selection") { assertUxDirectFileScope("refresh selection"); sendSelection(); }
   if (message.type === "run-native-health-check") { assertUxDirectFileScope("start health-check command"); await runNativeApiHealthCheck(message.commandId); }
+  if (message.type === "run-canvas-command") { assertUxDirectFileScope("start canvas command"); await runCanvasCommand(message.command); }
   if (message.type === "close") { assertUxDirectFileScope("close plugin"); figma.closePlugin(); }
 };
 sendSelection();
