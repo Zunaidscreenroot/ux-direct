@@ -37,13 +37,13 @@ export async function GET(request: Request) {
       oauthRequired: false,
       oauthConfigured: figmaOAuthConfigured,
       status: "native_plugin_bridge",
-      note: "Figma document access for this product uses the installed plugin's native Figma Plugin APIs; Figma OAuth is not required for that path. The current MCP bridge exposes plugin heartbeat and API diagnostics, while general-purpose design read/write commands are not yet exposed. Live plugin reachability is reported separately."
+      note: "Figma document access uses the installed plugin's native Figma Plugin APIs. The MCP server exposes bounded selection/current-page reads and restricted create/update writes through the authenticated plugin command bridge; execution results must be checked by command ID. The locally imported plugin must include the current bridge command handler. Live plugin reachability is reported separately."
     },
     capabilities: {
       taskPlanning: true,
-      figmaRead: false,
-      figmaWrite: false,
-      figmaExecution: "diagnostics_only",
+      figmaRead: true,
+      figmaWrite: true,
+      figmaExecution: "scoped_native_plugin_commands",
       operationalLog: "best_effort_runtime"
     }
   }, { headers: corsHeaders(origin) });
