@@ -469,11 +469,11 @@ const TOOLS = [
   },
   {
     name: "ux_direct_figma_canvas_write",
-    description: "Execute a narrowly scoped native Figma Plugin API write in the allowlisted file. Supported: create 1–20 frames, rectangles, ellipses or text; update a current-page node's name, visibility, position, size or rotation. Requires confirm=true and should only be called for a specific edit the owner explicitly requested. Use target=test-lab for safe bridge smoke tests, selection for an explicitly selected container, or current-page for the active page. Retrieve execution verification with ux_direct_figma_canvas_command_status. Deletes, arbitrary code, variables, component-library imports and bulk replacement are not supported.",
+    description: "Run explicit, validated native Figma canvas actions through the allowlisted UX Direct plugin. Supports ordered batches of up to 40 actions, creating frames/shapes/text, editing geometry/typography/fills/strokes/auto-layout/effects, cloning/deleting/reordering/grouping nodes, creating/detaching components and instances, applying local styles, selection/viewport control, page creation/rename, and SVG export. Every write requires confirm=true and is audited; deletion is limited to a node on the current page. No arbitrary code execution, unrestricted document traversal, library publishing, or bulk replacement. Retrieve verified results with ux_direct_figma_canvas_command_status.",
     inputSchema: {
       type: "object",
       properties: {
-        operation: { type: "string", enum: ["create-elements", "update-node"] },
+        operation: { type: "string", enum: ["batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "ungroup-node", "create-component", "create-instance", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"] },
         confirm: { type: "boolean", const: true, description: "Must be true only after the owner explicitly requests this specific write." },
         target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
         elements: {
@@ -481,21 +481,71 @@ const TOOLS = [
           items: {
             type: "object",
             properties: {
-              type: { type: "string", enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT"] },
+              type: { type: "string", enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE"] },
               name: { type: "string", minLength: 1, maxLength: 80 },
               x: { type: "number", minimum: -10000, maximum: 10000 },
               y: { type: "number", minimum: -10000, maximum: 10000 },
               width: { type: "number", minimum: 1, maximum: 4096 },
               height: { type: "number", minimum: 1, maximum: 4096 },
               text: { type: "string", maxLength: 5000 },
-              fontSize: { type: "number", minimum: 8, maximum: 72 },
-              color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }
+              fontSize: { type: "number", minimum: 8, maximum: 144 },
+              color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+              strokeColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+              strokeWeight: { type: "number", minimum: 0, maximum: 100 },
+              opacity: { type: "number", minimum: 0, maximum: 1 },
+              rotation: { type: "number", minimum: -360, maximum: 360 },
+              cornerRadius: { type: "number", minimum: 0, maximum: 512 },
+              clipsContent: { type: "boolean" },
+              layoutMode: { type: "string", enum: ["NONE", "HORIZONTAL", "VERTICAL"] },
+              itemSpacing: { type: "number", minimum: -100, maximum: 1000 },
+              fontFamily: { type: "string", minLength: 1, maxLength: 100 },
+              fontStyle: { type: "string", minLength: 1, maxLength: 100 },
+              paddingLeft: { type: "number", minimum: 0, maximum: 1000 },
+              paddingRight: { type: "number", minimum: 0, maximum: 1000 },
+              paddingTop: { type: "number", minimum: 0, maximum: 1000 },
+              paddingBottom: { type: "number", minimum: 0, maximum: 1000 },
+              primaryAxisAlignItems: { type: "string", enum: ["MIN", "MAX", "CENTER", "SPACE_BETWEEN"] },
+              counterAxisAlignItems: { type: "string", enum: ["MIN", "MAX", "CENTER", "BASELINE"] },
+              primaryAxisSizingMode: { type: "string", enum: ["AUTO", "FIXED"] },
+              counterAxisSizingMode: { type: "string", enum: ["AUTO", "FIXED"] },
+              textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] },
+              textAlignVertical: { type: "string", enum: ["TOP", "CENTER", "BOTTOM"] },
+              textAutoResize: { type: "string", enum: ["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"] },
+            textCase: { type: "string", enum: ["ORIGINAL", "UPPER", "LOWER", "TITLE"] },
+            textDecoration: { type: "string", enum: ["NONE", "UNDERLINE", "STRIKETHROUGH"] },
+              shadowColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+              shadowBlur: { type: "number", minimum: 0, maximum: 200 },
+              shadowX: { type: "number", minimum: -200, maximum: 200 },
+              shadowY: { type: "number", minimum: -200, maximum: 200 },
+              shadowSpread: { type: "number", minimum: -200, maximum: 200 }
             },
             required: ["type", "name"],
             additionalProperties: false
           }
         },
         nodeId: { type: "string", minLength: 1, maxLength: 100 },
+        actions: {
+          type: "array", minItems: 1, maxItems: 40,
+          description: "Sequential canvas actions. Batch is non-atomic: completed earlier steps remain if a later action fails. SVG export must be the only step.",
+          items: {
+            type: "object",
+            properties: {
+              operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "ungroup-node", "create-component", "create-instance", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"] },
+              target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
+              nodeId: { type: "string", minLength: 1, maxLength: 100 },
+              nodeIds: { type: "array", items: { type: "string", minLength: 1, maxLength: 100 }, maxItems: 100 },
+              index: { type: "integer", minimum: 0, maximum: 10000 },
+              pageName: { type: "string", minLength: 1, maxLength: 120 },
+              styleKind: { type: "string", enum: ["paint", "text", "effect", "grid"] },
+              styleId: { type: "string", minLength: 1, maxLength: 300 },
+              styleName: { type: "string", minLength: 1, maxLength: 240 },
+              elements: { type: "array", minItems: 1, maxItems: 20, items: { type: "object", additionalProperties: true } },
+              patch: { type: "object", additionalProperties: true }
+            },
+            required: ["operation"],
+            additionalProperties: false
+          }
+        },
         patch: {
           type: "object",
           properties: {
@@ -505,15 +555,53 @@ const TOOLS = [
             y: { type: "number", minimum: -10000, maximum: 10000 },
             width: { type: "number", minimum: 1, maximum: 4096 },
             height: { type: "number", minimum: 1, maximum: 4096 },
-            rotation: { type: "number", minimum: -360, maximum: 360 }
+            rotation: { type: "number", minimum: -360, maximum: 360 },
+            opacity: { type: "number", minimum: 0, maximum: 1 },
+            fillColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+            strokeColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+            strokeWeight: { type: "number", minimum: 0, maximum: 100 },
+            cornerRadius: { type: "number", minimum: 0, maximum: 512 },
+            clipsContent: { type: "boolean" },
+            text: { type: "string", maxLength: 5000 },
+            fontFamily: { type: "string", minLength: 1, maxLength: 100 },
+            fontStyle: { type: "string", minLength: 1, maxLength: 100 },
+            fontSize: { type: "number", minimum: 8, maximum: 144 },
+            textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] },
+            textAlignVertical: { type: "string", enum: ["TOP", "CENTER", "BOTTOM"] },
+            textAutoResize: { type: "string", enum: ["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"] },
+            layoutMode: { type: "string", enum: ["NONE", "HORIZONTAL", "VERTICAL"] },
+            itemSpacing: { type: "number", minimum: -100, maximum: 1000 },
+            paddingLeft: { type: "number", minimum: 0, maximum: 1000 },
+            paddingRight: { type: "number", minimum: 0, maximum: 1000 },
+            paddingTop: { type: "number", minimum: 0, maximum: 1000 },
+            paddingBottom: { type: "number", minimum: 0, maximum: 1000 },
+            primaryAxisAlignItems: { type: "string", enum: ["MIN", "MAX", "CENTER", "SPACE_BETWEEN"] },
+            counterAxisAlignItems: { type: "string", enum: ["MIN", "MAX", "CENTER", "BASELINE"] },
+            primaryAxisSizingMode: { type: "string", enum: ["AUTO", "FIXED"] },
+            counterAxisSizingMode: { type: "string", enum: ["AUTO", "FIXED"] },
+            horizontalConstraint: { type: "string", enum: ["MIN", "CENTER", "MAX", "STRETCH", "SCALE"] },
+            verticalConstraint: { type: "string", enum: ["MIN", "CENTER", "MAX", "STRETCH", "SCALE"] },
+            textCase: { type: "string", enum: ["ORIGINAL", "UPPER", "LOWER", "TITLE"] },
+            textDecoration: { type: "string", enum: ["NONE", "UNDERLINE", "STRIKETHROUGH"] },
+            shadowColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+            shadowBlur: { type: "number", minimum: 0, maximum: 200 },
+            shadowX: { type: "number", minimum: -200, maximum: 200 },
+            shadowY: { type: "number", minimum: -200, maximum: 200 },
+            shadowSpread: { type: "number", minimum: -200, maximum: 200 }
           },
           additionalProperties: false
-        }
+        },
+        nodeIds: { type: "array", items: { type: "string", minLength: 1, maxLength: 100 }, maxItems: 100 },
+        index: { type: "integer", minimum: 0, maximum: 10000 },
+        pageName: { type: "string", minLength: 1, maxLength: 120 },
+        styleKind: { type: "string", enum: ["paint", "text", "effect", "grid"] },
+        styleId: { type: "string", minLength: 1, maxLength: 300 },
+        styleName: { type: "string", minLength: 1, maxLength: 240 }
       },
       required: ["operation", "confirm"],
       additionalProperties: false
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
   {
     name: "ux_direct_figma_canvas_command_status",
@@ -842,33 +930,75 @@ async function callTool(name: string, args: unknown, request: Request) {
   if (name === "ux_direct_figma_canvas_write") {
     if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
     const input = args as Record<string, unknown>;
-    if (input.confirm !== true) return toolText({ error: "Write blocked: confirm=true is required after an explicit request for this specific canvas edit." }, true);
-    if (input.operation !== "create-elements" && input.operation !== "update-node") return toolText({ error: "operation must be create-elements or update-node." }, true);
+    const allowedOperations = new Set([
+      "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+      "group-nodes", "ungroup-node", "create-component", "create-instance",
+      "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style",
+    ]);
+    if (input.confirm !== true) return toolText({ error: "Write blocked: confirm=true is required after an explicit request for this specific canvas action." }, true);
+    if (typeof input.operation !== "string" || !allowedOperations.has(input.operation)) {
+      return toolText({ error: "operation is not a supported Figma canvas action." }, true);
+    }
     const payload: Record<string, unknown> = {
       operation: input.operation, confirm: true,
       ...(input.target === undefined ? {} : { target: input.target }),
       ...(input.elements === undefined ? {} : { elements: input.elements }),
       ...(input.nodeId === undefined ? {} : { nodeId: input.nodeId }),
+      ...(input.nodeIds === undefined ? {} : { nodeIds: input.nodeIds }),
+      ...(input.index === undefined ? {} : { index: input.index }),
+      ...(input.pageName === undefined ? {} : { pageName: input.pageName }),
+      ...(input.styleKind === undefined ? {} : { styleKind: input.styleKind }),
+      ...(input.styleId === undefined ? {} : { styleId: input.styleId }),
+      ...(input.styleName === undefined ? {} : { styleName: input.styleName }),
       ...(input.patch === undefined ? {} : { patch: input.patch }),
+      ...(input.actions === undefined ? {} : { actions: input.actions }),
     };
+    if (input.target !== undefined && !["current-page", "selection", "test-lab"].includes(String(input.target))) {
+      return toolText({ error: "target must be current-page, selection, or test-lab." }, true);
+    }
+    if (input.operation === "batch" && (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 40)) return toolText({ error: "batch requires 1–40 actions." }, true);
+    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && (step as Record<string, unknown>).operation === "export-svg") && input.actions.length > 1) return toolText({ error: "SVG export must be a standalone command." }, true);
+    if (input.operation !== "batch" && input.actions !== undefined) return toolText({ error: "actions is supported only for batch." }, true);
     if (input.operation === "create-elements") {
-      if (!Array.isArray(input.elements) || input.elements.length < 1 || input.elements.length > 20) return toolText({ error: "create-elements requires 1–20 elements." }, true);
-      if (input.target !== undefined && !["current-page", "selection", "test-lab"].includes(String(input.target))) return toolText({ error: "target must be current-page, selection, or test-lab." }, true);
-      const allowedTypes = new Set(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT"]);
+      if (!Array.isArray(input.elements) || input.elements.length < 1 || input.elements.length > 20) {
+        return toolText({ error: "create-elements requires 1–20 elements." }, true);
+      }
+      const allowedTypes = new Set(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE"]);
       for (const item of input.elements) {
         if (!item || typeof item !== "object" || Array.isArray(item)) return toolText({ error: "Each element must be an object." }, true);
         const element = item as Record<string, unknown>;
-        if (!allowedTypes.has(String(element.type)) || typeof element.name !== "string" || !element.name.trim()) return toolText({ error: "Each element requires a supported type and non-empty name." }, true);
+        if (!allowedTypes.has(String(element.type)) || typeof element.name !== "string" || !element.name.trim()) {
+          return toolText({ error: "Each element requires a supported type and non-empty name." }, true);
+        }
         if (element.type === "TEXT" && typeof element.text !== "string") return toolText({ error: "TEXT elements require text content." }, true);
       }
-    } else {
+    }
+    if (input.operation === "update-node") {
       if (typeof input.nodeId !== "string" || !input.nodeId.trim()) return toolText({ error: "update-node requires nodeId." }, true);
-      if (!input.patch || typeof input.patch !== "object" || Array.isArray(input.patch) || !Object.keys(input.patch as Record<string, unknown>).length) return toolText({ error: "update-node requires a non-empty patch." }, true);
+      if (!input.patch || typeof input.patch !== "object" || Array.isArray(input.patch) || !Object.keys(input.patch as Record<string, unknown>).length) {
+        return toolText({ error: "update-node requires a non-empty patch." }, true);
+      }
+    }
+    const nodeRequired = new Set(["clone-node", "delete-node", "reorder-node", "ungroup-node", "create-component", "create-instance", "detach-instance", "export-svg", "apply-style"]);
+    if (nodeRequired.has(input.operation) && (typeof input.nodeId !== "string" || !input.nodeId.trim())) {
+      return toolText({ error: input.operation + " requires nodeId." }, true);
+    }
+    if (input.operation === "group-nodes" && (!Array.isArray(input.nodeIds) || input.nodeIds.length < 2 || input.nodeIds.length > 100)) {
+      return toolText({ error: "group-nodes requires at least two nodeIds." }, true);
+    }
+    if (input.operation === "apply-style" && (typeof input.styleKind !== "string" || !["paint", "text", "effect", "grid"].includes(input.styleKind) || (!(typeof input.styleId === "string" && input.styleId.trim()) && !(typeof input.styleName === "string" && input.styleName.trim())))) {
+      return toolText({ error: "apply-style requires styleKind and either styleId or styleName." }, true);
+    }
+    if (input.operation === "reorder-node" && !Number.isInteger(input.index)) return toolText({ error: "reorder-node requires an integer index." }, true);
+    if (input.operation === "set-selection" && !Array.isArray(input.nodeIds)) return toolText({ error: "set-selection requires nodeIds; pass [] to clear selection." }, true);
+    if (input.operation === "zoom-to-nodes" && (!Array.isArray(input.nodeIds) || input.nodeIds.length < 1)) return toolText({ error: "zoom-to-nodes requires at least one nodeId." }, true);
+    if ((input.operation === "create-page" || input.operation === "rename-page") && (typeof input.pageName !== "string" || !input.pageName.trim())) {
+      return toolText({ error: input.operation + " requires pageName." }, true);
     }
     try {
       return toolText(await queueFigmaCanvasCommand(request, "write-canvas", payload));
     } catch (error) {
-      return toolText({ status: "error", error: error instanceof Error ? error.message : "Could not queue Figma canvas write." }, true);
+      return toolText({ status: "error", error: error instanceof Error ? error.message : "Could not queue Figma canvas action." }, true);
     }
   }
 

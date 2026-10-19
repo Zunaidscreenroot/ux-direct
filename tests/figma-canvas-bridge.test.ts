@@ -19,8 +19,13 @@ test("MCP exposes bounded canvas read, constrained write, and command status too
 
 test("canvas write tool requires explicit confirmation and supports only named operations", () => {
   assert.ok(mcp.includes('if (input.confirm !== true)'));
-  assert.ok(mcp.includes('operation: { type: "string", enum: ["create-elements", "update-node"] }'));
-  assert.ok(mcp.includes('enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT"]'));
+  assert.ok(mcp.includes('"clone-node", "delete-node", "reorder-node"'));
+  assert.ok(mcp.includes('"group-nodes", "ungroup-node", "create-component", "create-instance"'));
+  assert.ok(mcp.includes('"set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"'));
+  assert.ok(mcp.includes('enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE"]'));
+  assert.ok(mcp.includes('textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] }'));
+  assert.ok(mcp.includes('paddingLeft: { type: "number", minimum: 0, maximum: 1000 }'));
+  assert.ok(mcp.includes('shadowBlur: { type: "number", minimum: 0, maximum: 200 }'));
   assert.ok(mcp.includes('target=test-lab'));
   assert.ok(!mcp.includes('figma.deleteNode'));
 });
@@ -39,11 +44,42 @@ test("native plugin checks the approved file before canvas access and caps reads
   assert.ok(plugin.includes('Math.min(4, Number.isInteger(payload.maxDepth)'));
   assert.ok(plugin.includes('Math.min(100, Number.isInteger(payload.maxNodes)'));
   assert.ok(plugin.includes('type === "run-canvas-command"'));
-  assert.ok(plugin.includes('figma.currentPage.findOne(function (item) { return item.id === payload.nodeId; })'));
+  assert.ok(plugin.includes('function findPageNode(id)'));
+  assert.ok(plugin.includes('figma.currentPage.findOne(function (item) { return item.id === id; })'));
 });
 
 test("plugin UI dispatches only recognized command types and reports the result to the bridge", () => {
   assert.ok(pluginUi.includes('command.action === "read-canvas" || command.action === "write-canvas"'));
   assert.ok(pluginUi.includes('mode: "canvas-result"'));
   assert.ok(pluginUi.includes('operationError: message.error || undefined'));
+});
+
+
+test("canvas writer exposes native node, layout, style, component, selection, page, and export actions", () => {
+  for (const action of [
+    '"clone-node"', '"delete-node"', '"reorder-node"', '"group-nodes"', '"ungroup-node"',
+    '"create-component"', '"create-instance"', '"detach-instance"', '"set-selection"',
+    '"zoom-to-nodes"', '"create-page"', '"rename-page"', '"export-svg"', '"apply-style"',
+  ]) {
+    assert.ok(mcp.includes(action), "MCP schema missing " + action);
+    assert.ok(bridge.includes(action), "Plugin bridge validation missing " + action);
+  }
+  for (const api of [
+    'figma.createLine()', 'figma.createPolygon()', 'figma.createStar()', 'figma.createSlice()',
+    'figma.group(groupNodes, groupParent)', 'figma.ungroup(ungroupTarget)',
+    'figma.createComponentFromNode(componentSource)', 'componentSourceNode.createInstance()',
+    'instanceTarget.detachInstance()', 'figma.currentPage.selection = selectionNodes',
+    'figma.viewport.scrollAndZoomIntoView(zoomNodes)', 'await exportTarget.exportAsync({ format: "SVG_STRING" })',
+    'figma.getLocalPaintStylesAsync()', 'figma.getLocalTextStylesAsync()',
+  ]) {
+    assert.ok(plugin.includes(api), "Native plugin executor missing " + api);
+  }
+  assert.ok(plugin.includes('svg.length > 35000'), "SVG output is capped to fit the bridge result envelope");
+  assert.ok(mcp.includes('capabilities: { tools: { listChanged: false } }'), "MCP advertises tool-list change support");
+  assert.ok(mcp.includes('enum: ["batch", "create-elements", "update-node"'), "Batch operation is part of the exposed write tool");
+  assert.ok(mcp.includes('actions: {\n          type: "array", minItems: 1, maxItems: 40'), "MCP schema exposes sequential action batches");
+  assert.ok(bridge.includes('value.operation === "batch" && value.actions && value.actions.some((step) => step.operation === "export-svg")'), "Bridge prevents multiple large SVG exports from one batch");
+  assert.ok(plugin.includes('if (payload.operation === "batch")'), "Native executor supports ordered batches");
+  assert.ok(plugin.includes('state: batchResults.length ? "partial" : "failed"'), "Batch result reports partial completion instead of claiming atomic success");
+  assert.ok(plugin.includes('if (typeof spec.textCase === "string") node.textCase = spec.textCase'), "Text creation applies text case");
 });
