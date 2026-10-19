@@ -1368,7 +1368,7 @@ async function writeCanvasCommand(payload) {
     if (typeof exportTarget.exportAsync !== "function") throw new Error("This node type does not support export.");
     var svg = await exportTarget.exportAsync({ format: "SVG_STRING" });
     if (typeof svg !== "string") throw new Error("Figma did not return SVG text for this node.");
-    if (svg.length > 48000) throw new Error("SVG export exceeds the 48 KB response limit; export a smaller node.");
+    if (svg.length > 35000) throw new Error("SVG export exceeds the safe 35 KB response limit; export a smaller node.");
     return { ok: true, operation: "export-svg", fileKey: figma.fileKey,
       node: nodeSummary(exportTarget), format: "SVG_STRING", byteLength: svg.length, svg: svg };
   }
