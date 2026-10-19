@@ -192,6 +192,7 @@ test("connection-status tool reports ChatGPT and Figma connection semantics", as
     assert.ok(connectionTool);
     assert.match(connectionTool.description, /five minutes/);
     assert.match(connectionTool.description, /75 seconds/);
+    assert.match(connectionTool.description, /selection snapshot/);
   } finally {
     if (original === undefined) delete process.env.UX_DIRECT_MCP_API_KEY;
     else process.env.UX_DIRECT_MCP_API_KEY = original;
