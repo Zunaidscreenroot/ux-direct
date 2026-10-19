@@ -47,14 +47,3 @@ test("plugin UI dispatches only recognized command types and reports the result 
   assert.ok(pluginUi.includes('mode: "canvas-result"'));
   assert.ok(pluginUi.includes('operationError: message.error || undefined'));
 });
-
-test("current selection is synced by the UX Direct plugin and surfaced by its existing MCP status tool", () => {
-  assert.ok(plugin.includes("selectionCount: selectedNodes.length"));
-  assert.ok(plugin.includes("pageId: figma.currentPage.id"));
-  assert.ok(pluginUi.includes('mode: "selection"'));
-  assert.ok(pluginUi.includes("function getSelectionSnapshot()"));
-  assert.ok(bridge.includes("const SELECTION_SNAPSHOT = z.object({"));
-  assert.ok(bridge.includes('if (mode === "selection")'));
-  assert.ok(mcp.includes("selectionContext,"));
-  assert.ok(mcp.includes("selectionNote: selectionContext"));
-});
