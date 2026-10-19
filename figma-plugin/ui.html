@@ -105,7 +105,7 @@
   const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
   let verifiedFileKey = null;
   let pluginSessionStarted = false;
-  let currentSelection = { fileKey: null, pageId: "", pageName: "", selectionCount: 0, selection: [] };
+  let currentSelection = { fileKey: null, pageName: "", selection: [] };
   const status = (message) => { $("status").textContent = message; };
   $("runHealth").disabled = true;
   $("submit").disabled = true;
@@ -141,34 +141,11 @@
     if (!response.ok) throw new Error(data.error || "Bridge returned " + response.status);
     return data;
   }
-  function getSelectionSnapshot() {
-    const fileKey = verifiedFileKey || currentSelection.fileKey;
-    if (!fileKey || fileKey !== ALLOWED_FILE_KEY || !currentSelection.pageId || !currentSelection.pageName || !Array.isArray(currentSelection.selection)) return null;
-    const selection = currentSelection.selection.slice(0, 100);
-    return {
-      pageId: currentSelection.pageId,
-      pageName: currentSelection.pageName,
-      selectionCount: Number.isInteger(currentSelection.selectionCount) ? currentSelection.selectionCount : selection.length,
-      selection
-    };
-  }
-  function publishSelectionSnapshot() {
-    const selectionSnapshot = getSelectionSnapshot();
-    if (!selectionSnapshot) return;
-    void bridgeRequest({ mode: "selection", selectionSnapshot }).catch((error) => {
-      console.warn("[UX Direct selection sync]", error);
-      // Initial selection can arrive before the first heartbeat creates the session.
-      // The follow-up heartbeat carries the same bounded snapshot.
-      void syncPluginBridge();
-    });
-  }
-
   async function syncPluginBridge() {
     // Heartbeat requests use the same Cloudflare Workers origin as the health check.
     // Native API checks remain local/manual and never start automatically on open.
     try {
-      const selectionSnapshot = getSelectionSnapshot();
-      const heartbeat = await bridgeRequest({ mode: "heartbeat", ...(selectionSnapshot ? { selectionSnapshot } : {}) });
+      const heartbeat = await bridgeRequest({ mode: "heartbeat" });
       const command = heartbeat && heartbeat.command;
       if (command && command.commandId && !handledBridgeCommands.has(command.commandId)) {
         if (command.action === "native-api-health-check") {
@@ -432,16 +409,14 @@
     }
     if (message.type !== "selection") return;
     currentSelection = message;
-    publishSelectionSnapshot();
-    void sendTelemetry("Selection changed", "info", "Figma selection changed; " + (Number.isInteger(message.selectionCount) ? message.selectionCount : message.selection.length) + " top-level node(s) selected.");
+    void sendTelemetry("Selection changed", "info", "Figma selection changed; " + message.selection.length + " top-level node(s) selected.");
     const target = $("selection"); target.replaceChildren();
     if (!message.selection.length) {
       target.textContent = "No layers selected. Select one or more frames/layers in Figma."; target.className = "muted"; return;
     }
     target.className = "";
     const meta = document.createElement("div"); meta.className = "muted";
-    const selectedCount = Number.isInteger(message.selectionCount) ? message.selectionCount : message.selection.length;
-    meta.textContent = "Page: " + message.pageName + " · " + selectedCount + " selected"; target.appendChild(meta);
+    meta.textContent = "Page: " + message.pageName + " · " + message.selection.length + " selected"; target.appendChild(meta);
     message.selection.slice(0, 8).forEach((node) => {
       const row = document.createElement("div"); row.className = "node";
       const icon = document.createElement("span"); icon.textContent = node.type === "FRAME" ? "▣" : "◇";
@@ -449,7 +424,7 @@
       const detail = document.createElement("span"); detail.className = "muted"; detail.textContent = " · " + node.type + " · " + node.id;
       row.append(icon, title, detail); target.appendChild(row);
     });
-    if (selectedCount > 8) { const more = document.createElement("div"); more.className = "muted"; more.textContent = "+" + (selectedCount - 8) + " more"; target.appendChild(more); }
+    if (message.selection.length > 8) { const more = document.createElement("div"); more.className = "muted"; more.textContent = "+" + (message.selection.length - 8) + " more"; target.appendChild(more); }
   };
   $("submit").addEventListener("click", async () => {
     void sendTelemetry("Plan CTA clicked", "info", "User clicked Plan with UX Direct.");
