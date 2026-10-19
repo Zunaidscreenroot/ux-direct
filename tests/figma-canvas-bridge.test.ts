@@ -20,8 +20,9 @@ test("MCP exposes bounded canvas read, constrained write, and command status too
 test("canvas write tool requires explicit confirmation and supports only named operations", () => {
   assert.ok(mcp.includes('if (input.confirm !== true)'));
   assert.ok(mcp.includes('"clone-node", "delete-node", "reorder-node"'));
-  assert.ok(mcp.includes('"group-nodes", "flatten-nodes", "boolean-operation"'));
+  assert.ok(mcp.includes('"reparent-node", "group-nodes", "flatten-nodes", "boolean-operation"'));
   assert.ok(mcp.includes('"create-component", "create-component-set", "create-instance", "swap-component"'));
+  assert.ok(mcp.includes('"rename-page", "set-current-page", "export-svg"'));
   assert.ok(mcp.includes('"set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"'));
   assert.ok(mcp.includes('enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR"]'));
   assert.ok(mcp.includes('textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] }'));
@@ -58,7 +59,8 @@ test("plugin UI dispatches only recognized command types and reports the result 
 
 test("canvas writer exposes native node, layout, style, component, selection, page, and export actions", () => {
   for (const action of [
-    '"clone-node"', '"delete-node"', '"reorder-node"', '"group-nodes"', '"ungroup-node"',
+    '"clone-node"', '"delete-node"', '"reorder-node"', '"reparent-node"', '"group-nodes"', '"ungroup-node"',
+    '"set-current-page"',
     '"create-component"', '"create-instance"', '"detach-instance"', '"set-selection"',
     '"zoom-to-nodes"', '"create-page"', '"rename-page"', '"export-svg"', '"apply-style"',
   ]) {
@@ -67,6 +69,7 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
   }
   for (const api of [
     'figma.createLine()', 'figma.createPolygon()', 'figma.createStar()', 'figma.createSlice()',
+    'newParent.insertChild(insertAt, reparentTarget)', 'await figma.setCurrentPageAsync(targetPage)',
     'figma.group(groupNodes, groupParent)', 'figma.ungroup(ungroupTarget)',
     'figma.createComponentFromNode(componentSource)', 'componentSourceNode.createInstance()',
     'instanceTarget.detachInstance()', 'figma.currentPage.selection = selectionNodes',
@@ -94,5 +97,8 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
   assert.ok(plugin.includes('if (payload.operation === "set-text-range")'), "Native executor supports text range typography");
   assert.ok(plugin.includes('if (payload.operation === "create-image-fill")'), "Native executor supports image fills");
   assert.ok(plugin.includes('if (payload.operation === "export-node")'), "Native executor supports PNG/PDF/SVG export");
+  assert.ok(plugin.includes('if (payload.operation === "reparent-node")'), "Native executor supports layer reparenting");
+  assert.ok(plugin.includes('if (payload.operation === "set-current-page")'), "Native executor supports switching to an approved page");
+  assert.ok(plugin.includes('while (ancestor)'), "Reparent operation rejects parent/child cycles");
   assert.ok(mcp.includes('"flatten-nodes"') && mcp.includes('"boolean-operation"') && mcp.includes('"export-node"'), "MCP write schema exposes extended actions");
 });
