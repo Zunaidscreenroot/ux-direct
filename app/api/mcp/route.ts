@@ -477,7 +477,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        operation: { type: "string", enum: ["batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"] },
+        operation: { type: "string", enum: ["batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"] },
         confirm: { type: "boolean", const: true, description: "Must be true only after the owner explicitly requests this specific write." },
         target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
         elements: {
@@ -542,15 +542,19 @@ const TOOLS = [
           }
         },
         nodeId: { type: "string", minLength: 1, maxLength: 100 },
+        parentNodeId: { type: "string", minLength: 1, maxLength: 100 },
+        pageId: { type: "string", minLength: 1, maxLength: 100 },
         actions: {
           type: "array", minItems: 1, maxItems: 40,
           description: "Sequential canvas actions. Batch is non-atomic: completed earlier steps remain if a later action fails. Large exports must be standalone steps.",
           items: {
             type: "object",
             properties: {
-              operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"] },
+              operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"] },
               target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
               nodeId: { type: "string", minLength: 1, maxLength: 100 },
+        parentNodeId: { type: "string", minLength: 1, maxLength: 100 },
+        pageId: { type: "string", minLength: 1, maxLength: 100 },
               nodeIds: { type: "array", items: { type: "string", minLength: 1, maxLength: 100 }, maxItems: 100 },
               index: { type: "integer", minimum: 0, maximum: 10000 },
               pageName: { type: "string", minLength: 1, maxLength: 120 },
@@ -996,9 +1000,9 @@ async function callTool(name: string, args: unknown, request: Request) {
     if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
     const input = args as Record<string, unknown>;
     const allowedOperations = new Set([
-      "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+      "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node",
       "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
-      "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
+      "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
     ]);
     if (input.confirm !== true) return toolText({ error: "Write blocked: confirm=true is required after an explicit request for this specific canvas action." }, true);
     if (typeof input.operation !== "string" || !allowedOperations.has(input.operation)) {
@@ -1009,6 +1013,8 @@ async function callTool(name: string, args: unknown, request: Request) {
       ...(input.target === undefined ? {} : { target: input.target }),
       ...(input.elements === undefined ? {} : { elements: input.elements }),
       ...(input.nodeId === undefined ? {} : { nodeId: input.nodeId }),
+      ...(input.parentNodeId === undefined ? {} : { parentNodeId: input.parentNodeId }),
+      ...(input.pageId === undefined ? {} : { pageId: input.pageId }),
       ...(input.nodeIds === undefined ? {} : { nodeIds: input.nodeIds }),
       ...(input.index === undefined ? {} : { index: input.index }),
       ...(input.pageName === undefined ? {} : { pageName: input.pageName }),
@@ -1059,7 +1065,7 @@ async function callTool(name: string, args: unknown, request: Request) {
         return toolText({ error: "update-node requires a non-empty patch." }, true);
       }
     }
-    const nodeRequired = new Set(["clone-node", "delete-node", "reorder-node", "ungroup-node", "create-component", "create-instance", "swap-component", "detach-instance", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"]);
+    const nodeRequired = new Set(["clone-node", "delete-node", "reorder-node", "reparent-node", "ungroup-node", "create-component", "create-instance", "swap-component", "detach-instance", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"]);
     if (nodeRequired.has(input.operation) && (typeof input.nodeId !== "string" || !input.nodeId.trim())) {
       return toolText({ error: input.operation + " requires nodeId." }, true);
     }
@@ -1076,6 +1082,12 @@ async function callTool(name: string, args: unknown, request: Request) {
     if (input.operation === "set-text-range" && (!input.range || typeof input.range !== "object" || Array.isArray(input.range))) return toolText({ error: "set-text-range requires a range object." }, true);
     if (input.operation === "export-node" && !["PNG", "PDF", "SVG_STRING"].includes(String(input.format))) return toolText({ error: "export-node requires format PNG, PDF, or SVG_STRING." }, true);
     if (input.operation === "create-image-fill" && (typeof input.imageBase64 !== "string" || !input.imageBase64.length)) return toolText({ error: "create-image-fill requires imageBase64." }, true);
+    if (input.operation === "reparent-node" && (typeof input.parentNodeId !== "string" || !input.parentNodeId.trim() || input.parentNodeId === input.nodeId)) {
+      return toolText({ error: "reparent-node requires a different parentNodeId on the current page." }, true);
+    }
+    if (input.operation === "set-current-page" && (typeof input.pageId !== "string" || !input.pageId.trim())) {
+      return toolText({ error: "set-current-page requires pageId from the approved file." }, true);
+    }
     if (input.operation === "group-nodes" && (!Array.isArray(input.nodeIds) || input.nodeIds.length < 2 || input.nodeIds.length > 100)) {
       return toolText({ error: "group-nodes requires at least two nodeIds." }, true);
     }
