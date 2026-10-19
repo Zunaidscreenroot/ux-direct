@@ -28,6 +28,16 @@ type BridgeSession = {
     failure?: string;
     result?: unknown;
   };
+  selectionSnapshot?: {
+    pageId?: string;
+    pageName?: string;
+    selectionCount?: number;
+    updatedAt?: string;
+    selection?: Array<{
+      id?: string; name?: string; type?: string; visible?: boolean; childCount?: number;
+      bounds?: { x?: number; y?: number; width?: number; height?: number };
+    }>;
+  };
   healthReport?: {
     passed?: number;
     available?: number;
@@ -430,7 +440,7 @@ const TOOLS = [
   },
   {
     name: "ux_direct_connection_status",
-    description: "Show whether ChatGPT has recently called the authenticated UX Direct connector and whether the approved Figma plugin is online. ChatGPT state means authenticated MCP activity within five minutes; Figma state means a heartbeat within 75 seconds.",
+    description: "Show whether ChatGPT and the approved Figma plugin are connected. Also return the latest bounded selection snapshot reported by the UX Direct Figma plugin, when available. ChatGPT state means authenticated MCP activity within five minutes; Figma state means a heartbeat within 75 seconds.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -704,7 +714,7 @@ async function callTool(name: string, args: unknown, request: Request) {
   }
 
   if (name === "ux_direct_connection_status") {
-    const [chatgptConnector, figmaPlugin, backendResponse] = await Promise.all([
+    const [chatgptConnector, figmaPlugin, backendResponse, bridgeSnapshot] = await Promise.all([
       getChatGPTConnectionStatus(),
       getFigmaPluginConnectionStatus(),
       fetch(new URL("/api/health", request.url), {
@@ -713,8 +723,11 @@ async function callTool(name: string, args: unknown, request: Request) {
         cache: "no-store",
         signal: AbortSignal.timeout(10_000),
       }),
+      fetchBridgeSnapshot(request).catch(() => ({ sessions: [] } as BridgeSnapshot)),
     ]);
     const backend = await backendResponse.json().catch(() => ({ error: "Health endpoint returned invalid JSON." }));
+    const activePluginSession = (bridgeSnapshot.sessions ?? []).find((item) => item.isOnline === true && typeof item.clientId === "string");
+    const selectionContext = activePluginSession?.selectionSnapshot ?? null;
     return toolText({
       checkedAt: new Date().toISOString(),
       backend: { reachable: backendResponse.ok, status: backendResponse.ok ? "connected" : "error", details: backend },
@@ -729,6 +742,10 @@ async function callTool(name: string, args: unknown, request: Request) {
         connected: figmaPlugin.connected,
         connectedSessions: figmaPlugin.connectedSessions,
         lastHeartbeatAt: figmaPlugin.lastHeartbeatAt,
+        selectionContext,
+        selectionNote: selectionContext
+          ? "Selection was read by the UX Direct native plugin and synced to the bridge at " + (selectionContext.updatedAt ?? "an unknown time") + "."
+          : "No selection snapshot has been synced yet. Reload the latest UX Direct plugin in the allowlisted Figma file, then select a frame or use Refresh selection.",
         note: "Connected means at least one allowlisted Figma plugin session sent a heartbeat in the last 75 seconds.",
       },
     });
