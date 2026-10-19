@@ -23,7 +23,9 @@ test("canvas write tool requires explicit confirmation and supports only named o
   assert.ok(mcp.includes('"reparent-node", "group-nodes", "flatten-nodes", "boolean-operation"'));
   assert.ok(mcp.includes('"create-component", "create-component-set", "create-instance", "swap-component"'));
   assert.ok(mcp.includes('"rename-page", "set-current-page", "export-svg"'));
-  assert.ok(mcp.includes('"set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"'));
+  assert.ok(mcp.includes('"set-selection", "zoom-to-nodes"'));
+  assert.ok(mcp.includes('"create-page", "rename-page", "set-current-page"'));
+  assert.ok(mcp.includes('"export-svg", "export-node", "apply-style"'));
   assert.ok(mcp.includes('enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR"]'));
   assert.ok(mcp.includes('textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] }'));
   assert.ok(mcp.includes('paddingLeft: { type: "number", minimum: 0, maximum: 1000 }'));
