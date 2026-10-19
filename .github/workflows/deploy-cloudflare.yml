@@ -1,8 +1,16 @@
 name: Deploy UX Direct to Cloudflare
 
-# Run manually after the repository has a CLOUDFLARE_API_TOKEN Actions secret.
+# The native Figma canvas bridge is deployed automatically when its server routes
+# change. Keep manual dispatch available for a controlled redeploy.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "app/api/mcp/route.ts"
+      - "app/api/plugin-bridge/route.ts"
+      - "src/security/figma-access.ts"
+      - ".github/workflows/deploy-cloudflare.yml"
 
 permissions:
   contents: read
