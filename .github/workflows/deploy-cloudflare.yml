@@ -1,0 +1,39 @@
+name: Deploy UX Direct to Cloudflare
+
+# Run manually after the repository has a CLOUDFLARE_API_TOKEN Actions secret.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ux-direct-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Type-check application
+        run: npm run typecheck
+      - name: Check Figma plugin syntax
+        run: node --check figma-plugin/code.js
+      - name: Run tests
+        run: npm test
+      - name: Build for Cloudflare Workers
+        run: npm run cf:build
+      - name: Deploy production Worker
+        run: npx opennextjs-cloudflare deploy -- --keep-vars
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: cb73bfd260a197b57210ae47f427db06
