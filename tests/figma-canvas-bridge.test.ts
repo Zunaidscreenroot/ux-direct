@@ -75,4 +75,10 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
   }
   assert.ok(plugin.includes('svg.length > 48000'), "SVG output is capped to fit the bridge result envelope");
   assert.ok(mcp.includes('capabilities: { tools: { listChanged: true } }'), "MCP advertises tool-list change support");
+  assert.ok(mcp.includes('enum: ["batch", "create-elements", "update-node"'), "Batch operation is part of the exposed write tool");
+  assert.ok(mcp.includes('actions: {\n          type: "array", minItems: 1, maxItems: 40'), "MCP schema exposes sequential action batches");
+  assert.ok(bridge.includes('value.operation === "batch" && value.actions && value.actions.some((step) => step.operation === "export-svg")'), "Bridge prevents multiple large SVG exports from one batch");
+  assert.ok(plugin.includes('if (payload.operation === "batch")'), "Native executor supports ordered batches");
+  assert.ok(plugin.includes('state: batchResults.length ? "partial" : "failed"'), "Batch result reports partial completion instead of claiming atomic success");
+  assert.ok(plugin.includes('if (typeof spec.textCase === "string") node.textCase = spec.textCase'), "Text creation applies text case");
 });
