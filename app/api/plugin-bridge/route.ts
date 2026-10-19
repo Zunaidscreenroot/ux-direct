@@ -61,7 +61,7 @@ const CANVAS_ELEMENT = z.object({
   textDecoration: z.enum(["NONE", "UNDERLINE", "STRIKETHROUGH"]).optional(),
   pointCount: z.number().int().min(3).max(100).optional(),
   innerRadius: z.number().finite().min(0.01).max(1).optional(),
-  vectorPaths: z.array(z.object({ windingRule: z.enum(["EVENODD", "NONZERO"]), data: z.string().trim().min(1).max(20000) }).strict()).min(1).max(20).optional(),
+  vectorPaths: z.array(z.object({ windingRule: z.enum(["EVENODD", "NONZERO"]), data: z.string().trim().min(1).max(5000) }).strict()).min(1).max(5).optional(),
   shadowColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   shadowBlur: z.number().finite().min(0).max(200).optional(),
   shadowX: z.number().finite().min(-200).max(200).optional(),
@@ -259,8 +259,14 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   if (value.operation !== "batch" && value.actions) {
     ctx.addIssue({ code: "custom", path: ["actions"], message: "actions is supported only for batch." });
   }
-  if (value.operation === "batch" && value.actions && value.actions.some((step) => ["export-svg", "export-node"].includes(step.operation)) && value.actions.length > 1) {
-    ctx.addIssue({ code: "custom", path: ["actions"], message: "SVG export must be a standalone command to preserve the result size limit." });
+  if (value.operation === "batch" && value.actions && value.actions.some((step) => ["export-svg", "export-node", "create-image-fill"].includes(step.operation)) && value.actions.length > 1) {
+    ctx.addIssue({ code: "custom", path: ["actions"], message: "Exports and image fills with inline image data must be standalone commands to preserve bridge size limits." });
+  }
+  if (value.operation === "batch" && value.actions) {
+    const totalCreated = value.actions.reduce((sum, step) => sum + (step.operation === "create-elements" && step.elements ? step.elements.length : 0), 0);
+    if (totalCreated > 100) {
+      ctx.addIssue({ code: "custom", path: ["actions"], message: "A batch can create at most 100 canvas nodes in total." });
+    }
   }
   if (value.operation === "update-node" && value.elements) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "update-node cannot include elements." });
