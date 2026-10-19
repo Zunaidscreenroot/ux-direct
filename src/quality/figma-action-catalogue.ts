@@ -21,7 +21,7 @@ export const FIGMA_ACTION_CATALOGUE: readonly FigmaActionDefinition[] = [
   action("page.list", "Pages", "List pages in the approved file", "figma.root.children", "partial"),
   action("page.create", "Pages", "Create a page in the approved file through the native canvas bridge", "figma.createPage", "partial"),
   action("page.rename", "Pages", "Rename the active page through an explicitly confirmed native action", "PageNode.name", "partial"),
-  action("page.set-current", "Pages", "Navigate to a page", "figma.setCurrentPageAsync", "planned", false, true),
+  action("page.set-current", "Pages", "Navigate to a page in the approved file through an explicit current-page switch", "figma.setCurrentPageAsync", "partial", false, true),
   action("node.find", "Nodes", "Search current-page nodes by case-insensitive name substring or exact node type; ID operations require a current-page node ID", "PageNode.findAll / BaseNode.id", "partial"),
   action("node.inspect", "Nodes", "Inspect node properties and descendants", "BaseNode / children", "partial"),
   action("node.clone", "Nodes", "Clone a node on the active page and offset the copy", "SceneNode.clone", "partial"),
