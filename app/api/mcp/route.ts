@@ -473,7 +473,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "ungroup-node", "create-component", "create-instance", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg"] },
+        operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "group-nodes", "ungroup-node", "create-component", "create-instance", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style"] },
         confirm: { type: "boolean", const: true, description: "Must be true only after the owner explicitly requests this specific write." },
         target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
         elements: {
@@ -488,7 +488,7 @@ const TOOLS = [
               width: { type: "number", minimum: 1, maximum: 4096 },
               height: { type: "number", minimum: 1, maximum: 4096 },
               text: { type: "string", maxLength: 5000 },
-              fontSize: { type: "number", minimum: 8, maximum: 72 },
+              fontSize: { type: "number", minimum: 8, maximum: 144 },
               color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
               strokeColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
               strokeWeight: { type: "number", minimum: 0, maximum: 100 },
@@ -499,7 +499,23 @@ const TOOLS = [
               layoutMode: { type: "string", enum: ["NONE", "HORIZONTAL", "VERTICAL"] },
               itemSpacing: { type: "number", minimum: -100, maximum: 1000 },
               fontFamily: { type: "string", minLength: 1, maxLength: 100 },
-              fontStyle: { type: "string", minLength: 1, maxLength: 100 }
+              fontStyle: { type: "string", minLength: 1, maxLength: 100 },
+              paddingLeft: { type: "number", minimum: 0, maximum: 1000 },
+              paddingRight: { type: "number", minimum: 0, maximum: 1000 },
+              paddingTop: { type: "number", minimum: 0, maximum: 1000 },
+              paddingBottom: { type: "number", minimum: 0, maximum: 1000 },
+              primaryAxisAlignItems: { type: "string", enum: ["MIN", "MAX", "CENTER", "SPACE_BETWEEN"] },
+              counterAxisAlignItems: { type: "string", enum: ["MIN", "MAX", "CENTER", "BASELINE"] },
+              primaryAxisSizingMode: { type: "string", enum: ["AUTO", "FIXED"] },
+              counterAxisSizingMode: { type: "string", enum: ["AUTO", "FIXED"] },
+              textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] },
+              textAlignVertical: { type: "string", enum: ["TOP", "CENTER", "BOTTOM"] },
+              textAutoResize: { type: "string", enum: ["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"] },
+              shadowColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+              shadowBlur: { type: "number", minimum: 0, maximum: 200 },
+              shadowX: { type: "number", minimum: -200, maximum: 200 },
+              shadowY: { type: "number", minimum: -200, maximum: 200 },
+              shadowSpread: { type: "number", minimum: -200, maximum: 200 }
             },
             required: ["type", "name"],
             additionalProperties: false
@@ -540,13 +556,23 @@ const TOOLS = [
             primaryAxisSizingMode: { type: "string", enum: ["AUTO", "FIXED"] },
             counterAxisSizingMode: { type: "string", enum: ["AUTO", "FIXED"] },
             horizontalConstraint: { type: "string", enum: ["MIN", "CENTER", "MAX", "STRETCH", "SCALE"] },
-            verticalConstraint: { type: "string", enum: ["MIN", "CENTER", "MAX", "STRETCH", "SCALE"] }
+            verticalConstraint: { type: "string", enum: ["MIN", "CENTER", "MAX", "STRETCH", "SCALE"] },
+            textCase: { type: "string", enum: ["ORIGINAL", "UPPER", "LOWER", "TITLE"] },
+            textDecoration: { type: "string", enum: ["NONE", "UNDERLINE", "STRIKETHROUGH"] },
+            shadowColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+            shadowBlur: { type: "number", minimum: 0, maximum: 200 },
+            shadowX: { type: "number", minimum: -200, maximum: 200 },
+            shadowY: { type: "number", minimum: -200, maximum: 200 },
+            shadowSpread: { type: "number", minimum: -200, maximum: 200 }
           },
           additionalProperties: false
         },
         nodeIds: { type: "array", items: { type: "string", minLength: 1, maxLength: 100 }, maxItems: 100 },
         index: { type: "integer", minimum: 0, maximum: 10000 },
-        pageName: { type: "string", minLength: 1, maxLength: 120 }
+        pageName: { type: "string", minLength: 1, maxLength: 120 },
+        styleKind: { type: "string", enum: ["paint", "text", "effect", "grid"] },
+        styleId: { type: "string", minLength: 1, maxLength: 300 },
+        styleName: { type: "string", minLength: 1, maxLength: 240 }
       },
       required: ["operation", "confirm"],
       additionalProperties: false
@@ -883,7 +909,7 @@ async function callTool(name: string, args: unknown, request: Request) {
     const allowedOperations = new Set([
       "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
       "group-nodes", "ungroup-node", "create-component", "create-instance",
-      "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg",
+      "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "export-svg", "apply-style",
     ]);
     if (input.confirm !== true) return toolText({ error: "Write blocked: confirm=true is required after an explicit request for this specific canvas action." }, true);
     if (typeof input.operation !== "string" || !allowedOperations.has(input.operation)) {
@@ -897,6 +923,9 @@ async function callTool(name: string, args: unknown, request: Request) {
       ...(input.nodeIds === undefined ? {} : { nodeIds: input.nodeIds }),
       ...(input.index === undefined ? {} : { index: input.index }),
       ...(input.pageName === undefined ? {} : { pageName: input.pageName }),
+      ...(input.styleKind === undefined ? {} : { styleKind: input.styleKind }),
+      ...(input.styleId === undefined ? {} : { styleId: input.styleId }),
+      ...(input.styleName === undefined ? {} : { styleName: input.styleName }),
       ...(input.patch === undefined ? {} : { patch: input.patch }),
     };
     if (input.target !== undefined && !["current-page", "selection", "test-lab"].includes(String(input.target))) {
@@ -922,12 +951,15 @@ async function callTool(name: string, args: unknown, request: Request) {
         return toolText({ error: "update-node requires a non-empty patch." }, true);
       }
     }
-    const nodeRequired = new Set(["clone-node", "delete-node", "reorder-node", "ungroup-node", "create-component", "create-instance", "detach-instance", "export-svg"]);
+    const nodeRequired = new Set(["clone-node", "delete-node", "reorder-node", "ungroup-node", "create-component", "create-instance", "detach-instance", "export-svg", "apply-style"]);
     if (nodeRequired.has(input.operation) && (typeof input.nodeId !== "string" || !input.nodeId.trim())) {
       return toolText({ error: input.operation + " requires nodeId." }, true);
     }
     if (input.operation === "group-nodes" && (!Array.isArray(input.nodeIds) || input.nodeIds.length < 2 || input.nodeIds.length > 100)) {
       return toolText({ error: "group-nodes requires at least two nodeIds." }, true);
+    }
+    if (input.operation === "apply-style" && (typeof input.styleKind !== "string" || !["paint", "text", "effect", "grid"].includes(input.styleKind) || (!(typeof input.styleId === "string" && input.styleId.trim()) && !(typeof input.styleName === "string" && input.styleName.trim())))) {
+      return toolText({ error: "apply-style requires styleKind and either styleId or styleName." }, true);
     }
     if (input.operation === "reorder-node" && !Number.isInteger(input.index)) return toolText({ error: "reorder-node requires an integer index." }, true);
     if (input.operation === "set-selection" && !Array.isArray(input.nodeIds)) return toolText({ error: "set-selection requires nodeIds; pass [] to clear selection." }, true);
