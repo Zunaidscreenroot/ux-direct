@@ -147,10 +147,16 @@
     try {
       const heartbeat = await bridgeRequest({ mode: "heartbeat" });
       const command = heartbeat && heartbeat.command;
-      if (command && command.action === "native-api-health-check" && command.commandId && !handledBridgeCommands.has(command.commandId)) {
-        handledBridgeCommands.add(command.commandId);
-        status("Dashboard requested a native API health check. Running inside Figma…");
-        parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: command.commandId } }, "*");
+      if (command && command.commandId && !handledBridgeCommands.has(command.commandId)) {
+        if (command.action === "native-api-health-check") {
+          handledBridgeCommands.add(command.commandId);
+          status("Dashboard requested a native API health check. Running inside Figma…");
+          parent.postMessage({ pluginMessage: { type: "run-native-health-check", commandId: command.commandId } }, "*");
+        } else if (command.action === "read-canvas" || command.action === "write-canvas") {
+          handledBridgeCommands.add(command.commandId);
+          status("UX Direct canvas command received. Executing in the approved Figma file…");
+          parent.postMessage({ pluginMessage: { type: "run-canvas-command", command } }, "*");
+        }
       }
       $("connectionDot").className = "dot ok";
       $("connectionText").textContent = "Cloudflare Workers connected · plugin bridge online";
@@ -376,6 +382,28 @@
       }).catch((error) => {
         console.warn("[UX Direct Cloudflare health-report sync]", error);
         status("Native API test finished, but its report could not be saved to Cloudflare: " + (error && error.message ? error.message : "Unknown bridge error"));
+      });
+      return;
+    }
+    if (message.type === "canvas-command-result") {
+      void bridgeRequest({
+        mode: "canvas-result",
+        commandId: message.commandId,
+        operationResult: message.result === undefined ? null : message.result,
+        operationError: message.error || undefined
+      }).then(() => {
+        status(message.error
+          ? "Canvas command failed and the error was recorded by UX Direct."
+          : "Canvas command completed; result saved for ChatGPT to verify.");
+        void sendTelemetry(
+          "Figma canvas command completed",
+          message.error ? "error" : "success",
+          message.error ? "Figma canvas command failed." : "Figma canvas command executed and reported back.",
+          { requestId: message.commandId, action: message.result && message.result.operation }
+        );
+      }).catch((error) => {
+        console.warn("[UX Direct canvas-result sync]", error);
+        status("Canvas command ran, but UX Direct could not save its result: " + (error && error.message ? error.message : "Unknown bridge error"));
       });
       return;
     }
