@@ -432,7 +432,7 @@ const TOOLS = [
     name: "ux_direct_connection_status",
     description: "Show whether ChatGPT and the approved Figma plugin are connected, and queue a read-only selection snapshot of the currently selected Figma layers through the UX Direct plugin. Use ux_direct_figma_plugin_health_check_status with the returned commandId to retrieve the actual selection; no separate Figma connector is used. ChatGPT state means authenticated MCP activity within five minutes; Figma state means a heartbeat within 75 seconds.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: "ux_direct_figma_plugin_queue_health_check",
