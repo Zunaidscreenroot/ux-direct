@@ -73,6 +73,34 @@
     .service-state { float:right; margin-left:8px; color:var(--figma-color-text-secondary,#777); font-size:10px; font-weight:550; }
     .service-detail { margin-top:3px; color:var(--figma-color-text-secondary,#777); font-size:10px; line-height:1.45; overflow-wrap:anywhere; }
     .status-footnote { margin:9px 1px 0; color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; line-height:1.45; }
+    .health-card { margin-top:10px; border:1px solid var(--figma-color-border,#ddd); border-radius:11px; overflow:hidden; }
+    .health-summary { width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px; border:0; background:var(--figma-color-bg-secondary,#f8f8f8); color:var(--figma-color-text,#222); text-align:left; }
+    .health-summary:hover { background:var(--figma-color-bg-tertiary,var(--figma-color-bg-secondary,#f4f4f4)); }
+    .health-summary-copy { min-width:0; }
+    .health-summary-title { display:block; font-size:11px; font-weight:700; line-height:1.4; }
+    .health-summary-meta { display:block; margin-top:3px; color:var(--figma-color-text-secondary,#777); font-size:10px; line-height:1.45; }
+    .health-summary-action { flex:0 0 auto; color:var(--figma-color-text-secondary,#777); font-size:10px; font-weight:650; white-space:nowrap; }
+    .health-details { padding:10px; border-top:1px solid var(--figma-color-border,#ddd); }
+    .health-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; }
+    .health-metric { min-width:0; padding:7px 3px; border-radius:7px; background:var(--figma-color-bg-secondary,#f5f5f5); text-align:center; }
+    .health-metric strong { display:block; font-size:13px; line-height:1.25; font-variant-numeric:tabular-nums; }
+    .health-metric span { display:block; margin-top:3px; color:var(--figma-color-text-secondary,#777); font-size:9px; }
+    .health-list-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:11px 0 4px; }
+    .health-list-title { font-size:10px; font-weight:700; }
+    .health-list-count { color:var(--figma-color-text-secondary,#777); font-size:9px; }
+    .health-check-list { max-height:42vh; overflow:auto; overscroll-behavior:contain; border-top:1px solid var(--figma-color-border,#eee); }
+    .health-check-row { padding:8px 2px; border-bottom:1px solid var(--figma-color-border,#eee); }
+    .health-check-line { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+    .health-check-name { min-width:0; color:var(--figma-color-text,#222); font-size:10px; font-weight:600; line-height:1.4; }
+    .health-check-status { flex:0 0 auto; font-size:9px; font-weight:700; white-space:nowrap; }
+    .health-check-status.passed, .health-check-status.available { color:#178452; }
+    .health-check-status.failed { color:#c33442; }
+    .health-check-status.not-tested { color:var(--figma-color-text-secondary,#777); }
+    .health-check-detail { margin-top:3px; color:var(--figma-color-text-secondary,#777); font-size:9px; line-height:1.45; overflow-wrap:anywhere; }
+    .health-empty { padding:12px 2px; color:var(--figma-color-text-secondary,#777); font-size:10px; line-height:1.5; }
+    .health-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:9px; }
+    .health-note { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; line-height:1.4; }
+
   </style>
 </head>
 <body>
@@ -92,6 +120,32 @@
       </div>
     </div>
     <div id="serviceList" class="service-list"></div>
+    <section class="health-card" aria-label="Figma native API health checks">
+      <button id="healthSummary" class="health-summary" type="button" aria-expanded="false" aria-controls="healthDetails">
+        <span class="health-summary-copy">
+          <span class="health-summary-title">Figma native API health checks</span>
+          <span id="healthSummaryMeta" class="health-summary-meta">Not run yet · Click to run checks</span>
+        </span>
+        <span id="healthSummaryAction" class="health-summary-action">View actions ↓</span>
+      </button>
+      <div id="healthDetails" class="health-details" hidden>
+        <div class="health-metrics">
+          <div class="health-metric"><strong id="healthPassed">—</strong><span>Passed</span></div>
+          <div class="health-metric"><strong id="healthAvailable">—</strong><span>Available</span></div>
+          <div class="health-metric"><strong id="healthFailed">—</strong><span>Failed</span></div>
+          <div class="health-metric"><strong id="healthNotTested">—</strong><span>Not tested</span></div>
+        </div>
+        <div class="health-list-head">
+          <span class="health-list-title">Native actions and API capabilities</span>
+          <span id="healthListCount" class="health-list-count"></span>
+        </div>
+        <div id="healthCheckList" class="health-check-list" role="list" aria-label="Figma native API checks"></div>
+        <div class="health-actions">
+          <span class="health-note">Folder and external file access are excluded.</span>
+          <button id="runHealthChecks" class="small-button" type="button">Run checks</button>
+        </div>
+      </div>
+    </section>
     <p class="status-footnote">ChatGPT is a supervisor for monitoring and quality checks. Design requests are handled from this UX Direct cockpit.</p>
   </section>
 
@@ -135,6 +189,10 @@
     let brainHealthy = null;
     let auditHealthy = null;
     let chatgptState = "unknown";
+    let nativeHealthReport = null;
+    let nativeHealthRunning = false;
+    let nativeHealthProgress = "";
+    let healthDetailsOpen = false;
     let statusRefreshTimer = null;
     let heartbeatTimer = null;
     let connectionError = "";
@@ -234,6 +292,124 @@
       row.querySelector('[data-detail="' + id + '"]').textContent = detail || "";
     }
 
+    function visibleHealthChecks(report) {
+      const checks = report && Array.isArray(report.checks) ? report.checks : [];
+      return checks.filter(function (check) {
+        const category = String(check && check.category || "");
+        const name = String(check && check.name || "");
+        return !/\b(folder|file|library)\b/i.test(category + " " + name);
+      });
+    }
+
+    function healthCheckCounts(report) {
+      const checks = visibleHealthChecks(report);
+      return {
+        checks: checks,
+        passed: checks.filter(function (check) { return check.level === "functional" && check.status === "success"; }).length,
+        available: checks.filter(function (check) { return check.level === "availability" && check.status === "success"; }).length,
+        failed: checks.filter(function (check) { return check.status === "error"; }).length,
+        notTested: checks.filter(function (check) { return check.status === "not-tested"; }).length
+      };
+    }
+
+    function renderHealthPanel() {
+      const report = nativeHealthReport;
+      const counts = healthCheckCounts(report);
+      $("healthSummary").setAttribute("aria-expanded", String(healthDetailsOpen));
+      $("healthDetails").hidden = !healthDetailsOpen;
+      if (nativeHealthRunning) {
+        $("healthSummaryMeta").textContent = nativeHealthProgress || "Running native API checks…";
+        $("healthSummaryAction").textContent = "Running…";
+      } else if (report) {
+        $("healthSummaryMeta").textContent = counts.passed + " passed · " + counts.available + " available" +
+          (counts.failed ? " · " + counts.failed + " failed" : "") +
+          (counts.notTested ? " · " + counts.notTested + " not tested" : "");
+        $("healthSummaryAction").textContent = healthDetailsOpen ? "Hide actions ↑" : "View actions ↓";
+      } else {
+        $("healthSummaryMeta").textContent = "Not run yet · Click to run checks";
+        $("healthSummaryAction").textContent = healthDetailsOpen ? "Hide actions ↑" : "Run checks ↓";
+      }
+      $("healthPassed").textContent = report ? String(counts.passed) : "—";
+      $("healthAvailable").textContent = report ? String(counts.available) : "—";
+      $("healthFailed").textContent = report ? String(counts.failed) : "—";
+      $("healthNotTested").textContent = report ? String(counts.notTested) : "—";
+      $("runHealthChecks").disabled = nativeHealthRunning;
+      $("runHealthChecks").textContent = nativeHealthRunning ? "Running…" : report ? "Rerun checks" : "Run checks";
+      $("healthListCount").textContent = report ? counts.checks.length + " checks" : "";
+      const list = $("healthCheckList");
+      list.replaceChildren();
+      if (!report) {
+        const empty = document.createElement("div");
+        empty.className = "health-empty";
+        empty.textContent = nativeHealthRunning ? (nativeHealthProgress || "Inspecting Figma native APIs…") : "Run the native health checks to inspect supported actions, API availability and functional test results.";
+        list.appendChild(empty);
+        return;
+      }
+      if (!counts.checks.length) {
+        const empty = document.createElement("div");
+        empty.className = "health-empty";
+        empty.textContent = "No displayable checks were returned. Folder/file/library access checks are intentionally excluded.";
+        list.appendChild(empty);
+        return;
+      }
+      counts.checks.forEach(function (check) {
+        const row = document.createElement("div");
+        row.className = "health-check-row";
+        row.setAttribute("role", "listitem");
+        const line = document.createElement("div");
+        line.className = "health-check-line";
+        const name = document.createElement("div");
+        name.className = "health-check-name";
+        name.textContent = (check.category ? check.category + " · " : "") + String(check.name || "Unnamed check");
+        const status = document.createElement("span");
+        let statusClass = "not-tested";
+        let statusText = "NOT TESTED";
+        if (check.status === "error") { statusClass = "failed"; statusText = "FAILED"; }
+        else if (check.status === "success" && check.level === "availability") { statusClass = "available"; statusText = "AVAILABLE"; }
+        else if (check.status === "success") { statusClass = "passed"; statusText = "PASSED"; }
+        status.className = "health-check-status " + statusClass;
+        status.textContent = statusText;
+        line.append(name, status);
+        row.appendChild(line);
+        if (check.reason) {
+          const detail = document.createElement("div");
+          detail.className = "health-check-detail";
+          detail.textContent = String(check.reason);
+          row.appendChild(detail);
+        }
+        list.appendChild(row);
+      });
+    }
+
+    function runNativeHealthChecks() {
+      if (nativeHealthRunning || !verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
+      if (isSending) {
+        nativeHealthProgress = "Finish the current design operation before running API checks.";
+        renderHealthPanel();
+        return;
+      }
+      nativeHealthRunning = true;
+      nativeHealthProgress = "Running Figma native API checks in the isolated UXD Test Lab…";
+      healthDetailsOpen = true;
+      renderHealthPanel();
+      parent.postMessage({ pluginMessage: { type: "run-native-health-check" } }, "*");
+    }
+
+    async function loadSavedHealthReport() {
+      try {
+        const result = await bridgeRequest({ mode: "health-state" });
+        if (result && result.healthReport && Array.isArray(result.healthReport.checks)) {
+          nativeHealthReport = result.healthReport;
+          nativeHealthRunning = false;
+          nativeHealthProgress = "";
+          renderHealthPanel();
+          renderStatuses();
+        }
+      } catch (_) {
+        // The panel remains usable if no cached report exists yet.
+      }
+    }
+
     function renderStatuses() {
       renderService("backend", "UX Direct backend", backendHealthy ? "Connected" : "Not connected",
         connectionError || (backendHealthy ? "Cloudflare Workers health endpoint verified." : "Backend health check failed."), backendHealthy);
@@ -250,6 +426,7 @@
         chatHealthy ? "Recent authenticated ChatGPT activity was detected." : chatgptState === "idle" ? "No MCP request in the recent activity window. The in-Figma cockpit does not depend on ChatGPT to send design requests." : "Connection activity has not been confirmed.", chatgptState === "connected" ? true : chatgptState === "idle" ? null : false);
       const coreConnected = backendHealthy && providerHealthy && figmaBridgeHealthy;
       setOverallStatus(coreConnected ? "connected" : "disconnected", coreConnected ? "Connected" : "Not connected");
+      renderHealthPanel();
     }
 
     async function syncPluginBridge() {
@@ -618,6 +795,16 @@
     }
 
     $("overallStatus").addEventListener("click", function () { toggleStatusPanel(); });
+    $("healthSummary").addEventListener("click", function () {
+      healthDetailsOpen = !healthDetailsOpen;
+      renderHealthPanel();
+      if (healthDetailsOpen && !nativeHealthReport && !nativeHealthRunning) runNativeHealthChecks();
+    });
+    $("runHealthChecks").addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      runNativeHealthChecks();
+    });
     $("refreshStatus").addEventListener("click", function () { void refreshConnections(); });
     $("closeStatus").addEventListener("click", function () { toggleStatusPanel(false); });
     $("chatForm").addEventListener("submit", function (event) {
@@ -676,6 +863,7 @@
           pluginSessionStarted = true;
           void sendTelemetry("Plugin opened", "success", "UX Direct conversational cockpit initialized.");
           void syncPluginBridge().then(refreshConnections);
+          void loadSavedHealthReport();
           heartbeatTimer = window.setInterval(function () { void syncPluginBridge(); }, 15000);
           statusRefreshTimer = window.setInterval(function () { void refreshConnections(); }, 45000);
         }
@@ -691,7 +879,23 @@
         parent.postMessage({ pluginMessage: { type: "native-api-probe-ack", probeId: message.probeId } }, "*");
         return;
       }
+      if (message.type === "native-health-progress") {
+        nativeHealthProgress = String(message.text || "Running Figma native API checks…");
+        renderHealthPanel();
+        return;
+      }
       if (message.type === "native-health-result") {
+        nativeHealthReport = {
+          checks: Array.isArray(message.checks) ? message.checks.slice(0, 300) : [],
+          passed: Number(message.passed || 0),
+          available: Number(message.available || 0),
+          failed: Number(message.failed || 0),
+          notTested: Number(message.notTested || 0),
+          checkedAt: message.checkedAt || new Date().toISOString()
+        };
+        nativeHealthRunning = false;
+        nativeHealthProgress = "";
+        renderHealthPanel();
         const failures = Number(message.failed || 0);
         void bridgeRequest({
           mode: "result",
