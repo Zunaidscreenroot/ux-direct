@@ -1,6 +1,16 @@
 -- Automatic coaching activation provenance.
 -- Safe to apply repeatedly. Keeps legacy/manual review supported while ensuring
 -- lessons inserted via the relevance-gated ingestion path are not mislabeled human-approved.
+ALTER TABLE public.uxd_memory_items
+  DROP CONSTRAINT IF EXISTS uxd_memory_items_source_check;
+ALTER TABLE public.uxd_memory_items
+  ADD CONSTRAINT uxd_memory_items_source_check
+  CHECK (source = ANY (ARRAY[
+    'human-approved', 'task-outcome', 'design-review', 'imported',
+    'chatgpt-coaching', 'ux-audit', 'figma-plugin', 'knowledge-import',
+    'evaluation', 'human-approved-coaching-rule', 'automatic-coaching-rule'
+  ]::text[]));
+
 CREATE OR REPLACE FUNCTION public.uxd_brain_review_feedback(
   p_feedback_id uuid,
   p_action text,
