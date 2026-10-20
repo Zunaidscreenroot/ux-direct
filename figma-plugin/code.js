@@ -1548,11 +1548,19 @@ async function writeCanvasCommand(payload) {
       if (!("clipsContent" in targetNode)) throw new Error("This node type does not support clipping content.");
       targetNode.clipsContent = patch.clipsContent;
     }
-    var textPatch = ["text", "fontFamily", "fontStyle", "fontSize", "textAlignHorizontal", "textAlignVertical", "textAutoResize", "textCase", "textDecoration"].some(function (key) { return patch[key] !== undefined; });
+    var textPatch = ["text", "fontFamily", "fontStyle", "fontSize", "textAlignHorizontal", "textAlignVertical", "textAutoResize", "textCase", "textDecoration", "lineHeight", "letterSpacing"].some(function (key) { return patch[key] !== undefined; });
     if (textPatch) {
       await loadAndSetTextFont(targetNode, patch);
       if (typeof patch.text === "string") targetNode.characters = patch.text.slice(0, 5000);
       if (Number.isFinite(patch.fontSize)) targetNode.fontSize = Math.max(8, Math.min(144, patch.fontSize));
+      if (patch.lineHeight && typeof patch.lineHeight === "object" &&
+          ["PIXELS", "PERCENT"].includes(patch.lineHeight.unit) && Number.isFinite(patch.lineHeight.value)) {
+        targetNode.lineHeight = { unit: patch.lineHeight.unit, value: Math.max(1, Math.min(500, patch.lineHeight.value)) };
+      }
+      if (patch.letterSpacing && typeof patch.letterSpacing === "object" &&
+          ["PIXELS", "PERCENT"].includes(patch.letterSpacing.unit) && Number.isFinite(patch.letterSpacing.value)) {
+        targetNode.letterSpacing = { unit: patch.letterSpacing.unit, value: Math.max(-100, Math.min(500, patch.letterSpacing.value)) };
+      }
     }
     if (typeof patch.textAlignHorizontal === "string") {
       if (targetNode.type !== "TEXT") throw new Error("textAlignHorizontal can only be used on TEXT nodes.");
@@ -1850,6 +1858,137 @@ async function writeCanvasCommand(payload) {
     return { ok: true, operation: "set-text-range", fileKey: figma.fileKey, pageName: figma.currentPage.name,
       node: nodeSummary(rangeTarget), range: { start: range.start, end: range.end },
       applied: Object.keys(range).filter(function (key) { return !["start", "end"].includes(key); }) };
+  }
+
+  if (payload.operation === "insert-image") {
+    if (typeof payload.imageBase64 !== "string" || payload.imageBase64.length < 4 || payload.imageBase64.length > 250000) {
+      throw new Error("insert-image requires an attached base64 image under 250 KB.");
+    }
+    var imageParent = await resolveCanvasWriteParent(payload.target || "current-page", payload.parentNodeId);
+    var imageBase64 = payload.imageBase64.replace(/^data:[^,]*;base64,/, "");
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(imageBase64) || imageBase64.length % 4 !== 0) throw new Error("Attached image is not valid base64.");
+    var imageBinary = atob(imageBase64);
+    if (!imageBinary.length || imageBinary.length > 180000) throw new Error("Attached image must be under 180 KB after compression.");
+    var imageBytes = new Uint8Array(imageBinary.length);
+    for (var insertedIndex = 0; insertedIndex < imageBinary.length; insertedIndex++) imageBytes[insertedIndex] = imageBinary.charCodeAt(insertedIndex);
+    var insertedImage = figma.createImage(imageBytes);
+    var imageNode = figma.createRectangle();
+    imageNode.name = (typeof payload.name === "string" && payload.name.trim() ? payload.name.trim() : "Image").slice(0, 100);
+    imageNode.resize(Math.max(1, Math.min(4096, Number(payload.width) || 320)), Math.max(1, Math.min(4096, Number(payload.height) || 180)));
+    if (Number.isFinite(payload.cornerRadius)) imageNode.cornerRadius = Math.max(0, Math.min(512, payload.cornerRadius));
+    imageNode.fills = [{ type: "IMAGE", imageHash: insertedImage.hash,
+      scaleMode: ["FILL", "FIT", "CROP", "TILE"].includes(payload.scaleMode) ? payload.scaleMode : "FILL" }];
+    imageParent.appendChild(imageNode);
+    var imageParentLayout = typeof imageParent.layoutMode === "string" ? imageParent.layoutMode : "NONE";
+    if (imageParentLayout !== "NONE") {
+      if (payload.layoutPositioning === "ABSOLUTE") {
+        imageNode.layoutPositioning = "ABSOLUTE";
+        imageNode.x = Number.isFinite(payload.x) ? Math.max(-10000, Math.min(10000, payload.x)) : 0;
+        imageNode.y = Number.isFinite(payload.y) ? Math.max(-10000, Math.min(10000, payload.y)) : 0;
+      } else {
+        try {
+          imageNode.layoutSizingHorizontal = payload.layoutSizingHorizontal || "FILL";
+          imageNode.layoutSizingVertical = payload.layoutSizingVertical || "FIXED";
+        } catch (sizeError) {
+          throw new Error("Figma could not size the inserted image inside this Auto Layout parent: " + String(sizeError && sizeError.message || sizeError).slice(0, 160));
+        }
+      }
+    } else {
+      imageNode.x = Number.isFinite(payload.x) ? Math.max(-10000, Math.min(10000, payload.x)) : 0;
+      imageNode.y = Number.isFinite(payload.y) ? Math.max(-10000, Math.min(10000, payload.y)) : 0;
+    }
+    return { ok: true, operation: "insert-image", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(imageNode), imageHash: insertedImage.hash, scaleMode: payload.scaleMode || "FILL", imageBytes: imageBytes.length };
+  }
+
+  if (payload.operation === "create-variables") {
+    if (!figma.variables || typeof figma.variables.createVariableCollection !== "function") {
+      throw new Error("This Figma runtime does not expose local variable creation.");
+    }
+    if (typeof payload.collectionName !== "string" || !payload.collectionName.trim() ||
+        !Array.isArray(payload.variables) || payload.variables.length < 1 || payload.variables.length > 80) {
+      throw new Error("create-variables requires collectionName and 1–80 named variables.");
+    }
+    var variableCollections = await figma.variables.getLocalVariableCollectionsAsync();
+    var variableCollection = variableCollections.find(function (item) { return item.name === payload.collectionName; }) || null;
+    if (!variableCollection) variableCollection = figma.variables.createVariableCollection(payload.collectionName.trim().slice(0, 100));
+    var variableModeId = variableCollection.defaultModeId;
+    if (typeof payload.modeName === "string" && payload.modeName.trim()) {
+      var matchingMode = variableCollection.modes.find(function (item) { return item.name === payload.modeName; }) || null;
+      if (matchingMode) variableModeId = matchingMode.modeId;
+      else if (payload.modeName !== "Default" && typeof variableCollection.addMode === "function") {
+        variableModeId = variableCollection.addMode(payload.modeName.trim().slice(0, 100));
+      }
+    }
+    var localVariables = await figma.variables.getLocalVariablesAsync();
+    var variableResults = [];
+    for (var varIndex = 0; varIndex < payload.variables.length; varIndex++) {
+      var varSpec = payload.variables[varIndex];
+      if (!varSpec || typeof varSpec.name !== "string" || !varSpec.name.trim() ||
+          !["COLOR", "FLOAT", "STRING", "BOOLEAN"].includes(varSpec.type)) {
+        throw new Error("Each variable requires a name and a supported type (COLOR, FLOAT, STRING or BOOLEAN).");
+      }
+      var variable = localVariables.find(function (item) {
+        return item.name === varSpec.name && item.variableCollectionId === variableCollection.id;
+      }) || null;
+      if (variable && variable.resolvedType !== varSpec.type) throw new Error("Existing variable " + varSpec.name + " has a different type.");
+      if (!variable) {
+        variable = figma.variables.createVariable(varSpec.name.trim().slice(0, 100), variableCollection, varSpec.type);
+        localVariables.push(variable);
+      }
+      var value = varSpec.value;
+      if (varSpec.type === "COLOR") {
+        if (typeof value !== "string" || !/^#[0-9a-fA-F]{6}$/.test(value)) throw new Error("COLOR variable " + varSpec.name + " needs a #RRGGBB value.");
+        value = colorValue(value);
+      } else if (varSpec.type === "FLOAT" && (typeof value !== "number" || !Number.isFinite(value))) {
+        throw new Error("FLOAT variable " + varSpec.name + " needs a number.");
+      } else if (varSpec.type === "STRING" && typeof value !== "string") {
+        throw new Error("STRING variable " + varSpec.name + " needs a string.");
+      } else if (varSpec.type === "BOOLEAN" && typeof value !== "boolean") {
+        throw new Error("BOOLEAN variable " + varSpec.name + " needs a boolean.");
+      }
+      variable.setValueForMode(variableModeId, value);
+      variableResults.push({ id: variable.id, name: variable.name, type: variable.resolvedType, updated: true });
+    }
+    return { ok: true, operation: "create-variables", fileKey: figma.fileKey, collection: { id: variableCollection.id, name: variableCollection.name, modeId: variableModeId },
+      variables: variableResults, createdOrUpdated: variableResults.length };
+  }
+
+  if (payload.operation === "bind-variable") {
+    var bindingTarget = requireCanvasNode(payload.nodeId, "bind-variable");
+    if (!figma.variables || typeof figma.variables.getLocalVariablesAsync !== "function") throw new Error("Figma local variable APIs are unavailable.");
+    if (typeof payload.variableName !== "string" || !payload.variableName.trim() || typeof payload.property !== "string") {
+      throw new Error("bind-variable requires variableName and property.");
+    }
+    var bindCollectionName = typeof payload.collectionName === "string" ? payload.collectionName : "";
+    var bindVariables = await figma.variables.getLocalVariablesAsync();
+    var boundVariable = bindVariables.find(function (item) {
+      return item.name === payload.variableName && (!bindCollectionName || item.variableCollection && item.variableCollection.name === bindCollectionName);
+    }) || null;
+    if (!boundVariable) throw new Error("Local variable not found: " + payload.variableName);
+    if (payload.property === "fill" || payload.property === "stroke") {
+      if (boundVariable.resolvedType !== "COLOR") throw new Error("fill/stroke bindings require a COLOR variable.");
+      var paintProperty = payload.property === "fill" ? "fills" : "strokes";
+      if (!(paintProperty in bindingTarget)) throw new Error("This node cannot accept a " + payload.property + " paint.");
+      if (typeof figma.variables.setBoundVariableForPaint !== "function") throw new Error("This runtime cannot bind variables to individual paints.");
+      var existingPaints = Array.isArray(bindingTarget[paintProperty]) ? bindingTarget[paintProperty] : [];
+      var solidPaint = existingPaints.find(function (paint) { return paint && paint.type === "SOLID"; }) || {
+        type: "SOLID", color: { r: 0.2, g: 0.2, b: 0.2 }
+      };
+      var boundPaint = figma.variables.setBoundVariableForPaint(solidPaint, "color", boundVariable);
+      var otherPaints = existingPaints.filter(function (paint) { return paint !== solidPaint; });
+      bindingTarget[paintProperty] = [boundPaint].concat(otherPaints);
+    } else {
+      if (boundVariable.resolvedType !== "FLOAT") throw new Error("Numeric layout/opacity bindings require a FLOAT variable.");
+      var bindableProperties = { opacity: "opacity", cornerRadius: "cornerRadius", width: "width", height: "height",
+        itemSpacing: "itemSpacing", paddingLeft: "paddingLeft", paddingRight: "paddingRight", paddingTop: "paddingTop", paddingBottom: "paddingBottom" };
+      var bindProperty = bindableProperties[payload.property];
+      if (!bindProperty || typeof bindingTarget.setBoundVariable !== "function") throw new Error("This node does not support binding " + payload.property + ".");
+      if (!(bindProperty in bindingTarget)) throw new Error("This node does not expose property " + bindProperty + ".");
+      bindingTarget.setBoundVariable(bindProperty, boundVariable);
+    }
+    return { ok: true, operation: "bind-variable", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(bindingTarget), variable: { id: boundVariable.id, name: boundVariable.name, type: boundVariable.resolvedType }, property: payload.property };
   }
 
   if (payload.operation === "create-image-fill") {
