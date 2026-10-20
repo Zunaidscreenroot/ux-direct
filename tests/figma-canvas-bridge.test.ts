@@ -221,7 +221,7 @@ test("normal conversational chat uses Gemini primary and cost-ordered explicit f
 
 test("Figma visual analysis uses a compact rendered JPEG and native layer data", () => {
   assert.ok(pluginUi.includes("async function captureRenderedNodePreview(nodeId)"));
-  assert.ok(pluginUi.includes("for (const scale of [0.6, 0.45])"));
+  assert.ok(pluginUi.includes("const scales = [0.6, 0.45, 0.3, 0.2, 0.12, 0.08]"));
   assert.ok(pluginUi.includes('operation: "export-node"'));
   assert.ok(pluginUi.includes('format: "JPG"'));
   assert.ok(pluginUi.includes('data:image/jpeg;base64,'));
@@ -235,16 +235,16 @@ test("Figma visual analysis uses a compact rendered JPEG and native layer data",
   assert.ok(agent.includes("Analyse BOTH the attached rendered screen image and native layer tree"));
 });
 
-test("TinyFish visual QA can trigger one bounded native repair and a final re-check", () => {
-  const liveQA = read("app/api/assistant/figma-agent/live-qa/route.ts");
+test("native visual QA can trigger one bounded repair and a final re-check without browser automation", () => {
   const refine = read("app/api/assistant/figma-agent/refine/route.ts");
-  assert.ok(pluginUi.includes("/api/assistant/figma-agent/live-qa"));
+  assert.ok(pluginUi.includes("async function runVisualQualityLoop"));
+  assert.ok(pluginUi.includes("/api/assistant/figma-agent/review"));
   assert.ok(pluginUi.includes("/api/assistant/figma-agent/refine"));
-  assert.equal(pluginUi.includes("for (let iteration = 1; iteration <= 2; iteration++)"), false);
-  assert.ok(pluginUi.includes('runLiveVisualQA("verification"'));
-  assert.ok(liveQA.includes("https://agent.tinyfish.ai/v1/automation/run-sse"));
-  assert.ok(liveQA.includes("readR2Json"));
-  assert.ok(refine.includes("const models = [FIGMA_AGENT_DEFAULT_MODEL];"));
+  assert.ok(pluginUi.includes("refinement.patch.slice(0, 12)"));
+  assert.ok(pluginUi.includes('reviewCanvas(outputCanvas, capture.dataUrl || null, "after one bounded repair")'));
+  assert.equal(pluginUi.includes("/api/assistant/figma-agent/live-qa"), false);
+  assert.equal(pluginUi.includes("TinyFish"), false);
+  assert.ok(refine.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
   assert.ok(refine.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
   assert.ok(review.includes('type: "image_url"'));
   assert.ok(review.includes('sourceImage: z.string().max(52000).nullable().optional()'));
@@ -252,9 +252,7 @@ test("TinyFish visual QA can trigger one bounded native repair and a final re-ch
   assert.ok(review.includes("visualInspection: !!sourceImage && !!outputImage"));
   assert.ok(refine.includes("PatchSchema"));
   assert.ok(refine.includes("found.get(entry.nodeId)"));
-  assert.ok(pluginUi.includes("allowedIds.has(item.nodeId)"));
 });
-
 test("Figma plugin cockpit has a morphing orb and visible process stages", () => {
   assert.ok(pluginUi.includes('class="uxd-hero-orb"'));
   assert.ok(pluginUi.includes('id="processStatus"'));
@@ -272,9 +270,9 @@ test("Figma visual capture failures do not invalidate the full design request", 
   assert.ok(reviewRoute.includes("extractJsonObject(message.content)"), "Visual QA must accept structured content variants.");
   assert.ok(reviewRoute.includes("normalizeVisualReview(decodedRecord)"), "Provider response fields must be normalized before strict QA validation.");
   assert.ok(refinementRoute.includes("extractJsonObject(message.content)"), "Refinement must parse structured content variants.");
-  assert.ok(reviewRoute.includes("const models = [FIGMA_AGENT_QA_MODEL];"));
+  assert.ok(reviewRoute.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
   assert.ok(reviewRoute.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
-  assert.ok(refinementRoute.includes("const models = [FIGMA_AGENT_DEFAULT_MODEL];"));
+  assert.ok(refinementRoute.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
   assert.equal(reviewRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.equal(refinementRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.ok(agent.includes("renderedScreen: z.string().max(52000).nullable().optional()"));
@@ -286,10 +284,11 @@ test("Figma visual capture failures do not invalidate the full design request", 
 });
 
 test("selected and generated frame screenshot export falls back to progressively smaller scales", () => {
-  assert.ok(pluginUi.includes("for (const scale of [0.6, 0.45])"));
-  assert.ok(pluginUi.includes("JPEG preview export failed at 60% and 45%."));
-  assert.ok(pluginUi.includes("const outputCapture = await captureRenderedNodePreview(createdFrameId)"));
-  assert.ok(pluginUi.includes("outputCapture.warning"));
+  assert.ok(pluginUi.includes("const scales = [0.6, 0.45, 0.3, 0.2, 0.12, 0.08]"));
+  assert.ok(pluginUi.includes("JPEG preview export failed at all attempted scales (60%, 45%, 30%, 20%, 12%, 8%)."));
+  assert.ok(pluginUi.includes("const qualityTree = await runNativeCanvasCommand"));
+  assert.ok(pluginUi.includes("outputCanvas: qualityTree"));
+  assert.ok(pluginUi.includes("sourceImage: renderedScreen"));
 });
 
 test("native Figma design creation builds nested frame containers before their children", () => {
@@ -321,6 +320,17 @@ test("short Figma prompts inherit the complete design-variation workflow", () =>
   assert.ok(pluginUi.includes('waiting: "Waiting for the previous Figma action to finish"'));
 });
 
+test("native editor applies Auto Layout sizing and exposes image/variable operations safely", () => {
+  assert.ok(plugin.includes("node.layoutSizingHorizontal = value"));
+  assert.ok(plugin.includes("node.layoutSizingVertical = value"));
+  assert.ok(plugin.includes("x/y must not be assigned to normal Auto Layout children") || plugin.includes("if (!inAutoLayout || spec.layoutPositioning === \"ABSOLUTE\")"));
+  assert.ok(plugin.includes('payload.operation === "insert-image"'));
+  assert.ok(plugin.includes('payload.operation === "create-variables"'));
+  assert.ok(plugin.includes('payload.operation === "bind-variable"'));
+  assert.ok(plugin.includes("item.variableCollectionId === targetBindingCollection.id"));
+  assert.ok(bridge.includes('"create-image-fill", "insert-image"].includes(step.operation)') || bridge.includes('"create-image-fill", "insert-image"].includes(step.operation)'));
+});
+ 
 test("Figma cockpit uses Libraries.dev Thinking Orbs for task-state updates", () => {
   assert.ok(cockpitEffects.includes('from "thinking-orbs"'));
   assert.ok(cockpitEffects.includes('state="searching"') || cockpitEffects.includes('state={state}'));

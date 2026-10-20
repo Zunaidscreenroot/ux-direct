@@ -120,6 +120,11 @@ test("Figma agent uses Auto LOW first, cost-ordered fallbacks, and no plugin liv
 
   const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
   assert.equal(ui.includes('fetch(API + "/api/assistant/figma-agent/live-qa"'), false, "The plugin must not run live browser QA.");
-  assert.equal(ui.includes('fetch(API + "/api/assistant/figma-agent/refine"'), false, "The plugin must not invoke QA-based automatic repairs.");
+  assert.ok(ui.includes("async function runVisualQualityLoop"), "Visual QA must use the native screenshot/readback loop.");
+  assert.ok(ui.includes('fetch(API + "/api/assistant/figma-agent/review"'), "The plugin must request evidence-based visual review.");
+  assert.ok(ui.includes('fetch(API + "/api/assistant/figma-agent/refine"'), "A single bounded repair pass should use the surgical refiner.");
+  assert.ok(ui.includes('reviewCanvas(outputCanvas, capture.dataUrl || null, "after one bounded repair")'), "A repair must be followed by one final visual re-check.");
+  assert.ok(ui.includes("refinement.patch.slice(0, 12)"), "Repairs must remain bounded.");
+  assert.equal(ui.includes("/api/assistant/figma-agent/live-qa"), false, "The plugin must not run browser QA.");
   assert.equal(ui.includes("TinyFish"), false, "TinyFish should be removed from the plugin flow.");
 });

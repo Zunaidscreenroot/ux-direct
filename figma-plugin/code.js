@@ -1375,8 +1375,10 @@ async function writeCanvasCommand(payload) {
     if (!Array.isArray(payload.actions) || payload.actions.length < 1 || payload.actions.length > 40) {
       throw new Error("batch requires 1 to 40 validated actions.");
     }
-    if (payload.actions.some(function (step) { return step && ["export-svg", "export-node"].includes(step.operation); }) && payload.actions.length > 1) {
-      throw new Error("SVG export must be a standalone command to preserve the result-size limit.");
+    if (payload.actions.some(function (step) {
+      return step && ["export-svg", "export-node", "create-image-fill", "insert-image"].includes(step.operation);
+    }) && payload.actions.length > 1) {
+      throw new Error("Exports and image insertion with inline image data must be standalone commands to preserve bridge size limits.");
     }
     var batchResults = [];
     for (var batchIndex = 0; batchIndex < payload.actions.length; batchIndex++) {
@@ -1960,10 +1962,22 @@ async function writeCanvasCommand(payload) {
     if (typeof payload.variableName !== "string" || !payload.variableName.trim() || typeof payload.property !== "string") {
       throw new Error("bind-variable requires variableName and property.");
     }
-    var bindCollectionName = typeof payload.collectionName === "string" ? payload.collectionName : "";
+    var bindCollectionName = typeof payload.collectionName === "string" ? payload.collectionName.trim() : "";
     var bindVariables = await figma.variables.getLocalVariablesAsync();
+    var targetBindingCollection = null;
+    if (bindCollectionName) {
+      if (typeof figma.variables.getLocalVariableCollectionsAsync !== "function") {
+        throw new Error("This Figma runtime cannot resolve a variable collection by name.");
+      }
+      var bindingCollections = await figma.variables.getLocalVariableCollectionsAsync();
+      targetBindingCollection = bindingCollections.find(function (collection) {
+        return collection.name === bindCollectionName;
+      }) || null;
+      if (!targetBindingCollection) throw new Error("Local variable collection not found: " + bindCollectionName);
+    }
     var boundVariable = bindVariables.find(function (item) {
-      return item.name === payload.variableName && (!bindCollectionName || item.variableCollection && item.variableCollection.name === bindCollectionName);
+      return item.name === payload.variableName &&
+        (!targetBindingCollection || item.variableCollectionId === targetBindingCollection.id);
     }) || null;
     if (!boundVariable) throw new Error("Local variable not found: " + payload.variableName);
     if (payload.property === "fill" || payload.property === "stroke") {

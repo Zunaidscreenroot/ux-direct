@@ -353,8 +353,8 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   if (value.operation !== "batch" && value.actions) {
     ctx.addIssue({ code: "custom", path: ["actions"], message: "actions is supported only for batch." });
   }
-  if (value.operation === "batch" && value.actions && value.actions.some((step) => ["export-svg", "export-node", "create-image-fill"].includes(step.operation)) && value.actions.length > 1) {
-    ctx.addIssue({ code: "custom", path: ["actions"], message: "Exports and image fills with inline image data must be standalone commands to preserve bridge size limits." });
+  if (value.operation === "batch" && value.actions && value.actions.some((step) => ["export-svg", "export-node", "create-image-fill", "insert-image"].includes(step.operation)) && value.actions.length > 1) {
+    ctx.addIssue({ code: "custom", path: ["actions"], message: "Exports and image insertion/fills with inline image data must be standalone commands to preserve bridge size limits." });
   }
   if (value.operation === "batch" && value.actions) {
     const totalCreated = value.actions.reduce((sum, step) => sum + (step.operation === "create-elements" && step.elements ? step.elements.length : 0), 0);
