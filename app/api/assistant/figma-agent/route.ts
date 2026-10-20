@@ -423,10 +423,6 @@ export async function POST(request: Request) {
             // request; no candidate models are launched in parallel by UX Direct.
             ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
             max_tokens: isRecovery ? 6500 : 12000,
-            // Keep Gemini's reasoning budget low so tokens remain available for native layer JSON.
-            ...(model === "google/gemini-3.7-flash" ? {
-              reasoning: { effort: isRecovery ? "minimal" : "low" },
-            } : {}),
             // JSON mode is enabled for the first attempt. Compact retries use normal text mode
             // because some provider/model routes have returned successful but empty choices.
             ...(!isRecovery ? { response_format: { type: "json_object" } } : {}),
