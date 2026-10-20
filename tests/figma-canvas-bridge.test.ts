@@ -62,7 +62,7 @@ test("bridge authenticates server-issued commands and strictly validates write p
 test("native plugin checks the approved file before canvas access and caps reads", () => {
   assert.ok(plugin.includes('assertUxDirectFileScope("read canvas")'));
   assert.ok(plugin.includes('assertUxDirectFileScope("write canvas")'));
-  assert.ok(plugin.includes('Math.min(4, Number.isInteger(payload.maxDepth)'));
+  assert.ok(plugin.includes('Math.min(5, Number.isInteger(payload.maxDepth)'));
   assert.ok(plugin.includes('Math.min(100, Number.isInteger(payload.maxNodes)'));
   assert.ok(plugin.includes('type === "run-canvas-command"'));
   assert.ok(plugin.includes('function findPageNode(id)'));
@@ -125,10 +125,13 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
 test("in-Figma design agent retrieves approved brain context and validates native layer plans", () => {
   assert.ok(agent.includes('retrieveBrainContext('), "Figma design planning must retrieve shared memory.");
   assert.ok(agent.includes('resolveBrainScopes('), "Brain retrieval must be scope-filtered.");
-  assert.ok(agent.includes("const models = OPENROUTER_MODELS;"), "Figma design generation must use MiniMax free with OpenRouter Auto fallback.");
+  assert.ok(agent.includes("const models = OPENROUTER_MODELS;"), "Figma design generation must use the shared Gemini-first cost-ordered model chain.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "No provider restrictions should be sent to OpenRouter.");
-  assert.ok(modelPolicy.includes('"minimax/minimax-m3.1-flash:free"'));
-  assert.ok(modelPolicy.includes('"openrouter/auto"'));
+  assert.ok(modelPolicy.includes('"google/gemini-3.7-flash"'));
+  assert.ok(modelPolicy.includes('"qwen/qwen3.5-35b-a3b"'));
+  assert.ok(modelPolicy.includes('"qwen/qwen3.5-397b-a17b"'));
+  assert.ok(modelPolicy.includes('"google/gemini-3.5-flash-lite"'));
+  assert.equal(modelPolicy.includes('"openrouter/auto"'), false);
   assert.ok(modelPolicy.includes("UX_DIRECT_DESIGN_ROLE"));
   assert.equal(modelPolicy.includes("only:"), false);
   assert.equal(modelPolicy.includes("allow_fallbacks"), false);
@@ -149,7 +152,7 @@ test("conversational cockpit executes, batches, selects, zooms and verifies nati
   assert.ok(pluginUi.includes("async function createPlanChildren(parentId, elements, depth)"), "Native designs must be constructed recursively from the nested frame hierarchy.");
   assert.ok(pluginUi.includes('operation: "set-selection"'), "The resulting variation should be selected.");
   assert.ok(pluginUi.includes('operation: "zoom-to-nodes"'), "The resulting variation should be brought into view.");
-  assert.ok(pluginUi.includes('scope: "selection", maxDepth: 4, maxNodes: 100'), "Written frame hierarchy must be read back.");
+  assert.ok(pluginUi.includes('scope: "selection", maxDepth: 5, maxNodes: 100'), "Written frame hierarchy must be read back to full supported depth.");
   assert.ok(pluginUi.includes('verifiedNode.childCount'), "Success must require a verification result.");
 });
 
@@ -167,7 +170,7 @@ test("Figma agent normalizes provider-native design fields and uses the requeste
   assert.ok(planNormalizer.includes("export function normalizePlan("), "The reusable normalizer must be directly testable.");
   assert.ok(planNormalizer.includes("item.fill ?? item.backgroundColor"), "Provider fill aliases must map to the native Figma color field.");
   assert.ok(planNormalizer.includes("item.kind ?? item.elementType ?? item.nodeType"), "Provider layer type aliases must be normalized.");
-  assert.ok(agent.includes("const models = OPENROUTER_MODELS;"), "Figma agent must use the shared MiniMax/Auto model chain.");
+  assert.ok(agent.includes("const models = OPENROUTER_MODELS;"), "Figma agent must use the shared explicit model chain.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "Model requests must not be provider filtered.");
   assert.ok(agent.includes("const normalizedPlan = normalizePlan(rawPlan, canvas);"), "A normalized model plan must be validated before any canvas write.");
   assert.ok(agent.includes('PlanSchema.safeParse(normalizedPlan)'), "Native plan schema validation must remain mandatory.");
@@ -213,11 +216,12 @@ test("normal conversational chat uses Gemini primary and cost-ordered explicit f
   assert.equal(chatRoute.includes("auto-router"), false);
 });
 
-test("Figma visual analysis retries compact PNG capture and sends it with native layer data", () => {
-  assert.ok(pluginUi.includes("async function captureRenderedNodePng(nodeId)"));
-  assert.ok(pluginUi.includes("for (const scale of [0.35, 0.25, 0.2])"));
+test("Figma visual analysis uses a compact rendered JPEG and native layer data", () => {
+  assert.ok(pluginUi.includes("async function captureRenderedNodePreview(nodeId)"));
+  assert.ok(pluginUi.includes("for (const scale of [0.6, 0.45])"));
   assert.ok(pluginUi.includes('operation: "export-node"'));
-  assert.ok(pluginUi.includes('format: "PNG"'));
+  assert.ok(pluginUi.includes('format: "JPG"'));
+  assert.ok(pluginUi.includes('data:image/jpeg;base64,'));
   assert.ok(pluginUi.includes('stage("capturing", "Screenshot unavailable · "'));
   assert.ok(pluginUi.includes('"Analysing native layers only · " + (visualCaptureWarning'));
   assert.ok(plugin.includes('exportOptions.constraint = { type: "SCALE"'));
@@ -233,8 +237,8 @@ test("Figma visual review and refinement endpoints are wired and bounded", () =>
   const refine = read("app/api/assistant/figma-agent/refine/route.ts");
   assert.ok(pluginUi.includes("/api/assistant/figma-agent/review"));
   assert.ok(pluginUi.includes("/api/assistant/figma-agent/refine"));
-  assert.ok(pluginUi.includes("iteration <= 3"));
-  assert.ok(pluginUi.includes("iteration === 3"));
+  assert.ok(pluginUi.includes("iteration <= 2"));
+  assert.ok(pluginUi.includes("iteration === 2"));
   assert.ok(review.includes('type: "image_url"'));
   assert.ok(review.includes('sourceImage: z.string().max(52000).nullable().optional()'));
   assert.ok(review.includes('outputImage: z.string().max(52000).nullable().optional()'));
@@ -275,14 +279,17 @@ test("Figma visual capture failures do not invalidate the full design request", 
 
 test("selected and generated frame screenshot export falls back to progressively smaller scales", () => {
   assert.ok(pluginUi.includes("for (const scale of [0.35, 0.25, 0.2])"));
-  assert.ok(pluginUi.includes("PNG export failed at 35%, 25%, and 20%."));
-  assert.ok(pluginUi.includes("const outputCapture = await captureRenderedNodePng(createdFrameId)"));
+  assert.ok(pluginUi.includes("JPEG preview export failed at 60% and 45%."));
+  assert.ok(pluginUi.includes("const outputCapture = await captureRenderedNodePreview(createdFrameId)"));
   assert.ok(pluginUi.includes("outputCapture.warning"));
 });
 
 test("native Figma design creation builds nested frame containers before their children", () => {
   assert.ok(pluginUi.includes("async function createPlanChildren(parentId, elements, depth)"));
-  assert.ok(pluginUi.includes('target: "selection", elements: [spec]'));
+  assert.ok(pluginUi.includes('target: "node", parentNodeId: parentId, elements: [spec]'));
+  assert.ok(pluginUi.includes('target: "node", parentNodeId: parentId, elements: batch'));
+  assert.ok(plugin.includes('target === "node"'));
+  assert.ok(bridge.includes('target: z.enum(["current-page", "selection", "node", "test-lab"]).optional()'));
   assert.ok(pluginUi.includes("await createPlanChildren(container.id, children, depth + 1)"));
   assert.ok(pluginUi.includes("countPlanNodes(plan.elements)"));
   assert.ok(plugin.includes('node.type === "FRAME" && spec.noFill === true && "fills" in node'));

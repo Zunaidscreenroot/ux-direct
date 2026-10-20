@@ -27,7 +27,7 @@ test("UX Direct uses Gemini 3.7 Flash with cost-ordered OpenRouter fallbacks", (
   const policy = read("src/providers/openrouter-models.ts");
   assert.ok(route.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0]"));
   assert.ok(route.includes("const FALLBACK_MODEL = OPENROUTER_MODELS[1]"));
-  assert.ok(route.includes("for (const candidate of candidates)"));
+  assert.ok(route.includes("for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1)"));
   assert.equal(route.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.ok(route.includes("FIRST_TEXT_TIMEOUT_MS = 30_000"));
   assert.ok(route.includes("OPENROUTER_API_KEY"));

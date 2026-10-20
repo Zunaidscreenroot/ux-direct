@@ -86,7 +86,7 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("28–42 native nodes total INCLUDING nested children"), "The retry must explicitly cap output complexity.");
   assert.ok(route.includes("max_tokens: isRecovery ? 6500 : 12000"), "Use OpenRouter's current completion token parameter.");
   assert.ok(route.includes('reasoning: { effort: isRecovery ? "minimal" : "low" }'), "Gemini reasoning must leave room for visible JSON output.");
-  assert.ok(route.includes('model === "openrouter/auto" ? {}'), "Do not add reasoning or provider restrictions to unfiltered Auto.");
+  assert.ok(route.includes('model === "google/gemini-3.7-flash" ? {'), "Only Gemini receives the configured low-latency reasoning setting.");
 });
 
 test("compact recovery is model-agnostic and does not add OpenRouter provider filters", () => {
