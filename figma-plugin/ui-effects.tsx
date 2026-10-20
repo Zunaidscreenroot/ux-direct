@@ -148,7 +148,7 @@ renderBeam();
 
 window.UXDEffects = {
   setProcessState(state) {
-    processState = state in PROCESS_TO_ORB ? state as ProcessState : "working";
+    processState = state in PROCESS_TO_ORB ? state as ProcessState : "planning";
     renderOrbs();
   },
   setBeamEmphasis(active) {
