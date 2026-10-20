@@ -859,8 +859,10 @@
 
     async function captureRenderedNodePreview(nodeId) {
       const attempts = [];
-      // JPEG preserves the actual Figma render while greatly reducing payload size; retry once only.
-      for (const scale of [0.6, 0.45]) {
+      // Retry from a reasonably detailed preview down to a compact JPEG that fits the plugin bridge limit.
+      // Keep all image payloads below 35 KB binary / 48 KB base64; native layer analysis remains the fallback.
+      const scales = [0.6, 0.45, 0.3, 0.2, 0.12, 0.08];
+      for (const scale of scales) {
         try {
           const result = await runNativeCanvasCommand("write-canvas", {
             confirm: true,
@@ -878,7 +880,11 @@
           attempts.push(Math.round(scale * 100) + "%: " + String(error && error.message || "JPEG export failed").slice(0, 140));
         }
       }
-      return { dataUrl: null, scale: 0, warning: "JPEG preview export failed at 60% and 45%. " + attempts.join(" | ").slice(0, 500) };
+      return {
+        dataUrl: null,
+        scale: 0,
+        warning: "JPEG preview export failed at all attempted scales (60%, 45%, 30%, 20%, 12%, 8%). " + attempts.slice(-3).join(" | ").slice(0, 500)
+      };
     }
 
     function countPlanNodes(nodes) {
