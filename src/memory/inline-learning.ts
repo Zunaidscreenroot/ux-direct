@@ -46,7 +46,7 @@ export function parseInlineLearningCandidate(raw: string): InlineLearningCandida
     ? item.feedbackKind : "general";
   const keywords = Array.isArray(item.keywords)
     ? [...new Set(item.keywords.filter((entry): entry is string => typeof entry === "string")
-      .map(entry => entry.trim().toLowerCase()).filter(entry => entry.length > 0 && entry.length <= 64))].slice(0, 20)
+      .map(entry => entry.trim().toLowerCase()).filter(entry => entry.length > 0 && entry.length <= 64 && !containsSensitiveMaterial(entry)))].slice(0, 20)
     : [];
   return {
     title,
