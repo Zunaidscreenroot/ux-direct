@@ -200,10 +200,16 @@ test("normal conversational chat prefers GPT-6 Luna and only starts Auto after p
   assert.ok(chatRoute.includes('currentModel === FALLBACK_MODEL ? { plugins: [{ id: "auto-router", cost_tier: "low" }] }'));
 });
 
-test("Figma visual analysis receives a scaled rendered PNG together with native layer data", () => {
-  assert.ok(pluginUi.includes('operation: "export-node", nodeId: sourceNode.id, format: "PNG", scale: 0.35'));
+test("Figma visual analysis retries compact PNG capture and sends it with native layer data", () => {
+  assert.ok(pluginUi.includes("async function captureRenderedNodePng(nodeId)"));
+  assert.ok(pluginUi.includes("for (const scale of [0.35, 0.25, 0.2])"));
+  assert.ok(pluginUi.includes('operation: "export-node"'));
+  assert.ok(pluginUi.includes('format: "PNG"'));
+  assert.ok(pluginUi.includes('stage("capturing", "Screenshot unavailable · "'));
+  assert.ok(pluginUi.includes('"Analysing native layers only · " + (visualCaptureWarning'));
   assert.ok(plugin.includes('exportOptions.constraint = { type: "SCALE"'));
-  assert.ok(bridge.includes('scale: z.number().finite().min(0.2).max(1).optional()'));
+  const writeSchema = bridge.slice(bridge.indexOf("const CANVAS_WRITE_PAYLOAD"), bridge.indexOf("type HealthReport"));
+  assert.ok(writeSchema.includes('scale: z.number().finite().min(0.2).max(1).optional()'));
   assert.ok(agent.includes('renderedScreen: z.string().max(52000).nullable().optional()'));
   assert.ok(agent.includes('type: "image_url"'));
   assert.ok(agent.includes("Analyse BOTH the attached rendered screen image and native layer tree"));
@@ -244,4 +250,11 @@ test("Figma visual capture failures do not invalidate the full design request", 
   assert.ok(reviewRoute.includes('sourceImage: z.string().max(52000).nullable().optional()'));
   assert.ok(reviewRoute.includes('outputImage: z.string().max(52000).nullable().optional()'));
   assert.ok(pluginUi.includes('detail.message || "Invalid input"'));
+});
+
+test("selected and generated frame screenshot export falls back to progressively smaller scales", () => {
+  assert.ok(pluginUi.includes("for (const scale of [0.35, 0.25, 0.2])"));
+  assert.ok(pluginUi.includes("PNG export failed at 35%, 25%, and 20%."));
+  assert.ok(pluginUi.includes("const outputCapture = await captureRenderedNodePng(createdFrameId)"));
+  assert.ok(pluginUi.includes("outputCapture.warning"));
 });
