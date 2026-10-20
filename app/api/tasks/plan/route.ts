@@ -104,7 +104,7 @@ export async function POST(request: Request) {
     let memoryRetrieval: { status: string; memoryCount: number; knowledgeChunkCount: number; maxChars: number } | null = null;
     if (executionMode === "gateway") {
       const searchableText = [parsed.data.title, parsed.data.request].join(" ");
-      const scopes = ["UX_SHARED_BRAIN", "project:ux-direct"];
+      const scopes = ["UX_SHARED_BRAIN", "project:ux-direct", "project:general-ux"];
       if (/\b(bank|banking|bfsi|finance|financial|loan|credit|upi|insurance|nbfc|ujjivan|dmi|indian)\b/i.test(searchableText)) scopes.push("indian-bfsi");
       if (parsed.data.project === "dmi-finance") scopes.push("project:dmi-finance");
       if (parsed.data.project === "express-computers") scopes.push("project:express-computers");
