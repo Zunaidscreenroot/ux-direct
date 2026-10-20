@@ -11,7 +11,7 @@ const plugin = read("figma-plugin/code.js");
 const pluginUi = read("figma-plugin/ui.html");
 
 test("conversational cockpit inline JavaScript parses successfully", () => {
-  const match = pluginUi.match(/<script>([\\s\\S]*?)<\\/script>/i);
+  const match = pluginUi.match(/<script>([\s\S]*?)<\/script>/i);
   assert.ok(match, "Figma plugin UI must contain its main script block.");
   assert.doesNotThrow(() => new Script(match[1], { filename: "figma-plugin/ui.html" }));
 });
