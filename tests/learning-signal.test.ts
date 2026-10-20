@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { detectCoachingSignal, detectExplicitTrainingIntent, resolveLearningScope, resolveChatLearningScope } from "../src/memory/learning-signal";
+import { assessBrainRelevance, detectCoachingSignal, detectExplicitTrainingIntent, resolveLearningScope, resolveChatLearningScope } from "../src/memory/learning-signal";
 
 test("detects natural English feedback as a coaching signal", () => {
   assert.equal(detectCoachingSignal("You marked every CTA as high priority. That was wrong; remember this for future audits."), true);
@@ -59,4 +59,51 @@ test("a follow-up correction inherits only the prior task's client scope", () =>
   const followUpCorrection = "Aage se findings aur recommendations specific rakhna.";
   assert.equal(resolveChatLearningScope(followUpCorrection + "\\nConversation task context: Ujjivan SFB website revamp"), "project:ujjivan-sfb");
   assert.equal(resolveChatLearningScope(followUpCorrection + "\\nConversation task context: DMI HFC loan journey"), "project:dmi-finance");
+});
+
+
+test("shared knowledge ingestion requires at least 50% UX/product relevance", () => {
+  const relevant = assessBrainRelevance(
+    "CTA hierarchy and interaction pattern",
+    "Use a clear user interface layout and consistent interaction hierarchy.",
+    "UX_SHARED_BRAIN",
+  );
+  assert.equal(relevant.threshold, 0.5);
+  assert.equal(relevant.eligible, true);
+  assert.ok(relevant.score >= 0.5);
+
+  const unrelated = assessBrainRelevance(
+    "Weekend forecast",
+    "Tomorrow is expected to be sunny with light winds.",
+    "UX_SHARED_BRAIN",
+  );
+  assert.equal(unrelated.eligible, false);
+  assert.ok(unrelated.score < 0.5);
+});
+
+test("project-scoped knowledge can qualify with UX evidence plus explicit scope", () => {
+  const result = assessBrainRelevance(
+    "Banking task feedback",
+    "The user task needs clearer interaction and error feedback.",
+    "indian-bfsi",
+  );
+  assert.equal(result.eligible, true);
+  assert.ok(result.score >= 0.5);
+});
+
+test("project scope relevance is assessed independently from client scope resolution", () => {
+  const dmi = assessBrainRelevance(
+    "DMI loan journey",
+    "Clarify the OTP interaction and consent state in the application flow.",
+    "project:dmi-finance",
+  );
+  const ujjivan = assessBrainRelevance(
+    "Ujjivan website navigation",
+    "Improve CTA hierarchy and product card navigation.",
+    "project:ujjivan-sfb",
+  );
+  assert.equal(dmi.eligible, true);
+  assert.equal(ujjivan.eligible, true);
+  assert.ok(dmi.scopeSignals.length > 0);
+  assert.ok(ujjivan.scopeSignals.length > 0);
 });
