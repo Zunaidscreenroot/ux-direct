@@ -135,7 +135,7 @@ function learningKeywords(text: string): string[] {
   return [...new Set((text.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) || []).filter((word) => !stop.has(word)))].slice(0, 16);
 }
 
-async function captureChatLearning(text: string, taskContext = ""): Promise<ChatLearningCapture> {
+async function captureChatLearning(text: string, taskContext = "", sourceProduct: "ux-direct" | "figma-plugin" = "ux-direct"): Promise<ChatLearningCapture> {
   const value = text.trim();
   if (value.length < 12 || (!detectCoachingSignal(value) && !detectExplicitTrainingIntent(value))) return { status: "none" };
   // Never persist likely credentials/secrets as training material.
@@ -154,9 +154,9 @@ async function captureChatLearning(text: string, taskContext = ""): Promise<Chat
       feedbackKind: learningKind(captured),
       keywords: learningKeywords(captured),
       originalLanguage: /[\u0900-\u097f]/.test(captured) ? "Hindi" : /\b(yaad|aage se|galat|galti|karo|karna|hoga|chahiye|mein|hai)\b/i.test(captured) ? "Hinglish" : "English",
-      sourceProduct: "ux-direct",
-      idempotencyKey: "uxd-chat-learning-" + createHash("sha256").update(captured).digest("hex"),
-      metadata: { capturedFrom: "ux-direct-chat", captureVersion: 2, requiresOwnerApproval: false, automaticActivation: true, inferenceCalls: 0 },
+      sourceProduct,
+      idempotencyKey: "uxd-chat-learning-" + createHash("sha256").update(sourceProduct + "|" + captured).digest("hex"),
+      metadata: { capturedFrom: sourceProduct + "-chat", captureVersion: 3, requiresOwnerApproval: false, automaticActivation: true, inferenceCalls: 0 },
     });
     return { status: saved.activated === true ? "learned" : "none", recordId: saved.id };
   } catch {
@@ -370,9 +370,11 @@ export async function POST(request: Request) {
   const lastUserMessage = userTurns[userTurns.length - 1]?.content || "";
   const previousUserMessage = userTurns[userTurns.length - 2]?.content || "";
   const retrievalQuery = buildRetrievalQuery(lastUserMessage, previousUserMessage);
+  const origin = request.headers.get("origin");
+  const chatSourceProduct = origin && ALLOWED_FIGMA_ORIGINS.has(origin) ? "figma-plugin" : "ux-direct";
   const [brainBase, learning] = await Promise.all([
     retrieveMemory(request, retrievalQuery),
-    captureChatLearning(lastUserMessage, previousUserMessage),
+    captureChatLearning(lastUserMessage, previousUserMessage, chatSourceProduct),
   ]);
   const brain: BrainContextInfo = {
     ...brainBase,
