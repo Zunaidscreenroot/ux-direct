@@ -129,6 +129,9 @@ function compactCanvas(value: unknown): Record<string, unknown> {
 const SYSTEM = [
   "You are UX Direct's native Figma design agent. The user explicitly requested a design action.",
   "Return ONLY one JSON object. Root keys: summary (string), frame ({name,width,height,backgroundColor}), elements (5–80 flat native layers). Each layer MUST include type, name, x, y, width, height. Allowed type values: RECTANGLE, ELLIPSE, TEXT, LINE, FRAME, POLYGON, STAR. Use color: \"#RRGGBB\" for fill, NOT a fill key. TEXT layers must include text. Do not use unknown keys, children, nested layers, or markdown fences.",
+  "Analyse BOTH the attached rendered screen image and native layer tree before planning. Use the image to understand visual hierarchy, alignment, density, spacing, contrast, components, states and design language; use the layer tree for exact text, names, geometry, typography and paint values.",
+  "Do not replace an existing task-specific screen with a generic dashboard, generic landing page, or repeated stack of similar cards. Preserve the selected screen's purpose, key content, taxonomy and useful visual patterns. Reuse its components when possible, then improve professional craft, consistency, readability, alignment, action priority and visual rhythm.",
+  "Prefer evidence-grounded product content and component patterns. If values are unknown, label financial amounts as sample. Never claim visual analysis when no image was supplied.",
   "Create a polished, high-fidelity native Figma screen using only native shapes and text layers. Do not use images, external assets, or invented APIs.",
   "The frame's children are FLAT direct children; element x/y coordinates are relative to the new frame's top-left. Position layers back-to-front; rectangles first, then text and controls. Intentional overlap is allowed only when a text/control belongs visually on a card.",
   "Use Inter as fontFamily and Regular as fontStyle. Give visual hierarchy through font size, spacing, type scale, alignment, cards, and restrained color. Keep text short enough to fit its boxes. Use strong contrast and consistent spacing.",
@@ -163,11 +166,22 @@ export async function POST(request: Request) {
   const requestSchema = z.object({
     prompt: z.string().trim().min(2).max(5000),
     canvas: z.unknown(),
+    renderedScreen: z.string().max(52000).optional(),
+    visualCaptureWarning: z.string().max(400).optional(),
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
   if (!parsedInput.success) return NextResponse.json({ error: "A prompt and canvas context are required.", details: parsedInput.error.issues }, { status: 400, headers });
+  const renderedScreen = typeof parsedInput.data.renderedScreen === "string" &&
+    parsedInput.data.renderedScreen.length <= 52000 &&
+    new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.renderedScreen)
+    ? parsedInput.data.renderedScreen : null;
   const canvas = compactCanvas(parsedInput.data.canvas);
-  const userContext = JSON.stringify({ prompt: parsedInput.data.prompt, figmaCanvas: canvas });
+  const userContext = JSON.stringify({
+    prompt: parsedInput.data.prompt,
+    figmaCanvas: canvas,
+    visualCapture: renderedScreen ? "Rendered selected-screen image is attached." :
+      parsedInput.data.visualCaptureWarning || "No rendered image available; analyse layer evidence only and do not claim visual inspection.",
+  });
   if (userContext.length > 52000) return NextResponse.json({ error: "Selection context is too large. Select a smaller frame or reduce the number of layers." }, { status: 413, headers });
 
   let brain: BrainContextPromptInput = { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
@@ -213,7 +227,12 @@ export async function POST(request: Request) {
           model,
           messages: [
             { role: "system", content: system },
-            { role: "user", content: "Build the requested design variation. Use the supplied canvas tree as the source of truth. The user request and selected frame context are below:\n" + userContext },
+            { role: "user", content: renderedScreen
+              ? [
+                  { type: "text", text: "Design a high-fidelity, source-faithful improvement. Combine the rendered screen image with its native layer tree. Avoid generic redesigns. Context:\n" + userContext },
+                  { type: "image_url", image_url: { url: renderedScreen } },
+                ]
+              : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext },
           ],
           temperature: 0.25,
           max_tokens: 8500,
@@ -255,6 +274,7 @@ export async function POST(request: Request) {
         plan: parsedPlan.data,
         model: typeof payload.model === "string" ? payload.model : model,
         brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
+        visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
       }, { headers });
     } catch (error) {
       errors.push(model + ": " + (controller.signal.aborted ? "timed out after 65 seconds" : error instanceof Error ? error.message.slice(0, 200) : "request failed"));
