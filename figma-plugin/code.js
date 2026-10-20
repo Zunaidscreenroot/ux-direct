@@ -1099,12 +1099,16 @@ function summarizeCanvasNode(node, depth, state) {
     var strokes = summarizePaintColors(node.strokes);
     if (strokes.length) out.strokeColors = strokes;
   }
+  ["layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "layoutWrap",
+    "horizontalConstraint", "verticalConstraint", "primaryAxisSizingMode", "counterAxisSizingMode",
+    "primaryAxisAlignItems", "counterAxisAlignItems", "textAutoResize"].forEach(function (key) {
+    try { if (node[key] !== undefined && node[key] !== figma.mixed) out[key] = node[key]; } catch (_) {}
+  });
+  ["layoutGrow", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom"].forEach(function (key) {
+    try { if (typeof node[key] === "number" && Number.isFinite(node[key])) out[key] = node[key]; } catch (_) {}
+  });
   if (typeof node.layoutMode === "string" && node.layoutMode !== "NONE") {
     out.layoutMode = node.layoutMode;
-    ["itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
-      "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"].forEach(function (key) {
-      if (node[key] !== undefined && node[key] !== figma.mixed) out[key] = node[key];
-    });
   }
   if ("effects" in node && Array.isArray(node.effects) && node.effects.length) {
     out.effectTypes = node.effects.slice(0, 4).map(function (effect) { return effect.type; });
@@ -1241,7 +1245,7 @@ async function writeCanvasCommand(payload) {
   payload = payload || {};
   if (payload.confirm !== true) throw new Error("Write blocked: confirm must be true after an explicit user request.");
   function nodeSummary(node) {
-    return {
+    var summary = {
       id: node.id, name: node.name, type: node.type, visible: node.visible,
       x: typeof node.x === "number" ? node.x : null,
       y: typeof node.y === "number" ? node.y : null,
@@ -1249,6 +1253,15 @@ async function writeCanvasCommand(payload) {
       height: typeof node.height === "number" ? node.height : null,
       rotation: typeof node.rotation === "number" ? node.rotation : null
     };
+    ["layoutMode", "layoutWrap", "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning",
+      "primaryAxisSizingMode", "counterAxisSizingMode", "primaryAxisAlignItems", "counterAxisAlignItems",
+      "horizontalConstraint", "verticalConstraint", "textAutoResize"].forEach(function (key) {
+      try { if (node[key] !== undefined && node[key] !== figma.mixed) summary[key] = node[key]; } catch (_) {}
+    });
+    ["itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "layoutGrow"].forEach(function (key) {
+      try { if (typeof node[key] === "number" && Number.isFinite(node[key])) summary[key] = node[key]; } catch (_) {}
+    });
+    return summary;
   }
   function findPageNode(id) {
     if (typeof id !== "string" || !id.trim()) return null;
@@ -1325,6 +1338,19 @@ async function writeCanvasCommand(payload) {
       "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"].forEach(function (key) {
       if (spec[key] !== undefined && key in node) node[key] = spec[key];
     });
+    if (spec.layoutWrap !== undefined && node.type === "FRAME") {
+      if (node.layoutMode !== "HORIZONTAL" && spec.layoutWrap === "WRAP") {
+        throw new Error("layoutWrap=WRAP requires a horizontal Auto Layout FRAME.");
+      }
+      node.layoutWrap = spec.layoutWrap;
+    }
+    if (spec.horizontalConstraint !== undefined || spec.verticalConstraint !== undefined) {
+      if (!("constraints" in node)) throw new Error("Responsive constraints require a node with a constraints property.");
+      var constraints = Object.assign({}, node.constraints || {});
+      if (spec.horizontalConstraint !== undefined) constraints.horizontal = spec.horizontalConstraint;
+      if (spec.verticalConstraint !== undefined) constraints.vertical = spec.verticalConstraint;
+      node.constraints = constraints;
+    }
     if (node.type === "TEXT") {
       if (typeof spec.textAlignHorizontal === "string") node.textAlignHorizontal = spec.textAlignHorizontal;
       if (typeof spec.textAlignVertical === "string") node.textAlignVertical = spec.textAlignVertical;
@@ -1420,9 +1446,20 @@ async function writeCanvasCommand(payload) {
         if (Number.isFinite(spec.innerRadius)) node.innerRadius = Math.max(0.01, Math.min(1, spec.innerRadius));
       }
       if (type === "TEXT") {
-        var font = { family: typeof spec.fontFamily === "string" ? spec.fontFamily : "Inter",
-          style: typeof spec.fontStyle === "string" ? spec.fontStyle : "Regular" };
-        await figma.loadFontAsync(font);
+        var requestedFont = {
+          family: typeof spec.fontFamily === "string" ? spec.fontFamily : "Inter",
+          style: typeof spec.fontStyle === "string" ? spec.fontStyle : "Regular"
+        };
+        var font = requestedFont;
+        try {
+          await figma.loadFontAsync(requestedFont);
+        } catch (fontError) {
+          // Missing family/style should not abort an otherwise useful design. Record
+          // a visible diagnostic and fall back to a dependable native font.
+          font = { family: "Inter", style: "Regular" };
+          try { await figma.loadFontAsync(font); }
+          catch (_) { throw new Error("Could not load requested font or Inter Regular for " + node.name + "."); }
+        }
         node.fontName = font;
         node.fontSize = Number.isFinite(spec.fontSize) ? Math.max(8, Math.min(144, spec.fontSize)) : 14;
         node.characters = spec.text.slice(0, 5000);
@@ -1431,8 +1468,31 @@ async function writeCanvasCommand(payload) {
       }
       applyCreateProperties(node, spec);
       parent.appendChild(node);
-      node.x = Number.isFinite(spec.x) ? Math.max(-10000, Math.min(10000, spec.x)) : 0;
-      node.y = Number.isFinite(spec.y) ? Math.max(-10000, Math.min(10000, spec.y)) : i * (height + 24);
+
+      var parentLayoutMode = parent && typeof parent.layoutMode === "string" ? parent.layoutMode : "NONE";
+      var inAutoLayout = parentLayoutMode !== "NONE";
+      if (inAutoLayout && "layoutPositioning" in node && spec.layoutPositioning === "ABSOLUTE") {
+        node.layoutPositioning = "ABSOLUTE";
+      }
+      if (inAutoLayout && spec.layoutPositioning !== "ABSOLUTE") {
+        [["layoutSizingHorizontal", spec.layoutSizingHorizontal],
+          ["layoutSizingVertical", spec.layoutSizingVertical]].forEach(function (entry) {
+          var property = entry[0], value = entry[1];
+          if (value === undefined || !(property in node)) return;
+          try { node[property] = value; }
+          catch (layoutError) {
+            throw new Error("Figma rejected " + property + "=" + value + " for " + node.name +
+              " inside Auto Layout " + parent.name + ": " + String(layoutError && layoutError.message || layoutError).slice(0, 180));
+          }
+        });
+      }
+      // x/y must not be assigned to normal Auto Layout children. Figma ignores these
+      // coordinates while laying them out and may make a broken plan look verified.
+      // Absolute overlays and free-positioned children keep their local coordinates.
+      if (!inAutoLayout || spec.layoutPositioning === "ABSOLUTE") {
+        node.x = Number.isFinite(spec.x) ? Math.max(-10000, Math.min(10000, spec.x)) : 0;
+        node.y = Number.isFinite(spec.y) ? Math.max(-10000, Math.min(10000, spec.y)) : i * (height + 24);
+      }
       created.push(nodeSummary(node));
     }
     return { ok: true, operation: "create-elements", fileKey: figma.fileKey,
@@ -1527,17 +1587,43 @@ async function writeCanvasCommand(payload) {
         blendMode: "NORMAL"
       }];
     }
-    var layoutKeys = ["layoutMode", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
+    var containerLayoutKeys = ["layoutMode", "layoutWrap", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
       "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"];
-    var hasLayoutPatch = layoutKeys.some(function (key) { return patch[key] !== undefined; });
-    if (hasLayoutPatch && !("layoutMode" in targetNode)) throw new Error("Auto-layout properties require a frame or component container.");
+    var hasContainerLayoutPatch = containerLayoutKeys.some(function (key) { return patch[key] !== undefined; });
+    if (hasContainerLayoutPatch && !("layoutMode" in targetNode)) throw new Error("Container Auto Layout properties require a frame or component.");
     if (patch.layoutMode !== undefined) targetNode.layoutMode = patch.layoutMode;
     ["itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
       "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"].forEach(function (key) {
       if (patch[key] !== undefined) targetNode[key] = patch[key];
     });
+    if (patch.layoutWrap !== undefined) {
+      if (targetNode.type !== "FRAME" || targetNode.layoutMode !== "HORIZONTAL") throw new Error("layoutWrap requires a horizontal Auto Layout FRAME.");
+      targetNode.layoutWrap = patch.layoutWrap;
+    }
+    if (patch.layoutPositioning !== undefined) {
+      var patchParent = targetNode.parent;
+      if (!patchParent || !["HORIZONTAL", "VERTICAL", "GRID"].includes(String(patchParent.layoutMode))) {
+        throw new Error("layoutPositioning requires a child of an Auto Layout frame.");
+      }
+      targetNode.layoutPositioning = patch.layoutPositioning;
+    }
+    [["layoutSizingHorizontal", patch.layoutSizingHorizontal], ["layoutSizingVertical", patch.layoutSizingVertical]].forEach(function (entry) {
+      var property = entry[0], value = entry[1];
+      if (value === undefined) return;
+      var parentMode = targetNode.parent && targetNode.parent.layoutMode;
+      if (!["HORIZONTAL", "VERTICAL", "GRID"].includes(String(parentMode))) throw new Error(property + " requires an Auto Layout parent.");
+      if (!(property in targetNode)) throw new Error("Node does not support " + property + ".");
+      targetNode[property] = value;
+    });
+    if (Number.isFinite(patch.layoutGrow)) {
+      if (!("layoutGrow" in targetNode)) throw new Error("This node does not support layoutGrow.");
+      targetNode.layoutGrow = Math.max(0, Math.min(1, patch.layoutGrow));
+    }
     if (patch.horizontalConstraint !== undefined || patch.verticalConstraint !== undefined) {
-      if (!("constraints" in targetNode)) throw new Error("Constraints can only be set on nodes that support responsive constraints.");
+      if (!( "constraints" in targetNode)) throw new Error("Constraints can only be set on nodes that support responsive constraints.");
+      if (targetNode.parent && ["HORIZONTAL", "VERTICAL", "GRID"].includes(String(targetNode.parent.layoutMode))) {
+        throw new Error("Do not combine Auto Layout and responsive constraints on the same child; use layoutSizing and layoutPositioning instead.");
+      }
       var constraints = Object.assign({}, targetNode.constraints || {});
       if (patch.horizontalConstraint !== undefined) constraints.horizontal = patch.horizontalConstraint;
       if (patch.verticalConstraint !== undefined) constraints.vertical = patch.verticalConstraint;
