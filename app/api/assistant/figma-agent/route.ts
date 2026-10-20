@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { buildBrainSystemPrompt, resolveBrainScopes } from "@/src/memory/chat-context";
+import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 
 export const runtime = "nodejs";
@@ -91,7 +91,7 @@ function compactNode(value: unknown, state: { count: number }, depth = 0): Canva
   for (const key of ["id", "x", "y", "width", "height", "text", "fontSize", "visible", "layoutMode", "childCount"] as const) {
     const valueAtKey = node[key];
     if (key === "id" && typeof valueAtKey === "string") out.id = valueAtKey.slice(0, 100);
-    if (["x", "y", "width", "height", "fontSize", "childCount"].includes(key) && typeof valueAtKey === "number" && Number.isFinite(valueAtKey)) (out as Record<string, unknown>)[key] = valueAtKey;
+    if (["x", "y", "width", "height", "fontSize", "childCount"].includes(key) && typeof valueAtKey === "number" && Number.isFinite(valueAtKey)) (out as unknown as Record<string, unknown>)[key] = valueAtKey;
     if (key === "text" && typeof valueAtKey === "string") out.text = valueAtKey.slice(0, 350);
     if (key === "visible" && typeof valueAtKey === "boolean") out.visible = valueAtKey;
     if (key === "layoutMode" && typeof valueAtKey === "string") out.layoutMode = valueAtKey.slice(0, 20);
@@ -169,7 +169,7 @@ export async function POST(request: Request) {
   const userContext = JSON.stringify({ prompt: parsedInput.data.prompt, figmaCanvas: canvas });
   if (userContext.length > 52000) return NextResponse.json({ error: "Selection context is too large. Select a smaller frame or reduce the number of layers." }, { status: 413, headers });
 
-  let brain = { contextText: "", status: "degraded" as const, memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
+  let brain: BrainContextPromptInput = { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
   const brainStarted = Date.now();
   try {
     const retrieved = await retrieveBrainContext({
@@ -223,22 +223,34 @@ export async function POST(request: Request) {
         cache: "no-store",
         signal: controller.signal,
       });
-      const payload = await response.json().catch(() => null) as any;
+      const rawPayload: unknown = await response.json().catch(() => null);
+      const payload = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
+        ? rawPayload as Record<string, unknown>
+        : {};
+      const providerError = payload.error && typeof payload.error === "object" && !Array.isArray(payload.error)
+        ? payload.error as Record<string, unknown>
+        : {};
       if (!response.ok) {
-        const detail = typeof payload?.error?.message === "string" ? payload.error.message.slice(0, 260) : "HTTP " + response.status;
+        const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
         errors.push(model + ": " + detail);
         continue;
       }
-      const content = payload?.choices?.[0]?.message?.content;
-      const plan = PlanSchema.safeParse(extractJson(content));
-      if (!plan.success) {
-        errors.push(model + ": invalid design plan schema (" + plan.error.issues.slice(0, 3).map((issue) => issue.path.join(".") + " " + issue.message).join("; ") + ")");
+      const choices = Array.isArray(payload.choices) ? payload.choices : [];
+      const firstChoice = choices[0] && typeof choices[0] === "object" && !Array.isArray(choices[0])
+        ? choices[0] as Record<string, unknown>
+        : {};
+      const providerMessage = firstChoice.message && typeof firstChoice.message === "object" && !Array.isArray(firstChoice.message)
+        ? firstChoice.message as Record<string, unknown>
+        : {};
+      const parsedPlan = PlanSchema.safeParse(extractJson(providerMessage.content));
+      if (!parsedPlan.success) {
+        errors.push(model + ": invalid design plan schema (" + parsedPlan.error.issues.slice(0, 3).map((issue) => issue.path.join(".") + " " + issue.message).join("; ") + ")");
         continue;
       }
       return NextResponse.json({
         ok: true,
-        plan: plan.data,
-        model: typeof payload?.model === "string" ? payload.model : model,
+        plan: parsedPlan.data,
+        model: typeof payload.model === "string" ? payload.model : model,
         brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
       }, { headers });
     } catch (error) {
