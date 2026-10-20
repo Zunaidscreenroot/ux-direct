@@ -244,6 +244,7 @@
       brain: "Connecting to UX Direct Brain",
       memory: "Searching shared memories and Knowledge Base",
       planning: "Planning layout and visual design",
+      waiting: "Waiting for the previous Figma action to finish",
       creating: "Creating editable Figma layers",
       rendering: "Rendering the generated screen",
       reviewing: "Inspecting visual quality",
@@ -258,7 +259,7 @@
         welcome.classList.toggle("has-started", state !== "idle");
         const orb = welcome.querySelector(".uxd-hero-orb");
         if (orb) {
-          orb.dataset.state = ["scanning","capturing","brain","memory","planning"].includes(state) ? "thinking"
+          orb.dataset.state = ["scanning","capturing","brain","memory","planning","waiting"].includes(state) ? "thinking"
             : ["creating","refining"].includes(state) ? "creating"
             : ["rendering","reviewing","verifying"].includes(state) ? "reviewing" : state;
         }
