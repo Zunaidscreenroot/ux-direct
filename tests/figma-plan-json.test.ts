@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describeModelContent, extractPlanJson } from "../src/figma-agent/extract-plan-json";
 
 const plan = {
@@ -58,4 +60,41 @@ test("content diagnostics describe shape only, not model output", () => {
   assert.equal(describeModelContent(null), "null");
   assert.match(describeModelContent('{"summary":"private design text"}'), /^string\(\d+ chars\)$/);
   assert.equal(describeModelContent([{ type: "text" }, { type: "tool_use" }]), "array[text,tool_use]");
+});
+
+test("extracts a native plan from the full OpenRouter chat-completions envelope", () => {
+  const envelope = {
+    id: "gen-test",
+    model: "minimax/minimax-m3.1-flash:free",
+    choices: [{
+      finish_reason: "stop",
+      message: { role: "assistant", content: JSON.stringify(plan) },
+    }],
+  };
+  assert.deepEqual(extractPlanJson(envelope), plan);
+});
+
+test("missing final content remains invalid and is handled by the route recovery path", () => {
+  assert.equal(extractPlanJson({
+    choices: [{ finish_reason: "unknown", message: { role: "assistant", reasoning: "thinking only" } }],
+  }), null);
+  const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
+  assert.ok(route.includes("for (let recoveryAttempt = 0; recoveryAttempt < 2; recoveryAttempt += 1)"));
+  assert.ok(route.includes("const wasTruncated = finishReason === \"length\" || nativeFinishReason === \"length\""));
+  assert.ok(route.includes("if (!isRecovery) continue;"), "Missing content and invalid schemas must cause a compact retry.");
+  assert.ok(route.includes("compactRecoveryCanvas(canvas)"), "The retry should send a bounded source layer tree.");
+  assert.ok(route.includes("18–26 native nodes total INCLUDING all nested children"), "The retry must explicitly cap output complexity.");
+  assert.ok(route.includes("max_completion_tokens: isRecovery ? 6000 : 10000"), "Use OpenRouter's current completion token parameter.");
+  assert.ok(route.includes('reasoning: { effort: isRecovery ? "minimal" : "low" }'), "MiniMax reasoning must leave room for its visible JSON output.");
+  assert.ok(route.includes('model === "openrouter/auto" ? {}'), "Do not add reasoning or provider restrictions to unfiltered Auto.");
+});
+
+test("compact recovery is model-agnostic and does not add OpenRouter provider filters", () => {
+  const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
+  const models = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
+  assert.ok(route.includes("const models = OPENROUTER_MODELS;"));
+  assert.ok(models.includes('"minimax/minimax-m3.1-flash:free"'));
+  assert.ok(models.includes('"openrouter/auto"'));
+  assert.equal(route.includes("provider: {"), false);
+  assert.equal(route.includes("plugins: [{ id: \"auto-router\""), false);
 });

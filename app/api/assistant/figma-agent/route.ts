@@ -179,6 +179,47 @@ function compactNode(value: unknown, state: { count: number }, depth = 0): Canva
   }
   return out;
 }
+function compactRecoveryNode(
+  value: unknown,
+  state: { count: number },
+  depth = 0,
+): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value) || depth > 3 || state.count >= 45) return null;
+  const source = value as Record<string, unknown>;
+  if (typeof source.type !== "string") return null;
+  state.count += 1;
+  const out: Record<string, unknown> = { type: source.type };
+  for (const key of ["id", "name", "text", "x", "y", "width", "height", "fontSize", "childCount"] as const) {
+    const raw = source[key];
+    if (typeof raw === "string") out[key] = raw.slice(0, key === "text" ? 140 : 80);
+    else if (typeof raw === "number" && Number.isFinite(raw)) out[key] = raw;
+  }
+  if (Array.isArray(source.fillColors)) out.fillColors = source.fillColors.filter((item): item is string => typeof item === "string").slice(0, 2);
+  if (Array.isArray(source.children) && depth < 3) {
+    const children: Record<string, unknown>[] = [];
+    for (const child of source.children.slice(0, 8)) {
+      const nested = compactRecoveryNode(child, state, depth + 1);
+      if (nested) children.push(nested);
+      if (state.count >= 45) break;
+    }
+    if (children.length) out.children = children;
+  }
+  return out;
+}
+
+function compactRecoveryCanvas(canvas: Record<string, unknown>): Record<string, unknown> {
+  const state = { count: 0 };
+  const sourceNodes = Array.isArray(canvas.nodes) ? canvas.nodes : [];
+  const nodes = sourceNodes.slice(0, 8)
+    .map((node) => compactRecoveryNode(node, state))
+    .filter((node): node is Record<string, unknown> => !!node);
+  return {
+    pageName: typeof canvas.pageName === "string" ? canvas.pageName.slice(0, 80) : "",
+    scope: typeof canvas.scope === "string" ? canvas.scope.slice(0, 30) : "selection",
+    nodes,
+  };
+}
+
 function compactCanvas(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { pageName: "Unknown page", nodes: [] };
   const canvas = value as Record<string, unknown>;
@@ -300,101 +341,157 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // Try the requested free MiniMax model first, then unfiltered OpenRouter Auto.
+  // Try MiniMax free first, then unfiltered OpenRouter Auto. Each model gets one
+  // compact recovery attempt if its first response is absent, malformed, or truncated.
   const models = OPENROUTER_MODELS;
   const errors: string[] = [];
+  const recoveryContext = JSON.stringify({
+    prompt: parsedInput.data.prompt,
+    designScope,
+    selectedNode: { name: selectedName, type: selectedType, width: selectedWidth, height: selectedHeight },
+    screenshot: renderedScreen ? "Rendered screenshot attached to this request." : "No screenshot available; use native layer evidence only.",
+    figmaCanvas: compactRecoveryCanvas(canvas),
+  });
+  const recoverySystem = [
+    UX_DIRECT_DESIGN_ROLE,
+    "Create an improved native Figma variation of the selected source. The user prompt is the design change, not the procedure.",
+    scopeInstructions,
+    "Preserve the screen/component scope, all meaningful source text and financial values, status, date, labels, rows, actions and relationships. Do not redesign it as a generic dashboard or generic stack of cards.",
+    "Use the attached screenshot and source layers when available. Use semantic nested FRAMEs, Auto Layout for suitable cards and rows, clear hierarchy, strong contrast, consistent spacing and editable native shapes/text. Do not invent contractual financial details.",
+    "Return one complete JSON object only with root keys summary (string), frame ({name,width,height,backgroundColor}), elements (an array of exactly 5 non-empty FRAME section containers), and learningCandidate:null. Every element must use supported native Figma fields. This is a schema contract, not text to copy. No markdown, explanation or reasoning.",
+    "OUTPUT BUDGET: exactly 5 non-empty top-level FRAME groups; 18–26 native nodes total INCLUDING all nested children. Aim for 3–4 useful children per section. Do not add decorative or repetitive layers just to increase the count. Short names and concise text. Finish all strings, arrays, objects and the final closing brace.",
+    "Every node must have type, name, x, y, width and height. Types: FRAME, RECTANGLE, ELLIPSE, TEXT, LINE, POLYGON, STAR. TEXT must have text. Only FRAME can contain children. Coordinates must be relative to the immediate parent. Use color:'#RRGGBB' and noFill:true only for transparent structural frames.",
+    "Do not include a learningCandidate unless there is a durable reusable lesson. If none, set learningCandidate:null.",
+  ].join("\n");
   for (const model of models) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 65000);
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer " + key,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "HTTP-Referer": new URL(request.url).origin,
-          "X-OpenRouter-Title": "UX Direct Figma Agent",
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: renderedScreen
-              ? [
-                  { type: "text", text: "Design a high-fidelity, source-faithful improvement. Combine the rendered screen image with its native layer tree. Avoid generic redesigns. Context:\n" + userContext },
-                  { type: "image_url", image_url: { url: renderedScreen } },
-                ]
-              : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext },
-          ],
-          temperature: 0.25,
-          max_tokens: 10000,
-          response_format: { type: "json_object" },
-        }),
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      const rawPayload: unknown = await response.json().catch(() => null);
-      const payload = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
-        ? rawPayload as Record<string, unknown>
-        : {};
-      const providerError = payload.error && typeof payload.error === "object" && !Array.isArray(payload.error)
-        ? payload.error as Record<string, unknown>
-        : {};
-      if (!response.ok) {
-        const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
-        errors.push(model + ": " + detail);
-        continue;
-      }
-      const choices = Array.isArray(payload.choices) ? payload.choices : [];
-      const firstChoice = choices[0] && typeof choices[0] === "object" && !Array.isArray(choices[0])
-        ? choices[0] as Record<string, unknown>
-        : {};
-      const providerMessage = firstChoice.message && typeof firstChoice.message === "object" && !Array.isArray(firstChoice.message)
-        ? firstChoice.message as Record<string, unknown>
-        : {};
-      const rawPlan = extractPlanJson(providerMessage.content)
-        ?? extractPlanJson(providerMessage.parsed)
-        ?? extractPlanJson(providerMessage.tool_calls)
-        ?? extractPlanJson(providerMessage);
-      if (rawPlan === null) {
+    for (let recoveryAttempt = 0; recoveryAttempt < 2; recoveryAttempt += 1) {
+      const isRecovery = recoveryAttempt === 1;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 65000);
+      try {
+        const modelUserText = isRecovery
+          ? "RECOVERY RETRY: The prior response was absent, incomplete, or invalid. Return a smaller complete JSON object following the exact compact output budget in the system message. Do not continue the old text or explain the failure.\nSOURCE CONTEXT:\n" + recoveryContext
+          : (renderedScreen
+            ? "Design a high-fidelity, source-faithful improvement. Combine the rendered screen image with its native layer tree. Avoid generic redesigns. Context:\n" + userContext
+            : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext);
+        const userContent: string | Array<Record<string, unknown>> = renderedScreen
+          ? [
+              { type: "text", text: modelUserText },
+              { type: "image_url", image_url: { url: renderedScreen } },
+            ]
+          : modelUserText;
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer " + key,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "HTTP-Referer": new URL(request.url).origin,
+            "X-OpenRouter-Title": "UX Direct Figma Agent",
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: "system", content: isRecovery ? recoverySystem : system },
+              { role: "user", content: userContent },
+            ],
+            temperature: isRecovery ? 0.15 : 0.25,
+            max_completion_tokens: isRecovery ? 6000 : 10000,
+            // M3.1 Flash supports effort controls. Keep its reasoning budget low enough
+            // to leave tokens for the visible JSON plan. Do not constrain OpenRouter Auto.
+            ...(model === "openrouter/auto" ? {} : {
+              reasoning: { effort: isRecovery ? "minimal" : "low" },
+            }),
+            response_format: { type: "json_object" },
+          }),
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const rawPayload: unknown = await response.json().catch(() => null);
+        const payload = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
+          ? rawPayload as Record<string, unknown>
+          : {};
+        const providerError = payload.error && typeof payload.error === "object" && !Array.isArray(payload.error)
+          ? payload.error as Record<string, unknown>
+          : {};
+        if (!response.ok) {
+          const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
+          errors.push(model + (isRecovery ? " compact retry" : "") + ": " + detail);
+          if (!isRecovery && [408, 429, 500, 502, 503, 504].includes(response.status)) continue;
+          break;
+        }
+        const choices = Array.isArray(payload.choices) ? payload.choices : [];
+        const firstChoice = choices[0] && typeof choices[0] === "object" && !Array.isArray(choices[0])
+          ? choices[0] as Record<string, unknown>
+          : {};
+        const providerMessage = firstChoice.message && typeof firstChoice.message === "object" && !Array.isArray(firstChoice.message)
+          ? firstChoice.message as Record<string, unknown>
+          : {};
+        const rawPlan = extractPlanJson(providerMessage.content)
+          ?? extractPlanJson(providerMessage.parsed)
+          ?? extractPlanJson(providerMessage.tool_calls)
+          ?? extractPlanJson(providerMessage)
+          ?? extractPlanJson(firstChoice);
         const finishReason = typeof firstChoice.finish_reason === "string" ? firstChoice.finish_reason : "unknown";
-        const contentDescription = describeModelContent(providerMessage.content);
-        errors.push(model + ": response contained no extractable design JSON (content=" + contentDescription +
-          ", finish_reason=" + finishReason + ", tool_calls=" +
-          (Array.isArray(providerMessage.tool_calls) ? providerMessage.tool_calls.length : 0) + ").");
-        continue;
+        const nativeFinishReason = typeof firstChoice.native_finish_reason === "string" ? firstChoice.native_finish_reason : "unknown";
+        const wasTruncated = finishReason === "length" || nativeFinishReason === "length";
+        if (wasTruncated) {
+          errors.push(model + (isRecovery ? " compact retry" : "") +
+            ": provider hit the output length limit (finish_reason=" + finishReason +
+            ", native_finish_reason=" + nativeFinishReason + ", content=" +
+            describeModelContent(providerMessage.content) + ").");
+          // A valid-looking prefix can still be incomplete. Never write it; retry compactly.
+          if (!isRecovery) continue;
+          break;
+        }
+        if (rawPlan === null) {
+          const messageKeys = Object.keys(providerMessage).slice(0, 10).join(",") || "none";
+          const choiceKeys = Object.keys(firstChoice).slice(0, 10).join(",") || "none";
+          errors.push(model + (isRecovery ? " compact retry" : "") +
+            ": response contained no extractable design JSON (content=" + describeModelContent(providerMessage.content) +
+            ", finish_reason=" + finishReason + ", message_keys=" + messageKeys + ", choice_keys=" + choiceKeys +
+            ", tool_calls=" + (Array.isArray(providerMessage.tool_calls) ? providerMessage.tool_calls.length : 0) + ").");
+          if (!isRecovery) continue;
+          break;
+        }
+        const rawPlanRecord = rawPlan && typeof rawPlan === "object" && !Array.isArray(rawPlan)
+          ? rawPlan as Record<string, unknown> : {};
+        const normalizedPlan = normalizePlan(rawPlan, canvas);
+        const parsedPlan = PlanSchema.safeParse(normalizedPlan);
+        if (!parsedPlan.success) {
+          const issues = parsedPlan.error.issues.slice(0, 4)
+            .map((issue) => issue.path.join(".") + " " + issue.message).join("; ");
+          errors.push(model + (isRecovery ? " compact retry" : "") + ": invalid design plan schema (" + issues + ")");
+          if (!isRecovery) continue;
+          break;
+        }
+        const learningStatus = await captureFigmaTaskLearning(
+          rawPlanRecord.learningCandidate,
+          parsedInput.data.prompt,
+          "automatic-figma-generation",
+        );
+        return NextResponse.json({
+          ok: true,
+          plan: parsedPlan.data,
+          learning: learningStatus,
+          model: typeof payload.model === "string" ? payload.model : model,
+          brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
+          visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
+          generation: { recoveryAttempted: isRecovery, finishReason },
+        }, { headers });
+      } catch (error) {
+        errors.push(model + (isRecovery ? " compact retry" : "") + ": " +
+          (controller.signal.aborted ? "timed out after 65 seconds" : error instanceof Error ? error.message.slice(0, 200) : "request failed"));
+        if (!isRecovery) continue;
+        break;
+      } finally {
+        clearTimeout(timer);
       }
-      const rawPlanRecord = rawPlan && typeof rawPlan === "object" && !Array.isArray(rawPlan)
-        ? rawPlan as Record<string, unknown> : {};
-      const normalizedPlan = normalizePlan(rawPlan, canvas);
-      const parsedPlan = PlanSchema.safeParse(normalizedPlan);
-      if (!parsedPlan.success) {
-        errors.push(model + ": invalid design plan schema (" + parsedPlan.error.issues.slice(0, 3).map((issue) => issue.path.join(".") + " " + issue.message).join("; ") + ")");
-        continue;
-      }
-      const learningStatus = await captureFigmaTaskLearning(
-        rawPlanRecord.learningCandidate,
-        parsedInput.data.prompt,
-        "automatic-figma-generation",
-      );
-      return NextResponse.json({
-        ok: true,
-        plan: parsedPlan.data,
-        learning: learningStatus,
-        model: typeof payload.model === "string" ? payload.model : model,
-        brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
-        visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
-      }, { headers });
-    } catch (error) {
-      errors.push(model + ": " + (controller.signal.aborted ? "timed out after 65 seconds" : error instanceof Error ? error.message.slice(0, 200) : "request failed"));
-    } finally {
-      clearTimeout(timer);
     }
   }
   return NextResponse.json({
     error: "UX Direct could not produce a valid native Figma design plan. No canvas changes were made.",
     attemptedModels: models,
-    details: errors.slice(0, 3),
+    details: errors.slice(0, 6),
   }, { status: 502, headers });
 }
