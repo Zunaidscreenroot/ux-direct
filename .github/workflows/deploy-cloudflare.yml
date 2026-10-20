@@ -14,6 +14,7 @@ on:
       - "app/api/assistant/chat/route.ts"
       - "app/api/assistant/figma-agent/**"
       - "src/figma-agent/**"
+      - "src/providers/anthropic-openrouter.ts"
       - "src/memory/**"
       - "src/security/figma-access.ts"
       - ".github/workflows/deploy-cloudflare.yml"
