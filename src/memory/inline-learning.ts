@@ -64,18 +64,26 @@ export function parseInlineLearningCandidate(raw: string): InlineLearningCandida
 /** Prevent a model from copying a client name into a broader scope when the task did not name that client. */
 export function referencesUnstatedClient(candidate: InlineLearningCandidate, context: string): boolean {
   const output = [candidate.title, candidate.normalizedRule, candidate.rationale, ...candidate.keywords].join(" ");
-  const names: Array<{ pattern: RegExp; contextPattern: RegExp }> = [
+  const knownClients: Array<{ pattern: RegExp; contextPattern: RegExp }> = [
     { pattern: /\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\b/i, contextPattern: /\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\b/i },
     { pattern: /\b(dmi|dmi hfc|dmi finance|dmi wealth)\b/i, contextPattern: /\b(dmi|dmi hfc|dmi finance|dmi wealth)\b/i },
     { pattern: /\bexpress computers\b/i, contextPattern: /\bexpress computers\b/i },
   ];
-  return names.some(({ pattern, contextPattern }) => pattern.test(output) && !contextPattern.test(context));
+  const commonBfsiBrands = /\b(hdfc|icici|axis bank|axis|sbi|state bank of india|kotak|idfc first|yes bank|indusind|karnataka bank|au small finance bank|equitas|suryoday|capital small finance bank|canara bank|punjab national bank|bank of baroda|federal bank|bajaj finance|tata capital|mahindra finance|shriram finance|muthoot finance|manappuram finance)\b/i;
+  const dedicatedClientScope = ["project:dmi-finance", "project:ujjivan-sfb", "project:express-computers"].includes(candidate.scopeKey);
+  const broadScope = ["UX_SHARED_BRAIN", "indian-bfsi", "project:general-ux", "project:ux-direct", "project:ux-audit"].includes(candidate.scopeKey);
+  const knownClientInTask = knownClients.some(({ pattern, contextPattern }) => pattern.test(output) && contextPattern.test(context));
+
+  // Client-branded rules belong in an explicitly scoped client project, never the product-wide brain.
+  if (candidate.scopeKey === "UX_SHARED_BRAIN" && knownClients.some(({ pattern }) => pattern.test(output))) return true;
+  if (broadScope && !knownClientInTask) {
+    if (knownClients.some(({ pattern }) => pattern.test(output)) || commonBfsiBrands.test(output)) return true;
+    if (/\b(?!Indian\b|Small\b|Commercial\b|Private\b|Public\b|Regional\b|Rural\b|Central\b|Foreign\b|Cooperative\b)([A-Z][A-Za-z&.'-]{1,}(?:\s+[A-Z][A-Za-z&.'-]{1,}){0,2})\s+(?:Small Finance Bank|Bank|Finance|Financial Services|Capital|Insurance|NBFC)\b/.test(output)) return true;
+  }
+  if (!dedicatedClientScope && commonBfsiBrands.test(output)) return true;
+  return knownClients.some(({ pattern, contextPattern }) => pattern.test(output) && !contextPattern.test(context));
 }
 
-/**
- * Strip the assistant's private learning marker from an OpenAI-compatible SSE
- * stream and expose only its validated compact candidate to the caller.
- */
 export function createLearningMarkerTransform(
   onCandidate: (candidate: InlineLearningCandidate) => void,
 ): TransformStream<Uint8Array, Uint8Array> {
