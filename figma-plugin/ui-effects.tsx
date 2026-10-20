@@ -1,6 +1,6 @@
 import { createRoot, type Root } from "react-dom/client";
 import { BorderBeam } from "border-beam";
-import { ThinkingOrb, type ThinkingOrbProps } from "thinking-orbs";
+import { ThinkingOrb } from "thinking-orbs";
 import type { CSSProperties } from "react";
 
 type ProcessState =
@@ -8,7 +8,7 @@ type ProcessState =
   | "waiting" | "creating" | "rendering" | "reviewing" | "refining"
   | "verifying" | "done" | "error";
 
-type OrbState = NonNullable<ThinkingOrbProps["state"]>;
+type OrbState = "working" | "searching" | "solving" | "listening" | "connecting" | "weaving" | "composing" | "breathing" | "shaping";
 type EffectApi = {
   setProcessState: (state: string) => void;
   setBeamEmphasis: (active: boolean) => void;
@@ -62,7 +62,7 @@ function AgentOrb({ state, size, paused = false }: { state: OrbState; size: 20 |
     <ThinkingOrb
       state={state}
       size={size}
-      theme="dark"
+      dark={true}
       paused={paused}
       aria-label={ORB_LABEL[state]}
       style={{ display: "block" }}
@@ -96,11 +96,11 @@ function BeamOverlay({ emphasis }: { emphasis: boolean }) {
       size="md"
       colorVariant="ocean"
       theme="dark"
-      strength={emphasis ? 0.92 : 0.34}
+      strength={0.86}
       duration={2.8}
       borderRadius={15}
       staticColors
-      active
+      active={emphasis}
       className="uxd-composer-border-beam"
       style={wrapperStyle}
       aria-hidden="true"
