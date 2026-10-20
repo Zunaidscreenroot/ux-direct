@@ -125,19 +125,22 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
 test("in-Figma design agent retrieves approved brain context and validates native layer plans", () => {
   assert.ok(agent.includes('retrieveBrainContext('), "Figma design planning must retrieve shared memory.");
   assert.ok(agent.includes('resolveBrainScopes('), "Brain retrieval must be scope-filtered.");
-  assert.ok(agent.includes("const models = OPENROUTER_MODELS;"), "Figma design generation must use the shared Gemini-first cost-ordered model chain.");
+  assert.ok(agent.includes("const models = [FIGMA_AGENT_DEFAULT_MODEL];"), "Figma design generation must use exactly one OpenRouter Auto route.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "No provider restrictions should be sent to OpenRouter.");
   assert.ok(modelPolicy.includes('"google/gemini-3.7-flash"'));
   assert.ok(modelPolicy.includes('"qwen/qwen3.5-35b-a3b"'));
   assert.ok(modelPolicy.includes('"google/gemini-3.1-flash-lite"'));
   assert.ok(modelPolicy.includes('"qwen/qwen3.5-397b-a17b"'));
-  assert.equal(modelPolicy.includes('"openrouter/auto"'), false);
+  const generalModels = modelPolicy.slice(modelPolicy.indexOf("export const OPENROUTER_MODELS"), modelPolicy.indexOf("export const OPENROUTER_MODEL_LABELS"));
+  assert.equal(generalModels.includes('"openrouter/auto"'), false);
   assert.ok(modelPolicy.includes("UX_DIRECT_DESIGN_ROLE"));
   assert.equal(modelPolicy.includes("only:"), false);
   assert.equal(modelPolicy.includes("allow_fallbacks"), false);
   assert.ok(agent.includes('response_format: { type: "json_object" }'), "The design agent must request structured output.");
   assert.ok(agent.includes('PlanSchema.safeParse('), "The provider plan must be schema-validated before canvas execution.");
-  assert.ok(agent.includes('elements: z.array(ElementSchema).min(5).max(12)'), "Top-level design sections must be bounded.");
+  assert.ok(agent.includes('elements: z.array(ElementSchema).min(3).max(8)'), "Top-level design sections must be bounded without forcing filler groups.");
+  assert.ok(agent.includes("Progress indicators must preserve their meaning"), "First-pass generation must preserve progress-ring semantics.");
+  assert.ok(agent.includes("innerRadius about 0.68–0.8"), "Generation must support editable native progress arcs.");
   assert.ok(agent.includes("Top-level design sections must be named FRAME containers"), "Design plans must include semantic frame groups.");
   assert.ok(agent.includes("Only FRAME elements may contain nested children") || agent.includes("Only FRAME may contain nested children"), "Nested nodes must be valid native frame children.");
   assert.ok(agent.includes('No canvas changes were made.'), "Planning failures must not imply a canvas write.");
@@ -170,7 +173,7 @@ test("Figma agent normalizes provider-native design fields and uses the requeste
   assert.ok(planNormalizer.includes("export function normalizePlan("), "The reusable normalizer must be directly testable.");
   assert.ok(planNormalizer.includes("item.fill ?? item.backgroundColor"), "Provider fill aliases must map to the native Figma color field.");
   assert.ok(planNormalizer.includes("item.kind ?? item.elementType ?? item.nodeType"), "Provider layer type aliases must be normalized.");
-  assert.ok(agent.includes("const models = OPENROUTER_MODELS;"), "Figma agent must use the shared explicit model chain.");
+  assert.ok(agent.includes("const models = [FIGMA_AGENT_DEFAULT_MODEL];"), "Figma agent must not fan out to separate model fallbacks.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "Model requests must not be provider filtered.");
   assert.ok(agent.includes("const normalizedPlan = normalizePlan(rawPlan, canvas);"), "A normalized model plan must be validated before any canvas write.");
   assert.ok(agent.includes('PlanSchema.safeParse(normalizedPlan)'), "Native plan schema validation must remain mandatory.");
@@ -232,13 +235,15 @@ test("Figma visual analysis uses a compact rendered JPEG and native layer data",
   assert.ok(agent.includes("Analyse BOTH the attached rendered screen image and native layer tree"));
 });
 
-test("Figma visual review and refinement endpoints are wired and bounded", () => {
+test("Figma visual review is one advisory pass on the LOW-cost Auto route", () => {
   const review = read("app/api/assistant/figma-agent/review/route.ts");
   const refine = read("app/api/assistant/figma-agent/refine/route.ts");
   assert.ok(pluginUi.includes("/api/assistant/figma-agent/review"));
-  assert.ok(pluginUi.includes("/api/assistant/figma-agent/refine"));
-  assert.ok(pluginUi.includes("iteration <= 2"));
-  assert.ok(pluginUi.includes("iteration === 2"));
+  assert.equal(pluginUi.includes('fetch(API + "/api/assistant/figma-agent/refine"'), false);
+  assert.equal(pluginUi.includes("iteration <= 2"), false);
+  assert.equal(pluginUi.includes("iteration === 2"), false);
+  assert.ok(review.includes("const models = [FIGMA_AGENT_QA_MODEL];"));
+  assert.ok(review.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
   assert.ok(review.includes('type: "image_url"'));
   assert.ok(review.includes('sourceImage: z.string().max(52000).nullable().optional()'));
   assert.ok(review.includes('outputImage: z.string().max(52000).nullable().optional()'));
@@ -252,7 +257,7 @@ test("Figma plugin cockpit has a morphing orb and visible process stages", () =>
   assert.ok(pluginUi.includes('class="uxd-hero-orb"'));
   assert.ok(pluginUi.includes('id="processStatus"'));
   assert.ok(pluginUi.includes("function setProcessState"));
-  for (const stage of ['"scanning"', '"capturing"', '"brain"', '"memory"', '"planning"', '"creating"', '"rendering"', '"reviewing"', '"refining"', '"verifying"', '"error"']) {
+  for (const stage of ['"scanning"', '"capturing"', '"brain"', '"memory"', '"planning"', '"creating"', '"rendering"', '"reviewing"', '"verifying"', '"error"']) {
     assert.ok(pluginUi.includes(stage), "Missing process state " + stage);
   }
   const manifest = read("figma-plugin/manifest.json");
@@ -265,7 +270,8 @@ test("Figma visual capture failures do not invalidate the full design request", 
   assert.ok(reviewRoute.includes("extractJsonObject(message.content)"), "Visual QA must accept structured content variants.");
   assert.ok(reviewRoute.includes("normalizeVisualReview(decodedRecord)"), "Provider response fields must be normalized before strict QA validation.");
   assert.ok(refinementRoute.includes("extractJsonObject(message.content)"), "Refinement must parse structured content variants.");
-  assert.ok(reviewRoute.includes("const models = OPENROUTER_MODELS;"));
+  assert.ok(reviewRoute.includes("const models = [FIGMA_AGENT_QA_MODEL];"));
+  assert.ok(reviewRoute.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
   assert.ok(refinementRoute.includes("const models = OPENROUTER_MODELS;"));
   assert.equal(reviewRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.equal(refinementRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);

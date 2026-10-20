@@ -100,30 +100,23 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("payload_keys="), "Empty provider responses should report envelope shape for diagnosis.");
 });
 
-test("compact recovery is model-agnostic and does not add OpenRouter provider filters", () => {
+test("Figma generation uses only OpenRouter Auto LOW and never fans out to separate models", () => {
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
-  const models = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
-  assert.ok(route.includes("const models = [requestedModel, ...FIGMA_AGENT_FALLBACK_MODELS.filter((candidate) => candidate !== requestedModel)]"));
-  assert.ok(route.includes('model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}'), "Auto must use OpenRouter's low cost tier.");
-  assert.ok(route.includes("All model requests run sequentially"), "Generation must be sequential, not parallel.");
-  assert.ok(route.includes("candidate !== requestedModel"), "Fallbacks must not retry the selected model as a separate fallback.");
-  assert.ok(route.includes("requestedModel = parsedInput.data.model || FIGMA_AGENT_DEFAULT_MODEL"));
-  assert.ok(route.includes("Unsupported Figma design model"));
-  const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
-  assert.ok(ui.includes('id="designModel"'), "The plugin must expose a model selector.");
-  assert.ok(ui.includes("model: selectedModel"), "The selected model must reach the design endpoint.");
-  assert.equal(ui.includes('fetch(API + "/api/assistant/figma-agent/refine"'), false, "Automatic refinement must be disabled.");
-  assert.equal(ui.includes("for (let iteration = 1; iteration <= 2; iteration++)"), false, "Visual QA must run once.");
   const catalog = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
-  assert.ok(catalog.includes('"anthropic/claude-sonnet-5.5"'));
-  assert.ok(catalog.includes('"openai/gpt-5.4"'));
-  assert.ok(catalog.includes('"google/gemini-3.1-flash-lite"'));
-  assert.ok(models.includes('"google/gemini-3.7-flash"'));
-  assert.ok(models.includes('"anthropic/claude-haiku-5.5"'));
-  assert.ok(models.includes('"qwen/qwen3.5-35b-a3b"'));
-  assert.ok(models.includes('id: "openrouter/auto"'), "OpenRouter Auto must be selectable in the design model catalog.");
-  assert.ok(models.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto"'), "Auto should be the default until the user chooses a fixed model.");
-  assert.equal(route.includes("Promise.all(models"), false, "Models must never be generated in parallel.");
-  assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Auto Router cost tier must be low.");
-  assert.ok(catalog.includes("FIGMA_AGENT_FALLBACK_MODELS"));
+  assert.ok(route.includes("const models = [FIGMA_AGENT_DEFAULT_MODEL]"), "Only one OpenRouter Auto route should run.");
+  assert.equal(route.includes("FIGMA_AGENT_FALLBACK_MODELS"), false, "Generation must not call separate model fallbacks.");
+  assert.ok(route.includes('model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}'), "Auto must use the LOW tier.");
+  assert.ok(route.includes("const attemptsForModel = 2"), "Only one compact retry is allowed after a failed first attempt.");
+  assert.ok(route.includes("const isRecovery = recoveryAttempt === 1"), "The retry must target the same Auto route.");
+  assert.equal(route.includes("Promise.all(models"), false, "Model calls must never run in parallel.");
+  assert.ok(catalog.includes('id: "openrouter/auto"'), "Auto is the only selectable Figma design model.");
+  assert.ok(catalog.includes('FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openrouter/auto"'), "QA uses the same LOW-cost Auto route.");
+  assert.equal(catalog.includes("FIGMA_AGENT_FALLBACK_MODELS"), false, "No app-level Figma model fallback catalog should remain.");
+  const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
+  assert.equal(ui.includes('id="designModel"'), false, "The model dropdown must be removed.");
+  assert.equal(ui.includes("model-picker"), false, "No model selector styling should remain.");
+  assert.ok(ui.includes("OpenRouter Auto · LOW cost tier"), "The fixed route should be shown as a non-interactive label.");
+  assert.equal(ui.includes("model: selectedModel"), false, "The UI must not offer model overrides.");
+  assert.equal(ui.includes('fetch(API + "/api/assistant/figma-agent/refine"'), false, "Automatic refinement stays disabled.");
+  assert.equal(ui.includes("for (let iteration = 1; iteration <= 2; iteration++)"), false, "Visual QA must run once.");
 });

@@ -101,6 +101,19 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
     if (color) normalized.color = color;
     if (strokeColor) normalized.strokeColor = strokeColor;
     if (typeof item.noFill === "boolean") normalized.noFill = item.noFill;
+    const rawArcData = item.arcData && typeof item.arcData === "object" && !Array.isArray(item.arcData)
+      ? item.arcData as Record<string, unknown> : null;
+    if (type === "ELLIPSE" && rawArcData &&
+        typeof rawArcData.startingAngle === "number" && Number.isFinite(rawArcData.startingAngle) &&
+        typeof rawArcData.endingAngle === "number" && Number.isFinite(rawArcData.endingAngle) &&
+        typeof rawArcData.innerRadius === "number" && Number.isFinite(rawArcData.innerRadius) &&
+        rawArcData.endingAngle > rawArcData.startingAngle) {
+      normalized.arcData = {
+        startingAngle: Math.max(-Math.PI * 2, Math.min(Math.PI * 2, rawArcData.startingAngle)),
+        endingAngle: Math.max(-Math.PI * 2, Math.min(Math.PI * 2, rawArcData.endingAngle)),
+        innerRadius: Math.max(0, Math.min(1, rawArcData.innerRadius)),
+      };
+    }
     const aliases: Array<[string, string]> = [
       ["strokeWeight", "strokeWeight"], ["opacity", "opacity"], ["cornerRadius", "cornerRadius"],
       ["clipsContent", "clipsContent"], ["layoutMode", "layoutMode"], ["itemSpacing", "itemSpacing"],
@@ -154,10 +167,78 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
   }
 
   let normalized = inputElements.map((item, index) => normalizeNode(item, index, 0)).filter((item): item is Record<string, unknown> => !!item);
+
+  // Rebuild the source card boundary when a plan incorrectly separates its summary,
+  // breakdown and badge into unrelated top-level siblings.
+  function findSourceCompoundCard(nodes: unknown[], depth = 0): Record<string, unknown> | null {
+    if (depth > 5) return null;
+    for (const value of nodes) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const source = value as Record<string, unknown>;
+      const children = Array.isArray(source.children) ? source.children : [];
+      const names = children.map((child) => child && typeof child === "object" && !Array.isArray(child)
+        ? String((child as Record<string, unknown>).name || "") : "");
+      if (children.length && names.some((name) => /summary/i.test(name)) &&
+          names.some((name) => /break.?up|break.?down|loan.?wise|details/i.test(name))) return source;
+      const nested = findSourceCompoundCard(children, depth + 1);
+      if (nested) return nested;
+    }
+    return null;
+  }
+  const sourceCompoundCard = findSourceCompoundCard(sourceNodes);
+  if (sourceCompoundCard) {
+    const summaryIndex = normalized.findIndex((node) => node.type === "FRAME" &&
+      /summary|primary loan/i.test(String(node.name || "")) && Array.isArray(node.children));
+    const breakdownIndex = normalized.findIndex((node, index) => index !== summaryIndex && node.type === "FRAME" &&
+      /break.?up|break.?down|loan.?wise|supporting details/i.test(String(node.name || "")) && Array.isArray(node.children));
+    if (summaryIndex >= 0 && breakdownIndex >= 0) {
+      const summary = normalized[summaryIndex], breakdown = normalized[breakdownIndex];
+      const summaryX = Number(summary.x) || 0, summaryY = Number(summary.y) || 0;
+      const breakdownX = Number(breakdown.x) || 0, breakdownY = Number(breakdown.y) || 0;
+      const summaryW = Number(summary.width) || 0, summaryH = Number(summary.height) || 0;
+      const breakdownW = Number(breakdown.width) || 0, breakdownH = Number(breakdown.height) || 0;
+      const gap = breakdownY - (summaryY + summaryH);
+      const aligned = Math.abs(summaryX - breakdownX) <= 24 && Math.abs(summaryW - breakdownW) <= 36;
+      if (aligned && gap >= -24 && gap <= 36) {
+        const left = Math.min(summaryX, breakdownX), top = Math.min(summaryY, breakdownY);
+        const right = Math.max(summaryX + summaryW, breakdownX + breakdownW);
+        const bottom = Math.max(summaryY + summaryH, breakdownY + breakdownH);
+        const baseIndices = [summaryIndex, breakdownIndex];
+        const badges = normalized.map((node, index) => ({ node, index })).filter(({ node, index }) => {
+          if (baseIndices.includes(index) || node.type !== "FRAME" ||
+              !/status.?badge|current.?badge|badge.?status/i.test(String(node.name || ""))) return false;
+          const x = Number(node.x) || 0, y = Number(node.y) || 0;
+          const w = Number(node.width) || 0, h = Number(node.height) || 0;
+          return w <= 128 && h <= 36 && x >= left && x + w <= right + 8 && y >= top - 6 && y <= top + 34;
+        });
+        const toLocal = (node: Record<string, unknown>) => ({
+          ...node, x: Math.round((Number(node.x) || 0) - left), y: Math.round((Number(node.y) || 0) - top),
+        });
+        const cardChildren = [toLocal(summary), toLocal(breakdown), ...badges.map(({ node }) => toLocal(node))];
+        const nativeCardName = String(sourceCompoundCard.name || "Active loan card").slice(0, 58);
+        const outerCard: Record<string, unknown> = {
+          type: "FRAME", name: nativeCardName + " — variation",
+          x: left, y: top,
+          width: Math.max(1, Math.min(frame.width, right - left)),
+          height: Math.max(1, Math.min(frame.height, bottom - top)),
+          noFill: true, strokeColor: "#494949", strokeWeight: 1, cornerRadius: 14,
+          clipsContent: false, children: cardChildren,
+        };
+        const removed = new Set([summaryIndex, breakdownIndex, ...badges.map(({ index }) => index)]);
+        normalized = normalized.filter((_node, index) => !removed.has(index));
+        normalized.push(outerCard);
+      }
+    }
+  }
+
   const countTree = (nodes: Record<string, unknown>[]): number => nodes.reduce((count, node) =>
     count + 1 + (Array.isArray(node.children) ? countTree(node.children as Record<string, unknown>[]) : 0), 0);
-  const namedFrameGroups = normalized.filter((node) => node.type === "FRAME" && Array.isArray(node.children) && node.children.length > 0).length;
-  const alreadyStructured = normalized.length >= 5 && normalized.length <= 12 &&
+  const countFrameGroups = (nodes: Record<string, unknown>[]): number => nodes.reduce((count, node) => {
+    const children = Array.isArray(node.children) ? node.children as Record<string, unknown>[] : [];
+    return count + (node.type === "FRAME" && children.length > 0 ? 1 : 0) + countFrameGroups(children);
+  }, 0);
+  const namedFrameGroups = countFrameGroups(normalized);
+  const alreadyStructured = normalized.length >= 3 && normalized.length <= 8 &&
     normalized.every((node) => node.type === "FRAME" && Array.isArray(node.children) && node.children.length > 0) &&
     namedFrameGroups >= 4 && countTree(normalized) <= 80;
 

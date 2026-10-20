@@ -121,3 +121,54 @@ test("flat selected card output uses component groups rather than whole-screen s
   assert.ok(preservedTexts.includes("Due date"), "Secondary card details must not be discarded.");
   assert.ok(preservedTexts.includes("Make a payment"), "Actions must remain in the component variation.");
 });
+
+
+test("preserves native ellipse arcData and reunites a source compound loan card", () => {
+  const input = {
+    summary: "A source-faithful native Figma loan screen.",
+    frame: { name: "Manage Loans", width: 360, height: 800, backgroundColor: "#101010" },
+    elements: [
+      { type: "FRAME", name: "Header", x: 0, y: 0, width: 360, height: 64, children: [
+        { type: "TEXT", name: "Title", x: 20, y: 18, width: 200, height: 24, text: "Manage Loans" }
+      ] },
+      { type: "FRAME", name: "Tabs", x: 0, y: 64, width: 360, height: 44, children: [
+        { type: "TEXT", name: "Active", x: 20, y: 12, width: 80, height: 20, text: "Active" }
+      ] },
+      { type: "FRAME", name: "Loan summary card", x: 20, y: 124, width: 320, height: 150, children: [
+        { type: "ELLIPSE", name: "Progress arc", x: 16, y: 72, width: 56, height: 56, color: "#A78BFA",
+          arcData: { startingAngle: -1.5707963267948966, endingAngle: 2.199114857512855, innerRadius: 0.72 } },
+        { type: "TEXT", name: "Progress label", x: 24, y: 90, width: 40, height: 20, text: "60% Paid" }
+      ] },
+      { type: "FRAME", name: "Loan-wise breakup", x: 20, y: 274, width: 320, height: 139, children: [
+        { type: "TEXT", name: "Due date", x: 16, y: 16, width: 180, height: 20, text: "Due 5 Oct" }
+      ] },
+      { type: "FRAME", name: "Status badge", x: 267, y: 124, width: 73, height: 18, children: [
+        { type: "TEXT", name: "Current text", x: 10, y: 2, width: 53, height: 14, text: "Current" }
+      ] }
+    ]
+  };
+  const source = {
+    pageName: "Loans",
+    nodes: [{
+      type: "FRAME", name: "Manage loans — multiple loans", width: 360, height: 800,
+      children: [{
+        type: "FRAME", name: "Consumption loan", x: 20, y: 124, width: 320, height: 289,
+        children: [
+          { type: "FRAME", name: "summary", width: 320, height: 150, children: [] },
+          { type: "FRAME", name: "breakup", y: 150, width: 320, height: 139, children: [] },
+          { type: "FRAME", name: "status", x: 247, width: 73, height: 18, children: [] }
+        ]
+      }]
+    }]
+  };
+  const normalized = normalizePlan(input, source) as { elements: Array<Record<string, unknown>> };
+  const card = normalized.elements.find((node) => node.name === "Consumption loan — variation");
+  assert.ok(card, "The source card boundary should be preserved.");
+  const children = card?.children as Array<Record<string, unknown>>;
+  const ring = children.flatMap((node) => Array.isArray(node.children) ? node.children as Array<Record<string, unknown>> : [])
+    .find((node) => node.name === "Progress arc");
+  assert.deepEqual(ring?.arcData, { startingAngle: -1.5707963267948966, endingAngle: 2.199114857512855, innerRadius: 0.72 });
+  assert.deepEqual(children.map((node) => node.name), ["Loan summary card", "Loan-wise breakup", "Status badge"]);
+  assert.equal(children[1].y, 150);
+  assert.equal(children[2].x, 247);
+});
