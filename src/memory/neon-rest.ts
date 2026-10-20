@@ -19,7 +19,7 @@ const JSONB_COLUMNS: Record<string, ReadonlySet<string>> = {
   uxd_brain_eval_cases: new Set(["last_run_result", "metadata"]),
 };
 
-function serializeDatabaseValue(table: string, column: string, value: unknown): unknown {
+export function serializeDatabaseValue(table: string, column: string, value: unknown): unknown {
   if (value === null || value === undefined) return value;
   if (JSONB_COLUMNS[table]?.has(column) && typeof value === "object") {
     return JSON.stringify(value);
