@@ -1353,6 +1353,10 @@ async function writeCanvasCommand(payload) {
     if (Number.isFinite(spec.strokeWeight) && "strokeWeight" in node) node.strokeWeight = Math.max(0, Math.min(100, spec.strokeWeight));
     if (Number.isFinite(spec.cornerRadius) && "cornerRadius" in node) node.cornerRadius = Math.max(0, Math.min(512, spec.cornerRadius));
     if (typeof spec.clipsContent === "boolean" && "clipsContent" in node) node.clipsContent = spec.clipsContent;
+    if (typeof spec.paintStyleId === "string" && "fillStyleId" in node) node.fillStyleId = spec.paintStyleId;
+    if (typeof spec.textStyleId === "string" && node.type === "TEXT" && "textStyleId" in node) node.textStyleId = spec.textStyleId;
+    if (typeof spec.effectStyleId === "string" && "effectStyleId" in node) node.effectStyleId = spec.effectStyleId;
+    if (typeof spec.gridStyleId === "string" && "gridStyleId" in node) node.gridStyleId = spec.gridStyleId;
     if (typeof spec.layoutMode === "string" && "layoutMode" in node) node.layoutMode = spec.layoutMode;
     ["itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
       "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"].forEach(function (key) {

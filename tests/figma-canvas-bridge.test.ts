@@ -331,6 +331,11 @@ test("native editor applies Auto Layout sizing and exposes image/variable operat
   assert.ok(plugin.includes('payload.operation === "create-variables"'));
   assert.ok(plugin.includes('payload.operation === "bind-variable"'));
   assert.ok(plugin.includes("item.variableCollectionId === targetBindingCollection.id"));
+  assert.ok(plugin.includes("payload.includeVariables === true"));
+  assert.ok(agent.includes("variables: compactResourceList(canvas.variables, 120)"));
+  assert.ok(agent.includes("const invalidStyleAction = actions.find"));
+  assert.ok(agent.includes("const invalidVariableAction = actions.find"));
+  assert.ok(agent.includes('paintStyleId: z.string().trim().min(1).max(300).optional()'));
   assert.ok(bridge.includes('"create-image-fill", "insert-image"].includes(step.operation)') || bridge.includes('"create-image-fill", "insert-image"].includes(step.operation)'));
 });
  

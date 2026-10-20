@@ -148,7 +148,9 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
       ["primaryAxisSizingMode", "primaryAxisSizingMode"], ["counterAxisSizingMode", "counterAxisSizingMode"],
       ["textAlignHorizontal", "textAlignHorizontal"], ["textAlignVertical", "textAlignVertical"], ["textAutoResize", "textAutoResize"],
       ["lineHeight", "lineHeight"], ["letterSpacing", "letterSpacing"],
-      ["textCase", "textCase"], ["textDecoration", "textDecoration"], ["shadowColor", "shadowColor"],
+      ["textCase", "textCase"], ["textDecoration", "textDecoration"],
+      ["paintStyleId", "paintStyleId"], ["textStyleId", "textStyleId"], ["effectStyleId", "effectStyleId"], ["gridStyleId", "gridStyleId"],
+      ["shadowColor", "shadowColor"],
       ["shadowBlur", "shadowBlur"], ["shadowX", "shadowX"], ["shadowY", "shadowY"], ["shadowSpread", "shadowSpread"],
     ];
     for (const [sourceKey, targetKey] of aliases) {

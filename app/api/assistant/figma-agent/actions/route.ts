@@ -104,6 +104,10 @@ const elementSchema: z.ZodTypeAny = z.lazy(() => z.object({
   fontFamily: z.string().trim().min(1).max(100).optional(),
   fontStyle: z.string().trim().min(1).max(100).optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  paintStyleId: z.string().trim().min(1).max(300).optional(),
+  textStyleId: z.string().trim().min(1).max(300).optional(),
+  effectStyleId: z.string().trim().min(1).max(300).optional(),
+  gridStyleId: z.string().trim().min(1).max(300).optional(),
   noFill: z.boolean().optional(),
   strokeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   strokeWeight: z.number().finite().min(0).max(100).optional(),
@@ -250,7 +254,7 @@ export async function POST(request: Request) {
     "Use only node IDs that appear in canvas. Do not guess or fabricate IDs. If the target is ambiguous, choose the smallest reasonable set in the current selection and name it in the summary. Never delete nodes unless deletion was explicitly asked. Preserve unrelated content and the original visual intent.",
     "Use create-elements to add native layers into the current selected container (target:'node', parentNodeId:'...'). Children are nested under FRAME elements only. Use insert-image only when an actual user-attached image is available in this request; set useAttachedImage:true and don't invent an image URL. A rendered screenshot is visual evidence only, not an insertable asset. Never place base64 data in model output.",
     "When a rendered screenshot is available, inspect hierarchy, text density, collisions, clipped content, component boundaries and spacing. Prefer minimal direct edits for narrow requests; use coherent native action batches for broader requests.",
-    "Use apply-style to assign an existing local style by known style ID/name. Use create-variables only for explicit design-token requests or when the user asks to make reusable color/spacing tokens; use bind-variable only when the user asks to bind a design token. For variants, create components first, then combine only actual sibling components.",
+    "Use apply-style only with a local style in canvas.styles (exact style ID preferred; exact name allowed only when unique). If absent or ambiguous, use a supported literal property instead of guessing. Use create-variables only for explicit design-token requests; bind-variable only to a variable listed in canvas.variables and pass its exact collectionName when duplicate names exist. For variants, create components first, then combine only actual sibling components.",
     "Operation count 1–12. Use the least number of actions, prefer one update patch per node, and never return explanatory prose, markdown, unsupported fields, or tool calls.",
     "Native execution is irreversible for some operations. Ask for no confirmation in JSON; the host requires explicit user prompt to execute, and delete-node is allowed only when the request clearly asks to delete/remove.",
   ].join("\n");
@@ -300,6 +304,22 @@ export async function POST(request: Request) {
       const actions = parsedActions.data.actions;
       const badId = actions.flatMap(idsUsedByAction).find(id => !allowedIds.has(id));
       if (badId) { errors.push(model + ": action used a node ID not present in the inspected selection"); continue; }
+      const styles = isRecord(canvas.styles) ? canvas.styles : {};
+      const invalidStyleAction = actions.find((action) => {
+        if (action.operation !== "apply-style" || !action.styleKind) return false;
+        const catalogue = Array.isArray(styles[action.styleKind]) ? styles[action.styleKind] as Array<Record<string, unknown>> : [];
+        if (action.styleId) return !catalogue.some((style) => style.id === action.styleId);
+        return catalogue.filter((style) => style.name === action.styleName).length !== 1;
+      });
+      if (invalidStyleAction) { errors.push(model + ": apply-style references a missing or ambiguous local style; use an exact supplied style ID or literal property edit"); continue; }
+      const variables = Array.isArray(canvas.variables) ? canvas.variables as Array<Record<string, unknown>> : [];
+      const invalidVariableAction = actions.find((action) => {
+        if (action.operation !== "bind-variable") return false;
+        const matches = variables.filter((variable) => variable.name === action.variableName &&
+          (!action.collectionName || variable.collectionName === action.collectionName));
+        return matches.length !== 1;
+      });
+      if (invalidVariableAction) { errors.push(model + ": bind-variable references a missing or ambiguous local variable; specify its exact collectionName"); continue; }
       if (actions.some(a => a.operation === "delete-node") && !/\b(delete|remove|discard)\b/i.test(input.data.prompt)) {
         errors.push(model + ": deletion rejected because the prompt does not explicitly request removal"); continue;
       }

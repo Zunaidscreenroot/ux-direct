@@ -852,7 +852,7 @@
       if (!applied) return { text: "Visual QA " + (score === null ? "completed" : score + "/100") +
         " · suggested repairs failed native safety checks; no unsafe changes were applied.", score: score, repaired: false, issues: issues };
       stage("Applied " + applied + " repair(s) · validating the real canvas…");
-      outputCanvas = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true }, 90000);
+      outputCanvas = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true }, 90000);
       if (!outputCanvas || !Array.isArray(outputCanvas.nodes) || !outputCanvas.nodes.length) {
         return { text: "Applied " + applied + " repair(s), but final read-back was unavailable.", score: score, repaired: true, issues: issues };
       }
@@ -875,7 +875,7 @@
       function stage(state, message) { setProcessState(state, message); notify(message); }
       stage("scanning", "Inspecting selected Figma layers, text, layout and styles…");
       const canvas = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true
+        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true
       }, 90000);
       if (!canvas || !Array.isArray(canvas.nodes) || !canvas.nodes.length) {
         throw new Error("Select the frame, text layer, shape, or component you want to edit first.");
@@ -990,7 +990,7 @@
         attachedImageData = null; attachedImageName = ""; renderAttachmentChip();
       }
       stage("verifying", "Reading back the edited native properties…");
-      const verified = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true }, 90000);
+      const verified = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true }, 90000);
       if (!verified || !Array.isArray(verified.nodes) || !verified.nodes.some(function (node) { return node.id === root.id; })) {
         throw new Error("Actions ran, but the selected root could not be verified by native read-back. Inspect the canvas before retrying.");
       }
@@ -1029,7 +1029,7 @@
 
       stage("scanning", "Scanning selected screen, nested layers, text and styles…");
       const canvas = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 4, maxNodes: 100
+        scope: "selection", maxDepth: 4, maxNodes: 100, includeStyles: true, includeVariables: true
       }, 90000);
       const selectedNodes = Array.isArray(canvas && canvas.nodes) ? canvas.nodes : [];
       const expectsSelection = /\b(selected|selection|this frame|this screen|current frame|variation|variant|duplicate|redesign this|improve this)\b/i.test(prompt);
@@ -1163,7 +1163,7 @@
       // Read to the maximum supported depth so nested native FRAMEs are included.
       // The previous depth-2 read made otherwise-valid nested designs look incomplete.
       const verified = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true
+        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true
       }, 90000);
       const verifiedNode = verified && Array.isArray(verified.nodes)
         ? verified.nodes.find(function (node) { return node.id === createdFrameId; })
@@ -1181,7 +1181,7 @@
         throw new Error(problem + " The variation may be partial; the source frame remains untouched. Inspect the new frame before retrying.");
       }
       let visualNote = "";
-      const qualityTree = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true }, 90000);
+      const qualityTree = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true }, 90000);
       if (qualityTree && Array.isArray(qualityTree.nodes) && qualityTree.nodes.some(function (node) { return node.id === createdFrameId; })) {
         const qa = await runVisualQualityLoop({
           prompt: prompt, sourceCanvas: canvas, outputCanvas: qualityTree, sourceImage: renderedScreen,

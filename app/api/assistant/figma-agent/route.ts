@@ -39,6 +39,10 @@ const ElementFieldsSchema = z.object({
   fontFamily: z.string().trim().min(1).max(100).optional(),
   fontStyle: z.string().trim().min(1).max(100).optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  paintStyleId: z.string().trim().min(1).max(300).optional(),
+  textStyleId: z.string().trim().min(1).max(300).optional(),
+  effectStyleId: z.string().trim().min(1).max(300).optional(),
+  gridStyleId: z.string().trim().min(1).max(300).optional(),
   noFill: z.boolean().optional(),
   strokeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   strokeWeight: z.number().finite().min(0).max(20).optional(),
@@ -276,6 +280,18 @@ function compactRecoveryCanvas(canvas: Record<string, unknown>): Record<string, 
   };
 }
 
+function compactResourceList(value: unknown, limit = 50): Array<Record<string, string>> {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, limit).flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const item = entry as Record<string, unknown>;
+    if (typeof item.id !== "string" || typeof item.name !== "string") return [];
+    return [{ id: item.id.slice(0, 300), name: item.name.slice(0, 120),
+      ...(typeof item.type === "string" ? { type: item.type.slice(0, 40) } : {}),
+      ...(typeof item.collectionName === "string" ? { collectionName: item.collectionName.slice(0, 100) } : {}),
+      ...(typeof item.collectionId === "string" ? { collectionId: item.collectionId.slice(0, 300) } : {}) }];
+  });
+}
 function compactCanvas(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { pageName: "Unknown page", nodes: [] };
   const canvas = value as Record<string, unknown>;
@@ -283,15 +299,26 @@ function compactCanvas(value: unknown): Record<string, unknown> {
   const nodes = Array.isArray(canvas.nodes)
     ? canvas.nodes.slice(0, 20).map((node) => compactNode(node, state)).filter((node): node is CanvasNode => !!node)
     : [];
-  return {
-    pageName: typeof canvas.pageName === "string" ? canvas.pageName.slice(0, 120) : "Unknown page",
+  const rawStyles = canvas.styles && typeof canvas.styles === "object" && !Array.isArray(canvas.styles) ? canvas.styles as Record<string, unknown> : {};
+  const styles = { paint: compactResourceList(rawStyles.paint), text: compactResourceList(rawStyles.text),
+    effect: compactResourceList(rawStyles.effect), grid: compactResourceList(rawStyles.grid) };
+  const variableCollections = Array.isArray(canvas.variableCollections) ? canvas.variableCollections.slice(0, 30).flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const item = entry as Record<string, unknown>;
+    if (typeof item.id !== "string" || typeof item.name !== "string") return [];
+    return [{ id: item.id.slice(0, 300), name: item.name.slice(0, 100),
+      modes: Array.isArray(item.modes) ? item.modes.slice(0, 8).flatMap((mode) => {
+        if (!mode || typeof mode !== "object" || Array.isArray(mode)) return [];
+        const data = mode as Record<string, unknown>;
+        return typeof data.modeId === "string" && typeof data.name === "string"
+          ? [{ modeId: data.modeId.slice(0, 100), name: data.name.slice(0, 100) }] : [];
+      }) : [] }];
+  }) : [];
+  return { pageName: typeof canvas.pageName === "string" ? canvas.pageName.slice(0, 120) : "Unknown page",
     scope: typeof canvas.scope === "string" ? canvas.scope.slice(0, 40) : "selection",
-    nodeCount: state.count,
-    truncated: canvas.truncated === true || state.count >= 100,
-    nodes,
+    nodeCount: state.count, truncated: canvas.truncated === true || state.count >= 100, nodes,
     viewport: canvas.viewport && typeof canvas.viewport === "object" ? canvas.viewport : undefined,
-    styles: canvas.styles && typeof canvas.styles === "object" ? canvas.styles : undefined,
-  };
+    styles, variableCollections, variables: compactResourceList(canvas.variables, 120) };
 }
 
 const SYSTEM = [
@@ -370,7 +397,9 @@ export async function POST(request: Request) {
       "Use both the rendered screenshot (when available) and native layer tree to infer visual style, layout, information hierarchy, reusable patterns, and content density before planning.",
       "Translate only the requested improvement into a meaningful variation; preserve the source product identity and do not replace specific UI with generic cards.",
       "Build editable semantic FRAME containers with logically nested layers. Use native Auto Layout and modern HUG/FILL/FIXED sizing on content stacks, card internals, tabs, repeated information rows and actions. A normal child in an Auto Layout parent should not rely on x/y; reserve layoutPositioning=ABSOLUTE for true overlays and intentionally layered indicators.",
-      "Create a complete high-quality variation in the first plan. After native-layer creation, the plugin runs one advisory visual QA review only; it does not automatically patch or refine the result. Preserve the source frame."
+      "When the local style catalogue contains a suitable style, reuse exact paintStyleId/textStyleId/effectStyleId/gridStyleId rather than recreating equivalent colors or typography. Use text styles only on TEXT nodes and reference only IDs from the supplied catalogue.",
+      "When local variables/collections are supplied, use semantic names to guide consistent design. Never invent variable IDs or claim that a token was bound unless a native binding operation is verified.",
+      "After native-layer creation, the plugin runs one rendered screenshot + native layer review, may perform one bounded schema-validated surgical repair, then reads and reviews the result once more. Preserve the source frame."
     ],
     visualCapture: renderedScreen ? "Rendered selected-node image is attached." :
       parsedInput.data.visualCaptureWarning || "No rendered image available; use native layer evidence and do not claim visual inspection.",
@@ -575,6 +604,28 @@ export async function POST(request: Request) {
           const issues = parsedPlan.error.issues.slice(0, 4)
             .map((issue) => issue.path.join(".") + " " + issue.message).join("; ");
           errors.push(model + (isRecovery ? " compact retry" : "") + ": invalid design plan schema (" + issues + ")");
+          if (!isRecovery) continue;
+          break;
+        }
+        const styleSets = canvas.styles && typeof canvas.styles === "object" ? canvas.styles as Record<string, unknown> : {};
+        const styleReferences: Array<{ key: string; group: string; node: Record<string, unknown> }> = [];
+        const collectStyleReferences = (nodes: unknown[]) => {
+          for (const entry of nodes) {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+            const node = entry as Record<string, unknown>;
+            for (const [key, group] of [["paintStyleId", "paint"], ["textStyleId", "text"], ["effectStyleId", "effect"], ["gridStyleId", "grid"]] as const) {
+              if (typeof node[key] === "string") styleReferences.push({ key, group, node });
+            }
+            if (Array.isArray(node.children)) collectStyleReferences(node.children);
+          }
+        };
+        collectStyleReferences(parsedPlan.data.elements as unknown[]);
+        const invalidStyle = styleReferences.find(({ key, group, node }) => {
+          const catalogue = Array.isArray(styleSets[group]) ? styleSets[group] as Array<Record<string, unknown>> : [];
+          return !catalogue.some((style) => style.id === node[key]);
+        });
+        if (invalidStyle) {
+          errors.push(model + (isRecovery ? " compact retry" : "") + ": " + invalidStyle.key + " references an unknown local " + invalidStyle.group + " style ID.");
           if (!isRecovery) continue;
           break;
         }
