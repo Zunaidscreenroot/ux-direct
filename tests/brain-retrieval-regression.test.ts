@@ -59,13 +59,13 @@ test("makes retrieval failures explicit while preserving safe conversational fal
 
 test("shared queries do not automatically mix client-specific scopes", () => {
   assert.deepEqual(resolveBrainScopes("How should I improve navigation?"), [
-    "UX_SHARED_BRAIN", "indian-bfsi", "project:ux-direct",
+    "UX_SHARED_BRAIN", "indian-bfsi", "project:ux-direct", "project:general-ux",
   ]);
 });
 
 test("audit queries get audit rules without adding unrelated client memory", () => {
   assert.deepEqual(resolveBrainScopes("Review the UX audit findings"), [
-    "UX_SHARED_BRAIN", "indian-bfsi", "project:ux-direct", "project:ux-audit",
+    "UX_SHARED_BRAIN", "indian-bfsi", "project:ux-direct", "project:general-ux", "project:ux-audit",
   ]);
 });
 
