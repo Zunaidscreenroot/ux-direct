@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ReadableStream } from "node:stream/web";
 import { createLearningMarkerTransform, parseInlineLearningCandidate, referencesUnstatedClient, sanitizeInlineLearningCandidate } from "../src/memory/inline-learning";
 
 const candidate = {
