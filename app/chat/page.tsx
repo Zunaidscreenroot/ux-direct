@@ -11,7 +11,7 @@ type BrainTrace = {
   knowledgeChunkCount: number;
   durationMs: number;
   model?: string;
-  learningStatus?: "none" | "draft_saved" | "skipped_sensitive" | "failed";
+  learningStatus?: "none" | "learned" | "skipped_sensitive" | "failed";
 };
 type ChatMessage = { id: string; role: Role; content: string; brain?: BrainTrace };
 type ChatModel = { id: string; name: string; contextLength?: number };
@@ -204,7 +204,7 @@ export default function ChatWorkspace() {
         knowledgeChunkCount: Number(response.headers.get("X-UXD-Brain-References") || 0) || 0,
         durationMs: Number(response.headers.get("X-UXD-Brain-Latency-Ms") || 0) || 0,
         model: response.headers.get("X-UXD-Model") || selectedModel,
-        learningStatus: response.headers.get("X-UXD-Learning-Status") === "draft_saved" || response.headers.get("X-UXD-Learning-Status") === "skipped_sensitive" || response.headers.get("X-UXD-Learning-Status") === "failed" ? response.headers.get("X-UXD-Learning-Status") as "draft_saved" | "skipped_sensitive" | "failed" : "none",
+        learningStatus: response.headers.get("X-UXD-Learning-Status") === "learned" || response.headers.get("X-UXD-Learning-Status") === "skipped_sensitive" || response.headers.get("X-UXD-Learning-Status") === "failed" ? response.headers.get("X-UXD-Learning-Status") as "learned" | "skipped_sensitive" | "failed" : "none",
       };
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
@@ -325,7 +325,7 @@ export default function ChatWorkspace() {
             <div className="ud-thread-heading"><span className="ud-thread-mark">◌</span><div><strong>UX Direct</strong><small>OpenRouter Auto · low cost, throughput-prioritized</small></div><button onClick={newChat}>New chat ＋</button></div>
             {messages.map((message) => <article className={"ud-message " + message.role} key={message.id}>
               <div className={"ud-message-avatar " + message.role}>{message.role === "assistant" ? "u" : "Z"}</div>
-              <div className="ud-message-body"><div className="ud-message-role">{message.role === "assistant" ? "UX Direct" : "You"}</div><div className="ud-message-text">{message.content || (busy && message.role === "assistant" ? <span className="ud-typing"><i /><i /><i /></span> : "")}</div>{message.brain && <div className="ud-message-meta"><span className={message.brain.status === "complete" && (message.brain.memoryCount + message.brain.knowledgeChunkCount) > 0 ? "retrieval-ok" : "retrieval-note"}>{message.brain.status === "complete" ? "Shared brain · " + message.brain.memoryCount + " memories · " + message.brain.knowledgeChunkCount + " references" : message.brain.status === "empty" ? "Shared brain · no matching approved context" : message.brain.status === "disabled" ? "Shared brain · API key not configured" : message.brain.status === "degraded" ? "Shared brain · retrieval unavailable" : "Shared brain · status not reported"}</span>{message.brain.model && <span>Model · {message.brain.model.split("/").slice(-1)[0].replace(/:free$/, "")}</span>}{message.brain.learningStatus === "draft_saved" && <span>Learning · draft saved, awaiting approval</span>}{message.brain.learningStatus === "skipped_sensitive" && <span>Learning · sensitive content not stored</span>}{message.brain.learningStatus === "failed" && <span>Learning · draft save failed</span>}</div>}</div>
+              <div className="ud-message-body"><div className="ud-message-role">{message.role === "assistant" ? "UX Direct" : "You"}</div><div className="ud-message-text">{message.content || (busy && message.role === "assistant" ? <span className="ud-typing"><i /><i /><i /></span> : "")}</div>{message.brain && <div className="ud-message-meta"><span className={message.brain.status === "complete" && (message.brain.memoryCount + message.brain.knowledgeChunkCount) > 0 ? "retrieval-ok" : "retrieval-note"}>{message.brain.status === "complete" ? "Shared brain · " + message.brain.memoryCount + " memories · " + message.brain.knowledgeChunkCount + " references" : message.brain.status === "empty" ? "Shared brain · no matching approved context" : message.brain.status === "disabled" ? "Shared brain · API key not configured" : message.brain.status === "degraded" ? "Shared brain · retrieval unavailable" : "Shared brain · status not reported"}</span>{message.brain.model && <span>Model · {message.brain.model.split("/").slice(-1)[0].replace(/:free$/, "")}</span>}{message.brain.learningStatus === "learned" && <span>Learning · added to shared memory</span>}{message.brain.learningStatus === "skipped_sensitive" && <span>Learning · sensitive content not stored</span>}{message.brain.learningStatus === "failed" && <span>Learning · capture failed</span>}</div>}</div>
             </article>)}
             <div ref={endRef} />
           </div>}

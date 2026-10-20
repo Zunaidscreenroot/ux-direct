@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { planUXTask } from "@/src/core/orchestrator";
 import { mockProvider } from "@/src/providers/mock-provider";
@@ -10,8 +10,9 @@ import { getGatewaySettings } from "@/src/model-gateway/control-store";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
-import { retrieveBrainContext, reviewBrainFeedback, saveBrainFeedback } from "@/src/memory/shared-brain";
-import { detectCoachingSignal, detectExplicitTrainingIntent, resolveLearningScope } from "@/src/memory/learning-signal";
+import { retrieveBrainContext, saveBrainFeedback } from "@/src/memory/shared-brain";
+import { resolveLearningScope } from "@/src/memory/learning-signal";
+import { referencesUnstatedClient, sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 
 const requestSchema = z.object({
   title: z.string().trim().min(1).max(160),
@@ -77,7 +78,6 @@ export async function POST(request: Request) {
   }
   const originalUserInput = parsed.data.request.split(/\n\nSelected Figma context \(metadata only\):/i)[0].trim().slice(0, 12000);
   const isPluginRequest = parsed.data.source === "figma-plugin";
-  const learningRequested = isPluginRequest && detectCoachingSignal(originalUserInput);
   const taskInput = { title: parsed.data.title, request: parsed.data.request, project: parsed.data.project };
   const configuredProviders = providersFromEnv();
   const gatewaySettings = await getGatewaySettings();
@@ -97,13 +97,15 @@ export async function POST(request: Request) {
     : !reasoningPolicy.enabled || reasoningPolicy.mode === "paid" || explicitChoice || configuredForMode
       ? gatewayProvider : mockProvider;
   const executionMode = selectedProvider === mockProvider ? "mock" : "gateway";
+  // Every gateway-backed task may contribute one reusable lesson; mock mode performs no ingestion.
+  const learningRequested = executionMode === "gateway";
   recordOperationalEvent({ source: "backend", event: "Task request received", status: "info", summary: "Task planning request accepted; prompt contents are not stored in the operational log.", requestId, project: parsed.data.project, mode: executionMode });
   try {
     let memoryContext = "";
     let memoryRetrieval: { status: string; memoryCount: number; knowledgeChunkCount: number; maxChars: number } | null = null;
     if (executionMode === "gateway") {
       const searchableText = [parsed.data.title, parsed.data.request].join(" ");
-      const scopes = ["UX_SHARED_BRAIN", "project:ux-direct"];
+      const scopes = ["UX_SHARED_BRAIN", "project:ux-direct", "project:general-ux"];
       if (/\b(bank|banking|bfsi|finance|financial|loan|credit|upi|insurance|nbfc|ujjivan|dmi|indian)\b/i.test(searchableText)) scopes.push("indian-bfsi");
       if (parsed.data.project === "dmi-finance") scopes.push("project:dmi-finance");
       if (parsed.data.project === "express-computers") scopes.push("project:express-computers");
@@ -118,56 +120,83 @@ export async function POST(request: Request) {
       memoryRetrieval = brain.retrieval;
     }
     const result = await planUXTask({ ...taskInput, requestId, provider: selectedProvider, memoryContext, learningRequested });
-    let learningCapture: { status: "not-requested" | "not-extracted" | "draft-saved" | "approved" | "failed"; feedbackId?: string; scopeKey?: string; duplicate?: boolean } = { status: "not-requested" };
+    let learningCapture: { status: "not-requested" | "not-extracted" | "active" | "inactive" | "filtered" | "failed"; feedbackId?: string; scopeKey?: string; duplicate?: boolean } = { status: "not-requested" };
     if (learningRequested) {
-      const candidate = result.plan.learningCandidate;
-      if (executionMode !== "gateway" || !candidate) {
+      const modelCandidate = result.plan.learningCandidate;
+      const candidate = modelCandidate?.activate === true ? sanitizeInlineLearningCandidate(modelCandidate) : null;
+      if (!candidate) {
         learningCapture = { status: "not-extracted" };
+      } else if (referencesUnstatedClient(candidate, originalUserInput + "\n" + parsed.data.title)) {
+        learningCapture = { status: "filtered" };
+        recordOperationalEvent({
+          source: isPluginRequest ? "figma-plugin" : "dashboard",
+          event: "Shared brain task lesson filtered",
+          status: "info",
+          summary: "A task-derived candidate named a client not present in the task context; nothing was stored.",
+          requestId,
+          project: parsed.data.project,
+        });
       } else {
+        const sourceProduct = isPluginRequest ? "figma-plugin" : "ux-direct";
         try {
-          const scopeKey = resolveLearningScope(candidate.scopeKey, parsed.data.project, originalUserInput);
+          const scopeKey = resolveLearningScope(candidate.scopeKey, parsed.data.project, originalUserInput + "\n" + parsed.data.title);
+          const normalizedRule = candidate.normalizedRule.trim();
+          // Store the generalized lesson only; never copy the raw task brief or selected canvas text into the brain.
+          const rawLearning = "Task-derived reusable lesson: " + normalizedRule;
+          const idempotencyKey = "uxd-task-learning-" + createHash("sha256")
+            .update([sourceProduct, scopeKey, normalizedRule.toLowerCase()].join("|"))
+            .digest("hex");
           const saved = await saveBrainFeedback({
-            rawFeedback: originalUserInput,
-            summary: originalUserInput.slice(0, 500),
+            rawFeedback: rawLearning,
+            summary: normalizedRule.slice(0, 500),
             title: candidate.title,
-            normalizedRule: candidate.normalizedRule,
-            rationale: candidate.rationale,
+            normalizedRule,
+            rationale: "Reusable lesson abstracted from a task-planning inference. Raw task brief and canvas material were not persisted in the shared brain.",
             scopeKey,
             feedbackKind: candidate.feedbackKind,
             keywords: candidate.keywords,
-            examples: candidate.examples,
+            examples: [],
             originalLanguage: candidate.originalLanguage,
-            sourceProduct: "figma-plugin",
-            sourceAuditRef: parsed.data.fileKey ? "figma-file:" + parsed.data.fileKey : undefined,
-            sourceFindingTitle: parsed.data.title,
-            metadata: { project: parsed.data.project, requestId, origin: "figma-plugin" },
+            sourceProduct,
+            idempotencyKey,
+            metadata: {
+              project: parsed.data.project,
+              requestId,
+              origin: sourceProduct,
+              captureMode: "automatic-task-learning",
+              rawTaskBriefPersisted: false,
+              automaticActivation: true,
+              requiresOwnerApproval: false,
+            },
           });
-          let status: "draft-saved" | "approved" = "draft-saved";
-          if (detectExplicitTrainingIntent(originalUserInput)) {
-            await reviewBrainFeedback({
-              feedbackId: String(saved.id),
-              action: "approve",
-              reviewNote: "Owner explicitly requested future learning through a Figma-plugin correction.",
-              expectedSourceProduct: "figma-plugin",
-            });
-            status = "approved";
-          }
-          learningCapture = { status, feedbackId: String(saved.id), scopeKey, duplicate: saved.duplicate === true };
+          const active = saved.activated === true;
+          learningCapture = {
+            status: active ? "active" : "inactive",
+            feedbackId: String(saved.id),
+            scopeKey,
+            duplicate: saved.duplicate === true,
+          };
           recordOperationalEvent({
-            source: "figma-plugin",
-            event: status === "approved" ? "Shared brain lesson approved" : "Shared brain lesson saved",
-            status: "success",
-            summary: status === "approved" ? "An explicit Figma-plugin training request was added to approved shared memory." : "A Figma-plugin correction was saved as a draft in the shared brain.",
+            source: sourceProduct === "figma-plugin" ? "figma-plugin" : "dashboard",
+            event: active ? "Shared brain task lesson activated" : "Shared brain task lesson not activated",
+            status: active ? "success" : "info",
+            summary: active
+              ? "A reusable lesson from task planning passed relevance and scope checks and is active for future retrieval."
+              : "The matching task lesson remains inactive because it was previously rejected or archived.",
             requestId,
             project: parsed.data.project,
           });
         } catch (error) {
-          learningCapture = { status: "failed" };
+          const message = error instanceof Error ? error.message : "unknown error";
+          const filtered = /below the 50% ingestion threshold/i.test(message);
+          learningCapture = { status: filtered ? "filtered" : "failed" };
           recordOperationalEvent({
-            source: "figma-plugin",
-            event: "Shared brain lesson capture failed",
-            status: "warning",
-            summary: "The Figma task plan completed, but its optional learning capture failed: " + (error instanceof Error ? error.message.slice(0, 140) : "unknown error"),
+            source: sourceProduct === "figma-plugin" ? "figma-plugin" : "dashboard",
+            event: filtered ? "Shared brain task lesson filtered" : "Shared brain task lesson capture failed",
+            status: filtered ? "info" : "warning",
+            summary: filtered
+              ? "The task-derived candidate did not pass the deterministic 50% relevance gate; nothing was stored."
+              : "Task planning completed, but optional automatic learning capture failed: " + message.slice(0, 140),
             requestId,
             project: parsed.data.project,
           });

@@ -144,23 +144,32 @@ export function detectExplicitTrainingIntent(text: string): boolean {
 
 export function resolveLearningScope(candidateScope: unknown, project: TaskProject, originalFeedback: string): string {
   const requested = typeof candidateScope === "string" ? candidateScope : "";
+  const text = originalFeedback.toLowerCase();
   const isExplicitGlobal = EXPLICIT_GLOBAL_SCOPE.some(pattern => pattern.test(originalFeedback));
   const containsIndianBfsi = /\b(indian|india|bfsi|banking|finance|financial|insurance|nbfc|rbi|loan|lending)\b/i.test(originalFeedback);
   if (isExplicitGlobal) {
     if (containsIndianBfsi && /\b(bfsi|banking|finance|insurance|rbi|loan|lending)\b/i.test(originalFeedback)) return "indian-bfsi";
     return "UX_SHARED_BRAIN";
   }
-  if (project === "dmi-finance") return "project:dmi-finance";
-  if (project === "express-computers") return "project:express-computers";
+
+  // Named-client scope takes precedence over a broader model-suggested scope.
+  if (project === "dmi-finance" || /\b(dmi|dmi hfc|dmi finance|dmi wealth)\b/.test(text)) return "project:dmi-finance";
+  if (project === "express-computers" || /\bexpress computers\b/.test(text)) return "project:express-computers";
+  if (/\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\b/.test(text)) return "project:ujjivan-sfb";
+
+  // Accept product/domain scopes only when supported by the task context.
+  if (requested === "indian-bfsi" && containsIndianBfsi) return "indian-bfsi";
+  if (requested === "project:ux-audit" && /\b(audit|benchmark|past findings|accessibility review)\b/.test(text)) return "project:ux-audit";
+  if (requested === "project:ux-direct" && /\b(figma|plugin|mcp|orchestration|shared brain|knowledge base|ux direct)\b/.test(text)) return "project:ux-direct";
+  if (requested === "project:general-ux") return "project:general-ux";
   return "project:general-ux";
 }
-
 
 /** Select a conservative scope for chat-originated coaching; client rules never become global by default. */
 export function resolveChatLearningScope(text: string): string {
   const value = text.toLowerCase();
   if (/\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\b/.test(value)) return "project:ujjivan-sfb";
-  if (/\b(dmi|dmi hfc|dmi finance|dmi wealth|housing finance)\b/.test(value)) return "project:dmi-finance";
+  if (/\b(dmi|dmi hfc|dmi finance|dmi wealth)\b/.test(value)) return "project:dmi-finance";
   if (/\b(ux audit|uxaudit|audit findings|audit workflow|benchmarking)\b/.test(value)) return "project:ux-audit";
   if (/\b(indian bfs(i|fi)|banking|financial services|insurance|rbi|nbfc|credit bureau)\b/.test(value)) return "indian-bfsi";
   if (/\b(shared brain|cross[- ]product|across products|global memory|chat.{0,20}brain|brain.{0,20}chat)\b/.test(value)) return "UX_SHARED_BRAIN";

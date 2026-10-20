@@ -2,6 +2,8 @@ import { listR2Keys, readR2Json, writeR2Json } from "@/src/storage/r2-json-store
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { recordOperationalEvent } from "@/src/observability/event-log";
+import { saveBrainFeedback } from "@/src/memory/shared-brain";
+import { buildFigmaFailureLesson } from "@/src/memory/task-learning";
 import { ALLOWED_FIGMA_FILE_KEY, isAllowedFigmaFileKey } from "@/src/security/figma-access";
 
 export const runtime = "nodejs";
@@ -551,6 +553,54 @@ export async function POST(request: Request) {
         summary: operationError ? "A scoped Figma canvas command returned an error." : "A scoped Figma canvas command completed and returned a verified result.",
         category: "Figma Canvas", action: command.action, testType: "functional", requestId: command.commandId,
       });
+
+      // Learn from verified command failures using only a coarse recovery category.
+      // Raw errors, node IDs, command payloads, screen text and result objects are never sent to memory.
+      if (operationError && (command.action === "read-canvas" || command.action === "write-canvas")) {
+        const lesson = buildFigmaFailureLesson(operationError);
+        if (lesson) {
+          await saveBrainFeedback({
+            rawFeedback: lesson.rawFeedback,
+            summary: lesson.normalizedRule.slice(0, 500),
+            title: lesson.title,
+            normalizedRule: lesson.normalizedRule,
+            rationale: lesson.rationale,
+            scopeKey: "project:ux-direct",
+            feedbackKind: "interaction_logic",
+            keywords: lesson.keywords,
+            examples: [],
+            originalLanguage: "English",
+            sourceProduct: "figma-plugin",
+            idempotencyKey: lesson.idempotencyKey,
+            metadata: {
+              captureMode: "sanitized-verified-canvas-failure",
+              failureCategory: lesson.category,
+              rawErrorPersisted: false,
+              rawCanvasPayloadPersisted: false,
+              requiresOwnerApproval: false,
+            },
+          }).then((saved) => {
+            recordOperationalEvent({
+              source: "figma-plugin",
+              event: "Figma execution learning evaluated",
+              status: saved.activated === true ? "success" : "info",
+              summary: saved.activated === true
+                ? "A sanitized Figma recovery lesson passed relevance checks and is active."
+                : "The sanitized Figma recovery lesson remains inactive because it was previously archived or rejected.",
+              category: "Shared Brain", action: lesson.category, requestId: command.commandId,
+            });
+          }).catch(() => {
+            // Learning is best-effort and must never block or rewrite the verified Figma command result.
+            recordOperationalEvent({
+              source: "figma-plugin",
+              event: "Figma execution learning capture unavailable",
+              status: "warning",
+              summary: "The verified Figma command result was preserved, but its optional sanitized learning signal could not be stored.",
+              category: "Shared Brain", action: lesson.category, requestId: command.commandId,
+            });
+          });
+        }
+      }
       return NextResponse.json({ ok: true, saved: true, status: completed.status }, { headers });
     }
 

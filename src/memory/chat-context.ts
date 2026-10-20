@@ -28,12 +28,12 @@ export function buildRetrievalQuery(currentUserMessage: string, previousUserMess
  */
 export function resolveBrainScopes(query: string): string[] {
   const normalized = query.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, " ");
-  const scopes = ["UX_SHARED_BRAIN", "indian-bfsi", "project:ux-direct"];
+  const scopes = ["UX_SHARED_BRAIN", "indian-bfsi", "project:ux-direct", "project:general-ux"];
   if (/\b(ux\s*audit|uxaudit|audit|benchmark|past findings|audit findings)\b/.test(normalized)) {
     scopes.push("project:ux-audit");
   }
-  const dmi = /\b(dmi|housing finance|dmi hfc|hfc|dmi wealth)\b/.test(normalized);
-  const ujjivan = /\b(ujjivan|ujjivan sfb|small finance bank)\b/.test(normalized);
+  const dmi = /\b(dmi|dmi hfc|dmi finance|dmi wealth)\b/.test(normalized);
+  const ujjivan = /\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\b/.test(normalized);
   if (dmi) scopes.push("project:dmi-finance");
   if (ujjivan) scopes.push("project:ujjivan-sfb");
   return scopes;
