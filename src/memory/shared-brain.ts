@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { assessBrainRelevance } from "./learning-signal";
 import { neonRequest as supabaseRequest } from "./neon-rest";
 
 export type BrainMemory = {
@@ -194,6 +195,34 @@ export async function retrieveBrainContext(input: {
   }
 }
 
+async function activateBrainFeedbackOnIngestion(
+  row: Record<string, unknown>,
+  sourceProduct: string,
+  duplicate: boolean,
+): Promise<Record<string, unknown> & { id: string; duplicate: boolean }> {
+  const id = typeof row.id === "string" ? row.id : "";
+  if (!safeUuid(id)) throw new Error("Feedback record could not be activated because its ID was invalid.");
+  const status = typeof row.status === "string" ? row.status : "draft";
+  if (status === "approved") return { ...row, id, duplicate, activated: true };
+  // Never override a deliberate rejection/archive by replaying the same idempotent ingestion.
+  if (status !== "draft") return { ...row, id, duplicate, activated: false };
+
+  const activation = await reviewBrainFeedback({
+    feedbackId: id,
+    action: "approve",
+    expectedSourceProduct: sourceProduct,
+    reviewNote: "Automatically activated after relevance and scope checks; eligible ingestion does not require manual approval.",
+  });
+  return {
+    ...row,
+    id,
+    status: "approved",
+    duplicate,
+    activated: true,
+    activation,
+  };
+}
+
 export async function saveBrainFeedback(input: BrainFeedbackInput): Promise<Record<string, unknown> & { id: string; duplicate: boolean }> {
   const rawFeedback = textValue(input.rawFeedback, 12000, "rawFeedback", true);
   const title = textValue(input.title, 180, "title", true);
@@ -202,30 +231,50 @@ export async function saveBrainFeedback(input: BrainFeedbackInput): Promise<Reco
   const scopeKey = normalizeScope(input.scopeKey);
   const feedbackKind = textValue(input.feedbackKind, 48, "feedbackKind") || "general";
   if (!FEEDBACK_KINDS.has(feedbackKind)) throw new Error("Unsupported feedbackKind.");
+  const summary = textValue(input.summary, 1200, "summary") || rawFeedback.slice(0, 500);
+  const rationale = textValue(input.rationale, 1800, "rationale");
+  const keywords = normalizeTags(input.keywords);
+  const relevance = assessBrainRelevance(title, [rawFeedback, normalizedRule, rationale, summary, keywords.join(" ")].join("\n"), scopeKey);
+  if (!relevance.eligible) {
+    throw new Error("Feedback relevance scored " + Math.round(relevance.score * 100) + "%, below the 50% ingestion threshold. Add reusable UX/product context or correct its project scope; nothing was stored.");
+  }
   const idempotencyKey = textValue(input.idempotencyKey, 180, "idempotencyKey") || createHash("sha256").update([sourceProduct, scopeKey, title.toLowerCase(), rawFeedback, normalizedRule].join("|")).digest("hex");
   const payload = {
     source_product: sourceProduct,
     scope_key: scopeKey,
     feedback_kind: feedbackKind,
     raw_feedback: rawFeedback,
-    summary: textValue(input.summary, 1200, "summary") || rawFeedback.slice(0, 500),
+    summary,
     title,
     normalized_rule: normalizedRule,
-    rationale: textValue(input.rationale, 1800, "rationale"),
-    keywords: normalizeTags(input.keywords),
+    rationale,
+    keywords,
     examples: normalizeExamples(input.examples),
     original_language: textValue(input.originalLanguage, 60, "originalLanguage") || "unknown",
     source_audit_ref: textValue(input.sourceAuditRef, 120, "sourceAuditRef") || null,
     source_finding_title: textValue(input.sourceFindingTitle, 240, "sourceFindingTitle") || null,
     status: "draft",
     idempotency_key: idempotencyKey,
-    metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : {},
+    metadata: {
+      ...(input.metadata && typeof input.metadata === "object" ? input.metadata : {}),
+      ingestion: {
+        mode: "automatic",
+        relevanceScore: relevance.score,
+        relevanceThreshold: relevance.threshold,
+        scoringMethod: relevance.method,
+        generalSignals: relevance.generalSignals,
+        scopeSignals: relevance.scopeSignals,
+        requiresHumanApproval: false,
+      },
+    },
     updated_at: new Date().toISOString(),
   };
   const existingPath = `uxd_brain_feedback?select=id,status,title,scope_key,source_product,created_at&idempotency_key=eq.${encodeURIComponent(idempotencyKey)}&limit=1`;
   const existingBeforeWrite = await supabaseRequest(existingPath);
   const existingRow = Array.isArray(existingBeforeWrite) ? existingBeforeWrite[0] : null;
-  if (existingRow && typeof existingRow.id === "string") return { ...(existingRow as Record<string, unknown>), id: existingRow.id, duplicate: true };
+  if (existingRow && typeof existingRow.id === "string") {
+    return activateBrainFeedbackOnIngestion(existingRow as Record<string, unknown>, sourceProduct, true);
+  }
   try {
     const created = await supabaseRequest("uxd_brain_feedback", {
       method: "POST",
@@ -233,12 +282,16 @@ export async function saveBrainFeedback(input: BrainFeedbackInput): Promise<Reco
       body: JSON.stringify(payload),
     });
     const row = Array.isArray(created) ? created[0] : created && typeof created === "object" ? created as Record<string, unknown> : null;
-    if (row && typeof row.id === "string") return { ...(row as Record<string, unknown>), id: row.id, duplicate: false };
+    if (row && typeof row.id === "string") {
+      return activateBrainFeedbackOnIngestion(row as Record<string, unknown>, sourceProduct, false);
+    }
   } catch (error) {
     // A concurrent retry can win the partial unique index between our read and insert.
     const duplicate = await supabaseRequest(existingPath).catch(() => null);
     const found = Array.isArray(duplicate) ? duplicate[0] : null;
-    if (found) return { ...(found as Record<string, unknown>), id: String(found.id), duplicate: true };
+    if (found && typeof found.id === "string") {
+      return activateBrainFeedbackOnIngestion(found as Record<string, unknown>, sourceProduct, true);
+    }
     throw error;
   }
   throw new Error("Could not confirm whether coaching feedback was saved.");
@@ -316,6 +369,25 @@ export async function addBrainKnowledgeDocument(input: {
   const sourceType = textValue(input.sourceType, 60, "sourceType") || "document";
   const sourceAuthority = textValue(input.sourceAuthority, 60, "sourceAuthority") || "internal";
   const sourceUrl = textValue(input.sourceUrl, 1800, "sourceUrl") || null;
+  const sourceProduct = normalizeSource(input.sourceProduct || "knowledge-ingestion");
+  const relevance = assessBrainRelevance(title, content, projectKey);
+  if (!relevance.eligible) {
+    throw new Error("Knowledge relevance scored " + Math.round(relevance.score * 100) + "%, below the 50% ingestion threshold. Nothing was stored; add relevant UX/product signals or correct the document scope.");
+  }
+  const documentMetadata = {
+    ...(input.metadata || {}),
+    sourceProduct,
+    contentHash: createHash("sha256").update(content).digest("hex"),
+    ingestion: {
+      mode: "automatic",
+      relevanceScore: relevance.score,
+      relevanceThreshold: relevance.threshold,
+      scoringMethod: relevance.method,
+      generalSignals: relevance.generalSignals,
+      scopeSignals: relevance.scopeSignals,
+      requiresHumanApproval: false,
+    },
+  };
   const chunks = splitText(content);
   if (!chunks.length) throw new Error("Document content did not produce any searchable chunks.");
   const docResult = await supabaseRequest("uxd_knowledge_documents", {
@@ -329,7 +401,7 @@ export async function addBrainKnowledgeDocument(input: {
       source_authority: sourceAuthority,
       status: "draft",
       last_verified_at: null,
-      metadata: { ...(input.metadata || {}), sourceProduct: normalizeSource(input.sourceProduct || "knowledge-ingestion"), submittedStatus: input.status || "draft", contentHash: createHash("sha256").update(content).digest("hex") },
+      metadata: documentMetadata,
       updated_at: new Date().toISOString(),
     }),
   });
@@ -356,15 +428,25 @@ export async function addBrainKnowledgeDocument(input: {
       headers: { Prefer: "return=minimal" },
       body: JSON.stringify(chunkRows),
     });
+    const now = new Date().toISOString();
+    const activation = await supabaseRequest(`uxd_knowledge_documents?id=eq.${encodeURIComponent(document.id)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ status: "approved", updated_at: now }),
+    });
+    const activeDocument = Array.isArray(activation) ? activation[0] : null;
+    if (!activeDocument?.id || activeDocument.status !== "approved") {
+      throw new Error("The knowledge document chunks were stored, but automatic activation could not be confirmed.");
+    }
   } catch (error) {
     await supabaseRequest(`uxd_knowledge_documents?id=eq.${encodeURIComponent(document.id)}`, {
       method: "PATCH",
       headers: { Prefer: "return=minimal" },
-      body: JSON.stringify({ status: "failed", metadata: { ...(input.metadata || {}), ingestionError: error instanceof Error ? error.message.slice(0, 300) : "chunk write failed" }, updated_at: new Date().toISOString() }),
+      body: JSON.stringify({ status: "failed", metadata: { ...documentMetadata, ingestionError: error instanceof Error ? error.message.slice(0, 300) : "chunk write failed" }, updated_at: new Date().toISOString() }),
     }).catch(() => {});
     throw error;
   }
-  return { id: document.id as string, title, projectKey, sourceUrl, chunkCount: chunks.length, status: "draft" as const };
+  return { id: document.id as string, title, projectKey, sourceUrl, chunkCount: chunks.length, status: "approved" as const, active: true, relevanceScore: relevance.score, automaticIngestion: true };
 }
 
 export async function reviewBrainKnowledgeDocument(input: { documentId: string; action: "approve" | "reject" | "archive" }) {
