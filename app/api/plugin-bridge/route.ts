@@ -406,6 +406,63 @@ export async function POST(request: Request) {
   const path = sessionPath(clientId);
 
   try {
+    if (mode === "plugin-command") {
+      const token = z.string().min(20).max(200).safeParse(body.sessionToken);
+      const action = z.enum(["read-canvas", "write-canvas"]).safeParse(body.action);
+      if (!token.success || !action.success) {
+        return NextResponse.json({ error: "A valid session token and canvas action are required." }, { status: 400, headers });
+      }
+      let commandPayload: Record<string, unknown> | undefined;
+      if (action.data === "read-canvas") {
+        const parsed = CANVAS_READ_PAYLOAD.safeParse(body.payload ?? {});
+        if (!parsed.success) return NextResponse.json({ error: "Canvas read options are invalid.", issues: parsed.error.issues }, { status: 400, headers });
+        commandPayload = parsed.data as unknown as Record<string, unknown>;
+      } else {
+        const parsed = CANVAS_WRITE_PAYLOAD.safeParse(body.payload);
+        if (!parsed.success) return NextResponse.json({ error: "Canvas write payload is invalid.", issues: parsed.error.issues }, { status: 400, headers });
+        commandPayload = parsed.data as unknown as Record<string, unknown>;
+      }
+
+      const current = await readJson<Session>(path);
+      if (!current || current.sessionToken !== token.data || !isAllowedFigmaFileKey(current.fileKey) || current.fileKey !== body.fileKey) {
+        return NextResponse.json({ error: "Allowlisted plugin session not found or token/file-key mismatch." }, { status: 403, headers });
+      }
+      if (current.status !== "online" || Date.now() - Date.parse(current.lastHeartbeatAt) >= 75000) {
+        return NextResponse.json({ error: "Figma plugin is offline. Open the plugin and try again." }, { status: 409, headers });
+      }
+      if (current.latestCommand && ["pending", "claimed"].includes(current.latestCommand.status)) {
+        const age = Date.now() - Date.parse(current.latestCommand.issuedAt);
+        if (Number.isFinite(age) && age < 240000) {
+          return NextResponse.json({ error: "A Figma canvas action is already running. Wait for it to finish." }, { status: 409, headers });
+        }
+      }
+
+      const now = new Date();
+      const command: BridgeCommand = {
+        commandId: crypto.randomUUID(),
+        action: action.data,
+        status: "pending",
+        issuedAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 240000).toISOString(),
+        ...(commandPayload ? { payload: commandPayload } : {}),
+      };
+      await writeJson(commandPath(clientId), command);
+      current.latestCommand = command;
+      current.status = "online";
+      await writeJson(path, current);
+      recordOperationalEvent({
+        source: "figma-plugin",
+        event: "In-plugin design-agent command queued",
+        status: "info",
+        summary: action.data === "read-canvas"
+          ? "The in-Figma UX Direct agent requested a scoped read of the selected canvas."
+          : "The in-Figma UX Direct agent requested a validated native canvas write.",
+        requestId: command.commandId,
+        action: action.data,
+      });
+      return NextResponse.json({ ok: true, commandId: command.commandId, status: "pending" }, { headers });
+    }
+
     if (mode === "heartbeat") {
       const token = z.string().min(20).max(200).safeParse(body.sessionToken);
       if (!token.success) return NextResponse.json({ error: "Session token is missing." }, { status: 400, headers });
