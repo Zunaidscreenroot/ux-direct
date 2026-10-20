@@ -166,7 +166,16 @@ export async function POST(request: Request) {
         const node = found.get(entry.nodeId);
         return !!node && typeof node.id === "string" && !["DOCUMENT", "PAGE"].includes(String(node.type || ""));
       });
-      return NextResponse.json({ ok: true, patch, model: typeof record.model === "string" ? record.model : model }, { headers });
+      if (parsed.data.review.score < 82 && patch.length === 0) {
+        errors.push(model + ": quality score is below 82 but the model returned no actionable patches");
+        continue;
+      }
+      return NextResponse.json({
+        ok: true,
+        patch,
+        refinementRequired: parsed.data.review.score < 82 || parsed.data.review.issues.some(issue => issue.severity === "high"),
+        model: typeof record.model === "string" ? record.model : model
+      }, { headers });
     } catch (error) {
       errors.push(model + ": " + (controller.signal.aborted ? "timed out" : error instanceof Error ? error.message.slice(0, 140) : "request failed"));
     } finally {

@@ -162,6 +162,7 @@ export async function POST(request: Request) {
                 "Return JSON only with required keys: issues (array of {severity:'high'|'medium'|'low', issue:string, evidence:string, fix:string}), score (number 0–100), summary (string); optional learningCandidate (null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}) only if this review revealed a durable reusable design or execution lesson. Do not turn one-off screen defects, client-specific details, screenshots, node IDs, or private text into a general lesson. Use the narrowest safe scope; the backend validates the candidate and applies the existing 50% relevance gate.",
                 "Compare the source screenshot with the generated screenshot when both exist. Evaluate whether the result meaningfully preserves the selected screen's specific purpose/components and improves craft. Look for generic redesign patterns, clipped text, poor spacing, hierarchy, alignment, contrast, content density and weak CTA priority.",
                 "If screenshots are missing, treat the review as structural-only. Do not claim to see visual details. If no actionable issues remain, return an empty issues array.",
+                "Be conservative about passing: score the result against professional production-ready quality, not merely basic validity. Penalize empty/placeholder groups, content loss, repeated generic cards, missing important source values, weak hierarchy, insufficient contrast, overflow, and incomplete layer trees. A high score requires evidence that the actual output is materially complete and specific to the user's task.",
                 memoryContext,
               ].join("\n"),
             },
@@ -210,9 +211,20 @@ export async function POST(request: Request) {
         parsed.data.prompt,
         "automatic-figma-visual-review",
       );
+      const unresolvedHighSeverity = validated.data.issues.some(issue => issue.severity === "high");
+      const qualityGatePassed = validated.data.score >= 82 && !unresolvedHighSeverity && validated.data.issues.length === 0;
       return NextResponse.json({
         ok: true,
         review: validated.data,
+        qualityGate: {
+          passed: qualityGatePassed,
+          minimumScore: 82,
+          unresolvedHighSeverity,
+          issueCount: validated.data.issues.length,
+          message: qualityGatePassed
+            ? "Visual QA passed."
+            : "Visual QA found unresolved issues. Apply targeted refinement and review again; do not mark this variation as complete."
+        },
         learning: learningStatus,
         visualInspection: !!sourceImage && !!outputImage,
         outputImageInspected: !!outputImage,
