@@ -1,12 +1,14 @@
 type JsonRecord = Record<string, unknown>;
 
+type NativePlanLike = JsonRecord & { summary: unknown; frame: unknown; elements: unknown };
+
 const PLAN_KEYS = ["summary", "frame", "elements"] as const;
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function isPlanObject(value: unknown): value is JsonRecord {
+function isPlanObject(value: unknown): value is NativePlanLike {
   return isRecord(value) && PLAN_KEYS.every((key) => key in value);
 }
 
