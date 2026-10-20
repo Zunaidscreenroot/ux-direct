@@ -12,6 +12,7 @@ const pluginUi = read("figma-plugin/ui.html");
 const agent = read("app/api/assistant/figma-agent/route.ts");
 const planNormalizer = read("src/figma-agent/normalize-plan.ts");
 const chatRoute = read("app/api/assistant/chat/route.ts");
+const modelPolicy = read("src/providers/anthropic-openrouter.ts");
 
 test("conversational cockpit inline JavaScript parses successfully", () => {
   const match = pluginUi.match(/<script>([\s\S]*?)<\/script>/i);
@@ -123,7 +124,13 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
 test("in-Figma design agent retrieves approved brain context and validates native layer plans", () => {
   assert.ok(agent.includes('retrieveBrainContext('), "Figma design planning must retrieve shared memory.");
   assert.ok(agent.includes('resolveBrainScopes('), "Brain retrieval must be scope-filtered.");
-  assert.ok(agent.includes('const models = ["openai/gpt-6-luna", "openrouter/auto"];'), "GPT-6 Luna must be primary and OpenRouter Auto fallback.");
+  assert.ok(agent.includes("const models = ANTHROPIC_OPENROUTER_MODELS;"), "Figma design generation must use the shared Anthropic model chain.");
+  assert.ok(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), "Generation requests must be restricted to Anthropic provider endpoints.");
+  assert.ok(modelPolicy.includes('"anthropic/claude-sonnet-5.5"'));
+  assert.ok(modelPolicy.includes('"anthropic/claude-sonnet-5"'));
+  assert.ok(modelPolicy.includes('"anthropic/claude-haiku-5.5"'));
+  assert.ok(modelPolicy.includes('only: ["anthropic"]'));
+  assert.ok(modelPolicy.includes("allow_fallbacks: false"));
   assert.ok(agent.includes('response_format: { type: "json_object" }'), "The design agent must request structured output.");
   assert.ok(agent.includes('PlanSchema.safeParse('), "The provider plan must be schema-validated before canvas execution.");
   assert.ok(agent.includes('elements: z.array(ElementSchema).min(5).max(12)'), "Top-level design sections must be bounded.");
@@ -159,7 +166,8 @@ test("Figma agent normalizes provider-native design fields and uses the requeste
   assert.ok(planNormalizer.includes("export function normalizePlan("), "The reusable normalizer must be directly testable.");
   assert.ok(planNormalizer.includes("item.fill ?? item.backgroundColor"), "Provider fill aliases must map to the native Figma color field.");
   assert.ok(planNormalizer.includes("item.kind ?? item.elementType ?? item.nodeType"), "Provider layer type aliases must be normalized.");
-  assert.ok(agent.includes("const models = [\"openai/gpt-6-luna\", \"openrouter/auto\"];"), "GPT-6 Luna must be primary and OpenRouter Auto fallback.");
+  assert.ok(agent.includes("const models = ANTHROPIC_OPENROUTER_MODELS;"), "Figma agent must use the shared Anthropic model chain.");
+  assert.ok(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), "Model provider must be restricted to Anthropic.");
   assert.ok(agent.includes("const normalizedPlan = normalizePlan(rawPlan, canvas);"), "A normalized model plan must be validated before any canvas write.");
   assert.ok(agent.includes('PlanSchema.safeParse(normalizedPlan)'), "Native plan schema validation must remain mandatory.");
 });
@@ -195,12 +203,14 @@ test("bridge supports saved health reports above the legacy 100-check ceiling", 
   assert.ok(bridge.includes('mode === "health-state"'));
 });
 
-test("normal conversational chat prefers GPT-6 Luna and only starts Auto after primary failure", () => {
-  assert.ok(chatRoute.includes('const ROUTER_MODEL = "openai/gpt-6-luna";'));
-  assert.ok(chatRoute.includes('const FALLBACK_MODEL = "openrouter/auto";'));
-  assert.ok(chatRoute.includes("Sequential fallback avoids starting or charging a second inference unless the primary fails."));
-  assert.ok(chatRoute.includes("const fallback = startAttempt(FALLBACK_MODEL);"));
-  assert.ok(chatRoute.includes('currentModel === FALLBACK_MODEL ? { plugins: [{ id: "auto-router", cost_tier: "low" }] }'));
+test("normal conversational chat uses only Anthropic models through OpenRouter", () => {
+  assert.ok(chatRoute.includes("const ROUTER_MODEL = ANTHROPIC_OPENROUTER_MODELS[0];"));
+  assert.ok(chatRoute.includes("const FALLBACK_MODEL = ANTHROPIC_OPENROUTER_MODELS[1];"));
+  assert.ok(chatRoute.includes("const FINAL_FALLBACK_MODEL = ANTHROPIC_OPENROUTER_MODELS[2];"));
+  assert.ok(chatRoute.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"));
+  assert.ok(chatRoute.includes("for (const candidate of candidates)"));
+  assert.equal(chatRoute.includes("openrouter/auto"), false);
+  assert.equal(chatRoute.includes("auto-router"), false);
 });
 
 test("Figma visual analysis retries compact PNG capture and sends it with native layer data", () => {
