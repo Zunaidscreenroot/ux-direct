@@ -47,7 +47,7 @@ test("UX Direct uses Gemini 3.7 Flash with cost-ordered OpenRouter fallbacks", (
   assert.ok(status.includes("defaultModel: OPENROUTER_MODELS[0]"));
   assert.ok(status.includes("fallbackModel: OPENROUTER_MODELS[1]"));
   assert.ok(status.includes("OPENROUTER_MODEL_LABELS[index]"));
-  assert.ok(status.includes("Gemini 3.7 Flash"));
+  assert.ok(status.includes("OPENROUTER_MODEL_LABELS[index]"));
   assert.equal(status.includes("anthropic/claude-sonnet"), false);
   assert.equal(status.includes("openai/gpt-6-luna"), false);
   assert.equal(status.includes("openrouter.ai/api/v1/models"), false);

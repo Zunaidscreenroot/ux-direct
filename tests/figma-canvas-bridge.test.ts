@@ -278,7 +278,7 @@ test("Figma visual capture failures do not invalidate the full design request", 
 });
 
 test("selected and generated frame screenshot export falls back to progressively smaller scales", () => {
-  assert.ok(pluginUi.includes("for (const scale of [0.35, 0.25, 0.2])"));
+  assert.ok(pluginUi.includes("for (const scale of [0.6, 0.45])"));
   assert.ok(pluginUi.includes("JPEG preview export failed at 60% and 45%."));
   assert.ok(pluginUi.includes("const outputCapture = await captureRenderedNodePreview(createdFrameId)"));
   assert.ok(pluginUi.includes("outputCapture.warning"));
