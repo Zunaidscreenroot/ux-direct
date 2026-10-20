@@ -166,11 +166,11 @@ export async function POST(request: Request) {
   const requestSchema = z.object({
     prompt: z.string().trim().min(2).max(5000),
     canvas: z.unknown(),
-    renderedScreen: z.string().max(52000).optional(),
+    renderedScreen: z.string().max(52000).nullable().optional(),
     visualCaptureWarning: z.string().max(400).optional(),
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
-  if (!parsedInput.success) return NextResponse.json({ error: "A prompt and canvas context are required.", details: parsedInput.error.issues }, { status: 400, headers });
+  if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
   const renderedScreen = typeof parsedInput.data.renderedScreen === "string" &&
     parsedInput.data.renderedScreen.length <= 52000 &&
     new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.renderedScreen)
