@@ -89,8 +89,8 @@ export async function POST(request: Request) {
     prompt: z.string().trim().min(2).max(5000),
     sourceCanvas: z.unknown(),
     outputCanvas: z.unknown(),
-    sourceImage: z.string().max(52000).optional(),
-    outputImage: z.string().max(52000).optional(),
+    sourceImage: z.string().max(52000).nullable().optional(),
+    outputImage: z.string().max(52000).nullable().optional(),
     iteration: z.number().int().min(1).max(2),
   }).strict();
   const parsed = schema.safeParse(body);
