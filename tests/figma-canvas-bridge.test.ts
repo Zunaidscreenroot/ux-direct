@@ -137,7 +137,8 @@ test("conversational cockpit executes, batches, selects, zooms and verifies nati
   assert.ok(pluginUi.includes('runNativeCanvasCommand("read-canvas"'), "Design agent must inspect real layer contents first.");
   assert.ok(pluginUi.includes('"/api/assistant/figma-agent"'), "Design requests must call the structured planner.");
   assert.ok(pluginUi.includes('operation: "create-elements"'), "Design agent must write native nodes.");
-  assert.ok(pluginUi.includes('start += 20'), "Large native layouts must be chunked into bridge-safe writes.");
+  assert.ok(pluginUi.includes('batch.length < 20'), "Large sibling batches must stay within the bridge-safe limit.");
+  assert.ok(pluginUi.includes("async function createPlanChildren(parentId, elements, depth)"), "Native designs must be constructed recursively from the nested frame hierarchy.");
   assert.ok(pluginUi.includes('operation: "set-selection"'), "The resulting variation should be selected.");
   assert.ok(pluginUi.includes('operation: "zoom-to-nodes"'), "The resulting variation should be brought into view.");
   assert.ok(pluginUi.includes('scope: "selection", maxDepth: 4, maxNodes: 100'), "Written frame hierarchy must be read back.");
