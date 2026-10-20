@@ -711,7 +711,7 @@
     }
 
     function isDirectCanvasActionPrompt(prompt) {
-      return /\b(edit|update|rewrite|replace|rename|recolor|restyle|resize|move|align|reposition|set|apply|insert|attach|delete|remove|clone|duplicate|group|ungroup|reorder|wrap|bind|auto.?layout|hug|fill|stroke|padding|spacing|typography|line.?height|letter.?spacing|swap component|make component|create component|create variant|create variables?|bind variable|apply style)\b/i.test(prompt) ||
+      return /\b(edit|update|rewrite|replace|rename|recolor|restyle|resize|move|align|reposition|refine|improve|polish|fine[- ]?tune|tidy|correct|set|apply|insert|attach|delete|remove|clone|duplicate|group|ungroup|reorder|wrap|bind|auto.?layout|hug|fill|stroke|padding|spacing|typography|line.?height|letter.?spacing|swap component|make component|create component|create variant|create variables?|bind variable|apply style)\b/i.test(prompt) ||
         /\b(change|fix)\s+(?:the\s+)?(?:text|label|title|copy|value|fill|color|stroke|font|size|position|spacing|padding|layout|alignment|background|corner radius|shadow|constraint|variable|icon|button)\b/i.test(prompt) ||
         /\b(add|insert|place)\s+(?:a|an|the|another|new)?\s*(?:image|photo|logo|icon|button|label|text|row|tab|card|divider|component|variant|variable|shape|frame)\b/i.test(prompt);
     }
@@ -766,7 +766,7 @@
           const response = await fetch(API + "/api/assistant/figma-agent/review", {
             method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
             cache: "no-store",
-            body: JSON.stringify({ prompt: prompt + "\\nVisual QA pass: " + pass, sourceCanvas: sourceCanvas,
+            body: JSON.stringify({ prompt: prompt + "\nVisual QA pass: " + pass, sourceCanvas: sourceCanvas,
               outputCanvas: outputCanvas, sourceImage: sourceImage, outputImage: outputImage || null })
           });
           const result = await response.json().catch(function () { return {}; });
@@ -881,8 +881,8 @@
         throw new Error("Select the frame, text layer, shape, or component you want to edit first.");
       }
       const root = canvas.nodes[0];
-      const needsSingleContainer = /\\b(add|insert|place|create|build|generate|attach)\\b/i.test(prompt) &&
-        /\\b(image|photo|logo|icon|button|label|text|row|tab|card|divider|component|variant|variable|shape|frame|layer)\\b/i.test(prompt);
+      const needsSingleContainer = /\b(add|insert|place|create|build|generate|attach)\b/i.test(prompt) &&
+        /\b(image|photo|logo|icon|button|label|text|row|tab|card|divider|component|variant|variable|shape|frame|layer)\b/i.test(prompt);
       if (canvas.nodes.length > 1 && needsSingleContainer) {
         throw new Error("Select one destination frame/container for adding content. Multiple selection is supported for targeted edits.");
       }
@@ -1008,13 +1008,13 @@
           prompt: prompt, sourceCanvas: canvas, outputCanvas: verified, sourceImage: captured.dataUrl,
           allowRepair: true, reportProgress: function (message) { stage("verifying", message); }
         });
-        visualNote = qa && qa.text ? "\\n" + qa.text : "";
+        visualNote = qa && qa.text ? "\n" + qa.text : "";
       }
       stage("done", "Native edits applied · Figma read-back verified");
       return String(payload.summary || "Native Figma actions applied.") +
-        "\\n\\nApplied " + actions.length + " native action(s)" + (changed ? " across approximately " + changed + " node/action changes." : ".") +
-        "\\nVerified against the selected layer tree and actual Figma properties." + visualNote +
-        (captured.warning ? "\\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
+        "\n\nApplied " + actions.length + " native action(s)" + (changed ? " across approximately " + changed + " node/action changes." : ".") +
+        "\nVerified against the selected layer tree and actual Figma properties." + visualNote +
+        (captured.warning ? "\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
     }
 
     async function createFigmaDesign(prompt, reportProgress) {
@@ -1187,19 +1187,19 @@
           prompt: prompt, sourceCanvas: canvas, outputCanvas: qualityTree, sourceImage: renderedScreen,
           allowRepair: true, reportProgress: stage
         });
-        visualNote = qa && qa.text ? "\\n\\n" + qa.text : "";
+        visualNote = qa && qa.text ? "\n\n" + qa.text : "";
       } else {
-        visualNote = "\\n\\nVisual QA skipped because the generated variation was not selected for a clean read-back.";
+        visualNote = "\n\nVisual QA skipped because the generated variation was not selected for a clean read-back.";
       }
       stage("done", "Variation created · native structure and visual review completed");
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
-      return "Created \\"" + plan.frame.name + "\\" as a separate editable Figma variation with " +
-        completedElementCount + " native layers. " + String(plan.summary || "The variation is ready for review.") +
-        "\\n\\nGeneration model: " + model + " · UX Direct Brain: " + memory +
+      return 'Created "' + plan.frame.name + '" as a separate editable Figma variation with ' +
+        completedElementCount + ' native layers. ' + String(plan.summary || "The variation is ready for review.") +
+        '\n\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory +
         visualNote +
-        (visualCaptureWarning ? "\\nVisual capture note: " + visualCaptureWarning : "") +
-        "\\nThe source frame was preserved. The new variation is selected on the canvas." +
-        "\\nThe generated variation is ready for manual review.";
+        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') +
+        '\nThe source frame was preserved. The new variation is selected on the canvas.' +
+        '\nThe generated variation is ready for manual review.';
     }
 
     async function captureRenderedNodePreview(nodeId) {

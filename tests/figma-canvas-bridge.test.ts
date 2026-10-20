@@ -101,7 +101,7 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
   assert.ok(mcp.includes('capabilities: { tools: { listChanged: false } }'), "MCP advertises tool-list change support");
   assert.ok(mcp.includes('enum: ["batch", "create-elements", "update-node"'), "Batch operation is part of the exposed write tool");
   assert.ok(mcp.includes('actions: {\n          type: "array", minItems: 1, maxItems: 40'), "MCP schema exposes sequential action batches");
-  assert.ok(bridge.includes('value.operation === "batch" && value.actions && value.actions.some((step) => ["export-svg", "export-node", "create-image-fill"].includes(step.operation))'), "Bridge prevents large exports and inline image payloads in batches");
+  assert.ok(bridge.includes('value.operation === "batch" && value.actions && value.actions.some((step) => ["export-svg", "export-node", "create-image-fill", "insert-image"].includes(step.operation))'), "Bridge prevents large exports and inline image payloads in batches");
   assert.ok(plugin.includes('if (payload.operation === "batch")'), "Native executor supports ordered batches");
   assert.ok(plugin.includes('state: batchResults.length ? "partial" : "failed"'), "Batch result reports partial completion instead of claiming atomic success");
   assert.ok(plugin.includes('if (typeof spec.textCase === "string") node.textCase = spec.textCase'), "Text creation applies text case");
@@ -125,7 +125,7 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
 test("in-Figma design agent retrieves approved brain context and validates native layer plans", () => {
   assert.ok(agent.includes('retrieveBrainContext('), "Figma design planning must retrieve shared memory.");
   assert.ok(agent.includes('resolveBrainScopes('), "Brain retrieval must be scope-filtered.");
-  assert.ok(agent.includes("const models = [FIGMA_AGENT_DEFAULT_MODEL];"), "Figma design generation must use exactly one OpenRouter Auto route.");
+  assert.ok(agent.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Figma generation must use Auto LOW followed by explicit cost-ordered fallbacks.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "No provider restrictions should be sent to OpenRouter.");
   assert.ok(modelPolicy.includes('"google/gemini-3.7-flash"'));
   assert.ok(modelPolicy.includes('"qwen/qwen3.5-35b-a3b"'));
@@ -173,7 +173,7 @@ test("Figma agent normalizes provider-native design fields and uses the requeste
   assert.ok(planNormalizer.includes("export function normalizePlan("), "The reusable normalizer must be directly testable.");
   assert.ok(planNormalizer.includes("item.fill ?? item.backgroundColor"), "Provider fill aliases must map to the native Figma color field.");
   assert.ok(planNormalizer.includes("item.kind ?? item.elementType ?? item.nodeType"), "Provider layer type aliases must be normalized.");
-  assert.ok(agent.includes("const models = [FIGMA_AGENT_DEFAULT_MODEL];"), "Figma agent must not fan out to separate model fallbacks.");
+  assert.ok(agent.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Figma agent must try the shared Auto-first fallback chain sequentially.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "Model requests must not be provider filtered.");
   assert.ok(agent.includes("const normalizedPlan = normalizePlan(rawPlan, canvas);"), "A normalized model plan must be validated before any canvas write.");
   assert.ok(agent.includes('PlanSchema.safeParse(normalizedPlan)'), "Native plan schema validation must remain mandatory.");
@@ -237,6 +237,7 @@ test("Figma visual analysis uses a compact rendered JPEG and native layer data",
 
 test("native visual QA can trigger one bounded repair and a final re-check without browser automation", () => {
   const refine = read("app/api/assistant/figma-agent/refine/route.ts");
+  const review = read("app/api/assistant/figma-agent/review/route.ts");
   assert.ok(pluginUi.includes("async function runVisualQualityLoop"));
   assert.ok(pluginUi.includes("/api/assistant/figma-agent/review"));
   assert.ok(pluginUi.includes("/api/assistant/figma-agent/refine"));
@@ -308,7 +309,8 @@ test("native Figma design creation builds nested frame containers before their c
 test("short Figma prompts inherit the complete design-variation workflow", () => {
   assert.ok(agent.includes("Users can give a short request. Infer the design procedure and execute the full playbook automatically"));
   assert.ok(agent.includes("preservation inventory from the selected layer tree"));
-  assert.ok(agent.includes("Auto Layout for card content, stacks, tab rows, repeated information rows"));
+  assert.ok(agent.includes("Use actual native Figma Auto Layout"));
+  assert.ok(agent.includes("layoutSizingHorizontal and layoutSizingVertical"));
   assert.ok(agent.includes("TARGET SCOPE: COMPONENT/CARD"));
   assert.ok(agent.includes("TARGET SCOPE: FULL SCREEN/FRAME"));
   assert.ok(agent.includes("designScope"));
@@ -321,8 +323,9 @@ test("short Figma prompts inherit the complete design-variation workflow", () =>
 });
 
 test("native editor applies Auto Layout sizing and exposes image/variable operations safely", () => {
-  assert.ok(plugin.includes("node.layoutSizingHorizontal = value"));
-  assert.ok(plugin.includes("node.layoutSizingVertical = value"));
+  assert.ok(plugin.includes("layoutSizingHorizontal"));
+  assert.ok(plugin.includes("layoutSizingVertical"));
+  assert.ok(plugin.includes("node[property] = value") || plugin.includes("targetNode[property] = value"));
   assert.ok(plugin.includes("x/y must not be assigned to normal Auto Layout children") || plugin.includes("if (!inAutoLayout || spec.layoutPositioning === \"ABSOLUTE\")"));
   assert.ok(plugin.includes('payload.operation === "insert-image"'));
   assert.ok(plugin.includes('payload.operation === "create-variables"'));

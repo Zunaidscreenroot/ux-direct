@@ -35,10 +35,11 @@ test("UX Direct uses Gemini 3.7 Flash with cost-ordered OpenRouter fallbacks", (
   assert.ok(policy.includes('"qwen/qwen3.5-35b-a3b"'));
   assert.ok(policy.includes('"google/gemini-3.1-flash-lite"'));
   assert.ok(policy.includes('"qwen/qwen3.5-397b-a17b"'));
-  assert.equal(policy.includes('"openrouter/auto"'), false);
+  const generalModels = policy.slice(policy.indexOf("export const OPENROUTER_MODELS"), policy.indexOf("export const OPENROUTER_MODEL_LABELS"));
+  assert.equal(generalModels.includes('"openrouter/auto"'), false, "Auto routing is limited to Figma-specific generation; normal chat retains its explicit model chain.");
   assert.ok(policy.includes("UX_DIRECT_DESIGN_ROLE"));
   for (const routeText of [figmaAgent, review, refine]) {
-    assert.ok(routeText.includes("OPENROUTER_MODELS"));
+    assert.ok(routeText.includes("FIGMA_AGENT_MODELS"));
     assert.equal(routeText.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
     assert.ok(routeText.includes("UX_DIRECT_DESIGN_ROLE"));
   }
