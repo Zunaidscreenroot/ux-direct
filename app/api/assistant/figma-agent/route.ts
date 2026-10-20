@@ -485,20 +485,6 @@ export async function POST(request: Request) {
     }
   }
   return NextResponse.json({
-        ok: true,
-        plan: parsedPlan.data,
-        learning: learningStatus,
-        model: typeof payload.model === "string" ? payload.model : model,
-        brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
-        visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
-      }, { headers });
-    } catch (error) {
-      errors.push(model + ": " + (controller.signal.aborted ? "timed out after 65 seconds" : error instanceof Error ? error.message.slice(0, 200) : "request failed"));
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  return NextResponse.json({
     error: "UX Direct could not produce a valid native Figma design plan. No canvas changes were made.",
     attemptedModels: models,
     details: errors.slice(0, 6),
