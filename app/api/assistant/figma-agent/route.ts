@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
+import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 
 export const runtime = "nodejs";
@@ -171,7 +172,7 @@ function compactCanvas(value: unknown): Record<string, unknown> {
 
 const SYSTEM = [
   "You are UX Direct's native Figma design agent. The user explicitly requested a design action.",
-  "Return ONLY one JSON object. Root keys: summary (string), frame ({name,width,height,backgroundColor}), elements (5–12 top-level FRAME section containers and 18–80 native nodes total). Each node MUST include type, name, x, y, width, height. Allowed type values: RECTANGLE, ELLIPSE, TEXT, LINE, FRAME, POLYGON, STAR. Use color: \"#RRGGBB\" for fill, NOT a fill key. TEXT layers must include text. FRAME nodes may include a children array recursively; only FRAME can contain children. Use noFill:true for transparent structural wrappers, but use visibly styled FRAMEs for cards/surfaces. Do not flatten everything into direct layers. Do not use markdown fences.",
+  "Return ONLY one JSON object. Required root keys: summary (string), frame ({name,width,height,backgroundColor}), elements (5–12 top-level FRAME section containers and 18–80 native nodes total). Optional root key learningCandidate: null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}; include it only if this task produced one durable reusable design or execution lesson, never as a task summary. Do not include client-specific names in cross-user or domain-wide rules, raw requirements, screen text, node IDs, screenshots or private facts. Use the narrowest safe scope; the backend validates, scopes, deduplicates and applies the existing 50% relevance threshold. Each node MUST include type, name, x, y, width, height. Allowed type values: RECTANGLE, ELLIPSE, TEXT, LINE, FRAME, POLYGON, STAR. Use color: \"#RRGGBB\" for fill, NOT a fill key. TEXT layers must include text. FRAME nodes may include a children array recursively; only FRAME can contain children. Use noFill:true for transparent structural wrappers, but use visibly styled FRAMEs for cards/surfaces. Do not flatten everything into direct layers. Do not use markdown fences.",
   "Analyse BOTH the attached rendered screen image and native layer tree before planning. Use the image to understand visual hierarchy, alignment, density, spacing, contrast, components, states and design language; use the layer tree for exact text, names, geometry, typography and paint values.",
   "Do not replace an existing task-specific screen with a generic dashboard, generic landing page, or repeated stack of similar cards. Preserve the selected screen's purpose, key content, taxonomy and useful visual patterns. Reuse its components when possible, then improve professional craft, consistency, readability, alignment, action priority and visual rhythm.",
   "Prefer evidence-grounded product content and component patterns. If values are unknown, label financial amounts as sample. Never claim visual analysis when no image was supplied.",
@@ -308,15 +309,23 @@ export async function POST(request: Request) {
         ? firstChoice.message as Record<string, unknown>
         : {};
       const rawPlan = extractJson(providerMessage.content);
+      const rawPlanRecord = rawPlan && typeof rawPlan === "object" && !Array.isArray(rawPlan)
+        ? rawPlan as Record<string, unknown> : {};
       const normalizedPlan = normalizePlan(rawPlan, canvas);
       const parsedPlan = PlanSchema.safeParse(normalizedPlan);
       if (!parsedPlan.success) {
         errors.push(model + ": invalid design plan schema (" + parsedPlan.error.issues.slice(0, 3).map((issue) => issue.path.join(".") + " " + issue.message).join("; ") + ")");
         continue;
       }
+      const learningStatus = await captureFigmaTaskLearning(
+        rawPlanRecord.learningCandidate,
+        parsedInput.data.prompt,
+        "automatic-figma-generation",
+      );
       return NextResponse.json({
         ok: true,
         plan: parsedPlan.data,
+        learning: learningStatus,
         model: typeof payload.model === "string" ? payload.model : model,
         brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
         visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
