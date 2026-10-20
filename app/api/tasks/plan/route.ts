@@ -122,7 +122,7 @@ export async function POST(request: Request) {
     let learningCapture: { status: "not-requested" | "not-extracted" | "active" | "inactive" | "filtered" | "failed"; feedbackId?: string; scopeKey?: string; duplicate?: boolean } = { status: "not-requested" };
     if (learningRequested) {
       const candidate = result.plan.learningCandidate;
-      if (!candidate) {
+      if (!candidate || candidate.activate !== true) {
         learningCapture = { status: "not-extracted" };
       } else {
         const sourceProduct = isPluginRequest ? "figma-plugin" : "ux-direct";
