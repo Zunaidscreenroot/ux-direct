@@ -308,7 +308,7 @@ export async function POST(request: Request) {
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
   // Prefer Anthropic Claude Sonnet 5.5, retry on Claude Sonnet 5, then use low-cost OpenRouter Auto.
-  const models = ["anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5", "openrouter/auto"];
+  const models = ["anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5", "anthropic/claude-haiku-5.5"];
   const errors: string[] = [];
   for (const model of models) {
     const controller = new AbortController();
@@ -337,8 +337,7 @@ export async function POST(request: Request) {
           temperature: 0.25,
           max_tokens: 8500,
           response_format: { type: "json_object" },
-          ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
-          provider: { sort: "throughput" },
+                    provider: { only: ["anthropic"], allow_fallbacks: false, sort: "throughput" },
         }),
         cache: "no-store",
         signal: controller.signal,
