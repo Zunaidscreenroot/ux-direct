@@ -56,3 +56,30 @@ test("strips private markers from SSE text even when marker boundaries cross del
 test("does not create a candidate from an unrelated one-off response", () => {
   assert.equal(parseInlineLearningCandidate("The weather is sunny today."), null);
 });
+
+test("strips private markers from multimodal text-part deltas", async () => {
+  const extracted: unknown[] = [];
+  const content = [
+    { type: "text", text: "Re-read the selected canvas before retrying.\n<UXD_" },
+    { type: "text", text: "LEARNING>" + JSON.stringify(candidate) + "</UXD_LEARNING>" },
+  ];
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(
+        "data: " + JSON.stringify({ choices: [{ delta: { content } }] }) + "\n\n",
+      ));
+      controller.close();
+    },
+  });
+  const reader = source.pipeThrough(createLearningMarkerTransform((value) => extracted.push(value))).getReader();
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const result = await reader.read();
+    if (result.done) break;
+    chunks.push(result.value);
+  }
+  const output = new TextDecoder().decode(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))));
+  assert.equal(extracted.length, 1);
+  assert.deepEqual(extracted[0], candidate);
+  assert.doesNotMatch(output, /UXD_LEARNING|Preserve existing design-system components/);
+});
