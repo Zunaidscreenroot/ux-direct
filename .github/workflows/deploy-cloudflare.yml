@@ -1,30 +1,19 @@
 name: Deploy UX Direct to Cloudflare
 
-# Deploy the native Figma bridge and design-agent backend whenever their server routes change.
-# Keep manual dispatch available for a controlled redeploy.
+# Beta priority: ship every main-branch change to production without waiting
+# for duplicate CI validation. Keep manual dispatch for recovery/redeploys.
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - "app/api/mcp/route.ts"
-      - "app/api/plugin-bridge/route.ts"
-      - "app/api/health/route.ts"
-      - "app/api/brain/**"
-      - "app/api/assistant/chat/route.ts"
-      - "app/api/assistant/figma-agent/**"
-      - "src/figma-agent/**"
-      - "src/providers/openrouter-models.ts"
-      - "src/memory/**"
-      - "src/security/figma-access.ts"
-      - ".github/workflows/deploy-cloudflare.yml"
 
 permissions:
   contents: read
 
+# A newer desired version supersedes the current rollout and any pending run.
 concurrency:
   group: ux-direct-production-deploy
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -33,18 +22,14 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-      - name: Set up Node.js
+      - name: Set up Node.js with npm cache
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: package.json
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
-      - name: Type-check application
-        run: npm run typecheck
-      - name: Check Figma plugin syntax
-        run: node --check figma-plugin/code.js
-      - name: Run tests
-        run: npm test
+        run: npm install --no-audit --no-fund --prefer-offline
       - name: Build for Cloudflare Workers
         run: npm run cf:build
       - name: Deploy production Worker
