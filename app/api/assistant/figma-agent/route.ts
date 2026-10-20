@@ -405,7 +405,9 @@ export async function POST(request: Request) {
             ...(model === "google/gemini-3.7-flash" ? {
               reasoning: { effort: isRecovery ? "minimal" : "low" },
             } : {}),
-            response_format: { type: "json_object" },
+            // JSON mode is enabled for the first attempt. Compact retries use normal text mode
+            // because some provider/model routes have returned successful but empty choices.
+            ...(!isRecovery ? { response_format: { type: "json_object" } } : {}),
           }),
           cache: "no-store",
           signal: controller.signal,
@@ -423,7 +425,18 @@ export async function POST(request: Request) {
           if (!isRecovery && [408, 429, 500, 502, 503, 504].includes(response.status)) continue;
           break;
         }
-        const choices = Array.isArray(payload.choices) ? payload.choices : [];
+        const nestedData = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+          ? payload.data as Record<string, unknown> : {};
+        const nestedResponse = payload.response && typeof payload.response === "object" && !Array.isArray(payload.response)
+          ? payload.response as Record<string, unknown> : {};
+        const nestedResult = payload.result && typeof payload.result === "object" && !Array.isArray(payload.result)
+          ? payload.result as Record<string, unknown> : {};
+        const responseEnvelope = Array.isArray(payload.choices) ? payload
+          : Array.isArray(nestedData.choices) ? nestedData
+          : Array.isArray(nestedResponse.choices) ? nestedResponse
+          : Array.isArray(nestedResult.choices) ? nestedResult
+          : payload;
+        const choices = Array.isArray(responseEnvelope.choices) ? responseEnvelope.choices : [];
         const firstChoice = choices[0] && typeof choices[0] === "object" && !Array.isArray(choices[0])
           ? choices[0] as Record<string, unknown>
           : {};
@@ -434,7 +447,9 @@ export async function POST(request: Request) {
           ?? extractPlanJson(providerMessage.parsed)
           ?? extractPlanJson(providerMessage.tool_calls)
           ?? extractPlanJson(providerMessage)
-          ?? extractPlanJson(firstChoice);
+          ?? extractPlanJson(firstChoice)
+          // Some provider adapters wrap OpenAI-compatible or native Gemini output.
+          ?? extractPlanJson(payload);
         const finishReason = typeof firstChoice.finish_reason === "string" ? firstChoice.finish_reason : "unknown";
         const nativeFinishReason = typeof firstChoice.native_finish_reason === "string" ? firstChoice.native_finish_reason : "unknown";
         const wasTruncated = finishReason === "length" || nativeFinishReason === "length";
@@ -453,7 +468,9 @@ export async function POST(request: Request) {
           errors.push(model + (isRecovery ? " compact retry" : "") +
             ": response contained no extractable design JSON (content=" + describeModelContent(providerMessage.content) +
             ", finish_reason=" + finishReason + ", message_keys=" + messageKeys + ", choice_keys=" + choiceKeys +
-            ", tool_calls=" + (Array.isArray(providerMessage.tool_calls) ? providerMessage.tool_calls.length : 0) + ").");
+            ", tool_calls=" + (Array.isArray(providerMessage.tool_calls) ? providerMessage.tool_calls.length : 0) +
+            ", payload_keys=" + (Object.keys(payload).slice(0, 12).join(",") || "none") +
+            ", envelope_keys=" + (Object.keys(responseEnvelope).slice(0, 12).join(",") || "none") + ").");
           if (!isRecovery) continue;
           break;
         }

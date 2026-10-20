@@ -98,10 +98,19 @@ export function extractPlanJson(value: unknown): unknown {
   // Tool/function calls may contain the entire JSON plan in arguments or input.
   const functionRecord = isRecord(value.function) ? value.function : null;
   for (const candidate of [
+    value.data,
+    value.result,
+    value.response,
+    value.responseBody,
+    value.generation,
+    value.candidates,
+    value.parts,
     value.parsed,
     value.json,
     value.output,
     value.output_text,
+    value.generatedText,
+    value.generated_text,
     value.content,
     value.text,
     value.arguments,

@@ -74,6 +74,15 @@ test("extracts a native plan from the full OpenRouter chat-completions envelope"
   assert.deepEqual(extractPlanJson(envelope), plan);
 });
 
+test("extracts plans from wrapped gateway and native Gemini candidate envelopes", () => {
+  assert.deepEqual(extractPlanJson({
+    data: { choices: [{ message: { content: JSON.stringify(plan) } }] },
+  }), plan);
+  assert.deepEqual(extractPlanJson({
+    response: { candidates: [{ content: { parts: [{ text: JSON.stringify(plan) }] } }] },
+  }), plan);
+});
+
 test("missing final content remains invalid and is handled by the route recovery path", () => {
   assert.equal(extractPlanJson({
     choices: [{ finish_reason: "unknown", message: { role: "assistant", reasoning: "thinking only" } }],
@@ -87,6 +96,8 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("max_tokens: isRecovery ? 6500 : 12000"), "Use OpenRouter's current completion token parameter.");
   assert.ok(route.includes('reasoning: { effort: isRecovery ? "minimal" : "low" }'), "Gemini reasoning must leave room for visible JSON output.");
   assert.ok(route.includes('model === "google/gemini-3.7-flash" ? {'), "Only Gemini receives the configured low-latency reasoning setting.");
+  assert.ok(route.includes('...(!isRecovery ? { response_format: { type: "json_object" } } : {})'), "Compact retries should avoid repeating JSON-mode failures.");
+  assert.ok(route.includes("payload_keys="), "Empty provider responses should report envelope shape for diagnosis.");
 });
 
 test("compact recovery is model-agnostic and does not add OpenRouter provider filters", () => {
@@ -94,6 +105,7 @@ test("compact recovery is model-agnostic and does not add OpenRouter provider fi
   const models = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
   assert.ok(route.includes("const models = OPENROUTER_MODELS;"));
   assert.ok(models.includes('"google/gemini-3.7-flash"'));
+  assert.ok(models.includes('"anthropic/claude-haiku-5.5"'));
   assert.ok(models.includes('"qwen/qwen3.5-35b-a3b"'));
   assert.equal(models.includes('"openrouter/auto"'), false);
   assert.equal(route.includes("provider: {"), false);
