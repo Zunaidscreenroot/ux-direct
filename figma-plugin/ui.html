@@ -31,42 +31,23 @@
     .welcome-mark { display:grid; place-items:center; width:42px; height:42px; border:1px solid var(--figma-color-border,#dedede); border-radius:13px; color:var(--figma-color-text,#222); font-size:18px; font-weight:800; margin-bottom:4px; }
     .welcome h1 { max-width:330px; margin:0; font-size:23px; font-weight:650; line-height:1.2; letter-spacing:-.8px; }
     .welcome p { max-width:295px; margin:0; color:var(--figma-color-text-secondary,#777); font-size:12px; line-height:1.6; }
-    .uxd-hero-orb{position:relative;width:184px;height:184px;margin:0 auto 5px;flex:0 0 auto;perspective:700px;transition:width .42s ease,height .42s ease,margin .42s ease;filter:drop-shadow(0 14px 34px #a18bff24)}
-    .uxd-orb-glow{position:absolute;inset:12%;border-radius:50%;background:radial-gradient(circle,#c3fff2b8 0%,#a49bff70 31%,#7fded42c 52%,transparent 74%);filter:blur(20px);animation:uxd-orb-glow 3.4s ease-in-out infinite}
-    .uxd-orb-ring{position:absolute;inset:10%;border:1px solid #b6f7ec70;border-radius:50%;box-shadow:inset 0 0 18px #9df0df14,0 0 18px #8bcfef14}
-    .uxd-orb-ring-one{transform:rotateX(68deg);animation:uxd-orb-orbit 16s linear infinite}
-    .uxd-orb-ring-two{inset:15% 8%;border-color:#c5b8ff80;transform:rotateY(66deg) rotateZ(42deg);animation:uxd-orb-orbit-reverse 12s linear infinite}
-    .uxd-orb-core{position:absolute;inset:23%;overflow:hidden;border-radius:50%;background:radial-gradient(circle at 29% 21%,#fff 0%,#e7fff9 3%,#b7fff0 9%,transparent 24%),radial-gradient(circle at 35% 29%,#cffff5 0%,#83e7d9 17%,#8a81e8 43%,#5a539f 64%,#302c55 81%,#171928 100%);box-shadow:inset -12px -15px 24px #1113299c,inset 5px 5px 18px #f2fffd8c,0 0 28px #92eadb52;animation:uxd-orb-breathe 4.8s ease-in-out infinite}
-    .uxd-orb-core::before{content:"";position:absolute;left:17%;top:12%;width:38%;height:20%;border-radius:50%;background:radial-gradient(ellipse,#fffde7d9 0%,#f4fffb78 40%,transparent 76%);filter:blur(2px);transform:rotate(-32deg)}
-    .uxd-orb-core::after{content:"";position:absolute;inset:7%;border-radius:50%;border-left:1px solid #d5fff47a;border-top:1px solid #ffffff46;box-shadow:inset 7px 3px 12px #c5fff019}
-    .uxd-orb-spark{position:absolute;width:6px;height:6px;border-radius:50%;background:#e4fff8;box-shadow:0 0 14px #b4fff0}
-    .uxd-orb-spark-a{left:21%;top:29%;animation:uxd-orb-spark 2.2s ease-in-out infinite}
-    .uxd-orb-spark-b{right:18%;bottom:27%;width:4px;height:4px;background:#ddd3ff;box-shadow:0 0 13px #c8baff;animation:uxd-orb-spark 1.7s ease-in-out infinite reverse}
-    .uxd-hero-orb[data-state="thinking"] .uxd-orb-core{animation-duration:1.8s;filter:saturate(1.12) brightness(1.06)}
-    .uxd-hero-orb[data-state="creating"] .uxd-orb-core{animation-duration:1.05s;filter:saturate(1.3) brightness(1.1)}
-    .uxd-hero-orb[data-state="reviewing"] .uxd-orb-core{animation-duration:2.7s;filter:hue-rotate(-12deg) saturate(1.08)}
-    .uxd-hero-orb[data-state="done"] .uxd-orb-core{filter:saturate(1.22) brightness(1.08);animation-play-state:paused}
-    .uxd-hero-orb[data-state="error"] .uxd-orb-core{filter:saturate(.6) hue-rotate(-28deg);animation-play-state:paused}
+    .uxd-hero-orb{position:relative;width:88px;height:88px;margin:0 auto 5px;flex:0 0 auto;display:grid;place-items:center;overflow:visible;transition:width .25s ease,height .25s ease,margin .25s ease}
+    #uxdOrbRoot{display:grid;place-items:center;width:100%;height:100%;overflow:visible}
+    #uxdOrbRoot canvas{display:block}
     .welcome.has-started{min-height:0;flex:0 0 auto;padding:8px 4px;gap:6px}
-    .welcome.has-started .uxd-hero-orb{width:76px;height:76px;margin:-11px auto 0}
-    .welcome.has-started .uxd-orb-spark{width:4px;height:4px}
+    .welcome.has-started .uxd-hero-orb{width:32px;height:32px;margin:-11px auto 0}
     .welcome.has-started h1{font-size:17px;letter-spacing:-.4px}
     .welcome.has-started p,.welcome.has-started .suggestions{display:none}
     .process-status{position:sticky;top:0;z-index:3;width:100%;display:flex;align-items:center;gap:9px;padding:8px 12px;border:1px solid var(--figma-color-border,#dedede);border-radius:10px;color:var(--figma-color-text-secondary,#737373);background:var(--figma-color-bg-secondary,#f7f7f7);font-size:10px;line-height:1.45;isolation:isolate}
-    .process-status::before{content:"";position:relative;display:block;flex:0 0 18px;width:18px;height:18px;border-radius:50%;background:radial-gradient(circle at 27% 22%,#fff 0%,#e5fff9 5%,#a3f6e7 15%,#9a8dec 43%,#61559c 66%,#23213a 100%);box-shadow:0 0 0 1px #a3f6e740,0 0 13px #a3f6e76e,inset -3px -4px 5px #14132780;animation:uxd-status-orb-breathe 1.8s ease-in-out infinite}
-    .process-status::after{content:"";position:absolute;left:9px;top:50%;width:25px;height:12px;border:1px solid #b3f6eb9c;border-radius:50%;pointer-events:none;transform:translateY(-50%) rotateX(64deg);animation:uxd-status-orbit 4s linear infinite}
-    body[data-process-state="error"] .process-status::before{background:radial-gradient(circle at 28% 22%,#fff 0%,#ffdada 8%,#ff8888 30%,#8b3a56 68%,#2b1527 100%);box-shadow:0 0 10px #ff888866;animation-duration:3.5s}
-    body[data-process-state="error"] .process-status::after{border-color:#ff8b8b9c;animation-play-state:paused}
-    body[data-process-state="done"] .process-status::before{background:radial-gradient(circle at 28% 22%,#fff 0%,#e4fff6 8%,#7fe9c8 28%,#367f79 68%,#1c2e39 100%);animation-play-state:paused}
-    body[data-process-state="done"] .process-status::after{animation-play-state:paused}
-    @keyframes uxd-status-orb-breathe{0%,100%{transform:scale(.92);filter:brightness(.95)}50%{transform:scale(1.08);filter:brightness(1.25)}}
-    @keyframes uxd-status-orbit{from{transform:translateY(-50%) rotateX(64deg) rotateZ(0deg)}to{transform:translateY(-50%) rotateX(64deg) rotateZ(360deg)}}
-    @media(prefers-reduced-motion:reduce){.uxd-hero-orb *{animation-duration:.01ms!important;animation-iteration-count:1!important}}
-    @keyframes uxd-orb-glow{0%,100%{transform:scale(.9);opacity:.62}50%{transform:scale(1.12);opacity:1}}
-    @keyframes uxd-orb-orbit{from{transform:rotateX(68deg) rotateZ(0deg)}to{transform:rotateX(68deg) rotateZ(360deg)}}
-    @keyframes uxd-orb-orbit-reverse{from{transform:rotateY(66deg) rotateZ(42deg)}to{transform:rotateY(66deg) rotateZ(-318deg)}}
-    @keyframes uxd-orb-breathe{0%,100%{transform:scale(.97);filter:brightness(.96)}50%{transform:scale(1.035);filter:brightness(1.12)}}
-    @keyframes uxd-orb-spark{0%,100%{transform:translateY(0) scale(.7);opacity:.38}50%{transform:translateY(-5px) scale(1.25);opacity:1}}
+    #processOrbRoot{display:grid;place-items:center;flex:0 0 20px;width:20px;height:20px;overflow:visible}
+    #processOrbRoot canvas{display:block!important;width:20px!important;height:20px!important}
+    .process-status-text{flex:1;min-width:0}
+    .composer{position:relative;isolation:isolate;overflow:visible}
+    #beamRoot{position:absolute;inset:-1px;z-index:0;pointer-events:none;overflow:visible;border-radius:16px}
+    #beamRoot>div,#beamRoot .uxd-composer-border-beam{pointer-events:none!important}
+    .composer .prompt,.composer .composer-bottom{position:relative;z-index:1}
+    .composer:focus-within{border-color:transparent;box-shadow:none}
+    @media(prefers-reduced-motion:reduce){.uxd-hero-orb,#processOrbRoot,#beamRoot{animation:none!important}}
     .suggestions { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:7px; max-width:360px; margin-top:13px; }
     .suggestion { padding:8px 10px; border:1px solid var(--figma-color-border,#dedede); border-radius:10px; background:var(--figma-color-bg,#fff); color:var(--figma-color-text,#333); font-size:11px; line-height:1.35; text-align:left; }
     .suggestion:hover { background:var(--figma-color-bg-secondary,#f5f5f5); }
@@ -188,15 +169,10 @@
 
   <main id="conversation" class="conversation">
     <div id="chatLog" class="chat-log" role="log" aria-live="polite" aria-relevant="additions text">
-      <div id="processStatus" class="process-status" aria-live="polite" hidden>Ready for a design task</div>
+      <div id="processStatus" class="process-status" aria-live="polite" hidden><span id="processOrbRoot" aria-hidden="true"></span><span id="processStatusText" class="process-status-text">Ready for a design task</span></div>
       <section id="welcome" class="welcome">
-        <div class="uxd-hero-orb" data-state="idle" aria-label="UX Direct is ready">
-          <div class="uxd-orb-glow"></div>
-          <div class="uxd-orb-ring uxd-orb-ring-one"></div>
-          <div class="uxd-orb-ring uxd-orb-ring-two"></div>
-          <div class="uxd-orb-core" aria-hidden="true"></div>
-          <div class="uxd-orb-spark uxd-orb-spark-a"></div>
-          <div class="uxd-orb-spark uxd-orb-spark-b"></div>
+        <div class="uxd-hero-orb" aria-label="UX Direct is ready">
+          <div id="uxdOrbRoot"></div>
         </div>
         <h1>What are we designing today?</h1>
         <p>Describe what you want to create, improve, or explore. UX Direct will use your current Figma selection as context.</p>
@@ -212,6 +188,7 @@
   <footer class="composer-area">
     <div id="selectionChip" class="context-chip" hidden><span aria-hidden="true">▣</span><span id="selectionName" class="context-name"></span></div>
     <form id="chatForm" class="composer">
+      <div id="beamRoot" aria-hidden="true"></div>
       <textarea id="prompt" class="prompt" maxlength="5000" rows="2" aria-label="Message UX Direct" placeholder="Ask UX Direct to create or improve something…" required></textarea>
       <div class="composer-bottom">
         <span class="composer-hint">Enter to send · Shift + Enter for a new line</span>
@@ -220,6 +197,7 @@
     </form>
   </footer>
 
+  <script src="ui-effects.js"></script>
   <script>
     const API = "https://ux-direct.zunaid-cb7.workers.dev";
     const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
@@ -258,21 +236,26 @@
       done: "Design created and verified",
       error: "The task needs attention"
     };
+    function setBeamEmphasis(active) {
+      if (window.UXDEffects && typeof window.UXDEffects.setBeamEmphasis === "function") {
+        window.UXDEffects.setBeamEmphasis(Boolean(active));
+      }
+    }
     function setProcessState(state, message) {
       const welcome = $("welcome");
-      if (welcome) {
-        welcome.classList.toggle("has-started", state !== "idle");
-        const orb = welcome.querySelector(".uxd-hero-orb");
-        if (orb) {
-          orb.dataset.state = ["scanning","capturing","brain","memory","planning","waiting"].includes(state) ? "thinking"
-            : ["creating","refining"].includes(state) ? "creating"
-            : ["rendering","reviewing","verifying"].includes(state) ? "reviewing" : state;
-        }
+      if (welcome) welcome.classList.toggle("has-started", state !== "idle");
+      if (window.UXDEffects && typeof window.UXDEffects.setProcessState === "function") {
+        window.UXDEffects.setProcessState(state);
       }
+      const activeTaskStates = ["scanning","capturing","brain","memory","planning","waiting","creating","rendering","reviewing","refining","verifying"];
+      setBeamEmphasis(activeTaskStates.includes(state) || document.activeElement === $("prompt"));
       const label = $("processStatus");
+      const labelText = $("processStatusText");
       if (label) {
         label.hidden = false;
-        label.textContent = message || processLabels[state] || state;
+        const nextMessage = message || processLabels[state] || state;
+        if (labelText) labelText.textContent = nextMessage;
+        else label.textContent = nextMessage;
       }
       document.body.dataset.processState = state;
     }
@@ -1100,6 +1083,12 @@
     $("chatForm").addEventListener("submit", function (event) {
       event.preventDefault();
       void submitPrompt($("prompt").value);
+    });
+    $("prompt").addEventListener("focus", function () {
+      setBeamEmphasis(true);
+    });
+    $("prompt").addEventListener("blur", function () {
+      setBeamEmphasis(isSending);
     });
     $("prompt").addEventListener("input", function () {
       this.style.height = "auto";

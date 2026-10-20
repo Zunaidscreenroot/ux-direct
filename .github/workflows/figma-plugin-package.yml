@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "figma-plugin/**"
+      - "package.json"
       - ".github/workflows/figma-plugin-package.yml"
 
 permissions:
@@ -18,22 +19,35 @@ concurrency:
 jobs:
   package:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package.json
+
+      - name: Install component libraries and bundler
+        run: npm install --no-audit --no-fund
+
+      - name: Build Libraries.dev thinking orb and Beam bundle
+        run: npm run build:figma-plugin-effects
 
       - name: Validate manifest JSON
         run: node -e "JSON.parse(require('fs').readFileSync('figma-plugin/manifest.json', 'utf8'))"
 
       - name: Validate plugin code syntax
-        run: node --check figma-plugin/code.js
+        run: node --check figma-plugin/code.js && node --check figma-plugin/ui-effects.js
 
       - name: Package import-ready plugin files
         run: |
           mkdir -p dist
           cd figma-plugin
-          zip -q ../dist/ux-direct-figma-plugin-cloudflare.zip manifest.json code.js ui.html README.md
+          zip -q ../dist/ux-direct-figma-plugin-cloudflare.zip manifest.json code.js ui.html ui-effects.js README.md
 
       - name: Upload plugin ZIP
         uses: actions/upload-artifact@v4

@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
+    "build:figma-plugin-effects": "esbuild figma-plugin/ui-effects.tsx --bundle --minify --outfile=figma-plugin/ui-effects.js --format=iife --jsx=automatic",
     "cf:build": "opennextjs-cloudflare build"
   },
   "dependencies": {
@@ -19,7 +20,8 @@
     "@xyflow/react": "^12.12.0",
     "@netlify/blobs": "^11.1.4",
     "@neondatabase/serverless": "^1.1.0",
-    "thinking-orbs": "^0.3.1"
+    "thinking-orbs": "^0.3.2",
+    "border-beam": "^1.4.1"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
@@ -31,6 +33,7 @@
     "tsx": "^4.20.3",
     "@crawlee/cheerio": "^3.18.2",
     "@opennextjs/cloudflare": "latest",
+    "esbuild": "^0.28.2",
     "wrangler": "latest"
   }
 }

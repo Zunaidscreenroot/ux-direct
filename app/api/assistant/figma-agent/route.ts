@@ -5,6 +5,7 @@ import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
 import { ANTHROPIC_OPENROUTER_MODELS, ANTHROPIC_OPENROUTER_PROVIDER } from "@/src/providers/anthropic-openrouter";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
+import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -215,17 +216,8 @@ const SYSTEM = [
   "Preserve the source's user intent, content taxonomy, and brand tone while producing a genuinely improved variation rather than copying its layout mechanically. Preserve every visible meaningful datum and repeated row. Use the selected frame's actual scope and size. Keep the source untouched.",
   "For Indian BFSI designs, emphasize transparency, clear amount/date/status hierarchy, user control and accessible legibility. Never make up actual interest rates, contractual terms, or legal-compliance claims. Label illustrative financial values as sample.",
   "Keep all elements within frame bounds, use reasonable minimum touch targets for CTAs, and include the primary action and meaningful secondary paths where appropriate. Limit to 80 elements and use only supported properties.",
-  "Return a concise user-facing summary of what you designed, not hidden reasoning."
+  "Return a concise user-facing summary of what you designed, not hidden reasoning. Never return null, an array at the root, a tool call, or explanatory text. Return one complete JSON object with summary, frame and elements keys; use learningCandidate:null when there is no durable reusable lesson."
 ].join("\n");
-
-function extractJson(content: unknown): unknown {
-  if (typeof content !== "string") return null;
-  const cleaned = content.trim().replace(/^\uFEFF/, "");
-  const first = cleaned.indexOf("{");
-  const last = cleaned.lastIndexOf("}");
-  if (first < 0 || last <= first) return null;
-  try { return JSON.parse(cleaned.slice(first, last + 1)); } catch { return null; }
-}
 
 export async function OPTIONS(request: Request) {
   if (!allowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: cors(request) });
@@ -308,7 +300,7 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // Prefer Anthropic Claude Sonnet 5.5, retry on Claude Sonnet 5, then use low-cost OpenRouter Auto.
+  // Use Anthropic Claude models via OpenRouter only: Sonnet for design quality, then the smaller Anthropic fallback models.
   const models = ANTHROPIC_OPENROUTER_MODELS;
   const errors: string[] = [];
   for (const model of models) {
@@ -336,7 +328,7 @@ export async function POST(request: Request) {
               : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext },
           ],
           temperature: 0.25,
-          max_tokens: 8500,
+          max_tokens: 10000,
           response_format: { type: "json_object" },
                     provider: ANTHROPIC_OPENROUTER_PROVIDER,
         }),
@@ -362,7 +354,18 @@ export async function POST(request: Request) {
       const providerMessage = firstChoice.message && typeof firstChoice.message === "object" && !Array.isArray(firstChoice.message)
         ? firstChoice.message as Record<string, unknown>
         : {};
-      const rawPlan = extractJson(providerMessage.content);
+      const rawPlan = extractPlanJson(providerMessage.content)
+        ?? extractPlanJson(providerMessage.parsed)
+        ?? extractPlanJson(providerMessage.tool_calls)
+        ?? extractPlanJson(providerMessage);
+      if (rawPlan === null) {
+        const finishReason = typeof firstChoice.finish_reason === "string" ? firstChoice.finish_reason : "unknown";
+        const contentDescription = describeModelContent(providerMessage.content);
+        errors.push(model + ": response contained no extractable design JSON (content=" + contentDescription +
+          ", finish_reason=" + finishReason + ", tool_calls=" +
+          (Array.isArray(providerMessage.tool_calls) ? providerMessage.tool_calls.length : 0) + ").");
+        continue;
+      }
       const rawPlanRecord = rawPlan && typeof rawPlan === "object" && !Array.isArray(rawPlan)
         ? rawPlan as Record<string, unknown> : {};
       const normalizedPlan = normalizePlan(rawPlan, canvas);

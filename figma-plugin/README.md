@@ -7,6 +7,9 @@ The plugin's production backend is the UX Direct Cloudflare Worker:
 ## What's included
 
 - Conversational Cockpit with live status cards for Cloudflare backend, OpenRouter, authenticated ChatGPT MCP activity, and the current Figma plugin heartbeat.
+- Libraries.dev Thinking Orbs for idle, scanning, thinking, creating, reviewing, refining, verifying, complete, and error task states.
+- Libraries.dev Border Beam around the composer while it is focused or UX Direct is executing a task. The plugin ZIP includes the prebuilt `ui-effects.js` bundle.
+- UX Direct chat, design generation, visual review, and refinement use Anthropic Claude models through OpenRouter only; provider-level fallback to non-Anthropic model providers is disabled.
 - Manual cockpit refresh plus a low-frequency OpenRouter provider-status refresh.
 - Conversational task planning with provider/model and shared-brain diagnostics in the result.
 - A native Figma API self-test that reports results back through the Cloudflare plugin bridge.
@@ -17,11 +20,22 @@ The plugin's production backend is the UX Direct Cloudflare Worker:
 
 ## Import into Figma Desktop
 
-1. Download and extract `UX-Direct-Figma-Plugin-Cloudflare.zip`.
+1. Download and extract `ux-direct-figma-plugin-cloudflare.zip` (includes `ui-effects.js`).
 2. In Figma Desktop, open **Plugins → Development → Import plugin from manifest…**
 3. Select the extracted `manifest.json`.
 4. Open the approved `Zunaid_Workspace` file and run **UX Direct** from **Plugins → Development**.
 5. Select a frame/layer and press **Refresh selection** before asking UX Direct to plan a task.
+
+## Build the local development plugin
+
+The production ZIP already contains the bundled UI effects. For a local source checkout, build that bundle before importing or launching the plugin:
+
+```bash
+npm install
+npm run build:figma-plugin-effects
+```
+
+Then import `figma-plugin/manifest.json` from Figma Desktop. Rebuild the effects bundle whenever `figma-plugin/ui-effects.tsx` changes.
 
 ## Status semantics
 
