@@ -3,7 +3,7 @@ import { z } from "zod";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
-import { FIGMA_AGENT_DEFAULT_MODEL, FIGMA_AGENT_FALLBACK_MODELS, FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { FIGMA_AGENT_DEFAULT_MODEL, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 
@@ -42,6 +42,11 @@ const ElementFieldsSchema = z.object({
   noFill: z.boolean().optional(),
   strokeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   strokeWeight: z.number().finite().min(0).max(20).optional(),
+  arcData: z.object({
+    startingAngle: z.number().finite().min(-6.283185307179586).max(6.283185307179586),
+    endingAngle: z.number().finite().min(-6.283185307179586).max(6.283185307179586),
+    innerRadius: z.number().finite().min(0).max(1),
+  }).strict().optional(),
   opacity: z.number().finite().min(0).max(1).optional(),
   cornerRadius: z.number().finite().min(0).max(128).optional(),
   clipsContent: z.boolean().optional(),
@@ -79,6 +84,12 @@ const ElementSchema: z.ZodTypeAny = z.lazy(() =>
       if (item.noFill === true && item.type !== "FRAME") {
         ctx.addIssue({ code: "custom", path: ["noFill"], message: "noFill is supported only for FRAME containers." });
       }
+      if (item.arcData !== undefined && item.type !== "ELLIPSE") {
+        ctx.addIssue({ code: "custom", path: ["arcData"], message: "arcData is supported only on ELLIPSE nodes." });
+      }
+      if (item.arcData && item.arcData.endingAngle <= item.arcData.startingAngle) {
+        ctx.addIssue({ code: "custom", path: ["arcData", "endingAngle"], message: "endingAngle must be greater than startingAngle." });
+      }
     })
 );
 const PlanSchema = z.object({
@@ -89,7 +100,7 @@ const PlanSchema = z.object({
     height: z.number().int().min(360).max(4096),
     backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   }).strict(),
-  elements: z.array(ElementSchema).min(5).max(12),
+  elements: z.array(ElementSchema).min(3).max(8),
 }).strict().superRefine((plan, ctx) => {
   let totalNodes = 0;
   let namedContainers = 0;
@@ -245,19 +256,21 @@ const SYSTEM = [
   "Use native Figma layout, not just visual approximation. Where appropriate set FRAME layoutMode to VERTICAL or HORIZONTAL and define padding, itemSpacing, alignment and sizing. Use Auto Layout for card content, stacks, tab rows, repeated information rows and action groups when suitable; use absolute positioning only for overlays, decorative elements or intentional placements. Do not claim Auto Layout or reusable components unless the resulting properties/nodes confirm them.",
   "A short prompt must be mapped to a concrete design objective. Keep everything else stable: product context, information architecture, content, interaction meaning and source visual language. Make deliberate, restrained improvements; do not simplify away meaningful content merely to make the canvas look cleaner.",
   "You are UX Direct's native Figma design agent. The user explicitly requested a design action.",
-  "Return ONLY one JSON object. Required root keys: summary (string), frame ({name,width,height,backgroundColor}), elements (5–12 top-level FRAME section containers and 18–80 native nodes total). Optional root key learningCandidate: null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}; include it only if this task produced one durable reusable design or execution lesson, never as a task summary. Do not include client-specific names in cross-user or domain-wide rules, raw requirements, screen text, node IDs, screenshots or private facts. Use the narrowest safe scope; the backend validates, scopes, deduplicates and applies the existing 50% relevance threshold. Each node MUST include type, name, x, y, width, height. Allowed type values: RECTANGLE, ELLIPSE, TEXT, LINE, FRAME, POLYGON, STAR. Use color: \"#RRGGBB\" for fill, NOT a fill key. TEXT layers must include text. FRAME nodes may include a children array recursively; only FRAME can contain children. Use noFill:true for transparent structural wrappers, but use visibly styled FRAMEs for cards/surfaces. Do not flatten everything into direct layers. Do not use markdown fences.",
+  "Return ONLY one JSON object. Required root keys: summary (string), frame ({name,width,height,backgroundColor}), elements (3–8 meaningful top-level FRAME section containers and 18–80 native nodes total). Optional root key learningCandidate: null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}; include it only if this task produced one durable reusable design or execution lesson, never as a task summary. Do not include client-specific names in cross-user or domain-wide rules, raw requirements, screen text, node IDs, screenshots or private facts. Use the narrowest safe scope; the backend validates, scopes, deduplicates and applies the existing 50% relevance threshold. Each node MUST include type, name, x, y, width, height. Allowed type values: RECTANGLE, ELLIPSE, TEXT, LINE, FRAME, POLYGON, STAR. ELLIPSE may use arcData:{startingAngle,endingAngle,innerRadius} with radian angles and endingAngle > startingAngle for native progress arcs/rings. Use color: \"#RRGGBB\" for fill, NOT a fill key. TEXT layers must include text. FRAME nodes may include a children array recursively; only FRAME can contain children. Use noFill:true for transparent structural wrappers, but use visibly styled FRAMEs for cards/surfaces. Do not flatten everything into direct layers. Do not use markdown fences.",
   "Analyse BOTH the attached rendered screen image and native layer tree before planning. Use the image to understand visual hierarchy, alignment, density, spacing, contrast, components, states and design language; use the layer tree for exact text, names, geometry, typography and paint values.",
   "Do not replace an existing task-specific screen with a generic dashboard, generic landing page, or repeated stack of similar cards. Preserve the selected screen's purpose, key content, taxonomy and useful visual patterns. Reuse its components when possible, then improve professional craft, consistency, readability, alignment, action priority and visual rhythm.",
   "Prefer evidence-grounded product content and component patterns. If values are unknown, label financial amounts as sample. Never claim visual analysis when no image was supplied.",
   "Create a polished, high-fidelity native Figma screen using only native shapes and text layers. Do not use images, external assets, or invented APIs.",
-  "Use a real Figma layer tree appropriate to selection scope: for a full screen, create meaningful screen sections; for a component, create meaningful internal groups such as Header & status, Primary information, Supporting detail, Progress/indicators and Actions only when those concepts exist in the source. Create 5–8 suitable top-level FRAME groups with names that describe their actual contents, not boilerplate section names. Nest each card's background, labels, values, badges, dividers and actions inside that card's FRAME. Nest row labels and figures together. Use 3 hierarchy levels where the content warrants them, never create empty wrappers just to meet a count. The output should be easy to inspect in Figma's layers panel, not a pile of siblings.",
+  "Use a real Figma layer tree appropriate to selection scope: for a full screen, create meaningful screen sections; for a component, create meaningful internal groups such as Header & status, Primary information, Supporting detail, Progress/indicators and Actions only when those concepts exist in the source. Create 3–6 suitable top-level FRAME groups with names that describe their actual contents, not boilerplate section names. If the source has one enclosing card containing a summary and a breakdown, keep both within one styled outer card FRAME and use an inner divider or surface split. Keep status badges and overlays nested with the card they belong to. Nest row labels and figures together. Use 3 hierarchy levels where the content warrants them; never create empty wrappers just to meet a count. The output should be easy to inspect in Figma's layers panel, not a pile of siblings.",
   "Coordinates are relative to each immediate parent frame's top-left, not global screen coordinates. Each frame's child x/y must fall inside that frame; draw rectangles/backplates before their text/icons. Give sections sensible heights and distinct y positions so nothing stacks at the top or overlaps accidentally. With Auto Layout enabled, rely on flow order, padding, spacing and alignment rather than simulated absolute positions. Use noFill:true for transparent structural wrappers; styled card frames should have their own background, corner radius and optional subtle stroke/shadow. Do not add a giant empty background inside a small selected card.",
   "For a mobile 360×800 design, use consistent 16–24 px side margins, a deliberate vertical rhythm, a clear type scale (screen title 22–26, section headings 17–20, key amounts 24–30, body 13–16, muted metadata 11–13), high contrast, and visible space between sections. Match the selected screen's visual system and information density rather than inventing a new generic template. Do not fill empty space with random cards.",
   "Use Inter as fontFamily and Regular or Medium as fontStyle when available. Define a coherent spacing scale, typography scale, surface palette and accent usage from the source screenshot/layers. For dark screens, retain the dark canvas and source's card/surface contrast; don't put a single grey slab in an otherwise black screen. Use moderate, consistent corner radii, separator lines only where useful, and strong text contrast. Keep copy and visible values faithful to the selection; never invent features just to decorate a screen.",
   "Preserve the source's user intent, content taxonomy, and brand tone while producing a genuinely improved variation rather than copying its layout mechanically. Preserve every visible meaningful datum and repeated row. Use the selected frame's actual scope and size. Keep the source untouched.",
   "For Indian BFSI designs, emphasize transparency, clear amount/date/status hierarchy, user control and accessible legibility. Never make up actual interest rates, contractual terms, or legal-compliance claims. Label illustrative financial values as sample.",
   "Keep all elements within frame bounds, use reasonable minimum touch targets for CTAs, and include the primary action and meaningful secondary paths where appropriate. Limit to 80 elements and use only supported properties.",
-  "CRITICAL GEOMETRY CHECK BEFORE RETURNING: check every sibling for accidental overlap and make each text box wide/tall enough for its full copy. Never put different labels or amounts at the same coordinates. Use each card's styled FRAME as its background, with its own labels, values, dividers and buttons nested inside; never cover sibling content with an opaque backplate. Avoid giant empty white/grey panels inside dark screens or leaving most of the screen blank. Align labels with their values and group each label/value pair in an appropriate row FRAME. The first plan must be visually coherent without any later automatic design refinements.",
+  "CRITICAL GEOMETRY CHECK BEFORE RETURNING: check every sibling for accidental overlap and make each text box wide/tall enough for its full copy. Never put different labels or amounts at the same coordinates. When the source uses one enclosing loan card, keep the summary and loan-wise breakdown inside the same outer card FRAME with the source's surface split; do not turn them into unrelated peer cards. Keep the status badge inside that card at its top-right edge and preserve the right-chevron/action cue. Avoid giant empty panels and never invent cards to fill scrollable whitespace.",
+  "Progress indicators must preserve their meaning. Do not replace a partial progress ring (for example 60% paid) with a solid disc. Use a native ELLIPSE arcData for the progress segment (radian angles, endingAngle > startingAngle, innerRadius about 0.68–0.8), plus a muted full-circle track and centered percentage/status text. Keep the indicator layers inside a named Progress indicator FRAME. Use arcData whenever the source has a partial progress ring.",
+  "Before returning the first plan, compare the generated structure with the source screenshot for the outer card boundary, summary/breakdown surface split, status badge position, right-chevron affordance, progress-ring shape and all financial values/dates. No automatic refinements will follow.",
   "Return a concise user-facing summary of what you designed, not hidden reasoning. Never return null, an array at the root, a tool call, or explanatory text. Return one complete JSON object with summary, frame and elements keys; use learningCandidate:null when there is no durable reusable lesson."
 ].join("\n");
 
@@ -284,10 +297,9 @@ export async function POST(request: Request) {
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
   if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
-  const requestedModel = parsedInput.data.model || FIGMA_AGENT_DEFAULT_MODEL;
-  if (!FIGMA_AGENT_MODELS.some((candidate) => candidate.id === requestedModel)) {
-    return NextResponse.json({ error: "Unsupported Figma design model. Choose one of the models shown in the UX Direct dropdown." }, { status: 400, headers });
-  }
+  // Ignore a model override from older plugin UI builds. Figma generation is intentionally
+  // locked to OpenRouter Auto's LOW cost tier to prevent app-level model fan-out.
+  const requestedModel = FIGMA_AGENT_DEFAULT_MODEL;
   const renderedScreen = typeof parsedInput.data.renderedScreen === "string" &&
     parsedInput.data.renderedScreen.length <= 52000 &&
     new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.renderedScreen)
@@ -348,9 +360,10 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // All model requests run sequentially. Try the user's model first, then one compact retry
-  // on that same model. Only if it still fails do we switch through the low-cost fallback chain.
-  const models = [requestedModel, ...FIGMA_AGENT_FALLBACK_MODELS.filter((candidate) => candidate !== requestedModel)];
+  // OpenRouter Auto routes within the LOW cost tier. UX Direct makes no separate model
+  // fallback calls. At most one compact retry is sent to the same Auto route if the first
+  // response is malformed; that retry is sequential, never parallel.
+  const models = [FIGMA_AGENT_DEFAULT_MODEL];
   const errors: string[] = [];
   const recoveryContext = JSON.stringify({
     prompt: parsedInput.data.prompt,
@@ -365,18 +378,18 @@ export async function POST(request: Request) {
     scopeInstructions,
     "Preserve the screen/component scope, all meaningful source text and financial values, status, date, labels, rows, actions and relationships. Do not redesign it as a generic dashboard or generic stack of cards.",
     "Use the attached screenshot and source layers when available. Use semantic nested FRAMEs, Auto Layout for suitable cards and rows, clear hierarchy, strong contrast, consistent spacing and editable native shapes/text. Do not invent contractual financial details.",
-    "Return one complete JSON object only with root keys summary (string), frame ({name,width,height,backgroundColor}), elements (an array of exactly 5 non-empty FRAME section containers), and learningCandidate:null. Every element must use supported native Figma fields. This is a schema contract, not text to copy. No markdown, explanation or reasoning.",
-    "OUTPUT BUDGET: exactly 5 meaningful top-level FRAME groups; target 28–42 native nodes total INCLUDING nested children. Preserve every source label, amount, value, status, date and action that belongs on the selected screen. Keep every layer purposeful; do not add decorative placeholders to hit a count. Finish every string, array, object and the final closing brace.",
-    "Every node must have type, name, x, y, width and height. Types: FRAME, RECTANGLE, ELLIPSE, TEXT, LINE, POLYGON, STAR. TEXT must have text. Only FRAME can contain children. Coordinates must be relative to the immediate parent. Use color:'#RRGGBB' and noFill:true only for transparent structural frames.",
+    "Return one complete JSON object only with root keys summary (string), frame ({name,width,height,backgroundColor}), elements (an array of 3–6 meaningful populated FRAME section containers), and learningCandidate:null. Every element must use supported native Figma fields. This is a schema contract, not text to copy. No markdown, explanation or reasoning.",
+    "OUTPUT BUDGET: use 3–6 meaningful top-level FRAME groups based on the actual screen; target 28–42 native nodes total INCLUDING nested children. Do not create a separate top-level group for a badge that belongs inside a card. Preserve every source label, amount, value, status, date and action. Keep every layer purposeful; do not add decorative placeholders to hit a count. Finish every string, array, object and the final closing brace.",
+    "Every node must have type, name, x, y, width and height. Types: FRAME, RECTANGLE, ELLIPSE, TEXT, LINE, POLYGON, STAR. ELLIPSE may include arcData:{startingAngle,endingAngle,innerRadius} with radian angles and endingAngle greater than startingAngle. TEXT must have text. Only FRAME can contain children. Coordinates must be relative to the immediate parent. Use color:'#RRGGBB' and noFill:true only for transparent structural frames.",
     "Do not include a learningCandidate unless there is a durable reusable lesson. If none, set learningCandidate:null.",
   ].join("\n");
   const generationStartedAt = Date.now();
   for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
-    const attemptsForModel = modelIndex === 0 ? 2 : 1;
+    const attemptsForModel = 2;
     for (let recoveryAttempt = 0; recoveryAttempt < attemptsForModel; recoveryAttempt += 1) {
-      const isRecovery = modelIndex > 0 || recoveryAttempt === 1;
-      const attemptTimeoutMs = modelIndex === 0 && !isRecovery ? 28000 : 16000;
+      const isRecovery = recoveryAttempt === 1;
+      const attemptTimeoutMs = isRecovery ? 16000 : 28000;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
       try {

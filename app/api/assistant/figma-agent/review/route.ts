@@ -147,6 +147,7 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           model,
+          ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
           messages: [
             {
               role: "system",

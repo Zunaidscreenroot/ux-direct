@@ -4,30 +4,14 @@
  * layer data and must return structured JSON for editable native layers.
  */
 export const FIGMA_AGENT_MODELS = [
-  { id: "openrouter/auto", label: "OpenRouter Auto · Recommended", description: "Selects a suitable model for the request; OpenRouter reports the model actually used.", price: "Variable · billed at the routed model's rate" },
-  { id: "google/gemini-3.7-flash", label: "Gemini 3.7 Flash · Recommended", description: "Multimodal baseline with structured JSON output.", price: "$0.75 input / $3.75 output per 1M tokens" },
-  { id: "anthropic/claude-sonnet-5.5", label: "Claude Sonnet 5.5 · Premium", description: "Premium visual/instruction-following comparison.", price: "$2.00 input / $10.00 output per 1M tokens" },
-  { id: "openai/gpt-5.4", label: "GPT-5.4 · Premium", description: "Strong instruction following and multimodal reasoning.", price: "$2.50 input / $15.00 output per 1M tokens" },
-  { id: "anthropic/claude-haiku-5.5", label: "Claude Haiku 5.5 · Value", description: "Lower-cost multimodal option with structured outputs.", price: "$0.10 input / $0.50 output per 1M tokens" },
-  { id: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite · Budget", description: "Fast, low-cost multimodal comparison.", price: "$0.25 input / $1.50 output per 1M tokens" },
+  { id: "openrouter/auto", label: "OpenRouter Auto · LOW cost", description: "Routes each request through OpenRouter's LOW cost tier.", price: "Variable · restricted to the LOW cost tier" },
 ] as const;
 
-/**
- * Sequential fallbacks are attempted only after the selected model fails to return a
- * schema-valid plan. Keep this list single-call per model and bias toward low cost.
- */
-export const FIGMA_AGENT_FALLBACK_MODELS = [
-  "anthropic/claude-haiku-5.5",
-  "google/gemini-3.1-flash-lite",
-  "google/gemini-3.7-flash",
-  "anthropic/claude-sonnet-5.5",
-  "openai/gpt-5.4",
-] as const;
 
 export type FigmaAgentModelId = typeof FIGMA_AGENT_MODELS[number]["id"];
 export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto";
 /** Fixed visual-QA judge so model comparisons use a consistent reviewer. */
-export const FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "google/gemini-3.7-flash";
+export const FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openrouter/auto";
 
 /** Legacy fallback order retained for endpoints outside selected-model generation. */
 export const OPENROUTER_MODELS = [
