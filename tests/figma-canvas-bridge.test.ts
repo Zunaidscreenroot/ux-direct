@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { Script } from "node:vm";
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 const mcp = read("app/api/mcp/route.ts");
@@ -9,11 +10,21 @@ const bridge = read("app/api/plugin-bridge/route.ts");
 const plugin = read("figma-plugin/code.js");
 const pluginUi = read("figma-plugin/ui.html");
 
-test("MCP exposes bounded canvas read, constrained write, and command status tools", () => {
+test("conversational cockpit inline JavaScript parses successfully", () => {
+  const match = pluginUi.match(/<script>([\s\S]*?)<\/script>/i);
+  assert.ok(match, "Figma plugin UI must contain its main script block.");
+  assert.doesNotThrow(() => new Script(match[1], { filename: "figma-plugin/ui.html" }));
+});
+
+test("Figma execution remains implemented but is hidden from ChatGPT's tool list", () => {
   assert.ok(mcp.includes('name: "ux_direct_figma_canvas_read"'));
   assert.ok(mcp.includes('name: "ux_direct_figma_canvas_write"'));
   assert.ok(mcp.includes('name: "ux_direct_figma_canvas_command_status"'));
+  assert.ok(mcp.includes("const CHATGPT_SUPERVISOR_HIDDEN_TOOLS = new Set(["));
+  assert.ok(mcp.includes('"ux_direct_figma_canvas_read"'));
   assert.ok(mcp.includes('"ux_direct_figma_canvas_write"'));
+  assert.ok(mcp.includes('"ux_direct_plan_task"'));
+  assert.ok(mcp.includes('].filter((tool) => !CHATGPT_SUPERVISOR_HIDDEN_TOOLS.has(tool.name));'));
   assert.ok(mcp.includes('maxNodes: { type: "integer", minimum: 1, maximum: 100'));
 });
 
@@ -30,7 +41,8 @@ test("canvas write tool requires explicit confirmation and supports only named o
   assert.ok(mcp.includes('textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] }'));
   assert.ok(mcp.includes('paddingLeft: { type: "number", minimum: 0, maximum: 1000 }'));
   assert.ok(mcp.includes('shadowBlur: { type: "number", minimum: 0, maximum: 200 }'));
-  assert.ok(mcp.includes('target=test-lab'));
+  assert.ok(mcp.includes('"ux_direct_figma_canvas_write"'));
+  assert.ok(mcp.includes('"ux_direct_figma_plugin_queue_health_check"'));
   assert.ok(!mcp.includes('figma.deleteNode'));
 });
 

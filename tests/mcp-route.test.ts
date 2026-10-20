@@ -112,7 +112,7 @@ test("authenticated client can initialize", async () => {
   }
 });
 
-test("tool list exposes status, safe UX planning, and shared brain operations", async () => {
+test("tool list exposes supervisory status/report and shared brain operations but no Figma executor", async () => {
   const original = process.env.UX_DIRECT_MCP_API_KEY;
   process.env.UX_DIRECT_MCP_API_KEY = validKey;
   try {
@@ -121,12 +121,8 @@ test("tool list exposes status, safe UX planning, and shared brain operations", 
     assert.deepEqual(body.result.tools.map((tool: { name: string }) => tool.name), [
       "ux_direct_status",
       "ux_direct_connection_status",
-      "ux_direct_figma_plugin_queue_health_check",
       "ux_direct_figma_plugin_health_check_status",
-      "ux_direct_figma_canvas_read",
-      "ux_direct_figma_canvas_write",
       "ux_direct_figma_canvas_command_status",
-      "ux_direct_plan_task",
       "ux_direct_brain_search",
       "ux_direct_brain_save_feedback",
       "ux_direct_brain_list_feedback",
@@ -148,8 +144,10 @@ test("tool list exposes status, safe UX planning, and shared brain operations", 
     assert.ok(brainSave.inputSchema.properties.rawFeedback);
     assert.ok(brainSave.inputSchema.properties.normalizedRule);
     assert.equal(brainSave.inputSchema.properties.sourceProduct.enum.includes("figma-plugin"), true);
-    const planner = body.result.tools.find((tool: { name: string }) => tool.name === "ux_direct_plan_task");
-    assert.deepEqual(planner.inputSchema.properties.project.enum, ["general", "express-computers"]);
+    assert.equal(body.result.tools.some((tool: { name: string }) => tool.name === "ux_direct_figma_plugin_queue_health_check"), false);
+    assert.equal(body.result.tools.some((tool: { name: string }) => tool.name === "ux_direct_figma_canvas_read"), false);
+    assert.equal(body.result.tools.some((tool: { name: string }) => tool.name === "ux_direct_figma_canvas_write"), false);
+    assert.equal(body.result.tools.some((tool: { name: string }) => tool.name === "ux_direct_plan_task"), false);
   } finally {
     if (original === undefined) delete process.env.UX_DIRECT_MCP_API_KEY;
     else process.env.UX_DIRECT_MCP_API_KEY = original;
@@ -192,11 +190,16 @@ test("connection-status tool reports ChatGPT and Figma connection semantics", as
     assert.ok(connectionTool);
     assert.match(connectionTool.description, /five minutes/);
     assert.match(connectionTool.description, /75 seconds/);
-    assert.match(connectionTool.description, /selection snapshot/);
+    assert.match(connectionTool.description, /read-only/i);
+    assert.match(connectionTool.description, /Does not queue plugin commands/);
     const healthStatusTool = body.result.tools.find((tool: { name: string }) => tool.name === "ux_direct_figma_plugin_health_check_status");
     assert.ok(healthStatusTool);
-    assert.match(healthStatusTool.description, /canvasResult/);
-    assert.ok((await import("node:fs")).readFileSync("app/api/mcp/route.ts", "utf8").includes('queueFigmaCanvasCommand(request, "read-canvas"'));
+    assert.match(healthStatusTool.description, /already queued/);
+    assert.match(healthStatusTool.description, /read-only/);
+    const source = (await import("node:fs")).readFileSync("app/api/mcp/route.ts", "utf8");
+    const connectionHandler = source.slice(source.indexOf('if (name === "ux_direct_connection_status") {'), source.indexOf('if (name === "ux_direct_figma_plugin_queue_health_check") {'));
+    assert.ok(connectionHandler.includes("controlPlane"));
+    assert.ok(!connectionHandler.includes("queueFigmaCanvasCommand"));
   } finally {
     if (original === undefined) delete process.env.UX_DIRECT_MCP_API_KEY;
     else process.env.UX_DIRECT_MCP_API_KEY = original;

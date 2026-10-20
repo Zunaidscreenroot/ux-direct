@@ -8,6 +8,23 @@ import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const ALLOWED_FIGMA_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
+function originIsAllowed(request: Request): boolean {
+  const origin = request.headers.get("origin");
+  return !origin || origin === new URL(request.url).origin || ALLOWED_FIGMA_ORIGINS.has(origin);
+}
+function corsHeaders(request: Request): HeadersInit {
+  const origin = request.headers.get("origin");
+  const allowed = origin && (origin === new URL(request.url).origin || ALLOWED_FIGMA_ORIGINS.has(origin));
+  return {
+    ...(allowed ? { "Access-Control-Allow-Origin": origin! } : {}),
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Accept",
+    "Cache-Control": "no-store",
+    "Vary": "Origin",
+  };
+}
+
 type Message = { role: "user" | "assistant"; content: string };
 type BrainStatus = "complete" | "empty" | "degraded" | "disabled";
 type BrainContextInfo = {
@@ -39,7 +56,7 @@ function safeCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
 }
 
-function brainHeaders(brain: BrainContextInfo, model?: string): Headers {
+function brainHeaders(brain: BrainContextInfo, model?: string, request?: Request): Headers {
   const headers = new Headers({
     "Cache-Control": "no-cache, no-transform",
     "X-UXD-Brain-Status": brain.status,
@@ -50,6 +67,9 @@ function brainHeaders(brain: BrainContextInfo, model?: string): Headers {
   });
   if (brain.learningDraftId) headers.set("X-UXD-Learning-Draft-Id", brain.learningDraftId);
   if (model) headers.set("X-UXD-Model", model);
+  if (request) {
+    new Headers(corsHeaders(request)).forEach((value, key) => headers.set(key, value));
+  }
   return headers;
 }
 
@@ -166,7 +186,7 @@ async function probeForFirstText(response: Response): Promise<ProbedStream> {
   return { reader, chunks, hasText: foundText };
 }
 
-function forwardProbedStream(probe: ProbedStream, brain: BrainContextInfo, model: string): Response {
+function forwardProbedStream(probe: ProbedStream, brain: BrainContextInfo, model: string, request: Request): Response {
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
@@ -187,47 +207,58 @@ function forwardProbedStream(probe: ProbedStream, brain: BrainContextInfo, model
       if (probe.reader) await probe.reader.cancel(reason).catch(() => {});
     },
   });
-  const headers = brainHeaders(brain, model);
+  const headers = brainHeaders(brain, model, request);
   headers.set("Content-Type", "text/event-stream; charset=utf-8");
   headers.set("X-Accel-Buffering", "no");
   return new Response(body, { headers });
 }
 
+export async function OPTIONS(request: Request) {
+  if (!originIsAllowed(request)) {
+    return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: corsHeaders(request) });
+  }
+  return new Response(null, { status: 204, headers: corsHeaders(request) });
+}
+
 export async function POST(request: Request) {
+  const responseHeaders = corsHeaders(request);
+  if (!originIsAllowed(request)) {
+    return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: responseHeaders });
+  }
   const key = process.env.OPENROUTER_API_KEY?.trim();
   if (!key) {
-    return NextResponse.json({ error: "OpenRouter is not configured. Add OPENROUTER_API_KEY to the UX Direct Worker secrets." }, { status: 503, headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ error: "OpenRouter is not configured. Add OPENROUTER_API_KEY to the UX Direct Worker secrets." }, { status: 503, headers: responseHeaders });
   }
 
   let body: unknown;
   try { body = await request.json(); } catch {
-    return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 });
+    return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400, headers: responseHeaders });
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400 });
+    return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400, headers: responseHeaders });
   }
   const value = body as Record<string, unknown>;
   // Let OpenRouter choose the model dynamically; never pin a stale provider/model ID from the browser.
   const model = ROUTER_MODEL;
   if (!Array.isArray(value.messages) || value.messages.length < 1 || value.messages.length > MAX_MESSAGES) {
-    return NextResponse.json({ error: "messages must contain between 1 and " + MAX_MESSAGES + " entries." }, { status: 400 });
+    return NextResponse.json({ error: "messages must contain between 1 and " + MAX_MESSAGES + " entries." }, { status: 400, headers: responseHeaders });
   }
 
   const messages: Message[] = [];
   let totalChars = 0;
   for (const item of value.messages) {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
-      return NextResponse.json({ error: "Invalid message entry." }, { status: 400 });
+      return NextResponse.json({ error: "Invalid message entry." }, { status: 400, headers: responseHeaders });
     }
     const message = item as Record<string, unknown>;
     if ((message.role !== "user" && message.role !== "assistant") || typeof message.content !== "string" || !message.content.trim() || message.content.length > 20000) {
-      return NextResponse.json({ error: "Each message needs a user/assistant role and non-empty text up to 20,000 characters." }, { status: 400 });
+      return NextResponse.json({ error: "Each message needs a user/assistant role and non-empty text up to 20,000 characters." }, { status: 400, headers: responseHeaders });
     }
     totalChars += message.content.length;
     messages.push({ role: message.role, content: message.content });
   }
   if (totalChars > MAX_TOTAL_CHARS) {
-    return NextResponse.json({ error: "Conversation is too long. Start a new chat to continue." }, { status: 413 });
+    return NextResponse.json({ error: "Conversation is too long. Start a new chat to continue." }, { status: 413, headers: responseHeaders });
   }
 
   // Conversational chat has no app-imposed output-token ceiling or history compaction.
@@ -317,13 +348,13 @@ export async function POST(request: Request) {
     for (const attempt of attempts) {
       if (attempt.controller !== winner.controller) attempt.controller.abort();
     }
-    return forwardProbedStream(winner.probe, brain, winner.model);
+    return forwardProbedStream(winner.probe, brain, winner.model, request);
   }
 
   for (const attempt of attempts) attempt.controller.abort();
   const userMessage = "OpenRouter Auto Router failed. " + lastError;
   return NextResponse.json(
     { error: userMessage, attemptedModels: candidates },
-    { status: lastStatus === 429 ? 429 : 502, headers: brainHeaders(brain) },
+    { status: lastStatus === 429 ? 429 : 502, headers: brainHeaders(brain, undefined, request) },
   );
 }

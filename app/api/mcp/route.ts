@@ -421,6 +421,15 @@ async function runUxAuditPage(input: Record<string, unknown>) {
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+// ChatGPT is a supervisor/monitor for Figma output, not the plugin's design-task executor.
+// Keep direct Figma reads/writes and task planning inside the in-Figma UX Direct cockpit.
+const CHATGPT_SUPERVISOR_HIDDEN_TOOLS = new Set([
+  "ux_direct_figma_plugin_queue_health_check",
+  "ux_direct_figma_canvas_read",
+  "ux_direct_figma_canvas_write",
+  "ux_direct_plan_task",
+]);
+
 const TOOLS = [
   {
     name: "ux_direct_status",
@@ -430,7 +439,7 @@ const TOOLS = [
   },
   {
     name: "ux_direct_connection_status",
-    description: "Show whether ChatGPT and the approved Figma plugin are connected, and queue a read-only selection snapshot of the currently selected Figma layers through the UX Direct plugin. Use ux_direct_figma_plugin_health_check_status with the returned commandId to retrieve the actual selection; no separate Figma connector is used. ChatGPT state means authenticated MCP activity within five minutes; Figma state means a heartbeat within 75 seconds.",
+    description: "Read-only combined connection diagnostics for the UX Direct backend, recent ChatGPT MCP activity, and the approved Figma plugin heartbeat. Does not queue plugin commands or read the current canvas. ChatGPT activity is recent authenticated activity within five minutes; Figma plugin connectivity is a heartbeat within 75 seconds.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
@@ -442,11 +451,11 @@ const TOOLS = [
   },
   {
     name: "ux_direct_figma_plugin_health_check_status",
-    description: "Retrieve status/results for a queued native Figma plugin API self-test, or the read-only selection command returned by ux_direct_connection_status. For selection reads, the response includes canvasResult when the command completes.",
+    description: "Retrieve the status and report for an already queued native Figma plugin API self-test. This is read-only and does not trigger a new test or canvas command.",
     inputSchema: {
       type: "object",
       properties: {
-        commandId: { type: "string", minLength: 8, maxLength: 100, pattern: "^[A-Za-z0-9_-]{8,100}$", description: "The commandId returned by ux_direct_figma_plugin_queue_health_check or the selectionRead field of ux_direct_connection_status." },
+        commandId: { type: "string", minLength: 8, maxLength: 100, pattern: "^[A-Za-z0-9_-]{8,100}$", description: "An existing commandId returned by a prior native plugin API health-check run." },
       },
       required: ["commandId"],
       additionalProperties: false,
@@ -835,7 +844,7 @@ const TOOLS = [
     }, required: ["clientName", "clientUrl", "competitors"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-];
+].filter((tool) => !CHATGPT_SUPERVISOR_HIDDEN_TOOLS.has(tool.name));
 
 async function callTool(name: string, args: unknown, request: Request) {
   if (name === "ux_direct_status") {
@@ -861,17 +870,6 @@ async function callTool(name: string, args: unknown, request: Request) {
       }),
     ]);
     const backend = await backendResponse.json().catch(() => ({ error: "Health endpoint returned invalid JSON." }));
-    let selectionRead: Record<string, unknown>;
-    try {
-      selectionRead = await queueFigmaCanvasCommand(request, "read-canvas", {
-        scope: "selection", maxDepth: 2, maxNodes: 60,
-      });
-    } catch (error) {
-      selectionRead = {
-        status: "unavailable",
-        error: error instanceof Error ? error.message.slice(0, 500) : "Could not queue a selection read through UX Direct.",
-      };
-    }
     return toolText({
       checkedAt: new Date().toISOString(),
       backend: { reachable: backendResponse.ok, status: backendResponse.ok ? "connected" : "error", details: backend },
@@ -879,16 +877,18 @@ async function callTool(name: string, args: unknown, request: Request) {
         state: chatgptConnector.state,
         connected: chatgptConnector.connected,
         lastActivityAt: chatgptConnector.lastActivityAt,
-        note: "Connected means the server received authenticated ChatGPT MCP activity in the last five minutes.",
+        note: "Connected means authenticated ChatGPT MCP activity was received in the last five minutes. Idle means no recent request; it is not a persistent-socket failure.",
       },
       figmaPlugin: {
         state: figmaPlugin.state,
         connected: figmaPlugin.connected,
         connectedSessions: figmaPlugin.connectedSessions,
         lastHeartbeatAt: figmaPlugin.lastHeartbeatAt,
-        selectionRead,
-        selectionNote: "Selection is read through the native UX Direct plugin command bridge. If selectionRead.status is queued, use ux_direct_figma_plugin_health_check_status with its commandId to retrieve the selected layers.",
-        note: "Connected means at least one allowlisted Figma plugin session sent a heartbeat in the last 75 seconds.",
+        note: "Connected means an approved Figma plugin session sent a heartbeat in the last 75 seconds.",
+      },
+      controlPlane: {
+        mode: "supervisor-only",
+        note: "This connection check is read-only. New design tasks and Figma read/write actions must originate in the in-Figma UX Direct conversational cockpit.",
       },
     });
   }
@@ -1476,7 +1476,7 @@ export async function POST(request: Request) {
           protocolVersion: PROTOCOL_VERSIONS.has(requested) ? requested : "2025-11-25",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "ux-direct", version: "0.1.0" },
-          instructions: "UX Direct is the single brain and MCP control center. It provides shared-brain search/training plus UX Audit operations for public-site IA discovery, desktop/mobile screenshot auditing, report retrieval, improved IA proposals, and multi-site benchmarking. Use UX Direct shared-brain retrieval before analysis; UX Audit persists client-specific findings in Past Findings and retrieves relevant approved shared rules. Never promote client-specific raw findings into global memory; only validated generalizable lessons belong in the shared brain. Preserve Hindi/Hinglish feedback, save reusable lessons as drafts by default, and approve only when the owner explicitly asks to train or activate the rule. Audit work may incur OpenRouter costs. Figma plugin connectivity uses the installed plugin's native Figma Plugin APIs; Figma OAuth is not required for that path. Figma MCP actions use the installed UX Direct plugin native API and a bounded, authenticated command bridge. Reads can inspect selected/current-page nodes, filter by name/type, return page/style metadata and viewport geometry. Explicitly confirmed write actions cover frame/shape/text/vector creation; node property, text-range, fill/stroke/effect and auto-layout edits; clone/delete/reorder/group/ungroup/flatten/boolean operations; component creation, variants, instances, swap/detach; selection and viewport; page create/rename; local-style application; image fills; PNG/PDF/SVG exports; and sequential batches with explicit partial-failure reporting. Every node mutation is restricted to the allowlisted file and current-page nodes, with bounded payload/result sizes. There is no arbitrary code execution, broad replacement, or Team Library publishing. Check command status to verify every action. Use target=test-lab for safe write smoke tests. Current screenshot evidence takes precedence over remembered rules.",
+          instructions: "UX Direct is the conversational cockpit and native Figma executor inside the installed plugin. Design requests and Figma read/write commands originate in that in-Figma UI, which calls the internal assistant, uses native Plugin APIs, validates scoped actions, and reports execution results. This ChatGPT MCP connection is a supervisor/monitor, not a design-task executor: use it for backend/connection status, existing command results, read-only reports and regression checks, and owner-authorized shared-brain learning. Do not issue new Figma read/write actions or task plans from ChatGPT. Figma OAuth is not required because document access uses the approved file's native plugin APIs. Keep client-specific past findings separate from generalized approved shared knowledge; preserve Hindi/Hinglish feedback and require review before activating new learning. Audit workflows may incur OpenRouter costs. Every previously initiated canvas action must be verified from its existing command ID, and current canvas evidence takes precedence over remembered rules.",
         }, headers);
       }
       case "ping":
