@@ -101,9 +101,10 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
       height: Math.max(1, Math.min(4096, height)),
     };
     if (text !== undefined && type === "TEXT") normalized.text = text;
-    if (typeof item.fontSize === "number" || typeof item.textSize === "number") normalized.fontSize = item.fontSize ?? item.textSize;
-    if (typeof item.fontFamily === "string" || typeof fontRaw.family === "string") normalized.fontFamily = item.fontFamily ?? fontRaw.family;
-    if (typeof item.fontStyle === "string" || typeof fontRaw.style === "string" || typeof fontRaw.weight === "string") normalized.fontStyle = item.fontStyle ?? fontRaw.style ?? fontRaw.weight;
+    const fontSizeValue = item.fontSize ?? item.textSize;
+    if (typeof fontSizeValue === "number" && Number.isFinite(fontSizeValue)) normalized.fontSize = Math.max(8, Math.min(96, fontSizeValue));
+    if (typeof item.fontFamily === "string" || typeof fontRaw.family === "string") normalized.fontFamily = String(item.fontFamily ?? fontRaw.family).trim().slice(0, 100) || "Inter";
+    if (typeof item.fontStyle === "string" || typeof fontRaw.style === "string" || typeof fontRaw.weight === "string") normalized.fontStyle = String(item.fontStyle ?? fontRaw.style ?? fontRaw.weight).trim().slice(0, 100) || "Regular";
     if (color) normalized.color = color;
     if (strokeColor) normalized.strokeColor = strokeColor;
     const aliases: Array<[string, string]> = [
