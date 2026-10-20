@@ -1,7 +1,7 @@
 name: Deploy UX Direct to Cloudflare
 
-# The native Figma canvas bridge is deployed automatically when its server routes
-# change. Keep manual dispatch available for a controlled redeploy.
+# Deploy the native Figma bridge and design-agent backend whenever their server routes change.
+# Keep manual dispatch available for a controlled redeploy.
 on:
   workflow_dispatch:
   push:
@@ -12,6 +12,8 @@ on:
       - "app/api/health/route.ts"
       - "app/api/brain/**"
       - "app/api/assistant/chat/route.ts"
+      - "app/api/assistant/figma-agent/**"
+      - "src/figma-agent/**"
       - "src/memory/**"
       - "src/security/figma-access.ts"
       - ".github/workflows/deploy-cloudflare.yml"
