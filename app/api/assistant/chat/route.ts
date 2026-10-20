@@ -6,7 +6,7 @@ import { detectCoachingSignal, detectExplicitTrainingIntent, resolveChatLearning
 import { containsSensitiveMaterial, createLearningMarkerTransform, referencesUnstatedClient, type InlineLearningCandidate } from "@/src/memory/inline-learning";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
-import { ANTHROPIC_OPENROUTER_MODELS, ANTHROPIC_OPENROUTER_PROVIDER } from "@/src/providers/anthropic-openrouter";
+import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,12 +44,11 @@ type BrainContextInfo = {
 
 const MAX_MESSAGES = 100;
 const MAX_TOTAL_CHARS = 80000;
-const ROUTER_MODEL = ANTHROPIC_OPENROUTER_MODELS[0];
-const FALLBACK_MODEL = ANTHROPIC_OPENROUTER_MODELS[1];
-const FINAL_FALLBACK_MODEL = ANTHROPIC_OPENROUTER_MODELS[2];
+const ROUTER_MODEL = OPENROUTER_MODELS[0];
+const FALLBACK_MODEL = OPENROUTER_MODELS[1];
 const FIRST_TEXT_TIMEOUT_MS = 30_000;
 const SYSTEM_PROMPT = [
-  "You are UX Direct, a thoughtful senior product UX partner.",
+  UX_DIRECT_DESIGN_ROLE + " You are UX Direct, a thoughtful UI/UX design partner.",
   "Focus on evidence-led UX, information architecture, user journeys, interaction design, accessibility, and measurable business hypotheses.",
   "Prioritize Indian BFSI when relevant, especially DMI Finance, DMI Housing Finance, DMI Wealth, and Ujjivan Small Finance Bank.",
   "Be conversational like a helpful design colleague. Answer directly, explain trade-offs, and ask a follow-up only when a missing detail genuinely blocks the work.",
@@ -395,7 +394,7 @@ export async function POST(request: Request) {
   };
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const candidates = [ROUTER_MODEL, FALLBACK_MODEL, FINAL_FALLBACK_MODEL];
+  const candidates = [ROUTER_MODEL, FALLBACK_MODEL];
   const failures: string[] = [];
   let lastStatus = 502;
   const origin = new URL(request.url).origin;
@@ -419,7 +418,6 @@ export async function POST(request: Request) {
             messages: [{ role: "system", content: systemContent }, ...promptMessages],
             stream: true,
             temperature: 0.4,
-            provider: ANTHROPIC_OPENROUTER_PROVIDER,
             usage: { include: true },
           }),
           cache: "no-store",
@@ -430,20 +428,20 @@ export async function POST(request: Request) {
           const status = providerResponse.status;
           const message = [401, 403].includes(status)
             ? "OpenRouter rejected the configured API key or account access (HTTP " + status + ")."
-            : "Anthropic model " + currentModel + " via OpenRouter returned HTTP " + status + (details ? ": " + details : ".");
+            : "Model " + currentModel + " via OpenRouter returned HTTP " + status + (details ? ": " + details : ".");
           throw Object.assign(new Error(message), { status });
         }
         const probe = await probeForFirstText(providerResponse);
         if (!probe.hasText) {
           if (probe.reader) await probe.reader.cancel().catch(() => {});
-          throw Object.assign(new Error("Anthropic model " + currentModel + " via OpenRouter returned an empty text stream before its first token."), { status: 502 });
+          throw Object.assign(new Error("Model " + currentModel + " via OpenRouter returned an empty text stream before its first token."), { status: 502 });
         }
         // Stop the startup timer once the first visible text arrives; let the full answer stream without an app-imposed timeout.
         clearTimeout(timer);
         return { model: currentModel, probe, controller };
       } catch (error) {
         if (controller.signal.aborted) {
-          throw Object.assign(new Error("Anthropic model " + currentModel + " via OpenRouter did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
+          throw Object.assign(new Error("Model " + currentModel + " via OpenRouter did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
         }
         throw error;
       } finally {
@@ -456,8 +454,8 @@ export async function POST(request: Request) {
   const attempts: Array<ReturnType<typeof startAttempt>> = [];
   let winner: { model: string; probe: ProbedStream; controller: AbortController } | null = null;
 
-  // Fail over sequentially across Anthropic-only model IDs. Never invoke OpenRouter Auto
-  // or allow the provider router to switch to a non-Anthropic provider.
+  // Try MiniMax M3.1 Flash free first; on failure, use OpenRouter Auto with no
+  // per-request provider filters or router restrictions.
   for (const candidate of candidates) {
     const attempt = startAttempt(candidate);
     attempts.push(attempt);
@@ -482,7 +480,7 @@ export async function POST(request: Request) {
   }
 
   for (const attempt of attempts) attempt.controller.abort();
-  const userMessage = "Anthropic Claude via OpenRouter failed for all configured Anthropic models. " + failures.join(" | ");
+  const userMessage = "MiniMax M3.1 Flash free and unfiltered OpenRouter Auto both failed. " + failures.join(" | ");
   return NextResponse.json(
     { error: userMessage, attemptedModels: candidates },
     { status: lastStatus === 429 ? 429 : 502, headers: brainHeaders(brain, undefined, request) },
