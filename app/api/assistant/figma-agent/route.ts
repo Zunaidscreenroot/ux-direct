@@ -307,8 +307,8 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // User-selected model order: Luna first, OpenRouter Auto as the explicit fallback.
-  const models = ["openai/gpt-6-luna", "openrouter/auto"];
+  // Prefer Anthropic Claude Sonnet 5.5, retry on Claude Sonnet 5, then use low-cost OpenRouter Auto.
+  const models = ["anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5", "openrouter/auto"];
   const errors: string[] = [];
   for (const model of models) {
     const controller = new AbortController();
@@ -321,7 +321,7 @@ export async function POST(request: Request) {
           "Content-Type": "application/json",
           Accept: "application/json",
           "HTTP-Referer": new URL(request.url).origin,
-          "X-OpenRouter-Title": "UX Direct Figma Agent",
+          "X-OpenRouter-Title": "UX Direct Figma Agent · Anthropic Claude",
         },
         body: JSON.stringify({
           model,
