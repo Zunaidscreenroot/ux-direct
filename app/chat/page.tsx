@@ -11,7 +11,7 @@ type BrainTrace = {
   knowledgeChunkCount: number;
   durationMs: number;
   model?: string;
-  learningStatus?: "none" | "draft_saved" | "skipped_sensitive" | "failed";
+  learningStatus?: "none" | "learned" | "skipped_sensitive" | "failed";
 };
 type ChatMessage = { id: string; role: Role; content: string; brain?: BrainTrace };
 type ChatModel = { id: string; name: string; contextLength?: number };
@@ -204,7 +204,7 @@ export default function ChatWorkspace() {
         knowledgeChunkCount: Number(response.headers.get("X-UXD-Brain-References") || 0) || 0,
         durationMs: Number(response.headers.get("X-UXD-Brain-Latency-Ms") || 0) || 0,
         model: response.headers.get("X-UXD-Model") || selectedModel,
-        learningStatus: response.headers.get("X-UXD-Learning-Status") === "draft_saved" || response.headers.get("X-UXD-Learning-Status") === "skipped_sensitive" || response.headers.get("X-UXD-Learning-Status") === "failed" ? response.headers.get("X-UXD-Learning-Status") as "draft_saved" | "skipped_sensitive" | "failed" : "none",
+        learningStatus: response.headers.get("X-UXD-Learning-Status") === "learned" || response.headers.get("X-UXD-Learning-Status") === "skipped_sensitive" || response.headers.get("X-UXD-Learning-Status") === "failed" ? response.headers.get("X-UXD-Learning-Status") as "learned" | "skipped_sensitive" | "failed" : "none",
       };
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
