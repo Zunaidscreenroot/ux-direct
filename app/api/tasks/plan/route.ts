@@ -129,7 +129,7 @@ export async function POST(request: Request) {
       } else if (referencesUnstatedClient(candidate, originalUserInput + "\n" + parsed.data.title)) {
         learningCapture = { status: "filtered" };
         recordOperationalEvent({
-          source: isPluginRequest ? "figma-plugin" : "ux-direct",
+          source: isPluginRequest ? "figma-plugin" : "dashboard",
           event: "Shared brain task lesson filtered",
           status: "info",
           summary: "A task-derived candidate named a client not present in the task context; nothing was stored.",
