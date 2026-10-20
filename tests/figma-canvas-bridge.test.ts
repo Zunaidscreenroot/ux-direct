@@ -367,3 +367,26 @@ test("Libraries.dev Border Beam is wired to the composer focus and task lifecycl
   assert.equal(/uxd-orb-glow|uxd-orb-ring|uxd-orb-core|uxd-status-orbit/.test(pluginUi), false);
 });
 
+
+test("broad refinement routes through screenshot-aware design generation; precise layer commands use native edits", () => {
+  assert.ok(pluginUi.includes("function isBroadDesignRequest") || pluginUi.includes("broadDesignIntent"), "The dispatcher must explicitly distinguish broad redesign requests.");
+  assert.ok(pluginUi.includes("if (isDirectCanvasActionPrompt(prompt))"), "Precise native commands remain supported.");
+  assert.ok(pluginUi.includes("if (isDesignActionPrompt(prompt))"), "Broad design requests keep the full generation flow.");
+  assert.ok(pluginUi.includes("attachedImageData, visualCaptureWarning: visualCaptureWarning"), "Generation receives a separate user-attached visual reference.");
+  assert.ok(pluginUi.includes("repairIteration: 1"), "A second repair is allowed only after the first repair still fails the QA gate.");
+  assert.ok(pluginUi.includes("downloadNativeExport"), "Native export operations return a downloadable artifact.");
+});
+
+test("native action planner covers Figma page, export, boolean, flatten and image-fill APIs safely", () => {
+  for (const operation of ["flatten-nodes", "boolean-operation", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "create-image-fill"]) {
+    assert.ok(actionAgent.includes('"' + operation + '"'), "AI planner schema is missing " + operation);
+    assert.ok(mcp.includes('"' + operation + '"'), "MCP exposes missing operation " + operation);
+    assert.ok(bridge.includes('"' + operation + '"'), "Bridge is missing validation for " + operation);
+    assert.ok(plugin.includes('payload.operation === "' + operation + '"'), "Native executor is missing " + operation);
+  }
+  assert.ok(actionAgent.includes("canvas.pages"), "Page switching must validate against the approved-file page catalogue.");
+  assert.ok(actionAgent.includes("references a page ID outside the supplied approved-file page catalogue"));
+  assert.ok(actionAgent.includes("no user-attached image was provided"), "A screenshot may not be misused as an image asset.");
+  assert.ok(mcp.includes('"create-image-fill", "insert-image", "create-variables", "bind-variable"'), "MCP runtime permits the safe native image and token actions.");
+  assert.ok(mcp.includes('["current-page", "selection", "node", "test-lab"].includes(String(input.target))'), "MCP and bridge agree on the node target.");
+});

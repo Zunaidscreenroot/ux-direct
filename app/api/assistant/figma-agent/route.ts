@@ -365,6 +365,7 @@ export async function POST(request: Request) {
     model: z.string().trim().min(1).max(100).optional(),
     canvas: z.unknown(),
     renderedScreen: z.string().max(52000).nullable().optional(),
+    referenceImage: z.string().max(250000).nullable().optional(),
     visualCaptureWarning: z.string().max(400).optional(),
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
@@ -375,6 +376,9 @@ export async function POST(request: Request) {
     parsedInput.data.renderedScreen.length <= 52000 &&
     new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.renderedScreen)
     ? parsedInput.data.renderedScreen : null;
+  const referenceImage = typeof parsedInput.data.referenceImage === "string" &&
+    new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.referenceImage)
+    ? parsedInput.data.referenceImage : null;
   const canvas = compactCanvas(parsedInput.data.canvas);
   const selectedRoot = Array.isArray(canvas.nodes) && canvas.nodes[0] && typeof canvas.nodes[0] === "object"
     ? canvas.nodes[0] as Record<string, unknown> : {};
@@ -394,7 +398,7 @@ export async function POST(request: Request) {
     operatingContract: [
       "Treat the user's short prompt as the requested design change, not as the full procedure. Apply the built-in senior designer and expert Figma workflow automatically.",
       "Inventory and preserve all meaningful source text, labels, values, amounts, dates, statuses, indicators, icons, repeated rows, and relationships unless the user explicitly asks to change them.",
-      "Use both the rendered screenshot (when available) and native layer tree to infer visual style, layout, information hierarchy, reusable patterns, and content density before planning.",
+      "Use both the rendered screenshot (when available) and native layer tree to infer visual style, layout, information hierarchy, reusable patterns, and content density before planning. If the user also attached a separate reference image, use it as visual inspiration or as content only when requested; never confuse it with the source screenshot or invent a successful asset insertion.",
       "Translate only the requested improvement into a meaningful variation; preserve the source product identity and do not replace specific UI with generic cards.",
       "Build editable semantic FRAME containers with logically nested layers. Use native Auto Layout and modern HUG/FILL/FIXED sizing on content stacks, card internals, tabs, repeated information rows and actions. A normal child in an Auto Layout parent should not rely on x/y; reserve layoutPositioning=ABSOLUTE for true overlays and intentionally layered indicators.",
       "When the local style catalogue contains a suitable style, reuse exact paintStyleId/textStyleId/effectStyleId/gridStyleId rather than recreating equivalent colors or typography. Use text styles only on TEXT nodes and reference only IDs from the supplied catalogue.",
@@ -403,6 +407,7 @@ export async function POST(request: Request) {
     ],
     visualCapture: renderedScreen ? "Rendered selected-node image is attached." :
       parsedInput.data.visualCaptureWarning || "No rendered image available; use native layer evidence and do not claim visual inspection.",
+    referenceImage: referenceImage ? "A user-attached reference image is included separately from the source screenshot." : null,
     figmaCanvas: canvas,
   });
   if (userContext.length > 52000) return NextResponse.json({ error: "Selection context is too large. Select a smaller frame or reduce the number of layers." }, { status: 413, headers });
@@ -470,11 +475,11 @@ export async function POST(request: Request) {
           : (renderedScreen
             ? "Design a high-fidelity, source-faithful improvement. Combine the rendered screen image with its native layer tree. Avoid generic redesigns. Context:\n" + userContext
             : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext);
-        const userContent: string | Array<Record<string, unknown>> = renderedScreen
-          ? [
-              { type: "text", text: modelUserText },
-              { type: "image_url", image_url: { url: renderedScreen } },
-            ]
+        const modelImages: Array<Record<string, unknown>> = [];
+        if (renderedScreen) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
+        if (referenceImage) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
+        const userContent: string | Array<Record<string, unknown>> = modelImages.length
+          ? [{ type: "text", text: modelUserText }, ...modelImages]
           : modelUserText;
         const response = await fetch(endpoint, {
           method: "POST",

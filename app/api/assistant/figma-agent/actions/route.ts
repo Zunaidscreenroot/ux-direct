@@ -147,14 +147,20 @@ const elementSchema: z.ZodTypeAny = z.lazy(() => z.object({
 }));
 
 const actionSchema = z.object({
-  operation: z.enum(["update-node", "create-elements", "insert-image", "delete-node", "clone-node", "reorder-node", "reparent-node",
-    "group-nodes", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
-    "detach-instance", "set-text-range", "apply-style", "create-variables", "bind-variable", "set-selection", "zoom-to-nodes"]),
+  operation: z.enum(["update-node", "create-elements", "insert-image", "create-image-fill", "delete-node", "clone-node", "reorder-node", "reparent-node",
+    "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
+    "detach-instance", "set-text-range", "apply-style", "create-variables", "bind-variable", "set-selection", "zoom-to-nodes",
+    "create-page", "rename-page", "set-current-page", "export-svg", "export-node"]),
   nodeId: z.string().trim().min(1).max(100).optional(),
   parentNodeId: z.string().trim().min(1).max(100).optional(),
   nodeIds: z.array(z.string().trim().min(1).max(100)).max(100).optional(),
   index: z.number().int().min(0).max(10000).optional(),
   componentId: z.string().trim().min(1).max(100).optional(),
+  booleanOperation: z.enum(["UNION", "SUBTRACT", "INTERSECT", "EXCLUDE"]).optional(),
+  pageId: z.string().trim().min(1).max(100).optional(),
+  pageName: z.string().trim().min(1).max(120).optional(),
+  format: z.enum(["PNG", "JPG", "PDF", "SVG_STRING"]).optional(),
+  scale: z.number().finite().min(0.05).max(1).optional(),
   styleKind: z.enum(["paint", "text", "effect", "grid"]).optional(),
   styleId: z.string().trim().min(1).max(300).optional(),
   styleName: z.string().trim().min(1).max(240).optional(),
@@ -192,7 +198,15 @@ const actionSchema = z.object({
   if (v.operation === "update-node" && (!v.nodeId || !v.patch)) ctx.addIssue({ code: "custom", path: [], message: "update-node requires nodeId and patch." });
   if (v.operation === "create-elements" && (!v.target || (v.target === "node" && !v.parentNodeId) || !v.elements)) ctx.addIssue({ code: "custom", path: [], message: "create-elements requires target, an optional target parent, and elements." });
   if (v.operation === "insert-image" && (!v.useAttachedImage || !v.target || (v.target === "node" && !v.parentNodeId))) ctx.addIssue({ code: "custom", path: [], message: "insert-image requires an attached image and a target." });
-  if (["delete-node", "clone-node", "reorder-node", "create-component", "create-instance", "detach-instance", "set-text-range", "apply-style", "bind-variable", "reparent-node"].includes(v.operation) && !v.nodeId) ctx.addIssue({ code: "custom", path: ["nodeId"], message: "This operation requires nodeId." });
+  if (v.operation === "create-image-fill" && (!v.nodeId || !v.useAttachedImage)) ctx.addIssue({ code: "custom", path: [], message: "create-image-fill requires a selected node and a user-attached image." });
+  if (v.operation === "flatten-nodes" && (!v.nodeIds || v.nodeIds.length < 1)) ctx.addIssue({ code: "custom", path: ["nodeIds"], message: "flatten-nodes requires sibling node IDs." });
+  if (v.operation === "boolean-operation" && (!v.nodeIds || v.nodeIds.length < 2 || !v.booleanOperation)) ctx.addIssue({ code: "custom", path: [], message: "boolean-operation requires at least two sibling node IDs and a booleanOperation." });
+  if (v.operation === "create-page" && !v.pageName) ctx.addIssue({ code: "custom", path: ["pageName"], message: "create-page requires pageName." });
+  if (v.operation === "rename-page" && !v.pageName) ctx.addIssue({ code: "custom", path: ["pageName"], message: "rename-page requires pageName." });
+  if (v.operation === "set-current-page" && !v.pageId) ctx.addIssue({ code: "custom", path: ["pageId"], message: "set-current-page requires pageId from the supplied page catalogue." });
+  if (v.operation === "export-node" && (!v.nodeId || !v.format)) ctx.addIssue({ code: "custom", path: ["format"], message: "export-node requires nodeId and format." });
+  if (v.operation === "export-svg" && !v.nodeId) ctx.addIssue({ code: "custom", path: ["nodeId"], message: "export-svg requires nodeId." });
+  if (["delete-node", "clone-node", "reorder-node", "create-component", "create-instance", "detach-instance", "set-text-range", "apply-style", "bind-variable", "reparent-node", "create-image-fill", "export-svg", "export-node"].includes(v.operation) && !v.nodeId) ctx.addIssue({ code: "custom", path: ["nodeId"], message: "This operation requires nodeId." });
   if (v.operation === "reparent-node" && (!v.parentNodeId || v.parentNodeId === v.nodeId)) ctx.addIssue({ code: "custom", path: ["parentNodeId"], message: "reparent-node requires a different parentNodeId." });
   if (v.operation === "reorder-node" && v.index === undefined) ctx.addIssue({ code: "custom", path: ["index"], message: "reorder-node requires index." });
   if (["group-nodes", "create-component-set"].includes(v.operation) && (!v.nodeIds || v.nodeIds.length < 2)) ctx.addIssue({ code: "custom", path: ["nodeIds"], message: v.operation + " requires at least two node IDs." });
@@ -256,8 +270,12 @@ export async function POST(request: Request) {
         isRecord(mode) && typeof mode.modeId === "string" && typeof mode.name === "string"
           ? [{ modeId: mode.modeId.slice(0, 100), name: mode.name.slice(0, 100) }] : []) : [] }];
   }) : [];
-  const canvas = { pageName: typeof canvasRaw.pageName === "string" ? canvasRaw.pageName.slice(0, 100) : "",
-    nodes: canvasNodes, nodeCount: state.count, styles, variables, variableCollections };
+  const pages = Array.isArray(canvasRaw.pages) ? canvasRaw.pages.slice(0, 100).flatMap((page) =>
+    isRecord(page) && typeof page.id === "string" && typeof page.name === "string"
+      ? [{ id: page.id.slice(0, 100), name: page.name.slice(0, 120) }] : []) : [];
+  const canvas = { pageId: typeof canvasRaw.pageId === "string" ? canvasRaw.pageId.slice(0, 100) : "",
+    pageName: typeof canvasRaw.pageName === "string" ? canvasRaw.pageName.slice(0, 100) : "",
+    pages, nodes: canvasNodes, nodeCount: state.count, styles, variables, variableCollections };
   const allowedIds = flattenNodes(canvasNodes);
   if (allowedIds.size === 0) return NextResponse.json({ error: "Select a layer/container first so the action planner can target real Figma node IDs." }, { status: 400, headers });
   const referenceImage = typeof input.data.referenceImage === "string" &&
@@ -268,12 +286,12 @@ export async function POST(request: Request) {
   const system = [
     UX_DIRECT_DESIGN_ROLE + " You are the native-canvas action planner for UX Direct. Work on actual selected/inspected Figma nodes; do not create a new screen unless explicitly requested.",
     "Translate the user's request into the smallest valid ordered set of native Figma operations. Return JSON only: {summary:string, actions:[...]}. Each action maps directly to a Figma native command; the plugin executes them sequentially and verifies read-back.",
-    "Allowed operations: update-node, create-elements, insert-image, delete-node, clone-node, reorder-node, reparent-node, group-nodes, ungroup-node, create-component, create-component-set, create-instance, swap-component, detach-instance, set-text-range, apply-style, create-variables, bind-variable, set-selection, zoom-to-nodes.",
+    "Allowed operations: update-node, create-elements, insert-image, create-image-fill, delete-node, clone-node, reorder-node, reparent-node, group-nodes, flatten-nodes, boolean-operation, ungroup-node, create-component, create-component-set, create-instance, swap-component, detach-instance, set-text-range, apply-style, create-variables, bind-variable, set-selection, zoom-to-nodes, create-page, rename-page, set-current-page, export-svg, export-node.",
     "For color or text fill changes use update-node.patch.fillColor; for text content edits use update-node.patch.text. For typography set fontFamily, fontStyle, fontSize, textAutoResize and textAlignHorizontal only on TEXT nodes. For responsive UI use layoutMode, itemSpacing, padding, alignment, sizing and constraints through update-node; prefer modern HUG/FILL sizing with an Auto Layout parent.",
-    "Use only node IDs that appear in canvas. Do not guess or fabricate IDs. If the target is ambiguous, choose the smallest reasonable set in the current selection and name it in the summary. Never delete nodes unless deletion was explicitly asked. Preserve unrelated content and the original visual intent.",
+    "Use only node IDs that appear in canvas. Do not guess or fabricate IDs. Page changes are separate: set-current-page must use an exact ID from canvas.pages; create-page/rename-page require a direct request. If the target is ambiguous, choose the smallest reasonable set in the current selection and name it in the summary. Never delete nodes unless deletion was explicitly asked. Preserve unrelated content and the original visual intent.",
     "Use create-elements to add native layers into the current selected container (target:'node', parentNodeId:'...'). Children are nested under FRAME elements only. Use insert-image only when an actual user-attached image is available in this request; set useAttachedImage:true and don't invent an image URL. A rendered screenshot is visual evidence only, not an insertable asset. Never place base64 data in model output.",
     "When a rendered screenshot is available, inspect hierarchy, text density, collisions, clipped content, component boundaries and spacing. Prefer minimal direct edits for narrow requests; use coherent native action batches for broader requests.",
-    "Use apply-style only with a local style in canvas.styles (exact style ID preferred; exact name allowed only when unique). If absent or ambiguous, use a supported literal property instead of guessing. Use create-variables only for explicit design-token requests; bind-variable only to a variable listed in canvas.variables and pass its exact collectionName when duplicate names exist. For variants, create components first, then combine only actual sibling components.",
+    "Use apply-style only with a local style in canvas.styles (exact style ID preferred; exact name allowed only when unique). If absent or ambiguous, use a supported literal property instead of guessing. Use create-variables only for explicit design-token requests; bind-variable only to a variable listed in canvas.variables and pass its exact collectionName when duplicate names exist. For variants, create components first, then combine only actual sibling components. Use create-image-fill only for a user-attached image and an exact selected node ID; a rendered screenshot is evidence, not an asset. Use exports only when the user requests a deliverable or preview.",
     "Operation count 1–12. Use the least number of actions, prefer one update patch per node, and never return explanatory prose, markdown, unsupported fields, or tool calls.",
     "Native execution is irreversible for some operations. Ask for no confirmation in JSON; the host requires explicit user prompt to execute, and delete-node is allowed only when the request clearly asks to delete/remove.",
   ].join("\n");
@@ -331,6 +349,19 @@ export async function POST(request: Request) {
         return catalogue.filter((style) => style.name === action.styleName).length !== 1;
       });
       if (invalidStyleAction) { errors.push(model + ": apply-style references a missing or ambiguous local style; use an exact supplied style ID or literal property edit"); continue; }
+      const pages = Array.isArray(canvas.pages) ? canvas.pages as Array<Record<string, unknown>> : [];
+      const invalidPageAction = actions.find((action) => action.operation === "set-current-page" &&
+        !pages.some((page) => page.id === action.pageId));
+      if (invalidPageAction) { errors.push(model + ": set-current-page references a page ID outside the supplied approved-file page catalogue"); continue; }
+      if (actions.some((action) => action.operation === "create-page") && !/\b(create|add|new)\b.{0,32}\bpage\b/i.test(input.data.prompt)) {
+        errors.push(model + ": create-page rejected because the prompt did not explicitly request a new page"); continue;
+      }
+      if (actions.some((action) => action.operation === "rename-page") && !/\b(rename|name)\b.{0,32}\bpage\b/i.test(input.data.prompt)) {
+        errors.push(model + ": rename-page rejected because the prompt did not explicitly request a page rename"); continue;
+      }
+      if (actions.some((action) => action.operation === "set-current-page") && !/\b(open|switch|go|navigate|change)\b.{0,32}\bpage\b/i.test(input.data.prompt)) {
+        errors.push(model + ": set-current-page rejected because the prompt did not explicitly request a page switch"); continue;
+      }
       const variables = Array.isArray(canvas.variables) ? canvas.variables as Array<Record<string, unknown>> : [];
       const invalidVariableAction = actions.find((action) => {
         if (action.operation !== "bind-variable") return false;
@@ -342,8 +373,8 @@ export async function POST(request: Request) {
       if (actions.some(a => a.operation === "delete-node") && !/\b(delete|remove|discard)\b/i.test(input.data.prompt)) {
         errors.push(model + ": deletion rejected because the prompt does not explicitly request removal"); continue;
       }
-      if (actions.some(a => a.operation === "insert-image") && !referenceImage) {
-        errors.push(model + ": image insertion rejected because no image was attached"); continue;
+      if (actions.some(a => ["insert-image", "create-image-fill"].includes(a.operation)) && !referenceImage) {
+        errors.push(model + ": image insertion/fill rejected because no user-attached image was provided"); continue;
       }
       return NextResponse.json({ ok: true, summary: parsedActions.data.summary, actions, model: typeof envelope.model === "string" ? envelope.model : model,
         inspectedNodes: allowedIds.size, referenceImageAttached: !!referenceImage }, { headers });

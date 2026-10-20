@@ -707,13 +707,27 @@
     }
 
     function isDesignActionPrompt(prompt) {
-      return /\b(create|build|generate|design|redesign|improve|refine|make|update|edit|modify|change|add|remove|fix|rework|duplicate|variation|variant|recreate)\b/i.test(prompt);
+      return /\b(create|build|generate|design|redesign|improve|refine|make|update|edit|modify|change|add|remove|fix|rework|duplicate|variation|variant|recreate|wireframe|screen|interface|user flow)\b/i.test(prompt);
     }
 
     function isDirectCanvasActionPrompt(prompt) {
-      return /\b(edit|update|rewrite|replace|rename|recolor|restyle|resize|move|align|reposition|refine|improve|polish|fine[- ]?tune|tidy|correct|set|apply|insert|attach|delete|remove|clone|duplicate|group|ungroup|reorder|wrap|bind|auto.?layout|hug|fill|stroke|padding|spacing|typography|line.?height|letter.?spacing|swap component|make component|create component|create variant|create variables?|bind variable|apply style)\b/i.test(prompt) ||
-        /\b(change|fix)\s+(?:the\s+)?(?:text|label|title|copy|value|fill|color|stroke|font|size|position|spacing|padding|layout|alignment|background|corner radius|shadow|constraint|variable|icon|button)\b/i.test(prompt) ||
-        /\b(add|insert|place)\s+(?:a|an|the|another|new)?\s*(?:image|photo|logo|icon|button|label|text|row|tab|card|divider|component|variant|variable|shape|frame)\b/i.test(prompt);
+      const text = String(prompt || "").trim();
+      if (!text) return false;
+      // A short, broad instruction is a design task, not a one-node patch.
+      // This keeps "refine this", "improve hierarchy", and "make this better"
+      // on the screenshot-aware variation + visual QA path.
+      const broadDesignIntent = /\b(refine|improve|polish|redesign|rework|make better|make this better|create a variation|design|generate|build)\b/i.test(text) &&
+        !/\b(?:the|this|selected|existing)\s+(?:text|label|title|copy|value|fill|color|stroke|font|size|position|spacing|padding|layout|alignment|background|corner radius|shadow|constraint|variable|icon|button|image|layer|node|component|page|style|token)\b/i.test(text) &&
+        !/\b(?:rename|recolor|resize|move|align|reposition|replace|rewrite|set|apply|insert|attach|delete|remove|clone|duplicate|group|ungroup|reorder|wrap|bind|swap|detach|flatten|export|create page|rename page|switch to page|make component|create component|create variant|create variables?|bind variable|apply style|auto.?layout|hug|fill|stroke|padding|letter.?spacing|line.?height)\b/i.test(text);
+      if (broadDesignIntent) return false;
+
+      const explicitNativeOperation = /\b(edit|update|rewrite|replace|rename|recolor|restyle|resize|move|align|reposition|set|apply|insert|attach|delete|remove|clone|duplicate|group|ungroup|reorder|wrap|bind|swap|detach|flatten|export|switch|open)\b/i.test(text);
+      const directTarget = /\b(text|label|title|copy|value|fill|color|stroke|font|size|position|spacing|padding|layout|alignment|background|corner radius|shadow|constraint|variable|icon|button|image|photo|logo|layer|node|component|variant|page|frame|selection|canvas|style|token|auto.?layout|hug|fill|text range|line height|letter spacing)\b/i.test(text);
+      const refinementOfSpecificTarget = /\b(refine|improve|polish|fine[- ]?tune|tidy|correct)\b/i.test(text) &&
+        /\b(the|this|selected|existing)\s+(?:text|label|title|copy|value|fill|color|stroke|font|size|position|spacing|padding|layout|alignment|background|corner radius|shadow|constraint|variable|icon|button|image|layer|node|component|style|token)\b/i.test(text);
+      const addNativeObject = /\b(add|insert|place|attach|create)\s+(?:a|an|the|another|new)?\s*(?:image|photo|logo|icon|button|label|text|row|tab|card|divider|component|variant|variable|shape|frame|layer|instance)\b/i.test(text);
+      const componentOrSystemOperation = /\b(create component|make component|create variant|combine as variants|create variables?|bind variable|apply style|swap component|detach instance|create page|rename page|switch to page|go to page|flatten|boolean union|boolean subtract|export (?:as|to)|export node|export svg)\b/i.test(text);
+      return (explicitNativeOperation && directTarget) || refinementOfSpecificTarget || addNativeObject || componentOrSystemOperation;
     }
 
     async function compressAttachedImage(file) {
@@ -757,6 +771,7 @@
 
     async function runVisualQualityLoop(options) {
       const prompt = String(options && options.prompt || "");
+      const repairIteration = Number(options && options.repairIteration) || 0;
       const sourceCanvas = options && options.sourceCanvas;
       const sourceImage = options && options.sourceImage || null;
       const notify = typeof (options && options.reportProgress) === "function" ? options.reportProgress : function () {};
@@ -811,7 +826,7 @@
         const response = await fetch(API + "/api/assistant/figma-agent/refine", {
           method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
           cache: "no-store",
-          body: JSON.stringify({ prompt: prompt, review: review, outputCanvas: outputCanvas, iteration: 1 })
+          body: JSON.stringify({ prompt: prompt, review: review, outputCanvas: outputCanvas, iteration: repairIteration + 1 })
         });
         const result = await response.json().catch(function () { return {}; });
         if (response.ok && result.ok === true && Array.isArray(result.patch)) refinement = result;
@@ -862,12 +877,62 @@
       if (finalReview && finalReview.review) {
         review = finalReview.review; score = Number.isFinite(review.score) ? review.score : score;
         issues = Array.isArray(review.issues) ? review.issues : [];
+        const stillNeedsRepair = finalReview.qualityGate && finalReview.qualityGate.passed === false &&
+          (score === null || score < 82 || issues.some(function (item) { return item && ["high", "medium"].includes(item.severity); }));
+        if (stillNeedsRepair && repairIteration === 0) {
+          stage("Visual QA still reports " + issues.length + " actionable issue(s) · running the final bounded repair pass…");
+          const secondPass = await runVisualQualityLoop({
+            prompt: prompt, sourceCanvas: sourceCanvas, sourceImage: sourceImage,
+            outputCanvas: outputCanvas, outputImage: capture.dataUrl || null,
+            repairIteration: 1, reportProgress: notify
+          });
+          return {
+            text: "First surgical pass applied " + applied + " patch(es).\n" + String(secondPass.text || ""),
+            score: Number.isFinite(secondPass.score) ? secondPass.score : score,
+            repaired: true, issues: Array.isArray(secondPass.issues) ? secondPass.issues : issues
+          };
+        }
         return { text: "Visual QA " + (score === null ? "completed" : score + "/100") + " after " + applied +
-          " surgical repair(s) · " + (issues.length ? issues.length + " issue(s) remain for manual review." : "no actionable defects reported."),
+          " surgical repair(s) · " + (stillNeedsRepair ? "quality gate still reports issues; inspect manually." :
+            issues.length ? "issue(s) remain for manual review." : "no actionable defects reported."),
           score: score, repaired: true, issues: issues };
       }
       return { text: "Visual QA first pass " + (score === null ? "completed" : score + "/100") +
         " · applied " + applied + " repair(s); final visual review was unavailable.", score: score, repaired: true, issues: issues };
+    }
+
+    function downloadNativeExport(result, action, root) {
+      const format = action.operation === "export-svg" ? "SVG_STRING" : (action.format || "PNG");
+      const safeBase = String(action.name || (root && root.name) || "ux-direct-export")
+        .replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 70) || "ux-direct-export";
+      let blob;
+      let extension;
+      if (format === "SVG_STRING") {
+        const svg = typeof result.svg === "string" ? result.svg : typeof result.data === "string" ? result.data : "";
+        if (!svg || svg.length > 35000) throw new Error("Figma returned no safe SVG export data.");
+        blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+        extension = "svg";
+      } else {
+        if (typeof result.base64 !== "string" || result.base64.length > 48000) throw new Error("Figma returned no safe binary export data.");
+        const binary = atob(result.base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const types = { PNG: ["image/png", "png"], JPG: ["image/jpeg", "jpg"], PDF: ["application/pdf", "pdf"] };
+        const descriptor = types[format];
+        if (!descriptor) throw new Error("Unsupported export format: " + format);
+        blob = new Blob([bytes], { type: descriptor[0] });
+        extension = descriptor[1];
+      }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = safeBase + "." + extension;
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+      return link.download;
     }
 
     async function executeNativeActionPlan(prompt, reportProgress) {
@@ -875,7 +940,7 @@
       function stage(state, message) { setProcessState(state, message); notify(message); }
       stage("scanning", "Inspecting selected Figma layers, text, layout and styles…");
       const canvas = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true
+        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true, includePages: true
       }, 90000);
       if (!canvas || !Array.isArray(canvas.nodes) || !canvas.nodes.length) {
         throw new Error("Select the frame, text layer, shape, or component you want to edit first.");
@@ -974,19 +1039,34 @@
           }), 90000);
           if (!result || result.ok === false) throw new Error("Figma could not insert the attached image.");
           changed += 1;
+        } else if (action.operation === "create-image-fill") {
+          if (!attachedImageData) throw new Error("Attach an image first. A rendered screenshot cannot be used as an inserted asset.");
+          const result = await runNativeCanvasCommand("write-canvas", Object.assign({}, base, {
+            nodeId: action.nodeId, imageBase64: attachedImageData, scaleMode: action.scaleMode || "FILL"
+          }), 90000);
+          if (!result || result.ok === false) throw new Error("Figma could not apply the attached image fill.");
+          changed += 1;
         } else {
           const keys = ["nodeId", "parentNodeId", "nodeIds", "index", "componentId", "styleKind", "styleId", "styleName",
-            "patch", "range", "target", "pageName", "pageId", "format", "collectionName", "modeName", "variables", "variableName", "property"];
+            "patch", "range", "target", "pageName", "pageId", "format", "scale", "booleanOperation", "collectionName", "modeName",
+            "variables", "variableName", "property", "name", "x", "y", "width", "height", "cornerRadius", "scaleMode",
+            "layoutPositioning", "layoutSizingHorizontal", "layoutSizingVertical"];
           const body = Object.assign({}, base);
           keys.forEach(function (key) { if (action[key] !== undefined) body[key] = action[key]; });
           const result = await runNativeCanvasCommand("write-canvas", body, 90000);
           if (!result || result.ok === false) throw new Error("Figma rejected " + action.operation + ".");
-          changed += action.operation === "create-variables" ? 0 : 1;
+          if (["export-node", "export-svg"].includes(action.operation)) {
+            const file = downloadNativeExport(result, action, root);
+            stage("creating", "Exported " + file + " from the native Figma node.");
+          } else {
+            changed += action.operation === "create-variables" || action.operation === "create-page" ||
+              action.operation === "rename-page" || action.operation === "set-current-page" ? 0 : 1;
+          }
         }
         stage("creating", "Applied " + (index + 1) + "/" + actions.length + " · " + action.operation);
       }
 
-      if (attachedImageData && actions.some(function (a) { return a.operation === "insert-image"; })) {
+      if (attachedImageData && actions.some(function (a) { return ["insert-image", "create-image-fill"].includes(a.operation); })) {
         attachedImageData = null; attachedImageName = ""; renderAttachmentChip();
       }
       stage("verifying", "Reading back the edited native properties…");
@@ -996,7 +1076,7 @@
       }
       let visualNote = "";
       const hasVisualMutations = actions.some(function (action) {
-        if (["create-elements", "insert-image", "create-component", "create-component-set", "swap-component"].includes(action.operation)) return true;
+        if (["create-elements", "insert-image", "create-image-fill", "create-component", "create-component-set", "swap-component", "boolean-operation", "flatten-nodes"].includes(action.operation)) return true;
         if (action.operation !== "update-node" || !action.patch) return false;
         return Object.keys(action.patch).some(function (key) {
           return ["text", "fontSize", "fontFamily", "fillColor", "strokeColor", "width", "height", "x", "y",
@@ -1068,7 +1148,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, visualCaptureWarning: visualCaptureWarning })
+        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning })
       });
       const payload = await response.json().catch(function () { return {}; });
       if (!response.ok || payload.ok !== true || !payload.plan || !Array.isArray(payload.plan.elements)) {

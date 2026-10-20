@@ -1041,7 +1041,7 @@ async function callTool(name: string, args: unknown, request: Request) {
     const allowedOperations = new Set([
       "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node",
       "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
-      "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
+      "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "insert-image", "create-variables", "bind-variable",
     ]);
     if (input.confirm !== true) return toolText({ error: "Write blocked: confirm=true is required after an explicit request for this specific canvas action." }, true);
     if (typeof input.operation !== "string" || !allowedOperations.has(input.operation)) {
@@ -1063,6 +1063,7 @@ async function callTool(name: string, args: unknown, request: Request) {
       ...(input.booleanOperation === undefined ? {} : { booleanOperation: input.booleanOperation }),
       ...(input.componentId === undefined ? {} : { componentId: input.componentId }),
       ...(input.format === undefined ? {} : { format: input.format }),
+      ...(input.scale === undefined ? {} : { scale: input.scale }),
       ...(input.range === undefined ? {} : { range: input.range }),
       ...(input.imageBase64 === undefined ? {} : { imageBase64: input.imageBase64 }),
       ...(input.scaleMode === undefined ? {} : { scaleMode: input.scaleMode }),
@@ -1083,8 +1084,8 @@ async function callTool(name: string, args: unknown, request: Request) {
       ...(input.patch === undefined ? {} : { patch: input.patch }),
       ...(input.actions === undefined ? {} : { actions: input.actions }),
     };
-    if (input.target !== undefined && !["current-page", "selection", "test-lab"].includes(String(input.target))) {
-      return toolText({ error: "target must be current-page, selection, or test-lab." }, true);
+    if (input.target !== undefined && !["current-page", "selection", "node", "test-lab"].includes(String(input.target))) {
+      return toolText({ error: "target must be current-page, selection, node, or test-lab." }, true);
     }
     if (input.operation === "batch" && (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 40)) return toolText({ error: "batch requires 1–40 actions." }, true);
     if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && ["export-svg", "export-node", "create-image-fill", "insert-image"].includes(String((step as Record<string, unknown>).operation))) && input.actions.length > 1) return toolText({ error: "Exports and inline image fills must be standalone commands." }, true);
