@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { buildBrainSystemPrompt, buildRetrievalQuery, resolveBrainScopes } from "@/src/memory/chat-context";
 import { retrieveBrainContext, saveBrainFeedback } from "@/src/memory/shared-brain";
-import { detectCoachingSignal, detectExplicitTrainingIntent, resolveChatLearningScope } from "@/src/memory/learning-signal";
+import { detectCoachingSignal, detectExplicitTrainingIntent, resolveChatLearningScope, resolveLearningScope } from "@/src/memory/learning-signal";
+import { createLearningMarkerTransform, type InlineLearningCandidate } from "@/src/memory/inline-learning";
+import { recordOperationalEvent } from "@/src/observability/event-log";
 import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
 
 export const runtime = "nodejs";
@@ -53,6 +55,7 @@ const SYSTEM_PROMPT = [
   "Never invent evidence, claim you inspected a website when you did not, or treat a hypothesis as a measured business outcome.",
   "For UX findings, distinguish observed evidence, interpretation, severity, recommendation, and validation.",
   "Only use retrieved approved shared-brain context when it is relevant. Current user instructions and direct evidence take precedence.",
+  "Private task-learning protocol: if this response contains one durable, reusable UX/product/design-system/accessibility/workflow lesson learned from the user's task, append exactly one final marker after the answer: <UXD_LEARNING>{JSON}</UXD_LEARNING>. JSON fields: title, normalizedRule, rationale, scopeKey, feedbackKind, keywords, originalLanguage. Omit the marker for greetings, simple facts, transient requests, speculative conclusions, or tasks with no reusable lesson. Keep normalizedRule concise and generalizable. Prefer narrow project/client scope; use indian-bfsi only for reusable Indian financial-services patterns, project:ux-direct for Figma/plugin/tooling, project:ux-audit for audit workflow, project:general-ux for general task patterns, and UX_SHARED_BRAIN only for genuinely cross-product rules. Never include raw prompts, screenshot or canvas text, personal identifiers, financial/health details, secrets, or confidential client facts. The private marker is removed before the answer reaches the user; never explain it in normal prose.",
 ].join(" ");
 
 function safeCount(value: unknown): number {
@@ -193,8 +196,73 @@ async function probeForFirstText(response: Response): Promise<ProbedStream> {
   return { reader, chunks, hasText: foundText };
 }
 
-function forwardProbedStream(probe: ProbedStream, brain: BrainContextInfo, model: string, request: Request): Response {
-  const body = new ReadableStream<Uint8Array>({
+async function persistInlineTaskLearning(
+  candidate: InlineLearningCandidate,
+  context: string,
+  sourceProduct: "ux-direct" | "figma-plugin",
+): Promise<void> {
+  try {
+    // Explicit coaching already has its own capture path; avoid writing a duplicate.
+    if (detectCoachingSignal(context) || detectExplicitTrainingIntent(context)) return;
+    const scopeKey = resolveLearningScope(candidate.scopeKey, "general", context);
+    const rule = candidate.normalizedRule.trim();
+    const idempotencyKey = "uxd-inline-task-learning-" + createHash("sha256")
+      .update([sourceProduct, scopeKey, rule.toLowerCase()].join("|"))
+      .digest("hex");
+    const saved = await saveBrainFeedback({
+      rawFeedback: "Task-derived reusable lesson: " + rule,
+      summary: rule.slice(0, 500),
+      title: candidate.title,
+      normalizedRule: rule,
+      rationale: "Extracted from a UX Direct task response. The raw conversation and canvas material are not persisted in shared memory.",
+      scopeKey,
+      feedbackKind: candidate.feedbackKind,
+      keywords: candidate.keywords,
+      examples: [],
+      originalLanguage: candidate.originalLanguage,
+      sourceProduct,
+      idempotencyKey,
+      metadata: {
+        captureMode: "automatic-inline-task-learning",
+        rawTaskBriefPersisted: false,
+        rawCanvasContentPersisted: false,
+        requiresOwnerApproval: false,
+        automaticActivation: true,
+      },
+    });
+    recordOperationalEvent({
+      source: sourceProduct,
+      event: "Inline task learning evaluated",
+      status: saved.activated === true ? "success" : "info",
+      summary: saved.activated === true
+        ? "A compact task-derived lesson passed shared-brain relevance and scope checks."
+        : "A matching task-derived lesson remains inactive because it was previously archived or rejected.",
+      category: "Shared Brain",
+    });
+  } catch (error) {
+    const filtered = error instanceof Error && /below the 50% ingestion threshold/i.test(error.message);
+    recordOperationalEvent({
+      source: sourceProduct,
+      event: filtered ? "Inline task learning filtered" : "Inline task learning capture failed",
+      status: filtered ? "info" : "warning",
+      summary: filtered
+        ? "The compact task-derived candidate did not meet the relevance threshold; nothing was stored."
+        : "Optional task-derived learning could not be stored; the chat response was still completed.",
+      category: "Shared Brain",
+    });
+  }
+}
+
+function forwardProbedStream(
+  probe: ProbedStream,
+  brain: BrainContextInfo,
+  model: string,
+  request: Request,
+  learningContext: string,
+): Response {
+  let streamReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  const candidates: InlineLearningCandidate[] = [];
+  const source = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
         for (const chunk of probe.chunks) controller.enqueue(chunk);
@@ -214,12 +282,40 @@ function forwardProbedStream(probe: ProbedStream, brain: BrainContextInfo, model
       if (probe.reader) await probe.reader.cancel(reason).catch(() => {});
     },
   });
+  const filtered = source.pipeThrough(createLearningMarkerTransform((candidate) => {
+    if (candidates.length === 0) candidates.push(candidate);
+  }));
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      streamReader = filtered.getReader();
+      try {
+        while (true) {
+          const result = await streamReader.read();
+          if (result.done) break;
+          controller.enqueue(result.value);
+        }
+        if (candidates[0]) {
+          const origin = request.headers.get("origin");
+          const sourceProduct = origin && ALLOWED_FIGMA_ORIGINS.has(origin) ? "figma-plugin" : "ux-direct";
+          await persistInlineTaskLearning(candidates[0], learningContext, sourceProduct);
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      } finally {
+        streamReader = null;
+      }
+    },
+    async cancel(reason) {
+      if (streamReader) await streamReader.cancel(reason).catch(() => {});
+      else if (probe.reader) await probe.reader.cancel(reason).catch(() => {});
+    },
+  });
   const headers = brainHeaders(brain, model, request);
   headers.set("Content-Type", "text/event-stream; charset=utf-8");
   headers.set("X-Accel-Buffering", "no");
   return new Response(body, { headers });
 }
-
 export async function OPTIONS(request: Request) {
   if (!originIsAllowed(request)) {
     return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: corsHeaders(request) });
@@ -373,7 +469,7 @@ export async function POST(request: Request) {
     for (const attempt of attempts) {
       if (attempt.controller !== winner.controller) attempt.controller.abort();
     }
-    return forwardProbedStream(winner.probe, brain, winner.model, request);
+    return forwardProbedStream(winner.probe, brain, winner.model, request, lastUserMessage + "\n" + previousUserMessage);
   }
 
   for (const attempt of attempts) attempt.controller.abort();
