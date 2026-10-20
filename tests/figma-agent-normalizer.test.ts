@@ -83,3 +83,41 @@ test("preserves model-authored nested FRAME containers and relative child coordi
   assert.equal(cta.type, "FRAME");
   assert.equal((cta.children as Array<Record<string, unknown>>)[0].text, "View loan details");
 });
+
+test("flat selected card output uses component groups rather than whole-screen sections", () => {
+  const elements = [
+    ["Consumption Loan", 10], ["Current status", 25], ["Loan reference", 42],
+    ["Loan amount", 72], ["₹40,000", 88], ["Outstanding", 108],
+    ["Progress ring", 142], ["60% Paid", 154], ["View details icon", 174],
+    ["Loan-wise breakdown", 198], ["Paid amount", 216], ["Due date", 234],
+    ["View loan details", 252], ["Make a payment", 263], ["Support", 273],
+  ].map(([text, y], index) => ({
+    type: "TEXT", name: "Card content " + index, text: String(text),
+    x: 16, y: Number(y), width: 280, height: 18, fontSize: 14, color: "#FFFFFF",
+  }));
+  const normalized = normalizePlan({
+    summary: "A more legible loan card variation preserving the source information.",
+    frame: { name: "Consumption loan card — variation", width: 320, height: 283, backgroundColor: "#111111" },
+    elements,
+  }, {
+    pageName: "Loans",
+    nodes: [{ id: "node-card", type: "FRAME", name: "Consumption loan card", width: 320, height: 283, x: 0, y: 0 }],
+  }) as { elements: Array<Record<string, unknown>> };
+  assert.equal(normalized.elements.length, 5);
+  assert.deepEqual(normalized.elements.map((node) => node.name), [
+    "Card header & status",
+    "Primary loan information",
+    "Progress & key indicators",
+    "Breakdown & supporting details",
+    "Actions & secondary metadata",
+  ]);
+  assert.ok(normalized.elements.every((node) => node.type === "FRAME"));
+  const preservedTexts: string[] = [];
+  for (const section of normalized.elements) {
+    const children = Array.isArray(section.children) ? section.children as Array<Record<string, unknown>> : [];
+    for (const child of children) if (typeof child.text === "string") preservedTexts.push(child.text);
+  }
+  assert.ok(preservedTexts.includes("₹40,000"), "Card values must remain in the normalized plan.");
+  assert.ok(preservedTexts.includes("Due date"), "Secondary card details must not be discarded.");
+  assert.ok(preservedTexts.includes("Make a payment"), "Actions must remain in the component variation.");
+});
