@@ -938,6 +938,7 @@
       } catch (error) {
         typingRow.remove();
         const detail = error && error.message ? error.message : "Unknown UX Direct error.";
+        setProcessState("error", "Task paused · " + detail.slice(0, 180));
         if (assistantMessage) {
           assistantMessage.bubble.textContent = "I couldn't complete that request. " + detail;
           assistantMessage.bubble.classList.add("error");
