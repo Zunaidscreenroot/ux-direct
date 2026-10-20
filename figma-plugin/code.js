@@ -1298,6 +1298,22 @@ async function writeCanvasCommand(payload) {
   function applyCreateProperties(node, spec) {
     if (Number.isFinite(spec.opacity) && "opacity" in node) node.opacity = Math.max(0, Math.min(1, spec.opacity));
     if (Number.isFinite(spec.rotation) && "rotation" in node) node.rotation = Math.max(-360, Math.min(360, spec.rotation));
+    if (spec.arcData !== undefined) {
+      if (node.type !== "ELLIPSE") throw new Error("arcData is supported only on ELLIPSE nodes.");
+      var arc = spec.arcData;
+      if (!arc || !Number.isFinite(arc.startingAngle) || !Number.isFinite(arc.endingAngle) ||
+          !Number.isFinite(arc.innerRadius) || arc.endingAngle <= arc.startingAngle ||
+          arc.startingAngle < -Math.PI * 2 || arc.startingAngle > Math.PI * 2 ||
+          arc.endingAngle < -Math.PI * 2 || arc.endingAngle > Math.PI * 2 ||
+          arc.innerRadius < 0 || arc.innerRadius > 1) {
+        throw new Error("ELLIPSE arcData requires valid radian angles and an innerRadius from 0 to 1.");
+      }
+      node.arcData = {
+        startingAngle: arc.startingAngle,
+        endingAngle: arc.endingAngle,
+        innerRadius: arc.innerRadius
+      };
+    }
     if (node.type === "FRAME" && spec.noFill === true && "fills" in node) node.fills = [];
     else if (typeof spec.color === "string" && "fills" in node) setSolidPaint(node, "fills", spec.color);
     if (typeof spec.strokeColor === "string" && "strokes" in node) setSolidPaint(node, "strokes", spec.strokeColor);

@@ -469,7 +469,7 @@ const TOOLS = [
       type: "object",
       properties: {
         scope: { type: "string", enum: ["selection", "current-page"], description: "Read selected layers or the active page's layer tree." },
-        maxDepth: { type: "integer", minimum: 0, maximum: 4, description: "Maximum descendant depth; defaults to 2." },
+        maxDepth: { type: "integer", minimum: 0, maximum: 5, description: "Maximum descendant depth; defaults to 2. Values up to 5 match native Figma final verification." },
         maxNodes: { type: "integer", minimum: 1, maximum: 100, description: "Maximum total nodes returned; defaults to 60." },
         queryName: { type: "string", minLength: 1, maxLength: 120, description: "Optional case-insensitive node-name search across the current page." },
         queryType: { type: "string", minLength: 1, maxLength: 80, description: "Optional Figma node type filter, for example COMPONENT, INSTANCE, TEXT, or FRAME." },
@@ -507,6 +507,17 @@ const TOOLS = [
               strokeWeight: { type: "number", minimum: 0, maximum: 100 },
               opacity: { type: "number", minimum: 0, maximum: 1 },
               rotation: { type: "number", minimum: -360, maximum: 360 },
+              arcData: {
+                type: "object",
+                properties: {
+                  startingAngle: { type: "number", minimum: -6.283185307179586, maximum: 6.283185307179586 },
+                  endingAngle: { type: "number", minimum: -6.283185307179586, maximum: 6.283185307179586 },
+                  innerRadius: { type: "number", minimum: 0, maximum: 1 }
+                },
+                required: ["startingAngle", "endingAngle", "innerRadius"],
+                additionalProperties: false,
+                description: "Optional native Figma ellipse arc for progress rings; angles are radians and endingAngle must exceed startingAngle."
+              },
               cornerRadius: { type: "number", minimum: 0, maximum: 512 },
               clipsContent: { type: "boolean" },
               layoutMode: { type: "string", enum: ["NONE", "HORIZONTAL", "VERTICAL"] },
@@ -978,7 +989,7 @@ async function callTool(name: string, args: unknown, request: Request) {
     const includePages = input.includePages === true;
     const includeStyles = input.includeStyles === true;
     if (scope !== "selection" && scope !== "current-page") return toolText({ error: "scope must be selection or current-page." }, true);
-    if (!Number.isInteger(maxDepth) || (maxDepth as number) < 0 || (maxDepth as number) > 4) return toolText({ error: "maxDepth must be an integer from 0 to 4." }, true);
+    if (!Number.isInteger(maxDepth) || (maxDepth as number) < 0 || (maxDepth as number) > 5) return toolText({ error: "maxDepth must be an integer from 0 to 5." }, true);
     if (!Number.isInteger(maxNodes) || (maxNodes as number) < 1 || (maxNodes as number) > 100) return toolText({ error: "maxNodes must be an integer from 1 to 100." }, true);
     if (queryName !== undefined && (typeof queryName !== "string" || !queryName.trim() || queryName.length > 120)) return toolText({ error: "queryName must be a non-empty string up to 120 characters." }, true);
     if (queryType !== undefined && (typeof queryType !== "string" || !queryType.trim() || queryType.length > 80)) return toolText({ error: "queryType must be a non-empty string up to 80 characters." }, true);

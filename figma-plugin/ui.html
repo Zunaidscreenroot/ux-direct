@@ -73,10 +73,7 @@
     .prompt { display:block; width:100%; min-height:51px; max-height:130px; padding:3px 2px 8px; border:0; border-radius:8px; outline:none; resize:vertical; background:transparent; color:var(--figma-color-text,#222); font-size:12px; line-height:1.5; }
     .prompt:focus-visible { outline:none; }
     .prompt::placeholder { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); }
-    .model-picker { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:7px; margin:0 0 5px; padding:1px 2px 6px; }
-    .model-picker label { color:var(--figma-color-text-secondary,#777); font-size:10px; font-weight:650; white-space:nowrap; }
-    .model-picker select { min-width:0; width:100%; padding:6px 8px; border:1px solid var(--figma-color-border,#ddd); border-radius:8px; background:var(--figma-color-bg-secondary,#f7f7f7); color:var(--figma-color-text,#222); font-size:10px; }
-    .model-picker-note { grid-column:1 / -1; margin-top:-3px; color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; line-height:1.35; }
+    .routing-note { margin:0 2px 7px; color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; line-height:1.4; }
     .composer-bottom { display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .composer-hint { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; }
     .send { display:grid; place-items:center; width:31px; height:31px; flex:0 0 31px; border:0; border-radius:10px; background:var(--figma-color-bg-brand,#0d99ff); color:#fff; font-size:17px; font-weight:700; line-height:1; }
@@ -193,18 +190,7 @@
     <div id="selectionChip" class="context-chip" hidden><span aria-hidden="true">▣</span><span id="selectionName" class="context-name"></span></div>
     <form id="chatForm" class="composer">
       <div id="beamRoot" aria-hidden="true"></div>
-      <div class="model-picker">
-        <label for="designModel">Design model</label>
-        <select id="designModel" aria-label="Model used to generate the selected-frame variation" title="Choose the model that will generate the next Figma variation">
-          <option value="openrouter/auto" selected>OpenRouter Auto · LOW cost · Recommended</option>
-          <option value="google/gemini-3.7-flash">Gemini 3.7 Flash · $0.75 / $3.75</option>
-          <option value="anthropic/claude-sonnet-5.5">Claude Sonnet 5.5 · $2 / $10</option>
-          <option value="openai/gpt-5.4">GPT-5.4 · $2.50 / $15</option>
-          <option value="anthropic/claude-haiku-5.5">Claude Haiku 5.5 · $0.10 / $0.50</option>
-          <option value="google/gemini-3.1-flash-lite">Gemini 3.1 Flash Lite · $0.25 / $1.50</option>
-        </select>
-        <span class="model-picker-note">OpenRouter Auto cost tier: LOW · serial fallback only after failure · no parallel calls</span>
-      </div>
+      <div class="routing-note" role="note">Design model: OpenRouter Auto · LOW cost tier · no separate model fallbacks</div>
       <textarea id="prompt" class="prompt" maxlength="5000" rows="2" aria-label="Message UX Direct" placeholder="Ask UX Direct to create or improve something…" required></textarea>
       <div class="composer-bottom">
         <span class="composer-hint">Enter to send · Shift + Enter for a new line</span>
@@ -709,7 +695,7 @@
     }
 
     async function createFigmaDesign(prompt, reportProgress) {
-      const selectedModel = $("designModel").value || "google/gemini-3.7-flash";
+      const selectedModel = "openrouter/auto";
       let createdFrameId = "";
       let completedElementCount = 0;
       const notify = typeof reportProgress === "function" ? reportProgress : function () {};
@@ -759,7 +745,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ prompt: prompt, model: selectedModel, canvas: canvas, renderedScreen: renderedScreen, visualCaptureWarning: visualCaptureWarning })
+        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, visualCaptureWarning: visualCaptureWarning })
       });
       const payload = await response.json().catch(function () { return {}; });
       if (!response.ok || payload.ok !== true || !payload.plan || !Array.isArray(payload.plan.elements)) {
@@ -767,8 +753,9 @@
         throw new Error((payload.error || "UX Direct could not plan the design.") + extra);
       }
       const plan = payload.plan;
-      if (plan.elements.length < 5 || plan.elements.length > 80) {
-        throw new Error("The proposed design plan has an unsupported layer count. No canvas changes were made.");
+      const planNodeCount = countPlanNodes(plan.elements);
+      if (plan.elements.length < 3 || plan.elements.length > 8 || planNodeCount < 18 || planNodeCount > 80) {
+        throw new Error("The proposed design plan must contain 3–8 meaningful top-level sections and 18–80 native layers. No canvas changes were made.");
       }
       const memory = payload.brain && payload.brain.status === "complete"
         ? String(payload.brain.memories || 0) + " memories and " + String(payload.brain.knowledgeChunks || 0) + " Knowledge Base chunks retrieved"

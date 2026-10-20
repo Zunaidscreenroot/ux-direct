@@ -36,6 +36,11 @@ const CANVAS_ELEMENT = z.object({
   width: z.number().finite().min(1).max(4096).optional(),
   height: z.number().finite().min(1).max(4096).optional(),
   rotation: z.number().finite().min(-360).max(360).optional(),
+  arcData: z.object({
+    startingAngle: z.number().finite().min(-6.283185307179586).max(6.283185307179586),
+    endingAngle: z.number().finite().min(-6.283185307179586).max(6.283185307179586),
+    innerRadius: z.number().finite().min(0).max(1),
+  }).strict().optional(),
   text: z.string().max(5000).optional(),
   fontSize: z.number().finite().min(8).max(144).optional(),
   fontFamily: z.string().trim().min(1).max(100).optional(),
@@ -80,10 +85,16 @@ const CANVAS_ELEMENT = z.object({
   if (value.pointCount !== undefined && !["POLYGON", "STAR"].includes(value.type)) {
     ctx.addIssue({ code: "custom", path: ["pointCount"], message: "pointCount is supported only on POLYGON and STAR nodes." });
   }
+  if (value.arcData !== undefined && value.type !== "ELLIPSE") {
+    ctx.addIssue({ code: "custom", path: ["arcData"], message: "arcData is supported only on ELLIPSE nodes." });
+  }
+  if (value.arcData && value.arcData.endingAngle <= value.arcData.startingAngle) {
+    ctx.addIssue({ code: "custom", path: ["arcData", "endingAngle"], message: "endingAngle must be greater than startingAngle." });
+  }
 });
 const CANVAS_READ_PAYLOAD = z.object({
   scope: z.enum(["selection", "current-page"]).default("selection"),
-  maxDepth: z.number().int().min(0).max(4).default(2),
+  maxDepth: z.number().int().min(0).max(5).default(2),
   maxNodes: z.number().int().min(1).max(100).default(60),
   queryName: z.string().trim().min(1).max(120).optional(),
   queryType: z.string().trim().min(1).max(80).optional(),
