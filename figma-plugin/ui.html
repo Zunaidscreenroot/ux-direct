@@ -841,7 +841,7 @@
       }
 
       stage("verifying", "Checking the final native layer tree and frame bounds…");
-      const verified = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 3, maxNodes: 100 }, 90000);
+      const verified = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 2, maxNodes: 100 }, 90000);
       const verifiedNode = verified && Array.isArray(verified.nodes)
         ? verified.nodes.find(function (node) { return node.id === createdFrameId; })
         : null;
