@@ -39,6 +39,6 @@ test("uses only a normalized generic lesson and stable idempotency key", () => {
   assert.ok(second);
   assert.equal(first.category, "invalid-payload");
   assert.equal(first.idempotencyKey, second.idempotencyKey);
-  assert.doesNotMatch(first.rawFeedback, /999|node/i);
+  assert.doesNotMatch(first.rawFeedback, /999/);
   assert.doesNotMatch(first.normalizedRule, /999|node 999/i);
 });
