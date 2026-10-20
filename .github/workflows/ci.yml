@@ -1,17 +1,15 @@
 name: UX Direct CI
 
+# Beta mode: keep deep validation available on demand, but don't run it
+# automatically on every push or pull request. Production has its own build.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# Keep only the newest validation run for each PR or branch.
 concurrency:
-  group: ux-direct-ci-${{ github.event.pull_request.number || github.ref }}
+  group: ux-direct-ci-manual
   cancel-in-progress: true
 
 jobs:
@@ -28,7 +26,7 @@ jobs:
           cache: npm
           cache-dependency-path: package.json
       - name: Install
-        run: npm install --no-audit --no-fund
+        run: npm install --no-audit --no-fund --prefer-offline
       - name: Typecheck
         run: npm run typecheck
       - name: Build Figma cockpit effects
