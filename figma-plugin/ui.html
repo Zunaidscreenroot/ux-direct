@@ -904,8 +904,8 @@
         const issueNotes = qaIssues.slice(0, 3).map(function (issue, index) {
           return (index + 1) + ". " + String(issue.issue || "Visual issue").slice(0, 180) +
             (issue.evidence ? " — " + String(issue.evidence).slice(0, 140) : "");
-        }).join("\\n");
-        if (issueNotes) quality += "\\nQA notes:\\n" + issueNotes;
+        }).join("\n");
+        if (issueNotes) quality += "\nQA notes:\n" + issueNotes;
         if (!visualQAComplete) quality += " Screenshot-based comparison was not fully available.";
       } else {
         quality = " Visual QA unavailable; no automatic refinement was run." +
@@ -913,9 +913,9 @@
       }
       return "Created \"" + plan.frame.name + "\" as a separate editable Figma variation with " +
         completedElementCount + " native layers. " + String(plan.summary || "The variation is ready for review.") +
-        "\\n\\nGeneration model: " + model + " · UX Direct Brain: " + memory +
-        (visualCaptureWarning ? "\\nVisual capture note: " + visualCaptureWarning : "") +
-        "\\nThe source frame was preserved. The new variation is selected on the canvas." + quality;
+        "\n\nGeneration model: " + model + " · UX Direct Brain: " + memory +
+        (visualCaptureWarning ? "\nVisual capture note: " + visualCaptureWarning : "") +
+        "\nThe source frame was preserved. The new variation is selected on the canvas." + quality;
     }
 
     async function captureRenderedNodePreview(nodeId) {
