@@ -45,6 +45,8 @@ const CANVAS_ELEMENT = z.object({
   fontSize: z.number().finite().min(8).max(144).optional(),
   fontFamily: z.string().trim().min(1).max(100).optional(),
   fontStyle: z.string().trim().min(1).max(100).optional(),
+  lineHeight: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(1).max(500) }).strict().optional(),
+  letterSpacing: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(-100).max(500) }).strict().optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   noFill: z.boolean().optional(),
   strokeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
@@ -52,7 +54,12 @@ const CANVAS_ELEMENT = z.object({
   opacity: z.number().finite().min(0).max(1).optional(),
   cornerRadius: z.number().finite().min(0).max(512).optional(),
   clipsContent: z.boolean().optional(),
-  layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]).optional(),
+  layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL", "GRID"]).optional(),
+  layoutWrap: z.enum(["NO_WRAP", "WRAP"]).optional(),
+  layoutSizingHorizontal: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutSizingVertical: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutPositioning: z.enum(["AUTO", "ABSOLUTE"]).optional(),
+  layoutGrow: z.number().finite().min(0).max(1).optional(),
   itemSpacing: z.number().finite().min(-100).max(1000).optional(),
   paddingLeft: z.number().finite().min(0).max(1000).optional(),
   paddingRight: z.number().finite().min(0).max(1000).optional(),
@@ -123,11 +130,18 @@ const CANVAS_PATCH = z.object({
   text: z.string().max(5000).optional(),
   fontFamily: z.string().trim().min(1).max(100).optional(),
   fontStyle: z.string().trim().min(1).max(100).optional(),
+  lineHeight: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(1).max(500) }).strict().optional(),
+  letterSpacing: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(-100).max(500) }).strict().optional(),
   fontSize: z.number().finite().min(8).max(144).optional(),
   textAlignHorizontal: z.enum(["LEFT", "CENTER", "RIGHT", "JUSTIFIED"]).optional(),
   textAlignVertical: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
   textAutoResize: z.enum(["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"]).optional(),
-  layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]).optional(),
+  layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL", "GRID"]).optional(),
+  layoutWrap: z.enum(["NO_WRAP", "WRAP"]).optional(),
+  layoutSizingHorizontal: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutSizingVertical: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutPositioning: z.enum(["AUTO", "ABSOLUTE"]).optional(),
+  layoutGrow: z.number().finite().min(0).max(1).optional(),
   itemSpacing: z.number().finite().min(-100).max(1000).optional(),
   paddingLeft: z.number().finite().min(0).max(1000).optional(),
   paddingRight: z.number().finite().min(0).max(1000).optional(),
@@ -175,9 +189,9 @@ const CANVAS_WRITE_STEP = z.object({
   operation: z.enum([
     "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node",
     "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
-    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
+    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "insert-image", "create-variables", "bind-variable",
   ]),
-  target: z.enum(["current-page", "selection", "test-lab"]).optional(),
+  target: z.enum(["current-page", "selection", "node", "test-lab"]).optional(),
   elements: z.array(CANVAS_ELEMENT).min(1).max(20).optional(),
   nodeId: z.string().trim().min(1).max(100).optional(),
   parentNodeId: z.string().trim().min(1).max(100).optional(),
@@ -195,13 +209,30 @@ const CANVAS_WRITE_STEP = z.object({
   range: CANVAS_TEXT_RANGE.optional(),
   imageBase64: z.string().max(250000).optional(),
   scaleMode: z.enum(["FILL", "FIT", "CROP", "TILE"]).optional(),
+  name: z.string().trim().min(1).max(100).optional(),
+  x: z.number().finite().min(-10000).max(10000).optional(),
+  y: z.number().finite().min(-10000).max(10000).optional(),
+  width: z.number().finite().min(1).max(4096).optional(),
+  height: z.number().finite().min(1).max(4096).optional(),
+  cornerRadius: z.number().finite().min(0).max(512).optional(),
+  layoutPositioning: z.enum(["AUTO", "ABSOLUTE"]).optional(),
+  layoutSizingHorizontal: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutSizingVertical: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  collectionName: z.string().trim().min(1).max(100).optional(),
+  modeName: z.string().trim().min(1).max(100).optional(),
+  variables: z.array(z.object({
+    name: z.string().trim().min(1).max(100), type: z.enum(["COLOR", "FLOAT", "STRING", "BOOLEAN"]),
+    value: z.union([z.string().max(300), z.number().finite(), z.boolean()]),
+  }).strict()).max(80).optional(),
+  variableName: z.string().trim().min(1).max(100).optional(),
+  property: z.enum(["fill", "stroke", "opacity", "cornerRadius", "width", "height", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom"]).optional(),
   patch: CANVAS_PATCH.optional(),
 }).strict();
 const CANVAS_WRITE_PAYLOAD = z.object({
   operation: z.enum([
     "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node",
     "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
-    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
+    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "insert-image", "create-variables", "bind-variable",
   ]),
   confirm: z.literal(true),
   target: z.enum(["current-page", "selection", "node", "test-lab"]).optional(),
@@ -222,11 +253,28 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   range: CANVAS_TEXT_RANGE.optional(),
   imageBase64: z.string().max(250000).optional(),
   scaleMode: z.enum(["FILL", "FIT", "CROP", "TILE"]).optional(),
+  name: z.string().trim().min(1).max(100).optional(),
+  x: z.number().finite().min(-10000).max(10000).optional(),
+  y: z.number().finite().min(-10000).max(10000).optional(),
+  width: z.number().finite().min(1).max(4096).optional(),
+  height: z.number().finite().min(1).max(4096).optional(),
+  cornerRadius: z.number().finite().min(0).max(512).optional(),
+  layoutPositioning: z.enum(["AUTO", "ABSOLUTE"]).optional(),
+  layoutSizingHorizontal: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutSizingVertical: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  collectionName: z.string().trim().min(1).max(100).optional(),
+  modeName: z.string().trim().min(1).max(100).optional(),
+  variables: z.array(z.object({
+    name: z.string().trim().min(1).max(100), type: z.enum(["COLOR", "FLOAT", "STRING", "BOOLEAN"]),
+    value: z.union([z.string().max(300), z.number().finite(), z.boolean()]),
+  }).strict()).max(80).optional(),
+  variableName: z.string().trim().min(1).max(100).optional(),
+  property: z.enum(["fill", "stroke", "opacity", "cornerRadius", "width", "height", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom"]).optional(),
   patch: CANVAS_PATCH.optional(),
   actions: z.array(CANVAS_WRITE_STEP).min(1).max(40).optional(),
 }).strict().superRefine((value, ctx) => {
   const requiresNode = ["update-node", "clone-node", "delete-node", "reorder-node", "ungroup-node",
-    "create-component", "create-instance", "swap-component", "detach-instance", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "reparent-node"].includes(value.operation);
+    "create-component", "create-instance", "swap-component", "detach-instance", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "bind-variable", "reparent-node"].includes(value.operation);
   if (requiresNode && !value.nodeId) {
     ctx.addIssue({ code: "custom", path: ["nodeId"], message: value.operation + " requires nodeId." });
   }
@@ -236,8 +284,17 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   if (value.operation === "create-elements" && value.target === "node" && !value.parentNodeId) {
     ctx.addIssue({ code: "custom", path: ["parentNodeId"], message: "create-elements targeting a parent node requires parentNodeId." });
   }
-  if (value.target === "node" && value.operation !== "create-elements") {
-    ctx.addIssue({ code: "custom", path: ["target"], message: "target=node is supported only for create-elements." });
+  if (value.target === "node" && !["create-elements", "insert-image"].includes(value.operation)) {
+    ctx.addIssue({ code: "custom", path: ["target"], message: "target=node is supported only for create-elements and insert-image." });
+  }
+  if (value.operation === "insert-image" && (!value.imageBase64 || !value.target || (value.target === "node" && !value.parentNodeId))) {
+    ctx.addIssue({ code: "custom", path: ["imageBase64"], message: "insert-image requires image data and a valid target." });
+  }
+  if (value.operation === "create-variables" && (!value.collectionName || !value.variables || !value.variables.length)) {
+    ctx.addIssue({ code: "custom", path: ["variables"], message: "create-variables requires collectionName and variables." });
+  }
+  if (value.operation === "bind-variable" && (!value.nodeId || !value.variableName || !value.property)) {
+    ctx.addIssue({ code: "custom", path: ["variableName"], message: "bind-variable requires nodeId, variableName and property." });
   }
   if (value.operation === "update-node" && (!value.nodeId || !value.patch)) {
     ctx.addIssue({ code: "custom", path: ["patch"], message: "update-node requires nodeId and a supported patch." });
