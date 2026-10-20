@@ -23,7 +23,7 @@ const REPORT = z.object({
   failed: z.number().int().nonnegative(),
   notTested: z.number().int().nonnegative(),
   checkedAt: z.string().max(50),
-  checks: z.array(CHECK).max(100),
+  checks: z.array(CHECK).max(300),
 });
 
 const CANVAS_ELEMENT = z.object({
@@ -461,6 +461,20 @@ export async function POST(request: Request) {
         action: action.data,
       });
       return NextResponse.json({ ok: true, commandId: command.commandId, status: "pending" }, { headers });
+    }
+
+    if (mode === "health-state") {
+      const token = z.string().min(20).max(200).safeParse(body.sessionToken);
+      if (!token.success) return NextResponse.json({ error: "Session token is missing." }, { status: 400, headers });
+      const current = await readJson<Session>(path);
+      if (!current || current.sessionToken !== token.data || !isAllowedFigmaFileKey(current.fileKey) || current.fileKey !== body.fileKey) {
+        return NextResponse.json({ error: "Allowlisted plugin session not found or token/file-key mismatch." }, { status: 403, headers });
+      }
+      return NextResponse.json({
+        ok: true,
+        healthReport: current.healthReport || null,
+        lastTestAt: current.lastTestAt || null,
+      }, { headers });
     }
 
     if (mode === "heartbeat") {
