@@ -107,3 +107,16 @@ test("project scope relevance is assessed independently from client scope resolu
   assert.ok(dmi.scopeSignals.length > 0);
   assert.ok(ujjivan.scopeSignals.length > 0);
 });
+
+
+test("task-derived lessons preserve narrow project and product scopes", () => {
+  assert.equal(resolveLearningScope("project:ux-direct", "general", "Figma plugin execution workflow"), "project:ux-direct");
+  assert.equal(resolveLearningScope("indian-bfsi", "general", "Review Indian banking consent and loan flows"), "indian-bfsi");
+  assert.equal(resolveLearningScope("project:ux-audit", "general", "UX audit benchmark evidence rules"), "project:ux-audit");
+  assert.equal(resolveLearningScope("project:ux-direct", "general", "Ujjivan SFB onboarding"), "project:ujjivan-sfb");
+});
+
+test("task model cannot promote lessons into global memory without explicit intent", () => {
+  assert.equal(resolveLearningScope("UX_SHARED_BRAIN", "general", "A banking task needs a clear CTA"), "project:general-ux");
+  assert.equal(resolveLearningScope("UX_SHARED_BRAIN", "general", "Make this a global rule across all products"), "UX_SHARED_BRAIN");
+});
