@@ -237,10 +237,11 @@ test("Figma plugin cockpit has a morphing orb and visible process stages", () =>
 });
 
 test("Figma visual capture failures do not invalidate the full design request", () => {
+  const reviewRoute = read("app/api/assistant/figma-agent/review/route.ts");
   assert.ok(agent.includes("renderedScreen: z.string().max(52000).nullable().optional()"));
   assert.ok(agent.includes('error: "Invalid Figma agent request."'));
   assert.ok(agent.includes('issue.path.join(".")'));
-  assert.ok(review.includes('sourceImage: z.string().max(52000).nullable().optional()'));
-  assert.ok(review.includes('outputImage: z.string().max(52000).nullable().optional()'));
+  assert.ok(reviewRoute.includes('sourceImage: z.string().max(52000).nullable().optional()'));
+  assert.ok(reviewRoute.includes('outputImage: z.string().max(52000).nullable().optional()'));
   assert.ok(pluginUi.includes('detail.message || "Invalid input"'));
 });
