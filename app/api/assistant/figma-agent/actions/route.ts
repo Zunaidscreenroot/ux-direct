@@ -64,6 +64,8 @@ const patchSchema = z.object({
   textAlignHorizontal: z.enum(["LEFT", "CENTER", "RIGHT", "JUSTIFIED"]).optional(),
   textAlignVertical: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
   textAutoResize: z.enum(["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"]).optional(),
+  lineHeight: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(1).max(500) }).strict().optional(),
+  letterSpacing: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(-100).max(500) }).strict().optional(),
   layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL", "GRID"]).optional(),
   layoutWrap: z.enum(["NO_WRAP", "WRAP"]).optional(),
   layoutSizingHorizontal: z.enum(["FIXED", "HUG", "FILL"]).optional(),
@@ -167,6 +169,10 @@ const actionSchema = z.object({
   height: z.number().finite().min(1).max(4096).optional(),
   scaleMode: z.enum(["FILL", "FIT", "CROP", "TILE"]).optional(),
   useAttachedImage: z.boolean().optional(),
+  cornerRadius: z.number().finite().min(0).max(512).optional(),
+  layoutPositioning: z.enum(["AUTO", "ABSOLUTE"]).optional(),
+  layoutSizingHorizontal: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutSizingVertical: z.enum(["FIXED", "HUG", "FILL"]).optional(),
   collectionName: z.string().trim().min(1).max(100).optional(),
   modeName: z.string().trim().min(1).max(100).optional(),
   variables: z.array(z.object({
@@ -215,6 +221,7 @@ export async function POST(request: Request) {
     prompt: z.string().trim().min(2).max(5000),
     canvas: z.unknown(),
     referenceImage: z.string().max(250000).nullable().optional(),
+    renderedScreen: z.string().max(52000).nullable().optional(),
   }).strict();
   const input = requestSchema.safeParse(raw);
   if (!input.success) return NextResponse.json({ error: "Invalid native Figma action request.", details: input.error.issues }, { status: 400, headers });
@@ -227,20 +234,32 @@ export async function POST(request: Request) {
   if (allowedIds.size === 0) return NextResponse.json({ error: "Select a layer/container first so the action planner can target real Figma node IDs." }, { status: 400, headers });
   const referenceImage = typeof input.data.referenceImage === "string" &&
     /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(input.data.referenceImage) ? input.data.referenceImage : null;
+  const renderedScreen = typeof input.data.renderedScreen === "string" &&
+    input.data.renderedScreen.length <= 52000 &&
+    /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(input.data.renderedScreen) ? input.data.renderedScreen : null;
   const system = [
     UX_DIRECT_DESIGN_ROLE + " You are the native-canvas action planner for UX Direct. Work on actual selected/inspected Figma nodes; do not create a new screen unless explicitly requested.",
     "Translate the user's request into the smallest valid ordered set of native Figma operations. Return JSON only: {summary:string, actions:[...]}. Each action maps directly to a Figma native command; the plugin executes them sequentially and verifies read-back.",
     "Allowed operations: update-node, create-elements, insert-image, delete-node, clone-node, reorder-node, reparent-node, group-nodes, ungroup-node, create-component, create-component-set, create-instance, swap-component, detach-instance, set-text-range, apply-style, create-variables, bind-variable, set-selection, zoom-to-nodes.",
     "For color or text fill changes use update-node.patch.fillColor; for text content edits use update-node.patch.text. For typography set fontFamily, fontStyle, fontSize, textAutoResize and textAlignHorizontal only on TEXT nodes. For responsive UI use layoutMode, itemSpacing, padding, alignment, sizing and constraints through update-node; prefer modern HUG/FILL sizing with an Auto Layout parent.",
     "Use only node IDs that appear in canvas. Do not guess or fabricate IDs. If the target is ambiguous, choose the smallest reasonable set in the current selection and name it in the summary. Never delete nodes unless deletion was explicitly asked. Preserve unrelated content and the original visual intent.",
-    "Use create-elements to add native layers into the current selected container (target:'node', parentNodeId:'...'). Children are nested under FRAME elements only. Use insert-image only when an image is attached in this request; set useAttachedImage:true and don't invent an image URL. Never place base64 data in model output.",
+    "Use create-elements to add native layers into the current selected container (target:'node', parentNodeId:'...'). Children are nested under FRAME elements only. Use insert-image only when an actual user-attached image is available in this request; set useAttachedImage:true and don't invent an image URL. A rendered screenshot is visual evidence only, not an insertable asset. Never place base64 data in model output.",
+    "When a rendered screenshot is available, inspect hierarchy, text density, collisions, clipped content, component boundaries and spacing. Prefer minimal direct edits for narrow requests; use coherent native action batches for broader requests.",
     "Use apply-style to assign an existing local style by known style ID/name. Use create-variables only for explicit design-token requests or when the user asks to make reusable color/spacing tokens; use bind-variable only when the user asks to bind a design token. For variants, create components first, then combine only actual sibling components.",
     "Operation count 1–12. Use the least number of actions, prefer one update patch per node, and never return explanatory prose, markdown, unsupported fields, or tool calls.",
     "Native execution is irreversible for some operations. Ask for no confirmation in JSON; the host requires explicit user prompt to execute, and delete-node is allowed only when the request clearly asks to delete/remove.",
   ].join("\n");
-  const userText = JSON.stringify({ prompt: input.data.prompt, canvas, referenceImageAttached: !!referenceImage });
-  const content: string | Array<Record<string, unknown>> = referenceImage
-    ? [{ type: "text", text: userText }, { type: "image_url", image_url: { url: referenceImage } }]
+  const userText = JSON.stringify({
+    prompt: input.data.prompt, canvas,
+    userAttachedImageAvailable: !!referenceImage,
+    renderedScreenshotAvailable: !!renderedScreen,
+    safety: "The rendered screenshot is visual evidence only. Only referenceImage is a user-attached asset eligible for insert-image."
+  });
+  const images: Array<Record<string, unknown>> = [];
+  if (renderedScreen) images.push({ type: "image_url", image_url: { url: renderedScreen } });
+  if (referenceImage) images.push({ type: "image_url", image_url: { url: referenceImage } });
+  const content: string | Array<Record<string, unknown>> = images.length
+    ? [{ type: "text", text: userText }, ...images]
     : userText;
   const models = FIGMA_AGENT_MODELS.map(m => m.id);
   const errors: string[] = [];
