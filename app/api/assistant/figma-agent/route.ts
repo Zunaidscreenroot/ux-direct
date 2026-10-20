@@ -51,6 +51,13 @@ const ElementFieldsSchema = z.object({
   cornerRadius: z.number().finite().min(0).max(128).optional(),
   clipsContent: z.boolean().optional(),
   layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]).optional(),
+  layoutWrap: z.enum(["NO_WRAP", "WRAP"]).optional(),
+  layoutSizingHorizontal: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutSizingVertical: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutPositioning: z.enum(["AUTO", "ABSOLUTE"]).optional(),
+  layoutGrow: z.number().finite().min(0).max(1).optional(),
+  horizontalConstraint: z.enum(["MIN", "CENTER", "MAX", "STRETCH", "SCALE"]).optional(),
+  verticalConstraint: z.enum(["MIN", "CENTER", "MAX", "STRETCH", "SCALE"]).optional(),
   itemSpacing: z.number().finite().min(0).max(160).optional(),
   paddingLeft: z.number().finite().min(0).max(160).optional(),
   paddingRight: z.number().finite().min(0).max(160).optional(),
@@ -90,6 +97,15 @@ const ElementSchema: z.ZodTypeAny = z.lazy(() =>
       if (item.arcData && item.arcData.endingAngle <= item.arcData.startingAngle) {
         ctx.addIssue({ code: "custom", path: ["arcData", "endingAngle"], message: "endingAngle must be greater than startingAngle." });
       }
+      if (item.layoutMode !== undefined && item.type !== "FRAME") {
+        ctx.addIssue({ code: "custom", path: ["layoutMode"], message: "Auto Layout container properties belong on FRAME elements." });
+      }
+      if (item.layoutWrap !== undefined && item.layoutMode !== "HORIZONTAL") {
+        ctx.addIssue({ code: "custom", path: ["layoutWrap"], message: "Wrap is supported only on horizontal Auto Layout frames." });
+      }
+      if ((item.horizontalConstraint !== undefined || item.verticalConstraint !== undefined) && item.layoutPositioning !== "ABSOLUTE") {
+        ctx.addIssue({ code: "custom", path: ["layoutPositioning"], message: "Responsive constraints are for intentionally positioned children; set layoutPositioning to ABSOLUTE." });
+      }
     })
 );
 const PlanSchema = z.object({
@@ -99,6 +115,16 @@ const PlanSchema = z.object({
     width: z.number().int().min(280).max(1440),
     height: z.number().int().min(360).max(4096),
     backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]),
+    itemSpacing: z.number().finite().min(0).max(160),
+    paddingLeft: z.number().finite().min(0).max(160),
+    paddingRight: z.number().finite().min(0).max(160),
+    paddingTop: z.number().finite().min(0).max(160),
+    paddingBottom: z.number().finite().min(0).max(160),
+    primaryAxisAlignItems: z.enum(["MIN", "MAX", "CENTER", "SPACE_BETWEEN"]),
+    counterAxisAlignItems: z.enum(["MIN", "MAX", "CENTER", "BASELINE"]),
+    primaryAxisSizingMode: z.enum(["AUTO", "FIXED"]),
+    counterAxisSizingMode: z.enum(["AUTO", "FIXED"]),
   }).strict(),
   elements: z.array(ElementSchema).min(3).max(8),
 }).strict().superRefine((plan, ctx) => {
@@ -162,7 +188,12 @@ const PlanSchema = z.object({
 type CanvasNode = {
   id?: string; name?: string; type?: string; x?: number; y?: number;
   width?: number; height?: number; text?: string; fontSize?: number;
-  fillColors?: string[]; visible?: boolean; layoutMode?: string;
+  fillColors?: string[]; visible?: boolean; layoutMode?: string; layoutWrap?: string;
+  layoutSizingHorizontal?: string; layoutSizingVertical?: string; layoutPositioning?: string;
+  primaryAxisSizingMode?: string; counterAxisSizingMode?: string; itemSpacing?: number;
+  paddingLeft?: number; paddingRight?: number; paddingTop?: number; paddingBottom?: number;
+  primaryAxisAlignItems?: string; counterAxisAlignItems?: string; textAutoResize?: string;
+  horizontalConstraint?: string; verticalConstraint?: string;
   childCount?: number; children?: CanvasNode[];
 };
 function compactNode(value: unknown, state: { count: number }, depth = 0): CanvasNode | null {
@@ -171,13 +202,19 @@ function compactNode(value: unknown, state: { count: number }, depth = 0): Canva
   if (typeof node.name !== "string" || typeof node.type !== "string") return null;
   state.count += 1;
   const out: CanvasNode = { name: node.name.slice(0, 120), type: node.type.slice(0, 40) };
-  for (const key of ["id", "x", "y", "width", "height", "text", "fontSize", "visible", "layoutMode", "childCount"] as const) {
+  for (const key of [
+    "id", "x", "y", "width", "height", "text", "fontSize", "visible", "layoutMode", "layoutWrap",
+    "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "primaryAxisSizingMode",
+    "counterAxisSizingMode", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
+    "primaryAxisAlignItems", "counterAxisAlignItems", "textAutoResize", "horizontalConstraint", "verticalConstraint",
+    "childCount",
+  ] as const) {
     const valueAtKey = node[key];
     if (key === "id" && typeof valueAtKey === "string") out.id = valueAtKey.slice(0, 100);
-    if (["x", "y", "width", "height", "fontSize", "childCount"].includes(key) && typeof valueAtKey === "number" && Number.isFinite(valueAtKey)) (out as unknown as Record<string, unknown>)[key] = valueAtKey;
+    if (["x", "y", "width", "height", "fontSize", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "childCount"].includes(key) && typeof valueAtKey === "number" && Number.isFinite(valueAtKey)) (out as unknown as Record<string, unknown>)[key] = valueAtKey;
     if (key === "text" && typeof valueAtKey === "string") out.text = valueAtKey.slice(0, 350);
     if (key === "visible" && typeof valueAtKey === "boolean") out.visible = valueAtKey;
-    if (key === "layoutMode" && typeof valueAtKey === "string") out.layoutMode = valueAtKey.slice(0, 20);
+    if (["layoutMode", "layoutWrap", "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "primaryAxisSizingMode", "counterAxisSizingMode", "primaryAxisAlignItems", "counterAxisAlignItems", "textAutoResize", "horizontalConstraint", "verticalConstraint"].includes(key) && typeof valueAtKey === "string") (out as unknown as Record<string, unknown>)[key] = valueAtKey.slice(0, 20);
   }
   if (Array.isArray(node.fillColors)) out.fillColors = node.fillColors.filter((color): color is string => typeof color === "string").slice(0, 4);
   if (depth < 4 && Array.isArray(node.children)) {
@@ -200,7 +237,13 @@ function compactRecoveryNode(
   if (typeof source.type !== "string") return null;
   state.count += 1;
   const out: Record<string, unknown> = { type: source.type };
-  for (const key of ["id", "name", "text", "x", "y", "width", "height", "fontSize", "childCount"] as const) {
+  for (const key of [
+    "id", "name", "text", "x", "y", "width", "height", "fontSize", "layoutMode", "layoutWrap",
+    "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "primaryAxisSizingMode",
+    "counterAxisSizingMode", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
+    "primaryAxisAlignItems", "counterAxisAlignItems", "textAutoResize", "horizontalConstraint", "verticalConstraint",
+    "childCount",
+  ] as const) {
     const raw = source[key];
     if (typeof raw === "string") out[key] = raw.slice(0, key === "text" ? 140 : 80);
     else if (typeof raw === "number" && Number.isFinite(raw)) out[key] = raw;
@@ -253,7 +296,7 @@ const SYSTEM = [
   UX_DIRECT_DESIGN_ROLE + " Users can give a short request. Infer the design procedure and execute the full playbook automatically without asking them to repeat it.",
   "Determine the scope from the selected node. If the selected node is a card, component, widget, row, or other sub-screen component, create a variation of that component only and keep its content inside that component's dimensions. Do not invent screen navigation, unrelated sections, or full-screen chrome for a component selection. If the selected node is a complete screen, create a screen variation.",
   "Before designing, extract a preservation inventory from the selected layer tree: every meaningful label, value, amount, date, status, indicator, icon role, repeated row, action, and relationship. Keep each item unless the user's requested change explicitly removes or changes it. If something is not legible in the screenshot, trust exact source text in the layer tree.",
-  "Use native Figma layout, not just visual approximation. Where appropriate set FRAME layoutMode to VERTICAL or HORIZONTAL and define padding, itemSpacing, alignment and sizing. Use Auto Layout for card content, stacks, tab rows, repeated information rows and action groups when suitable; use absolute positioning only for overlays, decorative elements or intentional placements. Do not claim Auto Layout or reusable components unless the resulting properties/nodes confirm them.",
+  "Use actual native Figma Auto Layout, not merely an arrangement that resembles it. Set FRAME.layoutMode to VERTICAL for content stacks/cards, HORIZONTAL for tabs, inline metric rows and action bars. Set itemSpacing, four padding values, primary/counter alignment, and axis sizing. For direct children of Auto Layout parents use layoutSizingHorizontal/layoutSizingVertical = HUG, FILL or FIXED intentionally; ordinary text in vertical stacks normally FILLs width and uses textAutoResize=HEIGHT. Use layoutPositioning=ABSOLUTE only for real overlays (status badges, progress-labels over rings, backplates, decorative art); preserve their coordinates. In an Auto Layout parent, child order is the flow order and x/y is ignored for AUTO-positioned children. Do not claim a feature unless the read-back shows its native properties.",
   "A short prompt must be mapped to a concrete design objective. Keep everything else stable: product context, information architecture, content, interaction meaning and source visual language. Make deliberate, restrained improvements; do not simplify away meaningful content merely to make the canvas look cleaner.",
   "You are UX Direct's native Figma design agent. The user explicitly requested a design action.",
   "Return ONLY one JSON object. Required root keys: summary (string), frame ({name,width,height,backgroundColor}), elements (3–8 meaningful top-level FRAME section containers and 18–80 native nodes total). Optional root key learningCandidate: null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}; include it only if this task produced one durable reusable design or execution lesson, never as a task summary. Do not include client-specific names in cross-user or domain-wide rules, raw requirements, screen text, node IDs, screenshots or private facts. Use the narrowest safe scope; the backend validates, scopes, deduplicates and applies the existing 50% relevance threshold. Each node MUST include type, name, x, y, width, height. Allowed type values: RECTANGLE, ELLIPSE, TEXT, LINE, FRAME, POLYGON, STAR. ELLIPSE may use arcData:{startingAngle,endingAngle,innerRadius} with radian angles and endingAngle > startingAngle for native progress arcs/rings. Use color: \"#RRGGBB\" for fill, NOT a fill key. TEXT layers must include text. FRAME nodes may include a children array recursively; only FRAME can contain children. Use noFill:true for transparent structural wrappers, but use visibly styled FRAMEs for cards/surfaces. Do not flatten everything into direct layers. Do not use markdown fences.",
@@ -262,7 +305,7 @@ const SYSTEM = [
   "Prefer evidence-grounded product content and component patterns. If values are unknown, label financial amounts as sample. Never claim visual analysis when no image was supplied.",
   "Create a polished, high-fidelity native Figma screen using only native shapes and text layers. Do not use images, external assets, or invented APIs.",
   "Use a real Figma layer tree appropriate to selection scope: for a full screen, create meaningful screen sections; for a component, create meaningful internal groups such as Header & status, Primary information, Supporting detail, Progress/indicators and Actions only when those concepts exist in the source. Create 3–6 suitable top-level FRAME groups with names that describe their actual contents, not boilerplate section names. If the source has one enclosing card containing a summary and a breakdown, keep both within one styled outer card FRAME and use an inner divider or surface split. Keep status badges and overlays nested with the card they belong to. Nest row labels and figures together. Use 3 hierarchy levels where the content warrants them; never create empty wrappers just to meet a count. The output should be easy to inspect in Figma's layers panel, not a pile of siblings.",
-  "Coordinates are relative to each immediate parent frame's top-left, not global screen coordinates. Each frame's child x/y must fall inside that frame; draw rectangles/backplates before their text/icons. Give sections sensible heights and distinct y positions so nothing stacks at the top or overlaps accidentally. With Auto Layout enabled, rely on flow order, padding, spacing and alignment rather than simulated absolute positions. Use noFill:true for transparent structural wrappers; styled card frames should have their own background, corner radius and optional subtle stroke/shadow. Do not add a giant empty background inside a small selected card.",
+  "Coordinates are relative to each immediate parent frame's top-left, not global screen coordinates. Auto Layout children flow in array order; do not emit different content nodes at the same simulated coordinates as a substitute for layout. Use layoutSizingHorizontal and layoutSizingVertical explicitly on children of Auto Layout frames. Use layoutPositioning=ABSOLUTE plus x/y only for overlays. Draw backplates behind the content and mark the backplate ABSOLUTE inside an Auto Layout container. Use noFill:true for transparent structural wrappers; styled card frames should have their own background, corner radius and optional subtle stroke/shadow. Do not add a giant empty background inside a small selected card.",
   "For a mobile 360×800 design, use consistent 16–24 px side margins, a deliberate vertical rhythm, a clear type scale (screen title 22–26, section headings 17–20, key amounts 24–30, body 13–16, muted metadata 11–13), high contrast, and visible space between sections. Match the selected screen's visual system and information density rather than inventing a new generic template. Do not fill empty space with random cards.",
   "Use Inter as fontFamily and Regular or Medium as fontStyle when available. Define a coherent spacing scale, typography scale, surface palette and accent usage from the source screenshot/layers. For dark screens, retain the dark canvas and source's card/surface contrast; don't put a single grey slab in an otherwise black screen. Use moderate, consistent corner radii, separator lines only where useful, and strong text contrast. Keep copy and visible values faithful to the selection; never invent features just to decorate a screen.",
   "Preserve the source's user intent, content taxonomy, and brand tone while producing a genuinely improved variation rather than copying its layout mechanically. Preserve every visible meaningful datum and repeated row. Use the selected frame's actual scope and size. Keep the source untouched.",
@@ -270,7 +313,7 @@ const SYSTEM = [
   "Keep all elements within frame bounds, use reasonable minimum touch targets for CTAs, and include the primary action and meaningful secondary paths where appropriate. Limit to 80 elements and use only supported properties.",
   "CRITICAL GEOMETRY CHECK BEFORE RETURNING: check every sibling for accidental overlap and make each text box wide/tall enough for its full copy. Never put different labels or amounts at the same coordinates. When the source uses one enclosing loan card, keep the summary and loan-wise breakdown inside the same outer card FRAME with the source's surface split; do not turn them into unrelated peer cards. Keep the status badge inside that card at its top-right edge and preserve the right-chevron/action cue. Avoid giant empty panels and never invent cards to fill scrollable whitespace.",
   "Progress indicators must preserve their meaning. Do not replace a partial progress ring (for example 60% paid) with a solid disc. Use a native ELLIPSE arcData for the progress segment (radian angles, endingAngle > startingAngle, innerRadius about 0.68–0.8), plus a muted full-circle track and centered percentage/status text. Keep the indicator layers inside a named Progress indicator FRAME. Use arcData whenever the source has a partial progress ring.",
-  "Before returning the first plan, compare the generated structure with the source screenshot for the outer card boundary, summary/breakdown surface split, status badge position, right-chevron affordance, progress-ring shape and all financial values/dates. No automatic refinements will follow.",
+  "Before returning the first plan, check text and numeric-value collisions, clipping, source-content omissions, card boundaries, status badge placement, progress-ring semantics and button hierarchy. UX Direct runs a bounded native read-back + rendered screenshot review after creation; choose robust Auto Layout and preserve overlays so the repair step can make surgical fixes. Do not intentionally truncate meaningful text.",
   "Return a concise user-facing summary of what you designed, not hidden reasoning. Never return null, an array at the root, a tool call, or explanatory text. Return one complete JSON object with summary, frame and elements keys; use learningCandidate:null when there is no durable reusable lesson."
 ].join("\n");
 
@@ -324,7 +367,7 @@ export async function POST(request: Request) {
       "Inventory and preserve all meaningful source text, labels, values, amounts, dates, statuses, indicators, icons, repeated rows, and relationships unless the user explicitly asks to change them.",
       "Use both the rendered screenshot (when available) and native layer tree to infer visual style, layout, information hierarchy, reusable patterns, and content density before planning.",
       "Translate only the requested improvement into a meaningful variation; preserve the source product identity and do not replace specific UI with generic cards.",
-      "Build editable semantic FRAME containers with logically nested layers. Use Auto Layout on suitable vertical stacks, horizontal rows, cards and repeated groups; set layoutMode, padding, itemSpacing and alignment deliberately. Use absolute coordinates only where appropriate.",
+      "Build editable semantic FRAME containers with logically nested layers. Use native Auto Layout and modern HUG/FILL/FIXED sizing on content stacks, card internals, tabs, repeated information rows and actions. A normal child in an Auto Layout parent should not rely on x/y; reserve layoutPositioning=ABSOLUTE for true overlays and intentionally layered indicators.",
       "Create a complete high-quality variation in the first plan. After native-layer creation, the plugin runs one advisory visual QA review only; it does not automatically patch or refine the result. Preserve the source frame."
     ],
     visualCapture: renderedScreen ? "Rendered selected-node image is attached." :
