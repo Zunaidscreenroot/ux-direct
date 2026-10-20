@@ -206,7 +206,7 @@ async function persistInlineTaskLearning(
     if (detectCoachingSignal(context) || detectExplicitTrainingIntent(context)) return;
     if (referencesUnstatedClient(candidate, context)) {
       recordOperationalEvent({
-        source: sourceProduct,
+        source: sourceProduct === "figma-plugin" ? "figma-plugin" : "dashboard",
         event: "Inline task learning filtered",
         status: "info",
         summary: "A task-derived candidate named a client not present in the task context; nothing was stored.",
