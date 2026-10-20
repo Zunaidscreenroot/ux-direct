@@ -68,8 +68,9 @@ export function normalizeVisualReview(value: unknown): unknown {
     const match = rawScore.match(/-?\d+(?:\.\d+)?/);
     score = match ? Number(match[0]) : 0;
   } else {
-    // Missing score must fail the quality gate rather than accidentally pass.
-    score = 0;
+    // Reject an incomplete review so the endpoint tries the configured fallback model.
+    // Do not turn an absent score into a valid-looking review result.
+    return null;
   }
   score = Math.max(0, Math.min(100, score));
 
