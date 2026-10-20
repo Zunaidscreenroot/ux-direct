@@ -13,6 +13,7 @@ const agent = read("app/api/assistant/figma-agent/route.ts");
 const planNormalizer = read("src/figma-agent/normalize-plan.ts");
 const chatRoute = read("app/api/assistant/chat/route.ts");
 const modelPolicy = read("src/providers/anthropic-openrouter.ts");
+const cockpitEffects = read("figma-plugin/ui-effects.tsx");
 
 test("conversational cockpit inline JavaScript parses successfully", () => {
   const match = pluginUi.match(/<script>([\s\S]*?)<\/script>/i);
@@ -297,3 +298,29 @@ test("short Figma prompts inherit the complete design-variation workflow", () =>
   assert.ok(pluginUi.includes('setProcessState("waiting"'));
   assert.ok(pluginUi.includes('waiting: "Waiting for the previous Figma action to finish"'));
 });
+
+test("Figma cockpit uses Libraries.dev Thinking Orbs for task-state updates", () => {
+  assert.ok(cockpitEffects.includes('from "thinking-orbs"'));
+  assert.ok(cockpitEffects.includes('state="searching"') || cockpitEffects.includes('state={state}'));
+  for (const state of ["working", "searching", "solving", "listening", "connecting", "weaving", "composing", "breathing", "shaping"]) {
+    assert.ok(cockpitEffects.includes('"' + state + '"'), "Thinking orb state missing: " + state);
+  }
+  assert.ok(pluginUi.includes('id="uxdOrbRoot"'));
+  assert.ok(pluginUi.includes('id="processOrbRoot"'));
+  assert.ok(pluginUi.includes('<script src="ui-effects.js"></script>'));
+  assert.equal(/uxd-orb-glow|uxd-orb-ring|uxd-orb-core|uxd-status-orbit/.test(pluginUi), false);
+  assert.ok(pluginUi.includes("window.UXDEffects.setProcessState(state)"));
+});
+
+test("Libraries.dev Border Beam is wired to the composer focus and task lifecycle", () => {
+  assert.ok(cockpitEffects.includes('from "border-beam"'));
+  assert.ok(cockpitEffects.includes("<BorderBeam"));
+  assert.ok(cockpitEffects.includes('colorVariant="ocean"'));
+  assert.ok(cockpitEffects.includes('active={emphasis}'));
+  assert.ok(pluginUi.includes('id="beamRoot"'));
+  assert.ok(pluginUi.includes('setBeamEmphasis(true)'));
+  assert.ok(pluginUi.includes('setBeamEmphasis(isSending)'));
+  assert.ok(pluginUi.includes("activeTaskStates.includes(state)"));
+  assert.equal(/uxd-orb-glow|uxd-orb-ring|uxd-orb-core|uxd-status-orbit/.test(pluginUi), false);
+});
+
