@@ -63,3 +63,12 @@ The design follows the useful ideas—not a new runtime dependency—from:
 - [agent-memory-toolkit](https://github.com/autosre-ai/agentmemory): hybrid retrieval and explicit memory tiers.
 
 These projects are research references. This implementation uses the existing TypeScript + Neon Postgres stack, with Cloudflare R2 for large binary assets such as screenshots. The shared brain remains model-independent and does not introduce a separate Python memory service or new recurring hosting costs.
+
+
+## Universal task learning (UX Direct + Figma plugin)
+
+- Every gateway-backed task-planning request may return at most one reusable lesson as part of the same planning inference; no second model call is added for learning. This applies to task plans from UX Direct and Figma-plugin-originated task plans. Routine, one-off, unsupported or confidential work should return no candidate.
+- The task pipeline stores only the short normalized lesson, not the raw task brief, selected canvas text, screenshots, or node IDs. Lessons are deduplicated by source, scope and normalized rule, then auto-activated only when the deterministic relevance and scope checks pass the existing 50% threshold.
+- A model-suggested scope is not automatically trusted. Named client scope takes precedence. Global cross-product memory requires an explicit whole-product instruction; Indian-BFSI lessons stay within that domain. Client-specific evidence must never be promoted to global memory.
+- The native Figma bridge may learn from a verified canvas-command failure only when it maps to a known recovery category (scope/permissions, stale node ID, timeout/expiry, unsupported API, or invalid payload). It stores only the generic recovery rule and coarse category; raw errors, file keys, node identifiers and operation payload/results are excluded. Capturing a lesson is best-effort and must not change the command result.
+- Shared memory is used through retrieval on later tasks, so this is persistent product memory/RAG—not fine-tuning model weights. Current task requirements and live Figma evidence always override stored lessons. Mock-mode plans do not create task-derived lessons because no learning-capable model inference ran.
