@@ -10,6 +10,7 @@ const bridge = read("app/api/plugin-bridge/route.ts");
 const plugin = read("figma-plugin/code.js");
 const pluginUi = read("figma-plugin/ui.html");
 const agent = read("app/api/assistant/figma-agent/route.ts");
+const chatRoute = read("app/api/assistant/chat/route.ts");
 
 test("conversational cockpit inline JavaScript parses successfully", () => {
   const match = pluginUi.match(/<script>([\s\S]*?)<\/script>/i);
@@ -187,4 +188,12 @@ test("native health check catalogue includes more than 100 non-file API probes a
 test("bridge supports saved health reports above the legacy 100-check ceiling", () => {
   assert.ok(bridge.includes("checks: z.array(CHECK).max(300)"));
   assert.ok(bridge.includes('mode === "health-state"'));
+});
+
+test("normal conversational chat prefers GPT-6 Luna and only starts Auto after primary failure", () => {
+  assert.ok(chatRoute.includes('const ROUTER_MODEL = "openai/gpt-6-luna";'));
+  assert.ok(chatRoute.includes('const FALLBACK_MODEL = "openrouter/auto";'));
+  assert.ok(chatRoute.includes("Sequential fallback avoids starting or charging a second inference unless the primary fails."));
+  assert.ok(chatRoute.includes("const fallback = startAttempt(FALLBACK_MODEL);"));
+  assert.ok(chatRoute.includes('currentModel === FALLBACK_MODEL ? { plugins: [{ id: "auto-router", cost_tier: "low" }] }'));
 });
