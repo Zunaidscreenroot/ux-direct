@@ -6,6 +6,7 @@ import { detectCoachingSignal, detectExplicitTrainingIntent, resolveChatLearning
 import { containsSensitiveMaterial, createLearningMarkerTransform, referencesUnstatedClient, type InlineLearningCandidate } from "@/src/memory/inline-learning";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
+import { ANTHROPIC_OPENROUTER_MODELS, ANTHROPIC_OPENROUTER_PROVIDER } from "@/src/providers/anthropic-openrouter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,9 +44,9 @@ type BrainContextInfo = {
 
 const MAX_MESSAGES = 100;
 const MAX_TOTAL_CHARS = 80000;
-const ROUTER_MODEL = "anthropic/claude-sonnet-5.5";
-const FALLBACK_MODEL = "anthropic/claude-sonnet-5";
-const FINAL_FALLBACK_MODEL = "anthropic/claude-haiku-5.5";
+const ROUTER_MODEL = ANTHROPIC_OPENROUTER_MODELS[0];
+const FALLBACK_MODEL = ANTHROPIC_OPENROUTER_MODELS[1];
+const FINAL_FALLBACK_MODEL = ANTHROPIC_OPENROUTER_MODELS[2];
 const FIRST_TEXT_TIMEOUT_MS = 30_000;
 const SYSTEM_PROMPT = [
   "You are UX Direct, a thoughtful senior product UX partner.",
@@ -418,7 +419,7 @@ export async function POST(request: Request) {
             messages: [{ role: "system", content: systemContent }, ...promptMessages],
             stream: true,
             temperature: 0.4,
-            provider: { only: ["anthropic"], allow_fallbacks: false, sort: "throughput" },
+            provider: ANTHROPIC_OPENROUTER_PROVIDER,
             usage: { include: true },
           }),
           cache: "no-store",
