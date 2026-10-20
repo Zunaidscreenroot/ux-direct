@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ReadableStream } from "node:stream/web";
-import { createLearningMarkerTransform, parseInlineLearningCandidate } from "../src/memory/inline-learning";
+import { createLearningMarkerTransform, parseInlineLearningCandidate, referencesUnstatedClient, sanitizeInlineLearningCandidate } from "../src/memory/inline-learning";
 
 const candidate = {
   title: "Preserve existing design-system components",
@@ -85,7 +85,6 @@ test("strips private markers from multimodal text-part deltas", async () => {
 });
 
 test("rejects a client name copied into a broader candidate when the task did not mention it", () => {
-  const { referencesUnstatedClient, sanitizeInlineLearningCandidate } = require("../src/memory/inline-learning") as typeof import("../src/memory/inline-learning");
   const candidate = sanitizeInlineLearningCandidate({
     title: "Ujjivan onboarding CTA lesson",
     normalizedRule: "Make the onboarding CTA more visible and keep the hierarchy consistent.",
