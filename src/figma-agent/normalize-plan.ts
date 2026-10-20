@@ -50,6 +50,11 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
     : {};
   const frameWidth = Number(rawFrame.width ?? rawFrame.frameWidth ?? sourceNode.width ?? 393);
   const frameHeight = Number(rawFrame.height ?? rawFrame.frameHeight ?? sourceNode.height ?? 852);
+  const sourceIsComponent = ["COMPONENT", "COMPONENT_SET", "INSTANCE", "GROUP"].includes(String(sourceNode.type || "").toUpperCase()) ||
+    (frameWidth > 0 && frameWidth <= 520 && frameHeight > 0 && frameHeight <= 560 &&
+      /\\b(card|component|widget|tile|row|button|panel|item|summary|breakdown|loan)\\b/i.test(String(sourceNode.name || "")) &&
+      !/\\b(screen|page|dashboard|flow)\\b/i.test(String(sourceNode.name || "")));
+  const requestedRootLayout = String(rawFrame.layoutMode ?? rawFrame.layout ?? "VERTICAL").trim().toUpperCase();
   const frame = {
     name: String(rawFrame.name ?? rawFrame.title ?? root.frameName ?? "UX Direct Variation").trim().slice(0, 80) || "UX Direct Variation",
     width: Math.max(280, Math.min(1440, Math.round(Number.isFinite(frameWidth) ? frameWidth : 393))),
@@ -57,6 +62,23 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
     backgroundColor: normalizeColor(rawFrame.backgroundColor ?? rawFrame.background ?? rawFrame.fill ?? rawFrame.color)
       || (Array.isArray(sourceNode.fillColors) && typeof sourceNode.fillColors[0] === "string" ? normalizeColor(sourceNode.fillColors[0]) : null)
       || "#F7F8FA",
+    layoutMode: requestedRootLayout === "HORIZONTAL" ? "HORIZONTAL" : requestedRootLayout === "NONE" ? "NONE" : "VERTICAL",
+    itemSpacing: typeof rawFrame.itemSpacing === "number" && Number.isFinite(rawFrame.itemSpacing)
+      ? Math.max(0, Math.min(160, rawFrame.itemSpacing)) : (sourceIsComponent ? 8 : 16),
+    paddingLeft: typeof rawFrame.paddingLeft === "number" && Number.isFinite(rawFrame.paddingLeft)
+      ? Math.max(0, Math.min(160, rawFrame.paddingLeft)) : (sourceIsComponent ? 12 : 16),
+    paddingRight: typeof rawFrame.paddingRight === "number" && Number.isFinite(rawFrame.paddingRight)
+      ? Math.max(0, Math.min(160, rawFrame.paddingRight)) : (sourceIsComponent ? 12 : 16),
+    paddingTop: typeof rawFrame.paddingTop === "number" && Number.isFinite(rawFrame.paddingTop)
+      ? Math.max(0, Math.min(160, rawFrame.paddingTop)) : (sourceIsComponent ? 12 : 16),
+    paddingBottom: typeof rawFrame.paddingBottom === "number" && Number.isFinite(rawFrame.paddingBottom)
+      ? Math.max(0, Math.min(160, rawFrame.paddingBottom)) : (sourceIsComponent ? 12 : 16),
+    primaryAxisAlignItems: ["MIN", "MAX", "CENTER", "SPACE_BETWEEN"].includes(String(rawFrame.primaryAxisAlignItems || "").toUpperCase())
+      ? String(rawFrame.primaryAxisAlignItems).toUpperCase() : "MIN",
+    counterAxisAlignItems: ["MIN", "MAX", "CENTER", "BASELINE"].includes(String(rawFrame.counterAxisAlignItems || "").toUpperCase())
+      ? String(rawFrame.counterAxisAlignItems).toUpperCase() : "MIN",
+    primaryAxisSizingMode: rawFrame.primaryAxisSizingMode === "AUTO" ? "AUTO" : "FIXED",
+    counterAxisSizingMode: rawFrame.counterAxisSizingMode === "AUTO" ? "AUTO" : "FIXED",
   };
   const inputElements = root.elements ?? root.layers ?? root.nodes ?? root.children;
   if (!Array.isArray(inputElements)) {
@@ -116,8 +138,12 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
     }
     const aliases: Array<[string, string]> = [
       ["strokeWeight", "strokeWeight"], ["opacity", "opacity"], ["cornerRadius", "cornerRadius"],
-      ["clipsContent", "clipsContent"], ["layoutMode", "layoutMode"], ["itemSpacing", "itemSpacing"],
-      ["paddingLeft", "paddingLeft"], ["paddingRight", "paddingRight"], ["paddingTop", "paddingTop"], ["paddingBottom", "paddingBottom"],
+      ["clipsContent", "clipsContent"], ["layoutMode", "layoutMode"], ["layoutWrap", "layoutWrap"],
+      ["layoutSizingHorizontal", "layoutSizingHorizontal"], ["layoutSizingVertical", "layoutSizingVertical"],
+      ["layoutPositioning", "layoutPositioning"], ["layoutGrow", "layoutGrow"], ["layoutAlign", "layoutAlign"],
+      ["horizontalConstraint", "horizontalConstraint"], ["verticalConstraint", "verticalConstraint"],
+      ["itemSpacing", "itemSpacing"], ["paddingLeft", "paddingLeft"], ["paddingRight", "paddingRight"],
+      ["paddingTop", "paddingTop"], ["paddingBottom", "paddingBottom"],
       ["primaryAxisAlignItems", "primaryAxisAlignItems"], ["counterAxisAlignItems", "counterAxisAlignItems"],
       ["primaryAxisSizingMode", "primaryAxisSizingMode"], ["counterAxisSizingMode", "counterAxisSizingMode"],
       ["textAlignHorizontal", "textAlignHorizontal"], ["textAlignVertical", "textAlignVertical"], ["textAutoResize", "textAutoResize"],
@@ -133,7 +159,7 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
       } else if (sourceKey === "clipsContent" && typeof rawValue === "boolean") normalized[targetKey] = rawValue;
       else if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
         const ranges: Record<string, [number, number]> = {
-          strokeWeight: [0, 20], opacity: [0, 1], cornerRadius: [0, 128],
+          strokeWeight: [0, 20], opacity: [0, 1], cornerRadius: [0, 128], layoutGrow: [0, 1],
           itemSpacing: [0, 160], paddingLeft: [0, 160], paddingRight: [0, 160],
           paddingTop: [0, 160], paddingBottom: [0, 160], shadowBlur: [0, 80],
           shadowX: [-30, 30], shadowY: [-30, 30], shadowSpread: [-30, 30],
@@ -142,8 +168,10 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
         normalized[targetKey] = range ? Math.max(range[0], Math.min(range[1], rawValue)) : rawValue;
       } else if (typeof rawValue === "string") {
         const enumKeys = new Set([
-          "layoutMode", "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode",
-          "counterAxisSizingMode", "textAlignHorizontal", "textAlignVertical", "textAutoResize", "textCase", "textDecoration",
+          "layoutMode", "layoutWrap", "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "layoutAlign",
+          "horizontalConstraint", "verticalConstraint", "primaryAxisAlignItems", "counterAxisAlignItems",
+          "primaryAxisSizingMode", "counterAxisSizingMode", "textAlignHorizontal", "textAlignVertical",
+          "textAutoResize", "textCase", "textDecoration",
         ]);
         let enumValue = rawValue.trim().toUpperCase().replace(/[ -]+/g, "_");
         if (targetKey === "textCase") {
@@ -342,6 +370,155 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
     return result;
   }
   normalized = prune(normalized, { count: 0 });
+
+  // Convert the semantic layer tree into a Figma-native layout contract before it
+  // reaches the writer. Geometry remains available for intentional absolute overlays;
+  // normal content flows through Auto Layout and uses modern HUG/FILL/FIXED sizing.
+  function nodeRect(node: Record<string, unknown>) {
+    return {
+      x: Number(node.x) || 0, y: Number(node.y) || 0,
+      width: Math.max(1, Number(node.width) || 1), height: Math.max(1, Number(node.height) || 1),
+    };
+  }
+  function overlapRatio(a: Record<string, unknown>, b: Record<string, unknown>) {
+    const ra = nodeRect(a), rb = nodeRect(b);
+    const overlapW = Math.max(0, Math.min(ra.x + ra.width, rb.x + rb.width) - Math.max(ra.x, rb.x));
+    const overlapH = Math.max(0, Math.min(ra.y + ra.height, rb.y + rb.height) - Math.max(ra.y, rb.y));
+    return overlapW * overlapH / Math.max(1, Math.min(ra.width * ra.height, rb.width * rb.height));
+  }
+  function isBackdrop(child: Record<string, unknown>, parent: Record<string, unknown>) {
+    const childBox = nodeRect(child), parentBox = nodeRect(parent);
+    return ["RECTANGLE", "FRAME"].includes(String(child.type)) &&
+      childBox.x <= 2 && childBox.y <= 2 &&
+      childBox.width >= parentBox.width * 0.86 && childBox.height >= parentBox.height * 0.82;
+  }
+  function inferLayoutMode(parent: Record<string, unknown>, children: Record<string, unknown>[]) {
+    const parentName = String(parent.name || "").toLowerCase();
+    if (/progress|indicator|gauge|meter|ring|overlay|hero visual|decorative|avatar stack|icon stack/.test(parentName) ||
+        children.some((child) => child.type === "ELLIPSE" && child.arcData && children.some((other) => other.type === "TEXT" && overlapRatio(child, other) > 0.22))) {
+      return "NONE";
+    }
+    const flow = children.filter((child) => !isBackdrop(child, parent));
+    if (flow.length <= 1) return "VERTICAL";
+    let horizontalPairs = 0, verticalPairs = 0, comparablePairs = 0;
+    for (let i = 0; i < flow.length; i += 1) {
+      for (let j = i + 1; j < flow.length; j += 1) {
+        const a = nodeRect(flow[i]), b = nodeRect(flow[j]);
+        const centerAY = a.y + a.height / 2, centerBY = b.y + b.height / 2;
+        const centerAX = a.x + a.width / 2, centerBX = b.x + b.width / 2;
+        const overlap = overlapRatio(flow[i], flow[j]);
+        if (overlap > 0.22) continue;
+        comparablePairs += 1;
+        if (Math.abs(centerAY - centerBY) <= Math.max(10, Math.min(a.height, b.height) * 0.45) &&
+            Math.abs(centerAX - centerBX) > Math.max(8, Math.min(a.width, b.width) * 0.25)) horizontalPairs += 1;
+        if (Math.abs(centerAX - centerBX) <= Math.max(12, Math.min(a.width, b.width) * 0.18) &&
+            Math.abs(centerAY - centerBY) > Math.max(6, Math.min(a.height, b.height) * 0.35)) verticalPairs += 1;
+      }
+    }
+    if (comparablePairs > 0 && horizontalPairs / comparablePairs >= 0.55) return "HORIZONTAL";
+    if (comparablePairs > 0 && verticalPairs / comparablePairs >= 0.4) return "VERTICAL";
+    // On content-heavy containers, a vertical stack is safer than fixed-position text
+    // boxes competing for the same pixels. Known layered art/indicators stay absolute.
+    if (/tabs|tab row|button group|actions row|metric row|summary row|value row|inline|toolbar|navigation/.test(parentName)) return "HORIZONTAL";
+    return "VERTICAL";
+  }
+  function estimateGap(children: Record<string, unknown>[], mode: string) {
+    const ordered = children.map(nodeRect).sort((a, b) => mode === "HORIZONTAL" ? a.x - b.x : a.y - b.y);
+    const gaps: number[] = [];
+    for (let i = 1; i < ordered.length; i += 1) {
+      const gap = mode === "HORIZONTAL"
+        ? ordered[i].x - (ordered[i - 1].x + ordered[i - 1].width)
+        : ordered[i].y - (ordered[i - 1].y + ordered[i - 1].height);
+      if (gap >= 0 && gap <= 64) gaps.push(gap);
+    }
+    if (!gaps.length) return 8;
+    gaps.sort((a, b) => a - b);
+    return Math.max(4, Math.min(24, Math.round(gaps[Math.floor(gaps.length / 2)])));
+  }
+  function applyLayoutContract(nodes: Record<string, unknown>[], parentMode: string = "NONE") {
+    for (const node of nodes) {
+      const children = Array.isArray(node.children) ? node.children as Record<string, unknown>[] : [];
+      const type = String(node.type || "");
+      if (type === "FRAME" && children.length) {
+        const hasLayout = typeof node.layoutMode === "string";
+        const layout = hasLayout
+          ? String(node.layoutMode)
+          : inferLayoutMode(node, children);
+        node.layoutMode = layout;
+        if (layout !== "NONE") {
+          const name = String(node.name || "").toLowerCase();
+          const isCard = /card|panel|summary|breakdown|loan|detail surface|content surface/.test(name);
+          if (typeof node.itemSpacing !== "number") node.itemSpacing = estimateGap(children.filter((child) => !isBackdrop(child, node)), layout);
+          if (typeof node.paddingLeft !== "number") node.paddingLeft = isCard ? 12 : 0;
+          if (typeof node.paddingRight !== "number") node.paddingRight = isCard ? 12 : 0;
+          if (typeof node.paddingTop !== "number") node.paddingTop = isCard ? 12 : 0;
+          if (typeof node.paddingBottom !== "number") node.paddingBottom = isCard ? 12 : 0;
+          if (typeof node.primaryAxisAlignItems !== "string") node.primaryAxisAlignItems = "MIN";
+          if (typeof node.counterAxisAlignItems !== "string") node.counterAxisAlignItems = "MIN";
+          if (typeof node.primaryAxisSizingMode !== "string") node.primaryAxisSizingMode = "FIXED";
+          if (typeof node.counterAxisSizingMode !== "string") node.counterAxisSizingMode = "FIXED";
+
+          for (const child of children) {
+            if (isBackdrop(child, node)) {
+              if (child.layoutPositioning === undefined) child.layoutPositioning = "ABSOLUTE";
+              continue;
+            }
+          }
+          // Preserve overlays (status badges, progress labels, arc indicators) as
+          // native absolute children rather than letting Auto Layout push them away.
+          for (let i = 0; i < children.length; i += 1) {
+            const child = children[i];
+            if (isBackdrop(child, node)) continue;
+            const area = nodeRect(child).width * nodeRect(child).height;
+            for (let j = 0; j < children.length; j += 1) {
+              if (i === j || isBackdrop(children[j], node)) continue;
+              const otherArea = nodeRect(children[j]).width * nodeRect(children[j]).height;
+              const name = String(child.name || "").toLowerCase();
+              const overlayLike = /badge|overlay|progress label|indicator label|icon|chevron|close|avatar|ring/.test(name);
+              if (overlapRatio(child, children[j]) >= 0.24 && (area <= otherArea * 0.58 || overlayLike) &&
+                  child.layoutPositioning === undefined) {
+                child.layoutPositioning = "ABSOLUTE";
+                break;
+              }
+            }
+          }
+        } else {
+          // A deliberately layered frame must keep its explicit coordinates.
+          for (const child of children) {
+            if (child.layoutPositioning === undefined) child.layoutPositioning = "ABSOLUTE";
+          }
+        }
+      }
+
+      // These are the modern child sizing properties, applied by the plugin only
+      // after appendChild (Figma requires a real Auto Layout parent first).
+      if (parentMode !== "NONE" && node.layoutPositioning !== "ABSOLUTE") {
+        if (node.layoutSizingHorizontal === undefined) {
+          node.layoutSizingHorizontal = type === "TEXT"
+            ? (parentMode === "VERTICAL" ? "FILL" : "HUG")
+            : (type === "FRAME" ? (parentMode === "VERTICAL" ? "FILL" : "HUG") : "FIXED");
+        }
+        if (node.layoutSizingVertical === undefined) {
+          node.layoutSizingVertical = type === "TEXT" ? "HUG" : "FIXED";
+        }
+        if (type === "TEXT" && node.textAutoResize === undefined) {
+          node.textAutoResize = parentMode === "VERTICAL" ? "HEIGHT" : "WIDTH_AND_HEIGHT";
+        }
+      }
+      const nextParentMode = type === "FRAME" && typeof node.layoutMode === "string"
+        ? String(node.layoutMode) : "NONE";
+      applyLayoutContract(children, nextParentMode);
+    }
+  }
+  // Top-level generated sections always flow vertically through a fixed viewport;
+  // nested containers use inferred or model-declared native Auto Layout.
+  applyLayoutContract(normalized, String(frame.layoutMode));
+  if (frame.layoutMode !== "NONE" && normalized.length > 1) {
+    normalized.sort((a, b) => {
+      if (frame.layoutMode === "HORIZONTAL") return (Number(a.x) || 0) - (Number(b.x) || 0);
+      return (Number(a.y) || 0) - (Number(b.y) || 0);
+    });
+  }
   return {
     summary: String(root.summary ?? root.description ?? root.rationale ?? "A structured, high-fidelity native Figma design variation.").trim().slice(0, 700),
     frame,
