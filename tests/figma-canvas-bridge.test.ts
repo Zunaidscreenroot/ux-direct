@@ -122,7 +122,7 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
 test("in-Figma design agent retrieves approved brain context and validates native layer plans", () => {
   assert.ok(agent.includes('retrieveBrainContext('), "Figma design planning must retrieve shared memory.");
   assert.ok(agent.includes('resolveBrainScopes('), "Brain retrieval must be scope-filtered.");
-  assert.ok(agent.includes('UXD_FIGMA_AGENT_MODELS'), "OpenRouter model fallback list must be configurable.");
+  assert.ok(agent.includes('const models = ["openai/gpt-6-luna", "openrouter/auto"];'), "GPT-6 Luna must be primary and OpenRouter Auto fallback.");
   assert.ok(agent.includes('response_format: { type: "json_object" }'), "The design agent must request structured output.");
   assert.ok(agent.includes('PlanSchema.safeParse('), "The provider plan must be schema-validated before canvas execution.");
   assert.ok(agent.includes('elements: z.array(ElementSchema).min(5).max(80)'), "Native element count must be bounded.");
