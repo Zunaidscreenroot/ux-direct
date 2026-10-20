@@ -190,7 +190,7 @@ test("connection-status tool reports ChatGPT and Figma connection semantics", as
     assert.ok(connectionTool);
     assert.match(connectionTool.description, /five minutes/);
     assert.match(connectionTool.description, /75 seconds/);
-    assert.match(connectionTool.description, /read-only/);
+    assert.match(connectionTool.description, /read-only/i);
     assert.match(connectionTool.description, /Does not queue plugin commands/);
     const healthStatusTool = body.result.tools.find((tool: { name: string }) => tool.name === "ux_direct_figma_plugin_health_check_status");
     assert.ok(healthStatusTool);
