@@ -153,7 +153,7 @@ export function resolveLearningScope(candidateScope: unknown, project: TaskProje
   }
 
   // Named-client scope takes precedence over a broader model-suggested scope.
-  if (project === "dmi-finance" || /\b(dmi|dmi hfc|dmi finance|dmi wealth|housing finance)\b/.test(text)) return "project:dmi-finance";
+  if (project === "dmi-finance" || /\b(dmi|dmi hfc|dmi finance|dmi wealth)\b/.test(text)) return "project:dmi-finance";
   if (project === "express-computers" || /\bexpress computers\b/.test(text)) return "project:express-computers";
   if (/\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\b/.test(text)) return "project:ujjivan-sfb";
 
@@ -169,7 +169,7 @@ export function resolveLearningScope(candidateScope: unknown, project: TaskProje
 export function resolveChatLearningScope(text: string): string {
   const value = text.toLowerCase();
   if (/\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\b/.test(value)) return "project:ujjivan-sfb";
-  if (/\b(dmi|dmi hfc|dmi finance|dmi wealth|housing finance)\b/.test(value)) return "project:dmi-finance";
+  if (/\b(dmi|dmi hfc|dmi finance|dmi wealth)\b/.test(value)) return "project:dmi-finance";
   if (/\b(ux audit|uxaudit|audit findings|audit workflow|benchmarking)\b/.test(value)) return "project:ux-audit";
   if (/\b(indian bfs(i|fi)|banking|financial services|insurance|rbi|nbfc|credit bureau)\b/.test(value)) return "indian-bfsi";
   if (/\b(shared brain|cross[- ]product|across products|global memory|chat.{0,20}brain|brain.{0,20}chat)\b/.test(value)) return "UX_SHARED_BRAIN";
