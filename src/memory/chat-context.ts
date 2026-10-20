@@ -32,8 +32,8 @@ export function resolveBrainScopes(query: string): string[] {
   if (/\b(ux\s*audit|uxaudit|audit|benchmark|past findings|audit findings)\b/.test(normalized)) {
     scopes.push("project:ux-audit");
   }
-  const dmi = /\b(dmi|housing finance|dmi hfc|hfc|dmi wealth)\b/.test(normalized);
-  const ujjivan = /\b(ujjivan|ujjivan sfb|small finance bank)\b/.test(normalized);
+  const dmi = /\b(dmi|dmi hfc|dmi finance|dmi wealth)\b/.test(normalized);
+  const ujjivan = /\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\b/.test(normalized);
   if (dmi) scopes.push("project:dmi-finance");
   if (ujjivan) scopes.push("project:ujjivan-sfb");
   return scopes;
