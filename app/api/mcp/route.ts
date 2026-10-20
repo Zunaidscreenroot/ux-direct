@@ -486,9 +486,9 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        operation: { type: "string", enum: ["batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"] },
+        operation: { type: "string", enum: ["batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "insert-image", "create-variables", "bind-variable"] },
         confirm: { type: "boolean", const: true, description: "Must be true only after the owner explicitly requests this specific write." },
-        target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
+        target: { type: "string", enum: ["current-page", "selection", "node", "test-lab"] },
         elements: {
           type: "array", minItems: 1, maxItems: 20,
           items: {
@@ -520,7 +520,12 @@ const TOOLS = [
               },
               cornerRadius: { type: "number", minimum: 0, maximum: 512 },
               clipsContent: { type: "boolean" },
-              layoutMode: { type: "string", enum: ["NONE", "HORIZONTAL", "VERTICAL"] },
+              layoutMode: { type: "string", enum: ["NONE", "HORIZONTAL", "VERTICAL", "GRID"] },
+              layoutWrap: { type: "string", enum: ["NO_WRAP", "WRAP"] },
+              layoutSizingHorizontal: { type: "string", enum: ["FIXED", "HUG", "FILL"] },
+              layoutSizingVertical: { type: "string", enum: ["FIXED", "HUG", "FILL"] },
+              layoutPositioning: { type: "string", enum: ["AUTO", "ABSOLUTE"] },
+              layoutGrow: { type: "number", minimum: 0, maximum: 1 },
               itemSpacing: { type: "number", minimum: -100, maximum: 1000 },
               fontFamily: { type: "string", minLength: 1, maxLength: 100 },
               fontStyle: { type: "string", minLength: 1, maxLength: 100 },
@@ -535,6 +540,8 @@ const TOOLS = [
               textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] },
               textAlignVertical: { type: "string", enum: ["TOP", "CENTER", "BOTTOM"] },
               textAutoResize: { type: "string", enum: ["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"] },
+              lineHeight: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: 1, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
+              letterSpacing: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: -100, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
             textCase: { type: "string", enum: ["ORIGINAL", "UPPER", "LOWER", "TITLE"] },
             textDecoration: { type: "string", enum: ["NONE", "UNDERLINE", "STRIKETHROUGH"] },
               shadowColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
@@ -570,8 +577,8 @@ const TOOLS = [
           items: {
             type: "object",
             properties: {
-              operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"] },
-              target: { type: "string", enum: ["current-page", "selection", "test-lab"] },
+              operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "insert-image", "create-variables", "bind-variable"] },
+              target: { type: "string", enum: ["current-page", "selection", "node", "test-lab"] },
               nodeId: { type: "string", minLength: 1, maxLength: 100 },
         parentNodeId: { type: "string", minLength: 1, maxLength: 100 },
         pageId: { type: "string", minLength: 1, maxLength: 100 },
@@ -629,7 +636,7 @@ const TOOLS = [
             textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] },
             textAlignVertical: { type: "string", enum: ["TOP", "CENTER", "BOTTOM"] },
             textAutoResize: { type: "string", enum: ["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"] },
-            layoutMode: { type: "string", enum: ["NONE", "HORIZONTAL", "VERTICAL"] },
+            layoutMode: { type: "string", enum: ["NONE", "HORIZONTAL", "VERTICAL", "GRID"] },
             itemSpacing: { type: "number", minimum: -100, maximum: 1000 },
             paddingLeft: { type: "number", minimum: 0, maximum: 1000 },
             paddingRight: { type: "number", minimum: 0, maximum: 1000 },
@@ -674,7 +681,25 @@ const TOOLS = [
           additionalProperties: false
         },
         imageBase64: { type: "string", maxLength: 250000 },
-        scaleMode: { type: "string", enum: ["FILL", "FIT", "CROP", "TILE"] }
+        scaleMode: { type: "string", enum: ["FILL", "FIT", "CROP", "TILE"] },
+        name: { type: "string", minLength: 1, maxLength: 100 },
+        x: { type: "number", minimum: -10000, maximum: 10000 },
+        y: { type: "number", minimum: -10000, maximum: 10000 },
+        width: { type: "number", minimum: 1, maximum: 4096 },
+        height: { type: "number", minimum: 1, maximum: 4096 },
+        cornerRadius: { type: "number", minimum: 0, maximum: 512 },
+        layoutPositioning: { type: "string", enum: ["AUTO", "ABSOLUTE"] },
+        layoutSizingHorizontal: { type: "string", enum: ["FIXED", "HUG", "FILL"] },
+        layoutSizingVertical: { type: "string", enum: ["FIXED", "HUG", "FILL"] },
+        collectionName: { type: "string", minLength: 1, maxLength: 100 },
+        modeName: { type: "string", minLength: 1, maxLength: 100 },
+        variables: { type: "array", maxItems: 80, items: { type: "object", properties: {
+          name: { type: "string", minLength: 1, maxLength: 100 },
+          type: { type: "string", enum: ["COLOR", "FLOAT", "STRING", "BOOLEAN"] },
+          value: { oneOf: [{ type: "string", maxLength: 300 }, { type: "number" }, { type: "boolean" }] }
+        }, required: ["name", "type", "value"], additionalProperties: false } },
+        variableName: { type: "string", minLength: 1, maxLength: 100 },
+        property: { type: "string", enum: ["fill", "stroke", "opacity", "cornerRadius", "width", "height", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom"] }
       },
       required: ["operation", "confirm"],
       additionalProperties: false
@@ -1038,6 +1063,20 @@ async function callTool(name: string, args: unknown, request: Request) {
       ...(input.range === undefined ? {} : { range: input.range }),
       ...(input.imageBase64 === undefined ? {} : { imageBase64: input.imageBase64 }),
       ...(input.scaleMode === undefined ? {} : { scaleMode: input.scaleMode }),
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.x === undefined ? {} : { x: input.x }),
+      ...(input.y === undefined ? {} : { y: input.y }),
+      ...(input.width === undefined ? {} : { width: input.width }),
+      ...(input.height === undefined ? {} : { height: input.height }),
+      ...(input.cornerRadius === undefined ? {} : { cornerRadius: input.cornerRadius }),
+      ...(input.layoutPositioning === undefined ? {} : { layoutPositioning: input.layoutPositioning }),
+      ...(input.layoutSizingHorizontal === undefined ? {} : { layoutSizingHorizontal: input.layoutSizingHorizontal }),
+      ...(input.layoutSizingVertical === undefined ? {} : { layoutSizingVertical: input.layoutSizingVertical }),
+      ...(input.collectionName === undefined ? {} : { collectionName: input.collectionName }),
+      ...(input.modeName === undefined ? {} : { modeName: input.modeName }),
+      ...(input.variables === undefined ? {} : { variables: input.variables }),
+      ...(input.variableName === undefined ? {} : { variableName: input.variableName }),
+      ...(input.property === undefined ? {} : { property: input.property }),
       ...(input.patch === undefined ? {} : { patch: input.patch }),
       ...(input.actions === undefined ? {} : { actions: input.actions }),
     };
@@ -1045,7 +1084,7 @@ async function callTool(name: string, args: unknown, request: Request) {
       return toolText({ error: "target must be current-page, selection, or test-lab." }, true);
     }
     if (input.operation === "batch" && (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 40)) return toolText({ error: "batch requires 1–40 actions." }, true);
-    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && ["export-svg", "export-node", "create-image-fill"].includes(String((step as Record<string, unknown>).operation))) && input.actions.length > 1) return toolText({ error: "Exports and inline image fills must be standalone commands." }, true);
+    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && ["export-svg", "export-node", "create-image-fill", "insert-image"].includes(String((step as Record<string, unknown>).operation))) && input.actions.length > 1) return toolText({ error: "Exports and inline image fills must be standalone commands." }, true);
     if (input.operation !== "batch" && input.actions !== undefined) return toolText({ error: "actions is supported only for batch." }, true);
     if (input.operation === "batch" && Array.isArray(input.actions)) {
       const totalCreated = input.actions.reduce((sum, step) => {
@@ -1070,13 +1109,16 @@ async function callTool(name: string, args: unknown, request: Request) {
         if (element.type === "VECTOR" && (!Array.isArray(element.vectorPaths) || element.vectorPaths.length < 1)) return toolText({ error: "VECTOR elements require vectorPaths." }, true);
       }
     }
+    if (input.operation === "insert-image" && (typeof input.imageBase64 !== "string" || !input.imageBase64.length || !input.target)) return toolText({ error: "insert-image requires imageBase64 and target." }, true);
+    if (input.operation === "create-variables" && (typeof input.collectionName !== "string" || !Array.isArray(input.variables) || !input.variables.length)) return toolText({ error: "create-variables requires collectionName and variables." }, true);
+    if (input.operation === "bind-variable" && (typeof input.nodeId !== "string" || typeof input.variableName !== "string" || typeof input.property !== "string")) return toolText({ error: "bind-variable requires nodeId, variableName and property." }, true);
     if (input.operation === "update-node") {
       if (typeof input.nodeId !== "string" || !input.nodeId.trim()) return toolText({ error: "update-node requires nodeId." }, true);
       if (!input.patch || typeof input.patch !== "object" || Array.isArray(input.patch) || !Object.keys(input.patch as Record<string, unknown>).length) {
         return toolText({ error: "update-node requires a non-empty patch." }, true);
       }
     }
-    const nodeRequired = new Set(["clone-node", "delete-node", "reorder-node", "reparent-node", "ungroup-node", "create-component", "create-instance", "swap-component", "detach-instance", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"]);
+    const nodeRequired = new Set(["clone-node", "delete-node", "reorder-node", "reparent-node", "ungroup-node", "create-component", "create-instance", "swap-component", "detach-instance", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "bind-variable"]);
     if (nodeRequired.has(input.operation) && (typeof input.nodeId !== "string" || !input.nodeId.trim())) {
       return toolText({ error: input.operation + " requires nodeId." }, true);
     }
