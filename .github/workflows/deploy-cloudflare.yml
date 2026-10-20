@@ -33,7 +33,7 @@ jobs:
       - name: Build for Cloudflare Workers
         run: npm run cf:build
       - name: Deploy production Worker
-        run: npx opennextjs-cloudflare deploy -- --keep-vars
+        run: npx opennextjs-cloudflare deploy --config wrangler.jsonc -- --keep-vars
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: cb73bfd260a197b57210ae47f427db06
