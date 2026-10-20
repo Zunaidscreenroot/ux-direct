@@ -474,7 +474,8 @@ const TOOLS = [
         queryName: { type: "string", minLength: 1, maxLength: 120, description: "Optional case-insensitive node-name search across the current page." },
         queryType: { type: "string", minLength: 1, maxLength: 80, description: "Optional Figma node type filter, for example COMPONENT, INSTANCE, TEXT, or FRAME." },
         includePages: { type: "boolean", description: "Include page IDs and names." },
-        includeStyles: { type: "boolean", description: "Include compact IDs/names for local paint, text, effect, and grid styles." }
+        includeStyles: { type: "boolean", description: "Include compact IDs/names for local paint, text, effect, and grid styles." },
+        includeVariables: { type: "boolean", description: "Include bounded local variable names, types, collection names and mode names." }
       },
       additionalProperties: false
     },
@@ -1013,6 +1014,7 @@ async function callTool(name: string, args: unknown, request: Request) {
     const queryType = input.queryType;
     const includePages = input.includePages === true;
     const includeStyles = input.includeStyles === true;
+    const includeVariables = input.includeVariables === true;
     if (scope !== "selection" && scope !== "current-page") return toolText({ error: "scope must be selection or current-page." }, true);
     if (!Number.isInteger(maxDepth) || (maxDepth as number) < 0 || (maxDepth as number) > 5) return toolText({ error: "maxDepth must be an integer from 0 to 5." }, true);
     if (!Number.isInteger(maxNodes) || (maxNodes as number) < 1 || (maxNodes as number) > 100) return toolText({ error: "maxNodes must be an integer from 1 to 100." }, true);
@@ -1020,12 +1022,13 @@ async function callTool(name: string, args: unknown, request: Request) {
     if (queryType !== undefined && (typeof queryType !== "string" || !queryType.trim() || queryType.length > 80)) return toolText({ error: "queryType must be a non-empty string up to 80 characters." }, true);
     if (input.includePages !== undefined && typeof input.includePages !== "boolean") return toolText({ error: "includePages must be boolean." }, true);
     if (input.includeStyles !== undefined && typeof input.includeStyles !== "boolean") return toolText({ error: "includeStyles must be boolean." }, true);
+    if (input.includeVariables !== undefined && typeof input.includeVariables !== "boolean") return toolText({ error: "includeVariables must be boolean." }, true);
     try {
       return toolText(await queueFigmaCanvasCommand(request, "read-canvas", {
         scope, maxDepth, maxNodes,
         ...(queryName === undefined ? {} : { queryName }),
         ...(queryType === undefined ? {} : { queryType }),
-        includePages, includeStyles,
+        includePages, includeStyles, includeVariables,
       }));
     } catch (error) {
       return toolText({ status: "error", error: error instanceof Error ? error.message : "Could not queue Figma canvas read." }, true);

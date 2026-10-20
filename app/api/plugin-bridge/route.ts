@@ -107,6 +107,7 @@ const CANVAS_READ_PAYLOAD = z.object({
   queryType: z.string().trim().min(1).max(80).optional(),
   includePages: z.boolean().optional(),
   includeStyles: z.boolean().optional(),
+  includeVariables: z.boolean().optional(),
 }).strict();
 const CANVAS_PATCH = z.object({
   name: z.string().trim().min(1).max(120).optional(),

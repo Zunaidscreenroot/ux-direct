@@ -1192,6 +1192,26 @@ async function readCanvasCommand(payload) {
       grid: styles[3].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; })
     };
   }
+  if (payload.includeVariables === true && figma.variables &&
+      typeof figma.variables.getLocalVariablesAsync === "function" &&
+      typeof figma.variables.getLocalVariableCollectionsAsync === "function") {
+    var variableData = await Promise.all([
+      figma.variables.getLocalVariablesAsync(),
+      figma.variables.getLocalVariableCollectionsAsync()
+    ]);
+    var collections = variableData[1] || [];
+    var collectionById = new Map(collections.map(function (collection) { return [collection.id, collection]; }));
+    result.variableCollections = collections.slice(0, 30).map(function (collection) {
+      return { id: collection.id, name: collection.name,
+        modes: (collection.modes || []).slice(0, 8).map(function (mode) { return { modeId: mode.modeId, name: mode.name }; }) };
+    });
+    result.variables = (variableData[0] || []).slice(0, 120).map(function (variable) {
+      var collection = collectionById.get(variable.variableCollectionId);
+      return { id: variable.id, name: variable.name, type: variable.resolvedType,
+        collectionId: variable.variableCollectionId, collectionName: collection ? collection.name : "",
+        scopes: Array.isArray(variable.scopes) ? variable.scopes.slice(0, 12) : [] };
+    });
+  }
   return result;
 }
 function parseHexColor(hex) {
