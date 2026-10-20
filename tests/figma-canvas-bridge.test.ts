@@ -214,7 +214,8 @@ test("Figma visual review and refinement endpoints are wired and bounded", () =>
   const refine = read("app/api/assistant/figma-agent/refine/route.ts");
   assert.ok(pluginUi.includes("/api/assistant/figma-agent/review"));
   assert.ok(pluginUi.includes("/api/assistant/figma-agent/refine"));
-  assert.ok(pluginUi.includes("iteration <= 2"));
+  assert.ok(pluginUi.includes("iteration <= 3"));
+  assert.ok(pluginUi.includes("iteration === 3"));
   assert.ok(review.includes('type: "image_url"'));
   assert.ok(review.includes("visualInspection: !!sourceImage && !!outputImage"));
   assert.ok(refine.includes("PatchSchema"));
