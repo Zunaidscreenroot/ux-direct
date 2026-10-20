@@ -826,104 +826,6 @@
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [createdFrameId] }, 90000);
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "zoom-to-nodes", nodeIds: [createdFrameId] }, 90000);
 
-      let lastReview = null;
-      let visualQAComplete = false;
-      let visualQAError = "";
-      let refinementPatchCount = 0;
-      const sourceNodeId = sourceNode && typeof sourceNode.id === "string" ? sourceNode.id : "";
-      function figmaNodeUrl(nodeId) {
-        return "https://www.figma.com/design/" + encodeURIComponent(verifiedFileKey) +
-          "/UX-Direct-Live-QA?node-id=" + encodeURIComponent(String(nodeId).replace(/:/g, "-"));
-      }
-      async function runLiveVisualQA(phase) {
-        const response = await fetch(API + "/api/assistant/figma-agent/live-qa", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Accept": "application/json" },
-          cache: "no-store",
-          body: JSON.stringify({
-            prompt: prompt,
-            fileKey: verifiedFileKey,
-            clientId: pluginClientId,
-            sessionToken: pluginSessionToken,
-            sourceNodeId: sourceNodeId,
-            outputNodeId: createdFrameId,
-            sourceUrl: figmaNodeUrl(sourceNodeId),
-            outputUrl: figmaNodeUrl(createdFrameId),
-            phase: phase
-          })
-        });
-        const payload = await response.json().catch(function () { return {}; });
-        if (!response.ok || !payload || !payload.review) {
-          const details = Array.isArray(payload && payload.details) ? " · " + payload.details.join(" | ") : "";
-          throw new Error(String((payload && payload.error) || "TinyFish visual QA failed.") + details);
-        }
-        return payload.review;
-      }
-      stage("reviewing", "Opening the source and generated frames in TinyFish for visual QA…");
-      let outputRead = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100 }, 90000);
-      let outputCanvas = frameOnlyRead(outputRead, createdFrameId);
-      try {
-        lastReview = await runLiveVisualQA("initial");
-        visualQAComplete = lastReview.sourceInspected === true && lastReview.outputInspected === true;
-        if (!visualQAComplete) throw new Error("TinyFish could not confirm that both Figma frames were inspected in the browser.");
-        const needsRepair = lastReview.issues.length > 0 &&
-          (lastReview.score < 86 || lastReview.issues.some(function (issue) { return issue.severity === "high"; }));
-        if (needsRepair) {
-          stage("reviewing", "Preparing one targeted repair using OpenRouter Auto · LOW…");
-          const refinementResponse = await fetch(API + "/api/assistant/figma-agent/refine", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Accept": "application/json" },
-            cache: "no-store",
-            body: JSON.stringify({ prompt: prompt, review: lastReview, outputCanvas: outputCanvas, iteration: 1 })
-          });
-          const refinementPayload = await refinementResponse.json().catch(function () { return {}; });
-          const patches = refinementResponse.ok && refinementPayload && Array.isArray(refinementPayload.patch)
-            ? refinementPayload.patch.slice(0, 20) : [];
-          const nativeIds = new Set();
-          (function collectNativeIds(nodes) {
-            (Array.isArray(nodes) ? nodes : []).forEach(function (node) {
-              if (node && typeof node.id === "string") nativeIds.add(node.id);
-              collectNativeIds(node && Array.isArray(node.children) ? node.children : []);
-            });
-          })(outputCanvas.nodes);
-          const safePatches = patches.filter(function (entry) {
-            return entry && typeof entry.nodeId === "string" && nativeIds.has(entry.nodeId) &&
-              entry.patch && typeof entry.patch === "object" && !Array.isArray(entry.patch);
-          });
-          if (safePatches.length) {
-            stage("reviewing", "Applying " + safePatches.length + " targeted native-layer fixes…");
-            await runNativeCanvasCommand("write-canvas", {
-              confirm: true,
-              operation: "batch",
-              actions: safePatches.map(function (entry) {
-                return { operation: "update-node", nodeId: entry.nodeId, patch: entry.patch };
-              })
-            }, 90000);
-            refinementPatchCount = safePatches.length;
-            outputRead = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100 }, 90000);
-            outputCanvas = frameOnlyRead(outputRead, createdFrameId);
-            stage("reviewing", "Re-scanning the repaired frame in TinyFish…");
-            try {
-              const finalReview = await runLiveVisualQA("verification");
-              if (finalReview.sourceInspected === true && finalReview.outputInspected === true) {
-                lastReview = finalReview;
-                visualQAComplete = true;
-              } else {
-                visualQAError = "The final browser re-check did not confirm both frames.";
-              }
-            } catch (verifyError) {
-              visualQAError = "Repair was applied, but final live QA could not complete: " +
-                String(verifyError && verifyError.message || "verification failed").slice(0, 220);
-            }
-          } else if (!refinementResponse.ok) {
-            visualQAError = "TinyFish found issues, but the single low-cost repair plan failed: " +
-              String((refinementPayload && refinementPayload.error) || "repair unavailable").slice(0, 220);
-          }
-        }
-      } catch (reviewError) {
-        visualQAError = reviewError && reviewError.message ? String(reviewError.message).slice(0, 500) : "TinyFish live QA failed.";
-        visualQAComplete = false;
-      }
       stage("verifying", "Checking the final native layer tree and frame bounds…");
       // Read to the maximum supported depth so nested native FRAMEs are included.
       // The previous depth-2 read made otherwise-valid nested designs look incomplete.
@@ -945,34 +847,14 @@
             : "Expected " + completedElementCount + " generated child layers, but read-back confirmed " + verifiedChildCount + ".";
         throw new Error(problem + " The variation may be partial; the source frame remains untouched. Inspect the new frame before retrying.");
       }
-      const qaIssues = lastReview && Array.isArray(lastReview.issues) ? lastReview.issues : [];
-      const qualityPassed = !!(lastReview && qaIssues.length === 0 && lastReview.score >= 82 && visualQAComplete);
-      stage("done", qualityPassed
-        ? "Variation created · one-pass visual QA passed"
-        : "Variation created · native structure verified · review the QA notes");
+      stage("done", "Variation created · native structure verified");
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
-      let quality = "";
-      if (lastReview && Array.isArray(lastReview.issues)) {
-        quality = " TinyFish live QA: " + lastReview.score + "/100; " + qaIssues.length +
-          " issue(s) flagged. " + (qualityPassed
-            ? "No actionable visual issues were reported."
-            : (refinementPatchCount ? " Applied " + refinementPatchCount + " targeted native-layer repair(s) and re-checked once." : " Review the findings before retrying."));
-        const issueNotes = qaIssues.slice(0, 3).map(function (issue, index) {
-          return (index + 1) + ". " + String(issue.issue || "Visual issue").slice(0, 180) +
-            (issue.evidence ? " — " + String(issue.evidence).slice(0, 140) : "");
-        }).join("\n");
-        if (issueNotes) quality += "\nQA notes:\n" + issueNotes;
-        if (!visualQAComplete) quality += " Screenshot-based comparison was not fully available.";
-      } else {
-        quality = " TinyFish live QA unavailable; no repair was run." +
-          (visualQAError ? " Review detail: " + visualQAError.slice(0, 350) : "");
-      }
       return "Created \"" + plan.frame.name + "\" as a separate editable Figma variation with " +
         completedElementCount + " native layers. " + String(plan.summary || "The variation is ready for review.") +
         "\n\nGeneration model: " + model + " · UX Direct Brain: " + memory +
         (visualCaptureWarning ? "\nVisual capture note: " + visualCaptureWarning : "") +
         "\nThe source frame was preserved. The new variation is selected on the canvas." +
-        (refinementPatchCount ? "\nLive refinements applied: " + refinementPatchCount + " native-layer patches (one pass maximum)." : "") + quality;
+        "\nThe generated variation is ready for manual review.";
     }
 
     async function captureRenderedNodePreview(nodeId) {
