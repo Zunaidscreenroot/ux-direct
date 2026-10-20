@@ -301,6 +301,72 @@ type Session = {
 };
 const sessionPath = (id: string) => `${PREFIX}/sessions/${id}/session.json`;
 const commandPath = (id: string) => `${PREFIX}/sessions/${id}/command.json`;
+const ACTIVE_COMMAND_STALE_PENDING_MS = 45_000;
+const ACTIVE_COMMAND_STALE_CLAIMED_MS = 120_000;
+
+/**
+ * Reconcile the session lock with the canonical command record before refusing
+ * new work. A timed-out browser waiter must not strand the plugin behind a
+ * stale session pointer. A claimed operation gets more than the 90s client
+ * command timeout plus a result-delivery margin before it can be reclaimed.
+ */
+async function reconcileActiveCommandLock(current: Session): Promise<{ locked: boolean; retryAfterMs: number }> {
+  const pointer = current.latestCommand;
+  if (!pointer || !["pending", "claimed"].includes(pointer.status)) {
+    return { locked: false, retryAfterMs: 0 };
+  }
+
+  const stored = await readJson<BridgeCommand>(commandPath(current.clientId));
+  const command = stored && stored.commandId === pointer.commandId ? stored : pointer;
+
+  if (!["pending", "claimed"].includes(command.status)) {
+    current.latestCommand = command;
+    await writeJson(sessionPath(current.clientId), current);
+    return { locked: false, retryAfterMs: 0 };
+  }
+
+  const now = Date.now();
+  const issuedAt = Date.parse(command.issuedAt);
+  const claimedAt = Date.parse(command.claimedAt || command.issuedAt);
+  const expiresAt = Date.parse(command.expiresAt);
+  const expired = !Number.isFinite(expiresAt) || expiresAt <= now;
+  const stalePending = command.status === "pending" &&
+    (!Number.isFinite(issuedAt) || now - issuedAt >= ACTIVE_COMMAND_STALE_PENDING_MS);
+  const staleClaimed = command.status === "claimed" &&
+    (!Number.isFinite(claimedAt) || now - claimedAt >= ACTIVE_COMMAND_STALE_CLAIMED_MS);
+
+  if (!expired && !stalePending && !staleClaimed) {
+    const age = command.status === "pending" ? now - issuedAt : now - claimedAt;
+    const limit = command.status === "pending" ? ACTIVE_COMMAND_STALE_PENDING_MS : ACTIVE_COMMAND_STALE_CLAIMED_MS;
+    return { locked: true, retryAfterMs: Math.max(500, Math.min(5000, limit - age)) };
+  }
+
+  const failure = expired
+    ? "Command lease expired before a verified result was stored."
+    : stalePending
+      ? "Pending command was never claimed by the active Figma plugin; stale lock was cleared."
+      : "Claimed command exceeded the safe execution window without a verified result; stale lock was cleared.";
+  const failed: BridgeCommand = {
+    ...command,
+    status: "failed",
+    completedAt: new Date().toISOString(),
+    failure,
+  };
+  await writeJson(commandPath(current.clientId), failed);
+  current.latestCommand = failed;
+  await writeJson(sessionPath(current.clientId), current);
+  recordOperationalEvent({
+    source: "figma-plugin",
+    event: "Stale Figma command lock recovered",
+    status: "warning",
+    summary: "UX Direct reconciled an expired or unresponsive native command before allowing the next operation.",
+    category: "Figma Canvas",
+    action: command.action,
+    requestId: command.commandId,
+  });
+  return { locked: false, retryAfterMs: 0 };
+}
+
 const latestReportPath = `${PREFIX}/reports/latest.json`;
 type PersistedHealthReport = { clientId: string; commandId?: string; savedAt: string; healthReport: HealthReport };
 
@@ -435,11 +501,12 @@ export async function POST(request: Request) {
       if (current.status !== "online" || Date.now() - Date.parse(current.lastHeartbeatAt) >= 75000) {
         return NextResponse.json({ error: "Figma plugin is offline. Open the plugin and try again." }, { status: 409, headers });
       }
-      if (current.latestCommand && ["pending", "claimed"].includes(current.latestCommand.status)) {
-        const age = Date.now() - Date.parse(current.latestCommand.issuedAt);
-        if (Number.isFinite(age) && age < 240000) {
-          return NextResponse.json({ error: "A Figma canvas action is already running. Wait for it to finish." }, { status: 409, headers });
-        }
+      const activeLock = await reconcileActiveCommandLock(current);
+      if (activeLock.locked) {
+        return NextResponse.json({
+          error: "A Figma canvas action is still running. UX Direct will retry when it completes.",
+          retryAfterMs: activeLock.retryAfterMs,
+        }, { status: 409, headers });
       }
 
       const now = new Date();
@@ -660,16 +727,12 @@ export async function POST(request: Request) {
       if (current.status !== "online" || Date.now() - Date.parse(current.lastHeartbeatAt) >= 75000) {
         return NextResponse.json({ error: "Figma plugin is offline. Open the plugin and try again." }, { status: 409, headers });
       }
-      if (current.latestCommand && ["pending", "claimed"].includes(current.latestCommand.status)) {
-        const commandAgeMs = Date.now() - Date.parse(current.latestCommand.issuedAt);
-        if (Number.isFinite(commandAgeMs) && commandAgeMs < 240000) {
-          return NextResponse.json({ error: "A plugin action is already running. Wait for it to finish." }, { status: 409, headers });
-        }
-        current.latestCommand = {
-          ...current.latestCommand, status: "failed", completedAt: new Date().toISOString(),
-          failure: "Previous native API test stopped responding; stale command lock was cleared."
-        };
-        await writeJson(path, current);
+      const activeLock = await reconcileActiveCommandLock(current);
+      if (activeLock.locked) {
+        return NextResponse.json({
+          error: "A plugin action is still running. UX Direct will retry when it completes.",
+          retryAfterMs: activeLock.retryAfterMs,
+        }, { status: 409, headers });
       }
       const now = new Date();
       const command: BridgeCommand = {
