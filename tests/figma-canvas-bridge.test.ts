@@ -9,6 +9,7 @@ const mcp = read("app/api/mcp/route.ts");
 const bridge = read("app/api/plugin-bridge/route.ts");
 const plugin = read("figma-plugin/code.js");
 const pluginUi = read("figma-plugin/ui.html");
+const agent = read("app/api/assistant/figma-agent/route.ts");
 
 test("conversational cockpit inline JavaScript parses successfully", () => {
   const match = pluginUi.match(/<script>([\s\S]*?)<\/script>/i);
@@ -115,4 +116,35 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
   assert.ok(plugin.includes('if (payload.operation === "set-current-page")'), "Native executor supports switching to an approved page");
   assert.ok(plugin.includes('while (ancestor)'), "Reparent operation rejects parent/child cycles");
   assert.ok(mcp.includes('"flatten-nodes"') && mcp.includes('"boolean-operation"') && mcp.includes('"export-node"'), "MCP write schema exposes extended actions");
+});
+
+test("in-Figma design agent retrieves approved brain context and validates native layer plans", () => {
+  assert.ok(agent.includes('retrieveBrainContext('), "Figma design planning must retrieve shared memory.");
+  assert.ok(agent.includes('resolveBrainScopes('), "Brain retrieval must be scope-filtered.");
+  assert.ok(agent.includes('UXD_FIGMA_AGENT_MODELS'), "OpenRouter model fallback list must be configurable.");
+  assert.ok(agent.includes('response_format: { type: "json_object" }'), "The design agent must request structured output.");
+  assert.ok(agent.includes('PlanSchema.safeParse('), "The provider plan must be schema-validated before canvas execution.");
+  assert.ok(agent.includes('elements: z.array(ElementSchema).min(5).max(80)'), "Native element count must be bounded.");
+  assert.ok(agent.includes('No canvas changes were made.'), "Planning failures must not imply a canvas write.");
+});
+
+test("conversational cockpit executes, batches, selects, zooms and verifies native Figma designs", () => {
+  assert.ok(pluginUi.includes('async function createFigmaDesign('));
+  assert.ok(pluginUi.includes('runNativeCanvasCommand("read-canvas"'), "Design agent must inspect real layer contents first.");
+  assert.ok(pluginUi.includes('"/api/assistant/figma-agent"'), "Design requests must call the structured planner.");
+  assert.ok(pluginUi.includes('operation: "create-elements"'), "Design agent must write native nodes.");
+  assert.ok(pluginUi.includes('start += 20'), "Large native layouts must be chunked into bridge-safe writes.");
+  assert.ok(pluginUi.includes('operation: "set-selection"'), "The resulting variation should be selected.");
+  assert.ok(pluginUi.includes('operation: "zoom-to-nodes"'), "The resulting variation should be brought into view.");
+  assert.ok(pluginUi.includes('scope: "selection", maxDepth: 2, maxNodes: 100'), "Written design must be read back.");
+  assert.ok(pluginUi.includes('verifiedNode.childCount'), "Success must require a verification result.");
+});
+
+test("native plugin bridge accepts in-plugin commands only with the live allowlisted session token", () => {
+  assert.ok(bridge.includes('mode === "plugin-command"'));
+  assert.ok(bridge.includes('current.sessionToken !== token.data'));
+  assert.ok(bridge.includes('current.fileKey !== body.fileKey'));
+  assert.ok(bridge.includes('current.status !== "online"'));
+  assert.ok(bridge.includes('CANVAS_WRITE_PAYLOAD.safeParse(body.payload)'));
+  assert.ok(bridge.includes('expiresAt: new Date(now.getTime() + 240000).toISOString()'));
 });

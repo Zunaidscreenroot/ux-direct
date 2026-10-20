@@ -176,6 +176,24 @@
       return data;
     }
 
+    function runNativeCanvasCommand(action, payload, timeoutMs) {
+      return bridgeRequest({ mode: "plugin-command", action: action, payload: payload }).then(function (queued) {
+        if (!queued || typeof queued.commandId !== "string") throw new Error("UX Direct did not receive a canvas command ID.");
+        return new Promise(function (resolve, reject) {
+          const timer = window.setTimeout(function () {
+            pendingCanvasCommands.delete(queued.commandId);
+            reject(new Error("Figma did not return a result for " + action + " within the expected time. Check the plugin connection and retry."));
+          }, Number.isFinite(timeoutMs) ? timeoutMs : 130000);
+          pendingCanvasCommands.set(queued.commandId, {
+            resolve: resolve,
+            reject: reject,
+            timer: timer
+          });
+          void syncPluginBridge();
+        });
+      });
+    }
+
     function setOverallStatus(state, label) {
       const chip = $("overallStatus");
       chip.className = "connection-pill " + state;
@@ -401,6 +419,112 @@
       return combined;
     }
 
+    function isDesignActionPrompt(prompt) {
+      return /\b(create|build|generate|design|redesign|improve|refine|make|update|edit|modify|change|add|remove|fix|rework|duplicate|variation|variant|recreate)\b/i.test(prompt);
+    }
+
+    async function createFigmaDesign(prompt, reportProgress) {
+      let createdFrameId = "";
+      let completedElementCount = 0;
+      const updateProgress = typeof reportProgress === "function" ? reportProgress : function () {};
+      updateProgress("Reading the selected frame and its layer contents…");
+      const canvas = await runNativeCanvasCommand("read-canvas", {
+        scope: "selection", maxDepth: 4, maxNodes: 80, includeStyles: true
+      }, 90000);
+      const selectedNodes = Array.isArray(canvas && canvas.nodes) ? canvas.nodes : [];
+      const expectsSelection = /\b(selected|selection|this frame|this screen|current frame|variation|variant|duplicate|redesign this|improve this)\b/i.test(prompt);
+      if (expectsSelection && selectedNodes.length === 0) {
+        throw new Error("Select the frame you want UX Direct to work from, then send the prompt again. I read and inspect the real layer tree before creating anything.");
+      }
+      if (expectsSelection && selectedNodes.length > 1) {
+        throw new Error("Select one frame or container at a time so UX Direct can create a correctly placed variation without changing the originals.");
+      }
+      const sourceNode = selectedNodes.length === 1 ? selectedNodes[0] : null;
+      if (sourceNode && /\b(frame|screen|variation|variant|duplicate|redesign)\b/i.test(prompt) &&
+          !Array.isArray(sourceNode.children) &&
+          !["COMPONENT", "COMPONENT_SET", "INSTANCE", "SECTION", "GROUP"].includes(sourceNode.type)) {
+        throw new Error("The selection is " + (sourceNode.type || "a layer") + ", not a frame/container. Select the full frame or screen to create a variation.");
+      }
+      updateProgress("Consulting the UX Direct Brain and planning a native Figma layout…");
+      const response = await fetch(API + "/api/assistant/figma-agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ prompt: prompt, canvas: canvas })
+      });
+      const payload = await response.json().catch(function () { return {}; });
+      if (!response.ok || payload.ok !== true || !payload.plan || !Array.isArray(payload.plan.elements)) {
+        const extra = Array.isArray(payload.details) ? " " + payload.details.join(" | ") : "";
+        throw new Error((payload.error || "UX Direct could not plan the design.") + extra);
+      }
+      const plan = payload.plan;
+      if (plan.elements.length < 5 || plan.elements.length > 80) {
+        throw new Error("The proposed design plan has an unsupported layer count. No canvas changes were made.");
+      }
+      const viewport = canvas && canvas.viewport && canvas.viewport.bounds ? canvas.viewport.bounds : {};
+      const rootX = sourceNode && Number.isFinite(sourceNode.x)
+        ? Math.max(-10000, Math.min(9000, sourceNode.x + (Number(sourceNode.width) || Number(plan.frame.width) || 393) + 100))
+        : Math.max(40, Math.min(9000, Number(viewport.x) + 80 || 80));
+      const rootY = sourceNode && Number.isFinite(sourceNode.y)
+        ? Math.max(-10000, Math.min(9000, sourceNode.y))
+        : Math.max(40, Math.min(9000, Number(viewport.y) + 80 || 80));
+      updateProgress("Creating a separate variation frame; the original stays untouched…");
+      const rootResult = await runNativeCanvasCommand("write-canvas", {
+        confirm: true,
+        operation: "create-elements",
+        target: "current-page",
+        elements: [{
+          type: "FRAME",
+          name: String(plan.frame.name || "UX Direct Variation").slice(0, 80),
+          x: rootX, y: rootY,
+          width: plan.frame.width, height: plan.frame.height,
+          color: plan.frame.backgroundColor,
+          clipsContent: true
+        }]
+      }, 90000);
+      const root = rootResult && Array.isArray(rootResult.nodes) ? rootResult.nodes[0] : null;
+      if (!root || typeof root.id !== "string") {
+        throw new Error("Figma did not return the new frame ID. The frame may have been created; inspect the current page before retrying.");
+      }
+      createdFrameId = root.id;
+      updateProgress("Building " + plan.elements.length + " editable native layers…");
+      await runNativeCanvasCommand("write-canvas", {
+        confirm: true, operation: "set-selection", nodeIds: [createdFrameId]
+      }, 90000);
+      for (let start = 0; start < plan.elements.length; start += 20) {
+        const batch = plan.elements.slice(start, start + 20);
+        const result = await runNativeCanvasCommand("write-canvas", {
+          confirm: true, operation: "create-elements", target: "selection", elements: batch
+        }, 90000);
+        completedElementCount += Number(result && result.createdCount) || batch.length;
+        updateProgress("Building editable layers… " + completedElementCount + " of " + plan.elements.length);
+      }
+      await runNativeCanvasCommand("write-canvas", {
+        confirm: true, operation: "set-selection", nodeIds: [createdFrameId]
+      }, 90000);
+      await runNativeCanvasCommand("write-canvas", {
+        confirm: true, operation: "zoom-to-nodes", nodeIds: [createdFrameId]
+      }, 90000);
+      updateProgress("Verifying the result on the Figma canvas…");
+      const verified = await runNativeCanvasCommand("read-canvas", {
+        scope: "selection", maxDepth: 2, maxNodes: 100
+      }, 90000);
+      const verifiedNode = verified && Array.isArray(verified.nodes)
+        ? verified.nodes.find(function (node) { return node.id === createdFrameId; })
+        : null;
+      if (!verifiedNode || (Number(verifiedNode.childCount) || 0) < completedElementCount) {
+        throw new Error("The variation was written, but the read-back check did not confirm all layers. The original frame remains untouched; inspect the new variation named \"" + plan.frame.name + "\".");
+      }
+      const model = typeof payload.model === "string" ? payload.model : "OpenRouter";
+      const memory = payload.brain && payload.brain.status === "complete"
+        ? String(payload.brain.memories || 0) + " memories + " + String(payload.brain.knowledgeChunks || 0) + " knowledge chunks"
+        : "retrieval unavailable for this run";
+      return "Created and verified \"" + plan.frame.name + "\" as a separate editable Figma variation with " +
+        completedElementCount + " native layers. " + String(plan.summary || "The variation is ready for review.") +
+        "\n\nModel: " + model + " · UX Direct Brain: " + memory +
+        "\nThe source frame was preserved. The new variation is selected on the canvas.";
+    }
+
     async function submitPrompt(rawPrompt) {
       const prompt = String(rawPrompt || "").trim();
       if (!prompt || isSending) return;
@@ -416,9 +540,29 @@
       appendMessage("user", prompt);
       chatHistory.push({ role: "user", content: prompt });
       const typingRow = appendTyping();
+      let assistantMessage = null;
       $("send").disabled = true;
       await sendTelemetry("Cockpit chat request started", "info", "The in-Figma UX Direct conversation received a user prompt.", { selectedCount: (currentSelection.selection || []).length });
       try {
+        if (isDesignActionPrompt(prompt)) {
+          typingRow.remove();
+          assistantMessage = appendMessage("assistant", "Reading the selected frame and its layer contents…");
+          const answer = await createFigmaDesign(prompt, function (status) {
+            if (assistantMessage) {
+              assistantMessage.bubble.textContent = status;
+              $("conversation").scrollTop = $("conversation").scrollHeight;
+            }
+          });
+          assistantMessage.bubble.textContent = answer;
+          chatHistory.push({ role: "assistant", content: answer });
+          await sendTelemetry("Figma design-agent task completed", "success", "UX Direct generated a native layout, executed Figma Plugin API commands, and verified the selected variation.", {
+            durationMs: Date.now() - startedAt,
+            selectedCount: (currentSelection.selection || []).length,
+            model: "figma-agent",
+          });
+          return;
+        }
+
         const messages = chatHistory.map(function (message, index) {
           const copy = { role: message.role, content: message.content };
           if (index === chatHistory.length - 1 && message.role === "user") copy.content = appendSelectionContext(copy.content);
@@ -431,19 +575,19 @@
           body: JSON.stringify({ messages: messages })
         });
         if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
+          const payload = await response.json().catch(function () { return {}; });
           throw new Error(payload.error || "UX Direct chat returned HTTP " + response.status + ".");
         }
-        const message = appendMessage("assistant", "");
+        assistantMessage = appendMessage("assistant", "");
         typingRow.remove();
         const answer = await streamAssistantResponse(response, function (_delta, current) {
-          message.bubble.textContent = current;
+          assistantMessage.bubble.textContent = current;
           $("conversation").scrollTop = $("conversation").scrollHeight;
         });
         if (!answer.trim()) {
-          message.bubble.textContent = "I couldn't produce a response this time. Please try again.";
-          message.bubble.classList.add("error");
-          chatHistory.push({ role: "assistant", content: message.bubble.textContent });
+          assistantMessage.bubble.textContent = "I couldn't produce a response this time. Please try again.";
+          assistantMessage.bubble.classList.add("error");
+          chatHistory.push({ role: "assistant", content: assistantMessage.bubble.textContent });
           await sendTelemetry("Cockpit chat returned empty response", "error", "The model stream contained no assistant text.", { durationMs: Date.now() - startedAt });
         } else {
           chatHistory.push({ role: "assistant", content: answer });
@@ -451,12 +595,17 @@
         }
       } catch (error) {
         typingRow.remove();
-        const detail = error && error.message ? error.message : "Unknown chat error.";
-        appendMessage("assistant", "I couldn't complete that request. " + detail, { error: true });
-        await sendTelemetry("Cockpit chat response failed", "error", "The internal UX Direct conversation request failed.", { durationMs: Date.now() - startedAt });
+        const detail = error && error.message ? error.message : "Unknown UX Direct error.";
+        if (assistantMessage) {
+          assistantMessage.bubble.textContent = "I couldn't complete that request. " + detail;
+          assistantMessage.bubble.classList.add("error");
+        } else {
+          assistantMessage = appendMessage("assistant", "I couldn't complete that request. " + detail, { error: true });
+        }
+        await sendTelemetry("Cockpit chat request failed", "error", "The internal UX Direct chat or native design-agent request failed.", { durationMs: Date.now() - startedAt });
       } finally {
         isSending = false;
-        $("send").disabled = !$("prompt").value.trim();
+        $("send").disabled = !$("prompt").value.trim() || !verifiedFileKey;
         $("prompt").focus();
       }
     }
@@ -563,6 +712,7 @@
         }).then(function () {
           if (promiseEntry) {
             pendingCanvasCommands.delete(message.commandId);
+            if (promiseEntry.timer) window.clearTimeout(promiseEntry.timer);
             if (message.error) promiseEntry.reject(new Error(message.error));
             else promiseEntry.resolve(message.result);
           }
