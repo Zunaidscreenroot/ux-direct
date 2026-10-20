@@ -558,7 +558,7 @@ export async function POST(request: Request) {
       if (operationError && (command.action === "read-canvas" || command.action === "write-canvas")) {
         const lesson = buildFigmaFailureLesson(operationError);
         if (lesson) {
-          void saveBrainFeedback({
+          await saveBrainFeedback({
             rawFeedback: lesson.rawFeedback,
             summary: lesson.normalizedRule.slice(0, 500),
             title: lesson.title,
