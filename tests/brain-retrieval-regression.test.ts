@@ -121,6 +121,7 @@ test("suppresses superseded approval-first memory and refreshes the Past Finding
     ...stale,
     id: "33e70e65-76df-4cb9-82fb-26ff2bed2c52",
     title: "Past Findings versus Knowledge Base",
+    source_reference: "owner-approved-bootstrap:2026-10-18",
     content: "Keep client-specific audit findings in Past Findings. Keep new feedback and reference documents as drafts until explicitly reviewed and approved.",
   };
   const sanitized = sanitizeLegacyLearningPolicyMemory(pastFindings);
