@@ -755,6 +755,121 @@
       $("attachmentName").textContent = attachedImageData ? attachedImageName + " · attached" : "";
     }
 
+    async function runVisualQualityLoop(options) {
+      const prompt = String(options && options.prompt || "");
+      const sourceCanvas = options && options.sourceCanvas;
+      const sourceImage = options && options.sourceImage || null;
+      const notify = typeof (options && options.reportProgress) === "function" ? options.reportProgress : function () {};
+      function stage(message) { setProcessState("verifying", message); notify(message); }
+      async function reviewCanvas(outputCanvas, outputImage, pass) {
+        try {
+          const response = await fetch(API + "/api/assistant/figma-agent/review", {
+            method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
+            cache: "no-store",
+            body: JSON.stringify({ prompt: prompt + "\\nVisual QA pass: " + pass, sourceCanvas: sourceCanvas,
+              outputCanvas: outputCanvas, sourceImage: sourceImage, outputImage: outputImage || null })
+          });
+          const result = await response.json().catch(function () { return {}; });
+          return response.ok && result.ok === true && result.review ? result : null;
+        } catch (_) { return null; }
+      }
+      function nodeMaps(canvasValue) {
+        const byId = new Map(), parentModes = new Map();
+        function walk(nodes, parentMode) {
+          (Array.isArray(nodes) ? nodes : []).forEach(function (node) {
+            if (!node || typeof node !== "object") return;
+            if (typeof node.id === "string") { byId.set(node.id, node); parentModes.set(node.id, parentMode || "NONE"); }
+            walk(node.children, typeof node.layoutMode === "string" ? node.layoutMode : "NONE");
+          });
+        }
+        walk(canvasValue && canvasValue.nodes, "NONE");
+        return { byId: byId, parentModes: parentModes };
+      }
+      let outputCanvas = options && options.outputCanvas;
+      if (!outputCanvas || !Array.isArray(outputCanvas.nodes) || !outputCanvas.nodes.length) {
+        return { text: "Visual QA skipped because the output layer tree was unavailable.", score: null, repaired: false };
+      }
+      let capture = options.outputImage
+        ? { dataUrl: options.outputImage, warning: "" }
+        : await captureRenderedNodePreview(outputCanvas.nodes[0].id);
+      stage("Visual QA · comparing rendered output with the source and native layers…");
+      let reviewResult = await reviewCanvas(outputCanvas, capture.dataUrl || null, "initial");
+      if (!reviewResult) return { text: "Visual QA service was unavailable; native Figma read-back still passed.", score: null, repaired: false };
+      let review = reviewResult.review;
+      let score = Number.isFinite(review.score) ? review.score : null;
+      let issues = Array.isArray(review.issues) ? review.issues : [];
+      const needsRepair = reviewResult.qualityGate && reviewResult.qualityGate.passed === false &&
+        (score === null || score < 82 || issues.some(function (item) { return item && ["high", "medium"].includes(item.severity); }));
+      if (!needsRepair) {
+        return { text: "Visual QA " + (score === null ? "completed" : score + "/100") + " · " +
+          (issues.length ? issues.length + " low-priority item(s) remain for review." : "no actionable defects reported."),
+          score: score, repaired: false, issues: issues };
+      }
+      stage("Visual QA found " + issues.length + " issue(s) · trying one bounded surgical repair…");
+      let refinement = null;
+      try {
+        const response = await fetch(API + "/api/assistant/figma-agent/refine", {
+          method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ prompt: prompt, review: review, outputCanvas: outputCanvas, iteration: 1 })
+        });
+        const result = await response.json().catch(function () { return {}; });
+        if (response.ok && result.ok === true && Array.isArray(result.patch)) refinement = result;
+      } catch (_) {}
+      if (!refinement || !refinement.patch.length) {
+        return { text: "Visual QA " + (score === null ? "completed" : score + "/100") +
+          " · issues were found, but no safe repair was available; please review manually.", score: score, repaired: false, issues: issues };
+      }
+      const maps = nodeMaps(outputCanvas);
+      const textKeys = new Set(["fontFamily", "fontStyle", "fontSize", "text", "textAlignHorizontal", "textAlignVertical", "textAutoResize", "lineHeight", "letterSpacing"]);
+      const layoutKeys = new Set(["layoutMode", "layoutWrap", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"]);
+      let applied = 0;
+      for (const item of refinement.patch.slice(0, 12)) {
+        if (!item || typeof item.nodeId !== "string" || !item.patch || typeof item.patch !== "object") continue;
+        const node = maps.byId.get(item.nodeId);
+        if (!node || ["DOCUMENT", "PAGE"].includes(String(node.type))) continue;
+        const patch = {};
+        for (const key of Object.keys(item.patch)) {
+          if (textKeys.has(key) && node.type !== "TEXT") continue;
+          if (key === "arcData" && node.type !== "ELLIPSE") continue;
+          if (layoutKeys.has(key) && node.type !== "FRAME") continue;
+          if (["layoutSizingHorizontal", "layoutSizingVertical", "layoutGrow"].includes(key) &&
+              !["HORIZONTAL", "VERTICAL", "GRID"].includes(String(maps.parentModes.get(item.nodeId)))) continue;
+          if (key === "layoutPositioning" &&
+              !["HORIZONTAL", "VERTICAL", "GRID"].includes(String(maps.parentModes.get(item.nodeId)))) continue;
+          if (["x", "y"].includes(key) && ["HORIZONTAL", "VERTICAL", "GRID"].includes(String(maps.parentModes.get(item.nodeId))) &&
+              node.layoutPositioning !== "ABSOLUTE") continue;
+          if (["horizontalConstraint", "verticalConstraint"].includes(key) &&
+              ["HORIZONTAL", "VERTICAL", "GRID"].includes(String(maps.parentModes.get(item.nodeId)))) continue;
+          patch[key] = item.patch[key];
+        }
+        if (!Object.keys(patch).length) continue;
+        try {
+          await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "update-node", nodeId: item.nodeId, patch: patch }, 90000);
+          applied += 1;
+        } catch (_) { /* continue with independent safe patches */ }
+      }
+      if (!applied) return { text: "Visual QA " + (score === null ? "completed" : score + "/100") +
+        " · suggested repairs failed native safety checks; no unsafe changes were applied.", score: score, repaired: false, issues: issues };
+      stage("Applied " + applied + " repair(s) · validating the real canvas…");
+      outputCanvas = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true }, 90000);
+      if (!outputCanvas || !Array.isArray(outputCanvas.nodes) || !outputCanvas.nodes.length) {
+        return { text: "Applied " + applied + " repair(s), but final read-back was unavailable.", score: score, repaired: true, issues: issues };
+      }
+      capture = await captureRenderedNodePreview(outputCanvas.nodes[0].id);
+      stage("Visual QA · checking the repaired output once…");
+      const finalReview = await reviewCanvas(outputCanvas, capture.dataUrl || null, "after one bounded repair");
+      if (finalReview && finalReview.review) {
+        review = finalReview.review; score = Number.isFinite(review.score) ? review.score : score;
+        issues = Array.isArray(review.issues) ? review.issues : [];
+        return { text: "Visual QA " + (score === null ? "completed" : score + "/100") + " after " + applied +
+          " surgical repair(s) · " + (issues.length ? issues.length + " issue(s) remain for manual review." : "no actionable defects reported."),
+          score: score, repaired: true, issues: issues };
+      }
+      return { text: "Visual QA first pass " + (score === null ? "completed" : score + "/100") +
+        " · applied " + applied + " repair(s); final visual review was unavailable.", score: score, repaired: true, issues: issues };
+    }
+
     async function executeNativeActionPlan(prompt, reportProgress) {
       const notify = typeof reportProgress === "function" ? reportProgress : function () {};
       function stage(state, message) { setProcessState(state, message); notify(message); }
@@ -765,10 +880,12 @@
       if (!canvas || !Array.isArray(canvas.nodes) || !canvas.nodes.length) {
         throw new Error("Select the frame, text layer, shape, or component you want to edit first.");
       }
-      if (canvas.nodes.length > 1) {
-        throw new Error("For this request, select one parent frame/container so edits stay inside the intended workspace.");
-      }
       const root = canvas.nodes[0];
+      const needsSingleContainer = /\\b(add|insert|place|create|build|generate|attach)\\b/i.test(prompt) &&
+        /\\b(image|photo|logo|icon|button|label|text|row|tab|card|divider|component|variant|variable|shape|frame|layer)\\b/i.test(prompt);
+      if (canvas.nodes.length > 1 && needsSingleContainer) {
+        throw new Error("Select one destination frame/container for adding content. Multiple selection is supported for targeted edits.");
+      }
       stage("capturing", "Capturing a compact visual preview to check the actual rendered design…");
       const captured = root && root.id ? await captureRenderedNodePreview(root.id) : { dataUrl: null, warning: "No selected node ID." };
       stage("planning", "UX Direct's design brain is planning minimal native Figma actions…");
@@ -877,11 +994,27 @@
       if (!verified || !Array.isArray(verified.nodes) || !verified.nodes.some(function (node) { return node.id === root.id; })) {
         throw new Error("Actions ran, but the selected root could not be verified by native read-back. Inspect the canvas before retrying.");
       }
+      let visualNote = "";
+      const hasVisualMutations = actions.some(function (action) {
+        if (["create-elements", "insert-image", "create-component", "create-component-set", "swap-component"].includes(action.operation)) return true;
+        if (action.operation !== "update-node" || !action.patch) return false;
+        return Object.keys(action.patch).some(function (key) {
+          return ["text", "fontSize", "fontFamily", "fillColor", "strokeColor", "width", "height", "x", "y",
+            "layoutMode", "layoutSizingHorizontal", "layoutSizingVertical", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "cornerRadius"].includes(key);
+        });
+      });
+      if (hasVisualMutations && canvas.nodes.length === 1 && Array.isArray(root.children)) {
+        const qa = await runVisualQualityLoop({
+          prompt: prompt, sourceCanvas: canvas, outputCanvas: verified, sourceImage: captured.dataUrl,
+          allowRepair: true, reportProgress: function (message) { stage("verifying", message); }
+        });
+        visualNote = qa && qa.text ? "\\n" + qa.text : "";
+      }
       stage("done", "Native edits applied · Figma read-back verified");
       return String(payload.summary || "Native Figma actions applied.") +
-        "\n\nApplied " + actions.length + " native action(s)" + (changed ? " across approximately " + changed + " node/action changes." : ".") +
-        "\nVerified against the selected layer tree and actual Figma properties." +
-        (captured.warning ? "\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
+        "\\n\\nApplied " + actions.length + " native action(s)" + (changed ? " across approximately " + changed + " node/action changes." : ".") +
+        "\\nVerified against the selected layer tree and actual Figma properties." + visualNote +
+        (captured.warning ? "\\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
     }
 
     async function createFigmaDesign(prompt, reportProgress) {
@@ -1047,14 +1180,26 @@
             : "Expected " + completedElementCount + " generated child layers, but read-back confirmed " + verifiedChildCount + ".";
         throw new Error(problem + " The variation may be partial; the source frame remains untouched. Inspect the new frame before retrying.");
       }
-      stage("done", "Variation created · native structure verified");
+      let visualNote = "";
+      const qualityTree = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true }, 90000);
+      if (qualityTree && Array.isArray(qualityTree.nodes) && qualityTree.nodes.some(function (node) { return node.id === createdFrameId; })) {
+        const qa = await runVisualQualityLoop({
+          prompt: prompt, sourceCanvas: canvas, outputCanvas: qualityTree, sourceImage: renderedScreen,
+          allowRepair: true, reportProgress: stage
+        });
+        visualNote = qa && qa.text ? "\\n\\n" + qa.text : "";
+      } else {
+        visualNote = "\\n\\nVisual QA skipped because the generated variation was not selected for a clean read-back.";
+      }
+      stage("done", "Variation created · native structure and visual review completed");
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
-      return "Created \"" + plan.frame.name + "\" as a separate editable Figma variation with " +
+      return "Created \\"" + plan.frame.name + "\\" as a separate editable Figma variation with " +
         completedElementCount + " native layers. " + String(plan.summary || "The variation is ready for review.") +
-        "\n\nGeneration model: " + model + " · UX Direct Brain: " + memory +
-        (visualCaptureWarning ? "\nVisual capture note: " + visualCaptureWarning : "") +
-        "\nThe source frame was preserved. The new variation is selected on the canvas." +
-        "\nThe generated variation is ready for manual review.";
+        "\\n\\nGeneration model: " + model + " · UX Direct Brain: " + memory +
+        visualNote +
+        (visualCaptureWarning ? "\\nVisual capture note: " + visualCaptureWarning : "") +
+        "\\nThe source frame was preserved. The new variation is selected on the canvas." +
+        "\\nThe generated variation is ready for manual review.";
     }
 
     async function captureRenderedNodePreview(nodeId) {
