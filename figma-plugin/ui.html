@@ -22,6 +22,8 @@
     .dot { width:7px; height:7px; flex:0 0 7px; border-radius:50%; background:#b8a16a; }
     .connected .dot { background:#209b63; }
     .disconnected .dot { background:#d54550; }
+    .dot.connected { background:#209b63; }
+    .dot.disconnected { background:#d54550; }
     .connection-pill:not(.connected):not(.disconnected) .dot { background:#b8a16a; }
     .conversation { position:relative; flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; scroll-behavior:smooth; }
     .chat-log { width:100%; min-height:100%; display:flex; flex-direction:column; gap:20px; padding:22px 16px 24px; }
@@ -289,7 +291,6 @@
           const data = await results[2].value.json();
           chatgptState = data.chatgptConnector && data.chatgptConnector.state || "unknown";
           const plugin = data.figmaPlugin || {};
-          if (plugin.connected !== true) figmaBridgeHealthy = false;
         } else {
           chatgptState = "unknown";
         }
