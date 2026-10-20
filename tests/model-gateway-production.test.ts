@@ -18,17 +18,20 @@ test("home opens the unified chat-first workspace instead of the operations dash
   assert.equal(page.includes("ModelGatewayPanel"), false);
 });
 
-test("UX Direct chat uses OpenRouter Auto with low-cost routing and throughput preference", () => {
+test("UX Direct chat prefers GPT-6 Luna, falls back to OpenRouter Auto and uses throughput routing", () => {
   const route = read("app/api/assistant/chat/route.ts");
   const status = read("app/api/assistant/status/route.ts");
-  assert.ok(route.includes('const ROUTER_MODEL = "openrouter/auto"'));
+  assert.ok(route.includes('const ROUTER_MODEL = "openai/gpt-6-luna"'));
+  assert.ok(route.includes('const FALLBACK_MODEL = "openrouter/auto"'));
+  assert.ok(route.includes("const fallback = startAttempt(FALLBACK_MODEL);"));
   assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
   assert.ok(route.includes('provider: { sort: "throughput" }'));
   assert.ok(route.includes("FIRST_TEXT_TIMEOUT_MS = 30_000"));
   assert.ok(route.includes("OPENROUTER_API_KEY"));
   assert.equal(route.includes('provider: { allow_fallbacks: false }'), false);
   assert.equal(route.includes('model.endsWith(":free")'), false);
-  assert.ok(status.includes('defaultModel: "openrouter/auto"'));
+  assert.ok(status.includes('defaultModel: "openai/gpt-6-luna"'));
+  assert.ok(status.includes('fallbackModel: "openrouter/auto"'));
   assert.equal(status.includes("openrouter.ai/api/v1/models"), false);
 });
 
