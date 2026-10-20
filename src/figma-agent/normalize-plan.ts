@@ -182,8 +182,10 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
       { name: "Details & breakdown", start: 0.55, end: 0.78 },
       { name: "Actions & support", start: 0.78, end: 1.5 },
     ];
-    const groups = bands.map((band, index) => {
+    const assigned = new Set<Record<string, unknown>>();
+    const groups = bands.map((band) => {
       const bucket = allLeaves.filter((item) => {
+        if (assigned.has(item)) return false;
         const x = Number(item.x) || 0;
         const y = Number(item.y) || 0;
         const h = Number(item.height) || 0;
@@ -192,21 +194,13 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
         if (item.type === "RECTANGLE" && x <= 2 && y <= 2 && w >= frame.width * 0.94 && h >= frame.height * 0.9) return false;
         return centerY / frame.height >= band.start && centerY / frame.height < band.end;
       }).slice(0, 30);
-      if (!bucket.length && allLeaves.length) {
-        const sorted = allLeaves.slice().sort((a, b) => (Number(a.y) || 0) - (Number(b.y) || 0));
-        const fallback = sorted[Math.min(sorted.length - 1, Math.floor(index * sorted.length / bands.length))];
-        if (fallback && !bands.slice(0, index).some((earlier) => earlier.name === (fallback as Record<string, unknown>).__fallbackGroup)) {
-          bucket.push(fallback);
-          (fallback as Record<string, unknown>).__fallbackGroup = band.name;
-        }
-      }
+      bucket.forEach((item) => assigned.add(item));
       const minX = bucket.length ? Math.max(0, Math.min(...bucket.map((item) => Number(item.x) || 0))) : 16;
       const minY = bucket.length ? Math.max(0, Math.min(...bucket.map((item) => Number(item.y) || 0))) : Math.round(frame.height * band.start);
-      const maxX = bucket.length ? Math.max(...bucket.map((item) => (Number(item.x) || 0) + (Number(item.width) || 1)) : frame.width - 16;
-      const maxY = bucket.length ? Math.max(...bucket.map((item) => (Number(item.y) || 0) + (Number(item.height) || 1)) : minY + 1;
+      const maxX = bucket.length ? Math.max(...bucket.map((item) => (Number(item.x) || 0) + (Number(item.width) || 1))) : frame.width - 16;
+      const maxY = bucket.length ? Math.max(...bucket.map((item) => (Number(item.y) || 0) + (Number(item.height) || 1))) : minY + 1;
       const children = bucket.map((item) => {
         const nested = { ...item, x: Math.max(0, (Number(item.x) || 0) - minX), y: Math.max(0, (Number(item.y) || 0) - minY) };
-        delete nested.__fallbackGroup;
         return nested;
       });
       return {
