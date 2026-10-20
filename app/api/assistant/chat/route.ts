@@ -39,7 +39,8 @@ type BrainContextInfo = {
 
 const MAX_MESSAGES = 100;
 const MAX_TOTAL_CHARS = 80000;
-const ROUTER_MODEL = "openrouter/auto";
+const ROUTER_MODEL = "openai/gpt-6-luna";
+const FALLBACK_MODEL = "openrouter/auto";
 const FIRST_TEXT_TIMEOUT_MS = 30_000;
 const SYSTEM_PROMPT = [
   "You are UX Direct, a thoughtful senior product UX partner.",
@@ -274,7 +275,7 @@ export async function POST(request: Request) {
   const brain: BrainContextInfo = { ...brainBase, learningStatus: learning.status, ...(learning.draftId ? { learningDraftId: learning.draftId } : {}) };
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const candidates = [model];
+  const candidates = [ROUTER_MODEL, FALLBACK_MODEL];
   let lastError = "No usable response was returned by OpenRouter Auto Router.";
   let lastStatus = 502;
   const origin = new URL(request.url).origin;
@@ -298,7 +299,7 @@ export async function POST(request: Request) {
             messages: [{ role: "system", content: systemContent }, ...promptMessages],
             stream: true,
             temperature: 0.4,
-            plugins: [{ id: "auto-router", cost_tier: "low" }],
+            ...(currentModel === FALLBACK_MODEL ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
             provider: { sort: "throughput" },
             usage: { include: true },
           }),
@@ -333,15 +334,29 @@ export async function POST(request: Request) {
     return { controller, promise };
   };
 
-  const attempts = [startAttempt(model)];
+  const attempts = [startAttempt(ROUTER_MODEL)];
   let winner: { model: string; probe: ProbedStream; controller: AbortController } | null = null;
   try {
     winner = await attempts[0].promise;
   } catch (error) {
-    lastError = error instanceof Error ? error.message : "OpenRouter Auto Router failed before producing text.";
+    lastError = error instanceof Error ? error.message : "GPT-6 Luna failed before producing text.";
     lastStatus = typeof error === "object" && error !== null && "status" in error
       ? Number((error as { status: unknown }).status)
       : 502;
+  }
+
+  // Sequential fallback avoids starting or charging a second inference unless the primary fails.
+  if (!winner) {
+    const fallback = startAttempt(FALLBACK_MODEL);
+    attempts.push(fallback);
+    try {
+      winner = await fallback.promise;
+    } catch (error) {
+      lastError = lastError + " Fallback: " + (error instanceof Error ? error.message : "OpenRouter Auto failed before producing text.");
+      lastStatus = typeof error === "object" && error !== null && "status" in error
+        ? Number((error as { status: unknown }).status)
+        : lastStatus;
+    }
   }
 
   if (winner) {
