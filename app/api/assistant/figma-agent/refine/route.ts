@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { ANTHROPIC_OPENROUTER_MODELS, ANTHROPIC_OPENROUTER_PROVIDER } from "@/src/providers/anthropic-openrouter";
+import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,13 +74,6 @@ function compactNode(value: unknown, depth: number, seen: Map<string, Record<str
   }
   return node;
 }
-function parseJsonObject(value: unknown): unknown {
-  if (typeof value !== "string") return null;
-  const text = value.trim(), first = text.indexOf("{"), last = text.lastIndexOf("}");
-  if (first < 0 || last <= first) return null;
-  try { return JSON.parse(text.slice(first, last + 1)); } catch { return null; }
-}
-
 export async function OPTIONS(request: Request) {
   const headers = corsHeaders(request);
   if (!isAllowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
@@ -113,7 +107,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Generated variation contains no editable native node IDs." }, { status: 400, headers });
   }
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const models = ANTHROPIC_OPENROUTER_MODELS;
+  const models = OPENROUTER_MODELS;
   const errors: string[] = [];
   for (const model of models) {
     const controller = new AbortController();
@@ -122,12 +116,12 @@ export async function POST(request: Request) {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", Accept: "application/json",
-          "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Design Refiner · Anthropic Claude" },
+          "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Design Refiner" },
         body: JSON.stringify({
           model,
           messages: [
             { role: "system", content: [
-              "You are UX Direct's surgical native-Figma refinement agent. Return JSON only: {patch:[{nodeId:string,patch:object}]}.",
+              UX_DIRECT_DESIGN_ROLE + " You are UX Direct's surgical native-Figma refinement agent. Return JSON only: {patch:[{nodeId:string,patch:object}]}.",
               "Fix only the supplied visual review issues with the smallest sensible adjustments. Preserve information architecture and visual language. Never redesign the screen wholesale.",
               "Each nodeId MUST come from the supplied generated-frame tree. Allowed patch fields are limited to native Figma update-node: x,y,width,height,fillColor,strokeColor,strokeWeight,opacity,cornerRadius,fontFamily,fontStyle,fontSize,text,textAlignHorizontal,textAlignVertical,textAutoResize,layoutMode,itemSpacing,paddingLeft,paddingRight,paddingTop,paddingBottom,primaryAxisAlignItems,counterAxisAlignItems,shadowColor,shadowBlur,shadowX,shadowY,shadowSpread.",
               "Do not target nodes outside the generated variation. Return no more than 20 patches.",
@@ -138,7 +132,6 @@ export async function POST(request: Request) {
           temperature: 0.1,
           max_tokens: 2400,
           response_format: { type: "json_object" },
-          provider: ANTHROPIC_OPENROUTER_PROVIDER,
         }),
         cache: "no-store",
         signal: controller.signal,
@@ -153,7 +146,7 @@ export async function POST(request: Request) {
       const choices = Array.isArray(record.choices) ? record.choices : [];
       const choice = isRecord(choices[0]) ? choices[0] : {};
       const message = isRecord(choice.message) ? choice.message : {};
-      const rawPlan = parseJsonObject(message.content);
+      const rawPlan = extractJsonObject(message.content) ?? extractJsonObject(message.parsed) ?? extractJsonObject(message.tool_calls) ?? extractJsonObject(message);
       const schema = z.object({
         patch: z.array(z.object({ nodeId: z.string().trim().min(1).max(100), patch: PatchSchema }).strict()).max(20),
       }).strict();
