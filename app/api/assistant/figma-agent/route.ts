@@ -113,6 +113,31 @@ const PlanSchema = z.object({
   if (totalNodes < 18) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Design hierarchy is too sparse; include enough native components and content layers." });
   }
+  const textNodes: Record<string, unknown>[] = [];
+  const repeatedText = new Map<string, number>();
+  const visitQuality = (nodes: unknown[]) => {
+    for (const value of nodes) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const node = value as Record<string, unknown>;
+      if (node.type === "TEXT") {
+        const text = typeof node.text === "string" ? node.text.trim() : "";
+        textNodes.push(node);
+        if (text) repeatedText.set(text.toLowerCase(), (repeatedText.get(text.toLowerCase()) || 0) + 1);
+      }
+      visitQuality(Array.isArray(node.children) ? node.children : []);
+    }
+  };
+  visitQuality(plan.elements as unknown[]);
+  const meaningfulText = textNodes.filter(node => typeof node.text === "string" &&
+    String(node.text).trim().length >= 2 &&
+    !/^(rectangle|frame|text|ellipse|line|container|section|placeholder|sample text)$/i.test(String(node.text).trim()));
+  if (textNodes.length < 6 || meaningfulText.length < 5) {
+    ctx.addIssue({ code: "custom", path: ["elements"], message: "Design needs more meaningful native text content; placeholders or mostly decorative shapes are not sufficient." });
+  }
+  const decorativeDominance = totalNodes > 0 && textNodes.length / totalNodes < 0.22;
+  if (decorativeDominance) {
+    ctx.addIssue({ code: "custom", path: ["elements"], message: "Design is too shape-heavy relative to its meaningful content. Add labels, values, and task-specific detail." });
+  }
   if (totalNodes > 80) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Design exceeds the safe 80-node budget." });
   }
