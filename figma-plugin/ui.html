@@ -236,12 +236,19 @@
       done: "Design created and verified",
       error: "The task needs attention"
     };
+    function setBeamEmphasis(active) {
+      if (window.UXDEffects && typeof window.UXDEffects.setBeamEmphasis === "function") {
+        window.UXDEffects.setBeamEmphasis(Boolean(active));
+      }
+    }
     function setProcessState(state, message) {
       const welcome = $("welcome");
       if (welcome) welcome.classList.toggle("has-started", state !== "idle");
       if (window.UXDEffects && typeof window.UXDEffects.setProcessState === "function") {
         window.UXDEffects.setProcessState(state);
       }
+      const activeTaskStates = ["scanning","capturing","brain","memory","planning","waiting","creating","rendering","reviewing","refining","verifying"];
+      setBeamEmphasis(activeTaskStates.includes(state) || document.activeElement === $("prompt"));
       const label = $("processStatus");
       const labelText = $("processStatusText");
       if (label) {
@@ -1076,6 +1083,12 @@
     $("chatForm").addEventListener("submit", function (event) {
       event.preventDefault();
       void submitPrompt($("prompt").value);
+    });
+    $("prompt").addEventListener("focus", function () {
+      setBeamEmphasis(true);
+    });
+    $("prompt").addEventListener("blur", function () {
+      setBeamEmphasis(isSending);
     });
     $("prompt").addEventListener("input", function () {
       this.style.height = "auto";
