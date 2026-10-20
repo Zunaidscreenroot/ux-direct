@@ -62,7 +62,7 @@ function AgentOrb({ state, size, paused = false }: { state: OrbState; size: 20 |
     <ThinkingOrb
       state={state}
       size={size}
-      dark={true}
+      theme="dark"
       paused={paused}
       aria-label={ORB_LABEL[state]}
       style={{ display: "block" }}
