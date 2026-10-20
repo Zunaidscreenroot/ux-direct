@@ -8,7 +8,7 @@ test("normalizes OpenRouter layer fields that previously failed strict Figma pla
     frame: { name: "Manage loans · Variation", width: 393, height: 852, backgroundColor: "#fafafa" },
     elements: [
       { x: 0, y: 0, width: 393, height: 852, fill: { type: "SOLID", color: { r: 1, g: 1, b: 1 } } },
-      { kind: "text", text: "Manage loans", x: 24, y: 28, width: 250, height: 36, fontSize: 28, fill: "#202124" },
+      { kind: "text", text: "Manage loans", x: 24, y: 28, width: 250, height: 36, fontSize: 120, fill: "#202124" },
       { type: "button", label: "Pay EMI", x: 24, y: 120, width: 345, height: 48, fill: "#0A6E5C", radius: 12 },
       { type: "rect", name: "Outstanding summary", x: 24, y: 190, width: 345, height: 130, fill: "#F3F6F5" },
       { content: "Next EMI due 25 Oct", x: 36, y: 215, width: 240, height: 24, fill: "#202124" },
@@ -33,6 +33,7 @@ test("normalizes OpenRouter layer fields that previously failed strict Figma pla
   assert.equal(normalized.elements[1].name, "Text · Manage loans");
   assert.equal(normalized.elements[1].text, "Manage loans");
   assert.equal(normalized.elements[1].color, "#202124");
+  assert.equal(normalized.elements[1].fontSize, 96, "Oversized model typography should be clamped to the native executor schema.");
 
   assert.equal(normalized.elements[2].type, "FRAME");
   assert.equal(normalized.elements[2].name, "Pay EMI");
