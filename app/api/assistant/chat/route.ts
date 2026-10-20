@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { buildBrainSystemPrompt, buildRetrievalQuery, resolveBrainScopes } from "@/src/memory/chat-context";
 import { retrieveBrainContext, saveBrainFeedback } from "@/src/memory/shared-brain";
 import { detectCoachingSignal, detectExplicitTrainingIntent, resolveChatLearningScope, resolveLearningScope } from "@/src/memory/learning-signal";
-import { createLearningMarkerTransform, referencesUnstatedClient, type InlineLearningCandidate } from "@/src/memory/inline-learning";
+import { containsSensitiveMaterial, createLearningMarkerTransform, referencesUnstatedClient, type InlineLearningCandidate } from "@/src/memory/inline-learning";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
 
@@ -138,8 +138,8 @@ function learningKeywords(text: string): string[] {
 async function captureChatLearning(text: string, taskContext = "", sourceProduct: "ux-direct" | "figma-plugin" = "ux-direct"): Promise<ChatLearningCapture> {
   const value = text.trim();
   if (value.length < 12 || (!detectCoachingSignal(value) && !detectExplicitTrainingIntent(value))) return { status: "none" };
-  // Never persist likely credentials/secrets as training material.
-  if (/\b(api[_ -]?key|password\s*[:=]|secret\s*[:=]|private key|recovery phrase|bearer\s+[A-Za-z0-9._-]{20,})\b/i.test(value)) {
+  // Never persist likely secrets or personal/financial identifiers as training material.
+  if (containsSensitiveMaterial(value)) {
     return { status: "skipped_sensitive" };
   }
   const captured = value.slice(0, 2250);
