@@ -15,7 +15,7 @@ function corsHeaders(request: Request): HeadersInit {
   const origin = request.headers.get("origin");
   const permitted = origin && (origin === new URL(request.url).origin || ALLOWED_ORIGINS.has(origin));
   return {
-    ...(permitted ? { "Access-Control-Allow-Origin": origin } : {}),
+    ...(permitted ? { "Access-Control-Allow-Origin": origin! } : {}),
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Accept",
     "Cache-Control": "no-store",
