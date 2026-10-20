@@ -55,11 +55,12 @@ test("normalizes common model aliases and strips unknown keys before strict sche
   });
 });
 
-test("normalizes empty issues without inventing a pass score", () => {
-  assert.deepEqual(normalizeVisualReview({ issues: [], summary: "No findings, but score missing." }), {
+test("rejects a review missing its score so the configured fallback model is tried", () => {
+  assert.equal(normalizeVisualReview({ issues: [], summary: "No findings, but score missing." }), null);
+  assert.deepEqual(normalizeVisualReview({ issues: [], score: 0, summary: "Review score was explicitly zero." }), {
     issues: [],
     score: 0,
-    summary: "No findings, but score missing.",
+    summary: "Review score was explicitly zero.",
   });
 });
 
