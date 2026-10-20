@@ -270,5 +270,20 @@ test("native Figma design creation builds nested frame containers before their c
   assert.ok(plugin.includes('node.type === "FRAME" && spec.noFill === true && "fills" in node'));
   assert.ok(bridge.includes("noFill: z.boolean().optional()"));
   assert.ok(agent.includes('children: z.array(ElementSchema).max(80).optional()'));
-  assert.ok(agent.includes("Use a real Figma layer tree: Screen -> named sections/cards (FRAME)"));
+  assert.ok(agent.includes("Use a real Figma layer tree appropriate to selection scope"));
+});
+
+test("short Figma prompts inherit the complete design-variation workflow", () => {
+  assert.ok(agent.includes("short request expresses the desired change; it is NOT expected to contain the procedure"));
+  assert.ok(agent.includes("preservation inventory from the selected layer tree"));
+  assert.ok(agent.includes("Auto Layout for card content, stacks, tab rows, repeated information rows"));
+  assert.ok(agent.includes("TARGET SCOPE: COMPONENT/CARD"));
+  assert.ok(agent.includes("TARGET SCOPE: FULL SCREEN/FRAME"));
+  assert.ok(agent.includes("designScope"));
+  assert.ok(agent.includes("operatingContract"));
+  assert.ok(pluginUi.includes("nativeCanvasCommandTail.then"));
+  assert.ok(pluginUi.includes("runNativeCanvasCommandOnce"));
+  assert.ok(pluginUi.includes("canvas action is already running"));
+  assert.ok(pluginUi.includes('setProcessState("waiting"'));
+  assert.ok(pluginUi.includes('waiting: "Waiting for the previous Figma action to finish"'));
 });

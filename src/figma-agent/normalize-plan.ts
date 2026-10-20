@@ -175,7 +175,21 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
       }
     };
     collect(normalized);
-    const bands = [
+    const sourceName = String(sourceNode.name ?? "");
+    const sourceType = String(sourceNode.type ?? "").toUpperCase();
+    const sourceWidth = Number(sourceNode.width) || 0;
+    const sourceHeight = Number(sourceNode.height) || 0;
+    const componentScope = ["COMPONENT", "COMPONENT_SET", "INSTANCE", "GROUP"].includes(sourceType) ||
+      (sourceWidth > 0 && sourceWidth <= 520 && sourceHeight > 0 && sourceHeight <= 560 &&
+        /\b(card|component|widget|tile|row|button|panel|item|summary|breakdown|loan)\b/i.test(sourceName) &&
+        !/\b(screen|page|dashboard|flow)\b/i.test(sourceName));
+    const bands = componentScope ? [
+      { name: "Card header & status", start: 0, end: 0.23 },
+      { name: "Primary loan information", start: 0.23, end: 0.48 },
+      { name: "Progress & key indicators", start: 0.48, end: 0.68 },
+      { name: "Breakdown & supporting details", start: 0.68, end: 0.88 },
+      { name: "Actions & secondary metadata", start: 0.88, end: 1.5 },
+    ] : [
       { name: "Header & navigation", start: 0, end: 0.14 },
       { name: "Status & section tabs", start: 0.14, end: 0.30 },
       { name: "Primary information", start: 0.30, end: 0.55 },

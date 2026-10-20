@@ -244,6 +244,7 @@
       brain: "Connecting to UX Direct Brain",
       memory: "Searching shared memories and Knowledge Base",
       planning: "Planning layout and visual design",
+      waiting: "Waiting for the previous Figma action to finish",
       creating: "Creating editable Figma layers",
       rendering: "Rendering the generated screen",
       reviewing: "Inspecting visual quality",
@@ -258,7 +259,7 @@
         welcome.classList.toggle("has-started", state !== "idle");
         const orb = welcome.querySelector(".uxd-hero-orb");
         if (orb) {
-          orb.dataset.state = ["scanning","capturing","brain","memory","planning"].includes(state) ? "thinking"
+          orb.dataset.state = ["scanning","capturing","brain","memory","planning","waiting"].includes(state) ? "thinking"
             : ["creating","refining"].includes(state) ? "creating"
             : ["rendering","reviewing","verifying"].includes(state) ? "reviewing" : state;
         }
@@ -272,6 +273,9 @@
     }
     const handledBridgeCommands = new Set();
     const pendingCanvasCommands = new Map();
+    // All native reads/writes share one FIFO so background status checks and design-generation
+    // steps cannot race the bridge's single in-flight canvas command slot.
+    let nativeCanvasCommandTail = Promise.resolve();
 
     function makeId() {
       if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
@@ -308,7 +312,26 @@
     }
 
     function runNativeCanvasCommand(action, payload, timeoutMs) {
-      return bridgeRequest({ mode: "plugin-command", action: action, payload: payload }).then(function (queued) {
+      const execute = function () {
+        return runNativeCanvasCommandOnce(action, payload, timeoutMs);
+      };
+      const operation = nativeCanvasCommandTail.then(execute, execute);
+      nativeCanvasCommandTail = operation.then(function () {}, function () {});
+      return operation;
+    }
+
+    function runNativeCanvasCommandOnce(action, payload, timeoutMs) {
+      function enqueueWhenAvailable(attempt) {
+        return bridgeRequest({ mode: "plugin-command", action: action, payload: payload }).catch(function (error) {
+          const message = error && error.message ? error.message : String(error);
+          if (!/canvas action is already running/i.test(message) || attempt >= 11) throw error;
+          setProcessState("waiting", "Waiting for the previous Figma canvas action to finish…");
+          const waitMs = Math.min(2000, 350 + attempt * 250);
+          return new Promise(function (resolve) { window.setTimeout(resolve, waitMs); })
+            .then(function () { return enqueueWhenAvailable(attempt + 1); });
+        });
+      }
+      return enqueueWhenAvailable(0).then(function (queued) {
         if (!queued || typeof queued.commandId !== "string") throw new Error("UX Direct did not receive a canvas command ID.");
         return new Promise(function (resolve, reject) {
           const timer = window.setTimeout(function () {
