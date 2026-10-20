@@ -20,7 +20,7 @@ const ALLOWED_KINDS = new Set([
   "interaction_logic", "design_system", "cost_optimization", "other",
 ]);
 
-function containsSensitiveMaterial(value: string): boolean {
+export function containsSensitiveMaterial(value: string): boolean {
   return /\b(api[_ -]?key|password\s*[:=]|secret\s*[:=]|private key|recovery phrase|bearer\s+[A-Za-z0-9._-]{20,})\b/i.test(value)
     || /\b[A-Z]{5}\d{4}[A-Z]\b/i.test(value)
     || /\b[6-9]\d{9}\b/.test(value)
@@ -97,11 +97,15 @@ export function createLearningMarkerTransform(
       if (inMarker) {
         const closeIndex = remaining.indexOf(CLOSE);
         if (closeIndex < 0) {
-          markerBody += remaining;
+          // Hold a possible partial closing marker so split SSE deltas remain parseable.
+          let hold = Math.min(CLOSE.length - 1, remaining.length);
+          while (hold > 0 && !CLOSE.startsWith(remaining.slice(-hold))) hold -= 1;
+          markerBody += remaining.slice(0, remaining.length - hold);
           if (markerBody.length > 5000) {
             markerOverflow = true;
             markerBody = markerBody.slice(0, 5000);
           }
+          visiblePending = remaining.slice(remaining.length - hold);
           return visible;
         }
         markerBody += remaining.slice(0, closeIndex);
