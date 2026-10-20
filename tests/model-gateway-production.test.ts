@@ -18,30 +18,34 @@ test("home opens the unified chat-first workspace instead of the operations dash
   assert.equal(page.includes("ModelGatewayPanel"), false);
 });
 
-test("UX Direct chat and status expose Anthropic-only Claude routing through OpenRouter", () => {
+test("UX Direct uses MiniMax M3.1 Flash free then unfiltered OpenRouter Auto", () => {
   const route = read("app/api/assistant/chat/route.ts");
+  const figmaAgent = read("app/api/assistant/figma-agent/route.ts");
+  const review = read("app/api/assistant/figma-agent/review/route.ts");
+  const refine = read("app/api/assistant/figma-agent/refine/route.ts");
   const status = read("app/api/assistant/status/route.ts");
-  const policy = read("src/providers/anthropic-openrouter.ts");
-  assert.ok(route.includes("const ROUTER_MODEL = ANTHROPIC_OPENROUTER_MODELS[0]"));
-  assert.ok(route.includes("const FALLBACK_MODEL = ANTHROPIC_OPENROUTER_MODELS[1]"));
-  assert.ok(route.includes("const FINAL_FALLBACK_MODEL = ANTHROPIC_OPENROUTER_MODELS[2]"));
+  const policy = read("src/providers/openrouter-models.ts");
+  assert.ok(route.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0]"));
+  assert.ok(route.includes("const FALLBACK_MODEL = OPENROUTER_MODELS[1]"));
   assert.ok(route.includes("for (const candidate of candidates)"));
-  assert.ok(route.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"));
+  assert.equal(route.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.ok(route.includes("FIRST_TEXT_TIMEOUT_MS = 30_000"));
   assert.ok(route.includes("OPENROUTER_API_KEY"));
-  assert.ok(policy.includes('"anthropic/claude-sonnet-5.5"'));
-  assert.ok(policy.includes('"anthropic/claude-sonnet-5"'));
-  assert.ok(policy.includes('"anthropic/claude-haiku-5.5"'));
-  assert.ok(policy.includes('only: ["anthropic"]'));
-  assert.ok(policy.includes("allow_fallbacks: false"));
-  assert.equal(route.includes("openrouter/auto"), false);
+  assert.ok(policy.includes('"minimax/minimax-m3.1-flash:free"'));
+  assert.ok(policy.includes('"openrouter/auto"'));
+  assert.ok(policy.includes("UX_DIRECT_DESIGN_ROLE"));
+  for (const routeText of [figmaAgent, review, refine]) {
+    assert.ok(routeText.includes("OPENROUTER_MODELS"));
+    assert.equal(routeText.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
+    assert.ok(routeText.includes("UX_DIRECT_DESIGN_ROLE"));
+  }
   assert.equal(route.includes("openai/gpt-6-luna"), false);
   assert.equal(route.includes('plugins: [{ id: "auto-router"'), false);
-  assert.ok(status.includes("defaultModel: ANTHROPIC_OPENROUTER_MODELS[0]"));
-  assert.ok(status.includes("fallbackModel: ANTHROPIC_OPENROUTER_MODELS[1]"));
-  assert.ok(status.includes('name: "Claude Sonnet 5.5 · primary"'));
-  assert.ok(status.includes('name: "Claude Haiku 5.5 · final fallback"'));
-  assert.equal(status.includes("openrouter/auto"), false);
+  assert.ok(status.includes("defaultModel: OPENROUTER_MODELS[0]"));
+  assert.ok(status.includes("fallbackModel: OPENROUTER_MODELS[1]"));
+  assert.ok(status.includes('name: "MiniMax M3.1 Flash · free primary"'));
+  assert.ok(status.includes('name: "OpenRouter Auto · unfiltered fallback"'));
+  assert.equal(status.includes("anthropic/claude-sonnet"), false);
   assert.equal(status.includes("openai/gpt-6-luna"), false);
   assert.equal(status.includes("openrouter.ai/api/v1/models"), false);
 });
