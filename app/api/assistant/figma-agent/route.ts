@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
+import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -127,7 +128,7 @@ function compactCanvas(value: unknown): Record<string, unknown> {
 
 const SYSTEM = [
   "You are UX Direct's native Figma design agent. The user explicitly requested a design action.",
-  "Return ONLY one JSON object matching this schema: {summary:string, frame:{name:string,width:number,height:number,backgroundColor:'#RRGGBB'}, elements:[element...]}. Do not wrap JSON in markdown.",
+  "Return ONLY one JSON object. Root keys: summary (string), frame ({name,width,height,backgroundColor}), elements (5–80 flat native layers). Each layer MUST include type, name, x, y, width, height. Allowed type values: RECTANGLE, ELLIPSE, TEXT, LINE, FRAME, POLYGON, STAR. Use color: \"#RRGGBB\" for fill, NOT a fill key. TEXT layers must include text. Do not use unknown keys, children, nested layers, or markdown fences.",
   "Create a polished, high-fidelity native Figma screen using only native shapes and text layers. Do not use images, external assets, or invented APIs.",
   "The frame's children are FLAT direct children; element x/y coordinates are relative to the new frame's top-left. Position layers back-to-front; rectangles first, then text and controls. Intentional overlap is allowed only when a text/control belongs visually on a card.",
   "Use Inter as fontFamily and Regular as fontStyle. Give visual hierarchy through font size, spacing, type scale, alignment, cards, and restrained color. Keep text short enough to fit its boxes. Use strong contrast and consistent spacing.",
@@ -192,8 +193,8 @@ export async function POST(request: Request) {
 
   const system = buildBrainSystemPrompt(SYSTEM, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const configured = (process.env.UXD_FIGMA_AGENT_MODELS || "").split(",").map((item) => item.trim()).filter(Boolean).slice(0, 3);
-  const models = [...new Set(["openrouter/auto", ...configured])].slice(0, 3);
+  // User-selected model order: Luna first, OpenRouter Auto as the explicit fallback.
+  const models = ["openai/gpt-6-luna", "openrouter/auto"];
   const errors: string[] = [];
   for (const model of models) {
     const controller = new AbortController();
@@ -242,7 +243,9 @@ export async function POST(request: Request) {
       const providerMessage = firstChoice.message && typeof firstChoice.message === "object" && !Array.isArray(firstChoice.message)
         ? firstChoice.message as Record<string, unknown>
         : {};
-      const parsedPlan = PlanSchema.safeParse(extractJson(providerMessage.content));
+      const rawPlan = extractJson(providerMessage.content);
+      const normalizedPlan = normalizePlan(rawPlan, canvas);
+      const parsedPlan = PlanSchema.safeParse(normalizedPlan);
       if (!parsedPlan.success) {
         errors.push(model + ": invalid design plan schema (" + parsedPlan.error.issues.slice(0, 3).map((issue) => issue.path.join(".") + " " + issue.message).join("; ") + ")");
         continue;

@@ -69,8 +69,12 @@ export async function GET(request: Request) {
   return NextResponse.json({
     connected,
     provider: "OpenRouter",
-    defaultModel: "openrouter/auto",
-    models: [{ id: "openrouter/auto", name: "OpenRouter Auto · low cost + high throughput" }],
+    defaultModel: "openai/gpt-6-luna",
+    fallbackModel: "openrouter/auto",
+    models: [
+      { id: "openai/gpt-6-luna", name: "GPT-6 Luna · primary" },
+      { id: "openrouter/auto", name: "OpenRouter Auto · fallback" },
+    ],
     checkedAt: new Date().toISOString(),
     ...(connected ? {} : { error: keyError || "OpenRouter is not ready for Auto Router requests." }),
     uxAudit: { reachable: auditReachable, baseUrl: auditBase, ...(auditReachable ? {} : { error: "Could not reach the UX Audit Worker." }) },

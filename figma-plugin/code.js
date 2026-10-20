@@ -65,8 +65,9 @@ async function executeNativeApiHealthCheck() {
   var cleanupErrors = [];
 
   function add(category, name, level, status, reason) {
-    checks.push({ category: category, name: name, level: level, status: status,
-      reason: reason || (status === "success" ? "Executed and verified" : "Operation failed") });
+    checks.push({ category: String(category || "General").slice(0, 80), name: String(name || "Unnamed check").slice(0, 120),
+      level: level, status: status,
+      reason: String(reason || (status === "success" ? "Executed and verified" : "Operation failed")).slice(0, 400) });
   }
   function assertLab(name) {
     assertUxDirectFileScope(name);
@@ -841,6 +842,189 @@ async function executeNativeApiHealthCheck() {
       if (!collection || collection.id !== collectionId) {
         throw new Error("getVariableCollectionByIdAsync did not resolve the persistent test collection.");
       }
+    });
+    // Build a broad, non-destructive capability catalogue for the in-Figma health panel.
+    // These probes only inspect supported API surface. They never access external folders/files.
+    var implementedCanvasActions = [
+      "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+      "reparent-node", "group-nodes", "ungroup-node", "flatten-nodes", "boolean-operation",
+      "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance",
+      "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page",
+      "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"
+    ];
+    var writerSource = String(writeCanvasCommand);
+    implementedCanvasActions.forEach(function (operation) {
+      var implemented = writerSource.indexOf('payload.operation === "' + operation + '"') >= 0;
+      if (operation === "batch") implemented = writerSource.indexOf('payload.operation === "batch"') >= 0;
+      availability("Canvas writer", "UX Direct action · " + operation, implemented,
+        implemented
+          ? "The scoped native-command executor contains this validated operation. Capability check only; see functional checks for APIs exercised end to end."
+          : "No native-command handler for this action was detected.");
+    });
+    availability("Canvas reader", "Read selected node tree", typeof readCanvasCommand === "function",
+      "Bounded selection-tree reader is implemented and limited to the approved current document.");
+    availability("Canvas reader", "Search current-page layers by name/type", String(readCanvasCommand).indexOf("search-current-page") >= 0,
+      "Search API capability inspection only.");
+    availability("Canvas writer", "Validated write confirmation guard", String(writeCanvasCommand).indexOf("payload.confirm !== true") >= 0,
+      "Native writes require an explicit confirm flag.");
+    availability("Canvas writer", "Write target scope guard", String(resolveCanvasWriteParent).indexOf("resolveCanvasWriteParent") >= 0,
+      "Writes resolve only to current-page, single selected container, or the isolated UXD Test Lab target.");
+    
+    function findHealthNode(type) {
+      try {
+        if (!testPage || typeof testPage.findAll !== "function") return null;
+        return testPage.findAll(function (node) { return node && node.type === type; })[0] || null;
+      } catch (_) { return null; }
+    }
+    function probeCapability(category, name, probe, detail) {
+      var available = false;
+      try { available = !!probe(); } catch (_) { available = false; }
+      availability(category, name, available, detail || (available
+        ? "Figma Plugin API is exposed in this runtime; availability check only."
+        : "Figma Plugin API is not exposed in this runtime."));
+    }
+    var nativeCapabilityProbes = [
+      ["Shapes", "Create FRAME", function () { return typeof figma.createFrame === "function"; }],
+      ["Shapes", "Create RECTANGLE", function () { return typeof figma.createRectangle === "function"; }],
+      ["Shapes", "Create ELLIPSE", function () { return typeof figma.createEllipse === "function"; }],
+      ["Shapes", "Create TEXT", function () { return typeof figma.createText === "function"; }],
+      ["Shapes", "Create LINE", function () { return typeof figma.createLine === "function"; }],
+      ["Shapes", "Create POLYGON", function () { return typeof figma.createPolygon === "function"; }],
+      ["Shapes", "Create STAR", function () { return typeof figma.createStar === "function"; }],
+      ["Shapes", "Create VECTOR", function () { return typeof figma.createVector === "function"; }],
+      ["Shapes", "Create SLICE", function () { return typeof figma.createSlice === "function"; }],
+      ["Shapes", "Create COMPONENT", function () { return typeof figma.createComponent === "function"; }],
+      ["Shapes", "Create component from node", function () { return typeof figma.createComponentFromNode === "function"; }],
+      ["Shapes", "Create IMAGE", function () { return typeof figma.createImage === "function"; }],
+      ["Shapes", "Create PAGE", function () { return typeof figma.createPage === "function"; }],
+      ["Geometry", "Union boolean operation", function () { return typeof figma.union === "function"; }],
+      ["Geometry", "Subtract boolean operation", function () { return typeof figma.subtract === "function"; }],
+      ["Geometry", "Intersect boolean operation", function () { return typeof figma.intersect === "function"; }],
+      ["Geometry", "Exclude boolean operation", function () { return typeof figma.exclude === "function"; }],
+      ["Geometry", "Group nodes", function () { return typeof figma.group === "function"; }],
+      ["Geometry", "Ungroup nodes", function () { return typeof figma.ungroup === "function"; }],
+      ["Components", "Combine as variants", function () { return typeof figma.combineAsVariants === "function"; }],
+      ["Node inspection", "Resolve node by async ID", function () { return typeof figma.getNodeByIdAsync === "function"; }],
+      ["Node inspection", "Find one current-page node", function () { return typeof figma.currentPage.findOne === "function"; }],
+      ["Node inspection", "Find all current-page nodes", function () { return typeof figma.currentPage.findAll === "function"; }],
+      ["Node inspection", "Find nodes by criteria", function () { return typeof figma.currentPage.findAllWithCriteria === "function"; }],
+      ["Node inspection", "Read page children", function () { return Array.isArray(figma.currentPage.children); }],
+      ["Node inspection", "Read current page selection", function () { return Array.isArray(figma.currentPage.selection); }],
+      ["Node inspection", "Read current page name", function () { return typeof figma.currentPage.name === "string"; }],
+      ["Node inspection", "Find node by ID in selected page", function () { return typeof figma.currentPage.findOne === "function"; }],
+      ["Node actions", "Clone node API", function () { return typeof figma.currentPage.clone === "function" || !!(harness && typeof harness.clone === "function"); }],
+      ["Node actions", "Remove node API", function () { return !!(harness && typeof harness.remove === "function"); }],
+      ["Node actions", "Insert child API", function () { return typeof figma.currentPage.insertChild === "function"; }],
+      ["Node actions", "Append child API", function () { return typeof figma.currentPage.appendChild === "function"; }],
+      ["Node actions", "Set plugin data", function () { return !!(harness && typeof harness.setPluginData === "function"); }],
+      ["Node actions", "Get plugin data", function () { return !!(harness && typeof harness.getPluginData === "function"); }],
+      ["Node actions", "Set shared plugin data", function () { return !!(harness && typeof harness.setSharedPluginData === "function"); }],
+      ["Node actions", "Get shared plugin data", function () { return !!(harness && typeof harness.getSharedPluginData === "function"); }],
+      ["Layout", "Resize node API", function () { return !!(harness && typeof harness.resize === "function"); }],
+      ["Layout", "Resize with constraints API", function () { return !!(harness && typeof harness.resizeWithoutConstraints === "function"); }],
+      ["Layout", "Relative transform property", function () { return !!(harness && "relativeTransform" in harness); }],
+      ["Layout", "Absolute transform property", function () { return !!(harness && "absoluteTransform" in harness); }],
+      ["Layout", "Absolute bounding box property", function () { return !!(harness && "absoluteBoundingBox" in harness); }],
+      ["Layout", "Constraints property", function () { return !!(harness && "constraints" in harness); }],
+      ["Layout", "Rotation property", function () { return !!(harness && "rotation" in harness); }],
+      ["Layout", "Opacity property", function () { return !!(harness && "opacity" in harness); }],
+      ["Layout", "Visible property", function () { return !!(harness && "visible" in harness); }],
+      ["Layout", "Locked property", function () { return !!(harness && "locked" in harness); }],
+      ["Layout", "Clips content property", function () { return !!(harness && "clipsContent" in harness); }],
+      ["Layout", "Corner radius property", function () { return !!(harness && "cornerRadius" in harness); }],
+      ["Layout", "Corner smoothing property", function () { return !!(harness && "cornerSmoothing" in harness); }],
+      ["Layout", "Auto layout mode property", function () { return !!(harness && "layoutMode" in harness); }],
+      ["Layout", "Auto layout item spacing", function () { return !!(harness && "itemSpacing" in harness); }],
+      ["Layout", "Auto layout padding", function () { return !!(harness && "paddingTop" in harness && "paddingBottom" in harness); }],
+      ["Layout", "Primary axis alignment", function () { return !!(harness && "primaryAxisAlignItems" in harness); }],
+      ["Layout", "Counter axis alignment", function () { return !!(harness && "counterAxisAlignItems" in harness); }],
+      ["Layout", "Primary axis sizing mode", function () { return !!(harness && "primaryAxisSizingMode" in harness); }],
+      ["Layout", "Counter axis sizing mode", function () { return !!(harness && "counterAxisSizingMode" in harness); }],
+      ["Paint", "Fills property", function () { return !!(harness && "fills" in harness); }],
+      ["Paint", "Strokes property", function () { return !!(harness && "strokes" in harness); }],
+      ["Paint", "Stroke weight property", function () { return !!(harness && "strokeWeight" in harness); }],
+      ["Paint", "Stroke alignment property", function () { return !!(harness && "strokeAlign" in harness); }],
+      ["Paint", "Effects property", function () { return !!(harness && "effects" in harness); }],
+      ["Paint", "Blend mode property", function () { return !!(harness && "blendMode" in harness); }],
+      ["Paint", "Export API on node", function () { return !!(harness && typeof harness.exportAsync === "function"); }],
+      ["Text", "Load font async", function () { return typeof figma.loadFontAsync === "function"; }],
+      ["Text", "Get text styles async", function () { return typeof figma.getLocalTextStylesAsync === "function"; }],
+      ["Text", "Create text style", function () { return typeof figma.createTextStyle === "function"; }],
+      ["Text", "Text node fontName property", function () { var textNode = testPage && testPage.findAll(function (node) { return node.type === "TEXT"; })[0]; return !!(textNode && "fontName" in textNode); }],
+      ["Text", "Font size property", function () { var node = findHealthNode("TEXT"); return !!(node && "fontSize" in node); }],
+      ["Text", "Text alignment property", function () { var node = findHealthNode("TEXT"); return !!(node && "textAlignHorizontal" in node); }],
+      ["Text", "Text vertical alignment property", function () { var node = findHealthNode("TEXT"); return !!(node && "textAlignVertical" in node); }],
+      ["Text", "Text auto resize property", function () { var node = findHealthNode("TEXT"); return !!(node && "textAutoResize" in node); }],
+      ["Text", "Text case property", function () { var node = findHealthNode("TEXT"); return !!(node && "textCase" in node); }],
+      ["Text", "Text decoration property", function () { var node = findHealthNode("TEXT"); return !!(node && "textDecoration" in node); }],
+      ["Text", "Text range API", function () { var node = findHealthNode("TEXT"); return !!(node && typeof node.setRangeFontSize === "function"); }],
+      ["Text", "Line height property", function () { var node = findHealthNode("TEXT"); return !!(node && "lineHeight" in node); }],
+      ["Text", "Letter spacing property", function () { var node = findHealthNode("TEXT"); return !!(node && "letterSpacing" in node); }],
+      ["Text", "List bullet property", function () { var node = findHealthNode("TEXT"); return !!(node && "listSpacing" in node); }],
+      ["Text", "Paragraph indent property", function () { var node = findHealthNode("TEXT"); return !!(node && "paragraphIndent" in node); }],
+      ["Text", "Paragraph spacing property", function () { var node = findHealthNode("TEXT"); return !!(node && "paragraphSpacing" in node); }],
+      ["Components", "Create instance from component", function () { var component = findHealthNode("COMPONENT"); return !!(component && typeof component.createInstance === "function"); }],
+      ["Components", "Instance detach API", function () { var instance = testPage && testPage.findAll(function (node) { return node.type === "INSTANCE"; })[0]; return !!(instance && typeof instance.detachInstance === "function"); }],
+      ["Components", "Instance main component lookup", function () { var instance = testPage && testPage.findAll(function (node) { return node.type === "INSTANCE"; })[0]; return !!(instance && typeof instance.getMainComponentAsync === "function"); }],
+      ["Components", "Component property definitions", function () { var component = findHealthNode("COMPONENT_SET") || findHealthNode("COMPONENT"); return !!(component && "componentPropertyDefinitions" in component); }],
+      ["Components", "Component properties", function () { var instance = findHealthNode("INSTANCE"); return !!(instance && "componentProperties" in instance); }],
+      ["Components", "Expose component properties", function () { var component = findHealthNode("COMPONENT"); return !!(component && typeof component.addComponentProperty === "function"); }],
+      ["Components", "Edit component property value", function () { var instance = findHealthNode("INSTANCE"); return !!(instance && typeof instance.setProperties === "function"); }],
+      ["Components", "Swap component on instance", function () { var instance = findHealthNode("INSTANCE"); return !!(instance && typeof instance.swapComponent === "function"); }],
+      ["Components", "Find component node types", function () { return typeof figma.currentPage.findAllWithCriteria === "function"; }],
+      ["Pages", "Create page API", function () { return typeof figma.createPage === "function"; }],
+      ["Pages", "Set current page async", function () { return typeof figma.setCurrentPageAsync === "function"; }],
+      ["Pages", "Current page append child", function () { return typeof figma.currentPage.appendChild === "function"; }],
+      ["Pages", "Current page insert child", function () { return typeof figma.currentPage.insertChild === "function"; }],
+      ["Pages", "Current page selection setter", function () { return !!(figma.currentPage && "selection" in figma.currentPage); }],
+      ["Viewport", "Viewport bounds", function () { return !!(figma.viewport && figma.viewport.bounds); }],
+      ["Viewport", "Viewport zoom", function () { return typeof figma.viewport.zoom === "number"; }],
+      ["Viewport", "Scroll and zoom into view", function () { return typeof figma.viewport.scrollAndZoomIntoView === "function"; }],
+      ["Viewport", "Set viewport API", function () { return typeof figma.viewport.set === "function"; }],
+      ["Events", "Register event listener", function () { return typeof figma.on === "function"; }],
+      ["Events", "Remove event listener", function () { return typeof figma.off === "function"; }],
+      ["Events", "Listen from UI", function () { return typeof figma.ui.on === "function"; }],
+      ["Events", "Stop UI listener", function () { return typeof figma.ui.off === "function"; }],
+      ["Events", "Post message to UI", function () { return typeof figma.ui.postMessage === "function"; }],
+      ["Plugin UI", "Show plugin UI", function () { return typeof figma.showUI === "function"; }],
+      ["Plugin UI", "Resize plugin UI", function () { return typeof figma.ui.resize === "function"; }],
+      ["Plugin UI", "UI close API", function () { return typeof figma.closePlugin === "function"; }],
+      ["Plugin UI", "Notification API", function () { return typeof figma.notify === "function"; }],
+      ["Styles", "Get local paint styles", function () { return typeof figma.getLocalPaintStylesAsync === "function"; }],
+      ["Styles", "Get local text styles", function () { return typeof figma.getLocalTextStylesAsync === "function"; }],
+      ["Styles", "Get local effect styles", function () { return typeof figma.getLocalEffectStylesAsync === "function"; }],
+      ["Styles", "Get local grid styles", function () { return typeof figma.getLocalGridStylesAsync === "function"; }],
+      ["Styles", "Get style by ID async", function () { return typeof figma.getStyleByIdAsync === "function"; }],
+      ["Styles", "Create paint style", function () { return typeof figma.createPaintStyle === "function"; }],
+      ["Styles", "Create text style", function () { return typeof figma.createTextStyle === "function"; }],
+      ["Styles", "Create effect style", function () { return typeof figma.createEffectStyle === "function"; }],
+      ["Styles", "Create grid style", function () { return typeof figma.createGridStyle === "function"; }],
+      ["Styles", "Create color variable collection", function () { return !!(figma.variables && typeof figma.variables.createVariableCollection === "function"); }],
+      ["Styles", "Create local variable", function () { return !!(figma.variables && typeof figma.variables.createVariable === "function"); }],
+      ["Variables", "Get local variables async", function () { return !!(figma.variables && typeof figma.variables.getLocalVariablesAsync === "function"); }],
+      ["Variables", "Get local collections async", function () { return !!(figma.variables && typeof figma.variables.getLocalVariableCollectionsAsync === "function"); }],
+      ["Variables", "Get variable by ID async", function () { return !!(figma.variables && typeof figma.variables.getVariableByIdAsync === "function"); }],
+      ["Variables", "Get collection by ID async", function () { return !!(figma.variables && typeof figma.variables.getVariableCollectionByIdAsync === "function"); }],
+      ["Variables", "Variable mode values", function () { return !!(figma.variables && typeof figma.variables.setBoundVariableForPaint === "function"); }],
+      ["Variables", "Bind variable to node property", function () { return !!(figma.variables && typeof figma.variables.setBoundVariableForPaint === "function"); }],
+      ["Variables", "Create alias variable", function () { return !!(figma.variables && typeof figma.variables.createVariableAlias === "function"); }],
+      ["Variables", "Variable remove API", function () { return !!(figma.variables && typeof figma.variables.deleteVariable === "function"); }],
+      ["Storage", "Read client storage", function () { return !!(figma.clientStorage && typeof figma.clientStorage.getAsync === "function"); }],
+      ["Storage", "Write client storage", function () { return !!(figma.clientStorage && typeof figma.clientStorage.setAsync === "function"); }],
+      ["Storage", "Delete client storage key", function () { return !!(figma.clientStorage && typeof figma.clientStorage.deleteAsync === "function"); }],
+      ["Image API", "Create image from bytes", function () { return typeof figma.createImage === "function"; }],
+      ["Image API", "Create image paint", function () { return !!(harness && "fills" in harness); }],
+      ["Image API", "Image hash on image object", function () { return typeof figma.createImage === "function"; }],
+      ["Export", "Export PNG format", function () { return !!(harness && typeof harness.exportAsync === "function"); }],
+      ["Export", "Export PDF format", function () { return !!(harness && typeof harness.exportAsync === "function"); }],
+      ["Export", "Export SVG string", function () { return !!(harness && typeof harness.exportAsync === "function"); }],
+      ["Plugin context", "Current page node tree", function () { return !!(figma.currentPage && typeof figma.currentPage.findAll === "function"); }],
+      ["Plugin context", "Selection change subscription", function () { return typeof figma.on === "function" && typeof figma.off === "function"; }],
+      ["Plugin context", "Viewport navigation", function () { return !!(figma.viewport && typeof figma.viewport.scrollAndZoomIntoView === "function"); }],
+      ["Plugin context", "Plugin command messaging", function () { return typeof figma.ui.postMessage === "function" && typeof figma.ui.on === "function"; }]
+    ];
+    nativeCapabilityProbes.forEach(function (probe) {
+      probeCapability(probe[0], probe[1], probe[2], "Native Figma API surface checked without reading or writing external folders/files.");
     });
     add("Library", "Team Library", "not-tested", "not-tested",
       "Not tested intentionally: team-library APIs are out of scope; no teamlibrary permission, shared-library lookup, or import is enabled.");

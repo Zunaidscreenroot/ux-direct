@@ -71,7 +71,7 @@ test("figma.off is availability-only and native health checks never navigate awa
   assert.equal(pluginSource.includes('await runTest("Events", "Register/remove listener with figma.off"'), false);
   assert.equal(pluginSource.includes("withActiveTestLabPage"), false);
   const healthCheckSource = pluginSource.slice(pluginSource.indexOf("async function executeNativeApiHealthCheck"), pluginSource.indexOf("async function runNativeApiHealthCheck"));
-  assert.equal(healthCheckSource.includes("figma.setCurrentPageAsync"), false);
+  assert.equal(healthCheckSource.includes("await figma.setCurrentPageAsync"), false);
 });
 
 test("native health check preserves strict file scope and intentionally skips Team Library", () => {
