@@ -1826,7 +1826,7 @@ async function writeCanvasCommand(payload) {
     }
     var exportOptions = { format: exportFormat };
     if ((exportFormat === "PNG" || exportFormat === "JPG") && Number.isFinite(payload.scale)) {
-      exportOptions.constraint = { type: "SCALE", value: Math.max(0.2, Math.min(1, payload.scale)) };
+      exportOptions.constraint = { type: "SCALE", value: Math.max(0.05, Math.min(1, payload.scale)) };
     }
     var exportBytes = await genericExportTarget.exportAsync(exportOptions);
     if (!(exportBytes instanceof Uint8Array)) throw new Error("Figma did not return encoded bytes for " + exportFormat + ".");
