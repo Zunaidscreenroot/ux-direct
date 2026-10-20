@@ -70,6 +70,8 @@ const ElementFieldsSchema = z.object({
   textAlignHorizontal: z.enum(["LEFT", "CENTER", "RIGHT", "JUSTIFIED"]).optional(),
   textAlignVertical: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
   textAutoResize: z.enum(["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"]).optional(),
+  lineHeight: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(1).max(500) }).strict().optional(),
+  letterSpacing: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(-100).max(500) }).strict().optional(),
   textCase: z.enum(["ORIGINAL", "UPPER", "LOWER", "TITLE"]).optional(),
   textDecoration: z.enum(["NONE", "UNDERLINE", "STRIKETHROUGH"]).optional(),
   shadowColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),

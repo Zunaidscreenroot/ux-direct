@@ -44,7 +44,14 @@ const PatchSchema = z.object({
   textAlignHorizontal: z.enum(["LEFT", "CENTER", "RIGHT", "JUSTIFIED"]).optional(),
   textAlignVertical: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
   textAutoResize: z.enum(["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"]).optional(),
-  layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]).optional(),
+  lineHeight: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(1).max(500) }).strict().optional(),
+  letterSpacing: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(-100).max(500) }).strict().optional(),
+  layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL", "GRID"]).optional(),
+  layoutWrap: z.enum(["NO_WRAP", "WRAP"]).optional(),
+  layoutSizingHorizontal: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutSizingVertical: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutPositioning: z.enum(["AUTO", "ABSOLUTE"]).optional(),
+  layoutGrow: z.number().finite().min(0).max(1).optional(),
   itemSpacing: z.number().finite().min(-100).max(1000).optional(),
   paddingLeft: z.number().finite().min(0).max(1000).optional(),
   paddingRight: z.number().finite().min(0).max(1000).optional(),
@@ -71,8 +78,12 @@ function compactNode(value: unknown, depth: number, seen: Map<string, Record<str
   for (const key of ["name", "text"] as const) {
     if (typeof value[key] === "string") node[key] = (value[key] as string).slice(0, key === "text" ? 280 : 100);
   }
-  for (const key of ["x", "y", "width", "height", "fontSize", "childCount"] as const) {
+  for (const key of ["x", "y", "width", "height", "fontSize", "childCount", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom"] as const) {
     if (typeof value[key] === "number" && Number.isFinite(value[key])) node[key] = value[key];
+  }
+  for (const key of ["layoutMode", "layoutWrap", "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning",
+    "primaryAxisSizingMode", "counterAxisSizingMode", "primaryAxisAlignItems", "counterAxisAlignItems", "textAutoResize"] as const) {
+    if (typeof value[key] === "string") node[key] = value[key].slice(0, 40);
   }
   if (Array.isArray(value.children)) {
     node.children = value.children.slice(0, 35).map((child) => compactNode(child, depth + 1, seen)).filter(Boolean);
@@ -129,7 +140,7 @@ export async function POST(request: Request) {
             { role: "system", content: [
               UX_DIRECT_DESIGN_ROLE + " You are UX Direct's surgical native-Figma refinement agent. Return JSON only: {patch:[{nodeId:string,patch:object}]}.",
               "Fix only the supplied visual review issues with the smallest sensible adjustments. Preserve information architecture and visual language. Never redesign the screen wholesale.",
-              "Each nodeId MUST come from the supplied generated-frame tree. Allowed patch fields are limited to native Figma update-node: x,y,width,height,fillColor,strokeColor,strokeWeight,opacity,cornerRadius,fontFamily,fontStyle,fontSize,text,textAlignHorizontal,textAlignVertical,textAutoResize,layoutMode,itemSpacing,paddingLeft,paddingRight,paddingTop,paddingBottom,primaryAxisAlignItems,counterAxisAlignItems,shadowColor,shadowBlur,shadowX,shadowY,shadowSpread,arcData. Only apply arcData to ELLIPSE nodes.",
+              "Each nodeId MUST come from the supplied generated-frame tree. Allowed patch fields are limited to native Figma update-node: x,y,width,height,fillColor,strokeColor,strokeWeight,opacity,cornerRadius,fontFamily,fontStyle,fontSize,text,textAlignHorizontal,textAlignVertical,textAutoResize,lineHeight,letterSpacing,layoutMode,layoutWrap,layoutSizingHorizontal,layoutSizingVertical,layoutPositioning,layoutGrow,itemSpacing,paddingLeft,paddingRight,paddingTop,paddingBottom,primaryAxisAlignItems,counterAxisAlignItems,shadowColor,shadowBlur,shadowX,shadowY,shadowSpread,arcData. Only apply arcData to ELLIPSE nodes, text properties to TEXT nodes, container layout properties to FRAME nodes, and sizing/positioning to children of native Auto Layout parents.",
               "Do not target nodes outside the generated variation. Return no more than 20 patches.",
             ].join("\n") },
             { role: "user", content: JSON.stringify({ prompt: parsed.data.prompt, iteration: parsed.data.iteration, score: parsed.data.review.score,

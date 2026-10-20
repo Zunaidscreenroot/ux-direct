@@ -40,8 +40,12 @@ function compactNode(value: unknown, state: { count: number }, depth = 0): SafeN
   for (const key of ["name", "text"] as const) {
     if (typeof source[key] === "string") node[key] = (source[key] as string).slice(0, key === "text" ? 280 : 100);
   }
-  for (const key of ["x", "y", "width", "height", "rotation", "fontSize", "childCount"] as const) {
+  for (const key of ["x", "y", "width", "height", "rotation", "fontSize", "childCount", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom"] as const) {
     if (typeof source[key] === "number" && Number.isFinite(source[key])) node[key] = source[key];
+  }
+  for (const key of ["layoutMode", "layoutWrap", "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning",
+    "primaryAxisSizingMode", "counterAxisSizingMode", "primaryAxisAlignItems", "counterAxisAlignItems", "textAutoResize"] as const) {
+    if (typeof source[key] === "string") node[key] = (source[key] as string).slice(0, 40);
   }
   if (Array.isArray(source.fillColors)) node.fillColors = source.fillColors.filter((item): item is string => typeof item === "string").slice(0, 4);
   if (Array.isArray(source.children) && depth < 4) {

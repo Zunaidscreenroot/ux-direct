@@ -126,6 +126,8 @@ const elementSchema: z.ZodTypeAny = z.lazy(() => z.object({
   textAlignHorizontal: z.enum(["LEFT", "CENTER", "RIGHT", "JUSTIFIED"]).optional(),
   textAlignVertical: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
   textAutoResize: z.enum(["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"]).optional(),
+  lineHeight: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(1).max(500) }).strict().optional(),
+  letterSpacing: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(-100).max(500) }).strict().optional(),
   textCase: z.enum(["ORIGINAL", "UPPER", "LOWER", "TITLE"]).optional(),
   textDecoration: z.enum(["NONE", "UNDERLINE", "STRIKETHROUGH"]).optional(),
   shadowColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
@@ -186,7 +188,10 @@ const actionSchema = z.object({
   if (v.operation === "update-node" && (!v.nodeId || !v.patch)) ctx.addIssue({ code: "custom", path: [], message: "update-node requires nodeId and patch." });
   if (v.operation === "create-elements" && (!v.target || (v.target === "node" && !v.parentNodeId) || !v.elements)) ctx.addIssue({ code: "custom", path: [], message: "create-elements requires target, an optional target parent, and elements." });
   if (v.operation === "insert-image" && (!v.useAttachedImage || !v.target || (v.target === "node" && !v.parentNodeId))) ctx.addIssue({ code: "custom", path: [], message: "insert-image requires an attached image and a target." });
-  if (["delete-node", "clone-node", "reorder-node", "create-component", "create-instance", "detach-instance", "set-text-range", "apply-style", "bind-variable"].includes(v.operation) && !v.nodeId) ctx.addIssue({ code: "custom", path: ["nodeId"], message: "This operation requires nodeId." });
+  if (["delete-node", "clone-node", "reorder-node", "create-component", "create-instance", "detach-instance", "set-text-range", "apply-style", "bind-variable", "reparent-node"].includes(v.operation) && !v.nodeId) ctx.addIssue({ code: "custom", path: ["nodeId"], message: "This operation requires nodeId." });
+  if (v.operation === "reparent-node" && (!v.parentNodeId || v.parentNodeId === v.nodeId)) ctx.addIssue({ code: "custom", path: ["parentNodeId"], message: "reparent-node requires a different parentNodeId." });
+  if (v.operation === "reorder-node" && v.index === undefined) ctx.addIssue({ code: "custom", path: ["index"], message: "reorder-node requires index." });
+  if (["group-nodes", "create-component-set"].includes(v.operation) && (!v.nodeIds || v.nodeIds.length < 2)) ctx.addIssue({ code: "custom", path: ["nodeIds"], message: v.operation + " requires at least two node IDs." });
   if (["create-component-set", "group-nodes", "set-selection", "zoom-to-nodes"].includes(v.operation) && !v.nodeIds) ctx.addIssue({ code: "custom", path: ["nodeIds"], message: "This operation requires nodeIds." });
   if (v.operation === "swap-component" && (!v.nodeId || !v.componentId)) ctx.addIssue({ code: "custom", path: [], message: "swap-component requires nodeId and componentId." });
   if (v.operation === "create-variables" && (!v.collectionName || !v.variables?.length)) ctx.addIssue({ code: "custom", path: [], message: "create-variables requires collectionName and variables." });

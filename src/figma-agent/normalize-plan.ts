@@ -147,6 +147,7 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
       ["primaryAxisAlignItems", "primaryAxisAlignItems"], ["counterAxisAlignItems", "counterAxisAlignItems"],
       ["primaryAxisSizingMode", "primaryAxisSizingMode"], ["counterAxisSizingMode", "counterAxisSizingMode"],
       ["textAlignHorizontal", "textAlignHorizontal"], ["textAlignVertical", "textAlignVertical"], ["textAutoResize", "textAutoResize"],
+      ["lineHeight", "lineHeight"], ["letterSpacing", "letterSpacing"],
       ["textCase", "textCase"], ["textDecoration", "textDecoration"], ["shadowColor", "shadowColor"],
       ["shadowBlur", "shadowBlur"], ["shadowX", "shadowX"], ["shadowY", "shadowY"], ["shadowSpread", "shadowSpread"],
     ];
@@ -156,6 +157,13 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
       if (sourceKey === "shadowColor") {
         const normalizedColor = normalizeColor(rawValue);
         if (normalizedColor) normalized[targetKey] = normalizedColor;
+      } else if ((sourceKey === "lineHeight" || sourceKey === "letterSpacing") && rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)) {
+        const metric = rawValue as Record<string, unknown>;
+        const unit = metric.unit;
+        const value = metric.value;
+        if ((unit === "PIXELS" || unit === "PERCENT") && typeof value === "number" && Number.isFinite(value)) {
+          normalized[targetKey] = { unit, value: sourceKey === "lineHeight" ? Math.max(1, Math.min(500, value)) : Math.max(-100, Math.min(500, value)) };
+        }
       } else if (sourceKey === "clipsContent" && typeof rawValue === "boolean") normalized[targetKey] = rawValue;
       else if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
         const ranges: Record<string, [number, number]> = {
@@ -482,6 +490,14 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
               }
             }
           }
+          const backplates = children.filter((child) => isBackdrop(child, node));
+          const flowChildren = children.filter((child) => !isBackdrop(child, node) && child.layoutPositioning !== "ABSOLUTE");
+          const absoluteOverlays = children.filter((child) => !isBackdrop(child, node) && child.layoutPositioning === "ABSOLUTE");
+          flowChildren.sort((a, b) => {
+            const ra = nodeRect(a), rb = nodeRect(b);
+            return layout === "HORIZONTAL" ? ra.x - rb.x : ra.y - rb.y;
+          });
+          children.splice(0, children.length, ...backplates, ...flowChildren, ...absoluteOverlays);
         } else {
           // A deliberately layered frame must keep its explicit coordinates.
           for (const child of children) {
