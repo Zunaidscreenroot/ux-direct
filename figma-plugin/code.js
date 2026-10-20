@@ -1451,6 +1451,18 @@ async function writeCanvasCommand(payload) {
     if (Number.isFinite(patch.x) && "x" in targetNode) targetNode.x = Math.max(-10000, Math.min(10000, patch.x));
     if (Number.isFinite(patch.y) && "y" in targetNode) targetNode.y = Math.max(-10000, Math.min(10000, patch.y));
     if (Number.isFinite(patch.rotation) && "rotation" in targetNode) targetNode.rotation = Math.max(-360, Math.min(360, patch.rotation));
+    if (patch.arcData !== undefined) {
+      if (targetNode.type !== "ELLIPSE") throw new Error("arcData updates are supported only on ELLIPSE nodes.");
+      var patchArc = patch.arcData;
+      if (!patchArc || !Number.isFinite(patchArc.startingAngle) || !Number.isFinite(patchArc.endingAngle) ||
+          !Number.isFinite(patchArc.innerRadius) || patchArc.endingAngle <= patchArc.startingAngle ||
+          patchArc.startingAngle < -Math.PI * 2 || patchArc.startingAngle > Math.PI * 2 ||
+          patchArc.endingAngle < -Math.PI * 2 || patchArc.endingAngle > Math.PI * 2 ||
+          patchArc.innerRadius < 0 || patchArc.innerRadius > 1) {
+        throw new Error("ELLIPSE arcData update requires valid radian angles and innerRadius from 0 to 1.");
+      }
+      targetNode.arcData = { startingAngle: patchArc.startingAngle, endingAngle: patchArc.endingAngle, innerRadius: patchArc.innerRadius };
+    }
     if (Number.isFinite(patch.width) || Number.isFinite(patch.height)) {
       if (typeof targetNode.resize !== "function") throw new Error("This node type does not support resizing.");
       targetNode.resize(

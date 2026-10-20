@@ -235,15 +235,17 @@ test("Figma visual analysis uses a compact rendered JPEG and native layer data",
   assert.ok(agent.includes("Analyse BOTH the attached rendered screen image and native layer tree"));
 });
 
-test("Figma visual review is one advisory pass on the LOW-cost Auto route", () => {
-  const review = read("app/api/assistant/figma-agent/review/route.ts");
+test("TinyFish visual QA can trigger one bounded native repair and a final re-check", () => {
+  const liveQA = read("app/api/assistant/figma-agent/live-qa/route.ts");
   const refine = read("app/api/assistant/figma-agent/refine/route.ts");
-  assert.ok(pluginUi.includes("/api/assistant/figma-agent/review"));
-  assert.equal(pluginUi.includes('fetch(API + "/api/assistant/figma-agent/refine"'), false);
-  assert.equal(pluginUi.includes("iteration <= 2"), false);
-  assert.equal(pluginUi.includes("iteration === 2"), false);
-  assert.ok(review.includes("const models = [FIGMA_AGENT_QA_MODEL];"));
-  assert.ok(review.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
+  assert.ok(pluginUi.includes("/api/assistant/figma-agent/live-qa"));
+  assert.ok(pluginUi.includes("/api/assistant/figma-agent/refine"));
+  assert.equal(pluginUi.includes("for (let iteration = 1; iteration <= 2; iteration++)"), false);
+  assert.ok(pluginUi.includes('runLiveVisualQA("verification"'));
+  assert.ok(liveQA.includes("https://agent.tinyfish.ai/v1/automation/run-sse"));
+  assert.ok(liveQA.includes("readR2Json"));
+  assert.ok(refine.includes("const models = [FIGMA_AGENT_DEFAULT_MODEL];"));
+  assert.ok(refine.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
   assert.ok(review.includes('type: "image_url"'));
   assert.ok(review.includes('sourceImage: z.string().max(52000).nullable().optional()'));
   assert.ok(review.includes('outputImage: z.string().max(52000).nullable().optional()'));
@@ -272,7 +274,7 @@ test("Figma visual capture failures do not invalidate the full design request", 
   assert.ok(refinementRoute.includes("extractJsonObject(message.content)"), "Refinement must parse structured content variants.");
   assert.ok(reviewRoute.includes("const models = [FIGMA_AGENT_QA_MODEL];"));
   assert.ok(reviewRoute.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
-  assert.ok(refinementRoute.includes("const models = OPENROUTER_MODELS;"));
+  assert.ok(refinementRoute.includes("const models = [FIGMA_AGENT_DEFAULT_MODEL];"));
   assert.equal(reviewRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.equal(refinementRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.ok(agent.includes("renderedScreen: z.string().max(52000).nullable().optional()"));

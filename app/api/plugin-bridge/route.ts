@@ -109,6 +109,11 @@ const CANVAS_PATCH = z.object({
   width: z.number().finite().min(1).max(4096).optional(),
   height: z.number().finite().min(1).max(4096).optional(),
   rotation: z.number().finite().min(-360).max(360).optional(),
+  arcData: z.object({
+    startingAngle: z.number().finite().min(-6.283185307179586).max(6.283185307179586),
+    endingAngle: z.number().finite().min(-6.283185307179586).max(6.283185307179586),
+    innerRadius: z.number().finite().min(0).max(1),
+  }).strict().optional(),
   opacity: z.number().finite().min(0).max(1).optional(),
   fillColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   strokeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),

@@ -117,6 +117,8 @@ test("Figma generation uses only OpenRouter Auto LOW and never fans out to separ
   assert.equal(ui.includes("model-picker"), false, "No model selector styling should remain.");
   assert.ok(ui.includes("OpenRouter Auto · LOW cost tier"), "The fixed route should be shown as a non-interactive label.");
   assert.equal(ui.includes("model: selectedModel"), false, "The UI must not offer model overrides.");
-  assert.equal(ui.includes('fetch(API + "/api/assistant/figma-agent/refine"'), false, "Automatic refinement stays disabled.");
-  assert.equal(ui.includes("for (let iteration = 1; iteration <= 2; iteration++)"), false, "Visual QA must run once.");
+  assert.ok(ui.includes('fetch(API + "/api/assistant/figma-agent/live-qa"'), "The plugin must call TinyFish for live browser QA.");
+  assert.ok(ui.includes('fetch(API + "/api/assistant/figma-agent/refine"'), "At most one low-cost repair call follows QA.");
+  assert.equal(ui.includes("for (let iteration = 1; iteration <= 2; iteration++)"), false, "Refinement must remain bounded rather than loop indefinitely.");
+  assert.ok(ui.includes('runLiveVisualQA("verification"'), "After one repair batch, TinyFish verifies once.");
 });

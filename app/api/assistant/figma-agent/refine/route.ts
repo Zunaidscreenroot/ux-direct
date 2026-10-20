@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { FIGMA_AGENT_DEFAULT_MODEL, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 
 export const runtime = "nodejs";
@@ -30,6 +30,11 @@ const PatchSchema = z.object({
   fillColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   strokeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   strokeWeight: z.number().finite().min(0).max(100).optional(),
+  arcData: z.object({
+    startingAngle: z.number().finite().min(-6.283185307179586).max(6.283185307179586),
+    endingAngle: z.number().finite().min(-6.283185307179586).max(6.283185307179586),
+    innerRadius: z.number().finite().min(0).max(1),
+  }).strict().optional(),
   opacity: z.number().finite().min(0).max(1).optional(),
   cornerRadius: z.number().finite().min(0).max(512).optional(),
   fontFamily: z.string().trim().min(1).max(100).optional(),
@@ -107,7 +112,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Generated variation contains no editable native node IDs." }, { status: 400, headers });
   }
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const models = OPENROUTER_MODELS;
+  const models = [FIGMA_AGENT_DEFAULT_MODEL];
   const errors: string[] = [];
   for (const [modelIndex, model] of models.entries()) {
     const controller = new AbortController();
@@ -119,11 +124,12 @@ export async function POST(request: Request) {
           "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Design Refiner" },
         body: JSON.stringify({
           model,
+          ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
           messages: [
             { role: "system", content: [
               UX_DIRECT_DESIGN_ROLE + " You are UX Direct's surgical native-Figma refinement agent. Return JSON only: {patch:[{nodeId:string,patch:object}]}.",
               "Fix only the supplied visual review issues with the smallest sensible adjustments. Preserve information architecture and visual language. Never redesign the screen wholesale.",
-              "Each nodeId MUST come from the supplied generated-frame tree. Allowed patch fields are limited to native Figma update-node: x,y,width,height,fillColor,strokeColor,strokeWeight,opacity,cornerRadius,fontFamily,fontStyle,fontSize,text,textAlignHorizontal,textAlignVertical,textAutoResize,layoutMode,itemSpacing,paddingLeft,paddingRight,paddingTop,paddingBottom,primaryAxisAlignItems,counterAxisAlignItems,shadowColor,shadowBlur,shadowX,shadowY,shadowSpread.",
+              "Each nodeId MUST come from the supplied generated-frame tree. Allowed patch fields are limited to native Figma update-node: x,y,width,height,fillColor,strokeColor,strokeWeight,opacity,cornerRadius,fontFamily,fontStyle,fontSize,text,textAlignHorizontal,textAlignVertical,textAutoResize,layoutMode,itemSpacing,paddingLeft,paddingRight,paddingTop,paddingBottom,primaryAxisAlignItems,counterAxisAlignItems,shadowColor,shadowBlur,shadowX,shadowY,shadowSpread,arcData. Only apply arcData to ELLIPSE nodes.",
               "Do not target nodes outside the generated variation. Return no more than 20 patches.",
             ].join("\n") },
             { role: "user", content: JSON.stringify({ prompt: parsed.data.prompt, iteration: parsed.data.iteration, score: parsed.data.review.score,
