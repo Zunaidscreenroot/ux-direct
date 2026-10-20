@@ -103,7 +103,10 @@ test("missing final content remains invalid and is handled by the route recovery
 test("compact recovery is model-agnostic and does not add OpenRouter provider filters", () => {
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   const models = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
-  assert.ok(route.includes("const models = [requestedModel];"));
+  assert.ok(route.includes("const models = [requestedModel, ...FIGMA_AGENT_FALLBACK_MODELS.filter((candidate) => candidate !== requestedModel)]"));
+  assert.ok(route.includes('model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}'), "Auto must use OpenRouter's low cost tier.");
+  assert.ok(route.includes("All model requests run sequentially"), "Generation must be sequential, not parallel.");
+  assert.ok(route.includes("candidate !== requestedModel"), "Fallbacks must not retry the selected model as a separate fallback.");
   assert.ok(route.includes("requestedModel = parsedInput.data.model || FIGMA_AGENT_DEFAULT_MODEL"));
   assert.ok(route.includes("Unsupported Figma design model"));
   const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
@@ -120,6 +123,7 @@ test("compact recovery is model-agnostic and does not add OpenRouter provider fi
   assert.ok(models.includes('"qwen/qwen3.5-35b-a3b"'));
   assert.ok(models.includes('id: "openrouter/auto"'), "OpenRouter Auto must be selectable in the design model catalog.");
   assert.ok(models.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto"'), "Auto should be the default until the user chooses a fixed model.");
-  assert.equal(route.includes("provider: {"), false);
-  assert.equal(route.includes("plugins: [{ id: \"auto-router\""), false);
+  assert.equal(route.includes("Promise.all(models"), false, "Models must never be generated in parallel.");
+  assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Auto Router cost tier must be low.");
+  assert.ok(catalog.includes("FIGMA_AGENT_FALLBACK_MODELS"));
 });

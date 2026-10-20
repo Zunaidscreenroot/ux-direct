@@ -12,6 +12,18 @@ export const FIGMA_AGENT_MODELS = [
   { id: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite · Budget", description: "Fast, low-cost multimodal comparison.", price: "$0.25 input / $1.50 output per 1M tokens" },
 ] as const;
 
+/**
+ * Sequential fallbacks are attempted only after the selected model fails to return a
+ * schema-valid plan. Keep this list single-call per model and bias toward low cost.
+ */
+export const FIGMA_AGENT_FALLBACK_MODELS = [
+  "anthropic/claude-haiku-5.5",
+  "google/gemini-3.1-flash-lite",
+  "google/gemini-3.7-flash",
+  "anthropic/claude-sonnet-5.5",
+  "openai/gpt-5.4",
+] as const;
+
 export type FigmaAgentModelId = typeof FIGMA_AGENT_MODELS[number]["id"];
 export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto";
 /** Fixed visual-QA judge so model comparisons use a consistent reviewer. */
