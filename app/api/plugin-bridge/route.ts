@@ -174,7 +174,7 @@ const CANVAS_WRITE_STEP = z.object({
   styleName: z.string().trim().min(1).max(240).optional(),
   booleanOperation: z.enum(["UNION", "SUBTRACT", "INTERSECT", "EXCLUDE"]).optional(),
   componentId: z.string().trim().min(1).max(100).optional(),
-  format: z.enum(["PNG", "PDF", "SVG_STRING"]).optional(),
+  format: z.enum(["PNG", "JPG", "PDF", "SVG_STRING"]).optional(),
   scale: z.number().finite().min(0.2).max(1).optional(),
   range: CANVAS_TEXT_RANGE.optional(),
   imageBase64: z.string().max(250000).optional(),
@@ -188,7 +188,7 @@ const CANVAS_WRITE_PAYLOAD = z.object({
     "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
   ]),
   confirm: z.literal(true),
-  target: z.enum(["current-page", "selection", "test-lab"]).optional(),
+  target: z.enum(["current-page", "selection", "node", "test-lab"]).optional(),
   elements: z.array(CANVAS_ELEMENT).min(1).max(20).optional(),
   nodeId: z.string().trim().min(1).max(100).optional(),
   parentNodeId: z.string().trim().min(1).max(100).optional(),
@@ -201,7 +201,7 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   styleName: z.string().trim().min(1).max(240).optional(),
   booleanOperation: z.enum(["UNION", "SUBTRACT", "INTERSECT", "EXCLUDE"]).optional(),
   componentId: z.string().trim().min(1).max(100).optional(),
-  format: z.enum(["PNG", "PDF", "SVG_STRING"]).optional(),
+  format: z.enum(["PNG", "JPG", "PDF", "SVG_STRING"]).optional(),
   scale: z.number().finite().min(0.2).max(1).optional(),
   range: CANVAS_TEXT_RANGE.optional(),
   imageBase64: z.string().max(250000).optional(),
@@ -216,6 +216,12 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   }
   if (value.operation === "create-elements" && !value.elements) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "create-elements requires 1–20 elements." });
+  }
+  if (value.operation === "create-elements" && value.target === "node" && !value.parentNodeId) {
+    ctx.addIssue({ code: "custom", path: ["parentNodeId"], message: "create-elements targeting a parent node requires parentNodeId." });
+  }
+  if (value.target === "node" && value.operation !== "create-elements") {
+    ctx.addIssue({ code: "custom", path: ["target"], message: "target=node is supported only for create-elements." });
   }
   if (value.operation === "update-node" && (!value.nodeId || !value.patch)) {
     ctx.addIssue({ code: "custom", path: ["patch"], message: "update-node requires nodeId and a supported patch." });
@@ -242,7 +248,7 @@ const CANVAS_WRITE_PAYLOAD = z.object({
     ctx.addIssue({ code: "custom", path: ["range"], message: "set-text-range requires a range object." });
   }
   if (value.operation === "export-node" && !value.format) {
-    ctx.addIssue({ code: "custom", path: ["format"], message: "export-node requires PNG, PDF, or SVG_STRING." });
+    ctx.addIssue({ code: "custom", path: ["format"], message: "export-node requires PNG, JPG, PDF, or SVG_STRING." });
   }
   if (value.operation === "create-image-fill" && (!value.imageBase64 || !value.nodeId)) {
     ctx.addIssue({ code: "custom", path: ["imageBase64"], message: "create-image-fill requires nodeId and imageBase64." });

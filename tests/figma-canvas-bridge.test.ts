@@ -204,11 +204,11 @@ test("bridge supports saved health reports above the legacy 100-check ceiling", 
   assert.ok(bridge.includes('mode === "health-state"'));
 });
 
-test("normal conversational chat uses MiniMax free then unfiltered OpenRouter Auto", () => {
+test("normal conversational chat uses Gemini primary and cost-ordered explicit fallbacks", () => {
   assert.ok(chatRoute.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0];"));
   assert.ok(chatRoute.includes("const FALLBACK_MODEL = OPENROUTER_MODELS[1];"));
   assert.equal(chatRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
-  assert.ok(chatRoute.includes("for (const candidate of candidates)"));
+  assert.ok(chatRoute.includes("for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1)"));
   assert.ok(chatRoute.includes("openrouter/auto") === false, "Auto model slug is defined in shared model policy, not hard-coded in request routing.");
   assert.equal(chatRoute.includes("auto-router"), false);
 });

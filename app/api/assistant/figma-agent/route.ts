@@ -266,6 +266,7 @@ export async function OPTIONS(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const requestStartedAt = Date.now();
   const headers = cors(request);
   if (!allowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
   const key = process.env.OPENROUTER_API_KEY?.trim();
@@ -321,12 +322,12 @@ export async function POST(request: Request) {
     const retrieved = await retrieveBrainContext({
       query: (parsedInput.data.prompt + "\n" + JSON.stringify(canvas).slice(0, 1800)).slice(0, 3000),
       scopeKeys: resolveBrainScopes(parsedInput.data.prompt + "\n" + JSON.stringify(canvas.nodes).slice(0, 1500)),
-      limit: 5,
-      maxChars: 4200,
+      limit: 3,
+      maxChars: 2600,
       includeKnowledge: true,
     });
     brain = {
-      contextText: retrieved.contextText.slice(0, 5200),
+      contextText: retrieved.contextText.slice(0, 3200),
       status: retrieved.retrieval.status,
       memoryCount: Math.max(0, retrieved.retrieval.memoryCount || 0),
       knowledgeChunkCount: Math.max(0, retrieved.retrieval.knowledgeChunkCount || 0),
@@ -341,8 +342,7 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // Try MiniMax free first, then unfiltered OpenRouter Auto. Each model gets one
-  // compact recovery attempt if its first response is absent, malformed, or truncated.
+  // Gemini is primary. Give it one compact recovery retry; attempt each explicitly priced fallback once.
   const models = OPENROUTER_MODELS;
   const errors: string[] = [];
   const recoveryContext = JSON.stringify({
@@ -359,15 +359,19 @@ export async function POST(request: Request) {
     "Preserve the screen/component scope, all meaningful source text and financial values, status, date, labels, rows, actions and relationships. Do not redesign it as a generic dashboard or generic stack of cards.",
     "Use the attached screenshot and source layers when available. Use semantic nested FRAMEs, Auto Layout for suitable cards and rows, clear hierarchy, strong contrast, consistent spacing and editable native shapes/text. Do not invent contractual financial details.",
     "Return one complete JSON object only with root keys summary (string), frame ({name,width,height,backgroundColor}), elements (an array of exactly 5 non-empty FRAME section containers), and learningCandidate:null. Every element must use supported native Figma fields. This is a schema contract, not text to copy. No markdown, explanation or reasoning.",
-    "OUTPUT BUDGET: exactly 5 non-empty top-level FRAME groups; 18–26 native nodes total INCLUDING all nested children. Aim for 3–4 useful children per section. Do not add decorative or repetitive layers just to increase the count. Short names and concise text. Finish all strings, arrays, objects and the final closing brace.",
+    "OUTPUT BUDGET: exactly 5 meaningful top-level FRAME groups; target 28–42 native nodes total INCLUDING nested children. Preserve every source label, amount, value, status, date and action that belongs on the selected screen. Keep every layer purposeful; do not add decorative placeholders to hit a count. Finish every string, array, object and the final closing brace.",
     "Every node must have type, name, x, y, width and height. Types: FRAME, RECTANGLE, ELLIPSE, TEXT, LINE, POLYGON, STAR. TEXT must have text. Only FRAME can contain children. Coordinates must be relative to the immediate parent. Use color:'#RRGGBB' and noFill:true only for transparent structural frames.",
     "Do not include a learningCandidate unless there is a durable reusable lesson. If none, set learningCandidate:null.",
   ].join("\n");
-  for (const model of models) {
-    for (let recoveryAttempt = 0; recoveryAttempt < 2; recoveryAttempt += 1) {
-      const isRecovery = recoveryAttempt === 1;
+  const generationStartedAt = Date.now();
+  for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
+    const model = models[modelIndex];
+    const attemptsForModel = modelIndex === 0 ? 2 : 1;
+    for (let recoveryAttempt = 0; recoveryAttempt < attemptsForModel; recoveryAttempt += 1) {
+      const isRecovery = modelIndex > 0 || recoveryAttempt === 1;
+      const attemptTimeoutMs = modelIndex === 0 && !isRecovery ? 28000 : 16000;
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 65000);
+      const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
       try {
         const modelUserText = isRecovery
           ? "RECOVERY RETRY: The prior response was absent, incomplete, or invalid. Return a smaller complete JSON object following the exact compact output budget in the system message. Do not continue the old text or explain the failure.\nSOURCE CONTEXT:\n" + recoveryContext
@@ -396,12 +400,11 @@ export async function POST(request: Request) {
               { role: "user", content: userContent },
             ],
             temperature: isRecovery ? 0.15 : 0.25,
-            max_completion_tokens: isRecovery ? 6000 : 10000,
-            // M3.1 Flash supports effort controls. Keep its reasoning budget low enough
-            // to leave tokens for the visible JSON plan. Do not constrain OpenRouter Auto.
-            ...(model === "openrouter/auto" ? {} : {
+            max_tokens: isRecovery ? 6500 : 12000,
+            // Keep Gemini's reasoning budget low so tokens remain available for native layer JSON.
+            ...(model === "google/gemini-3.7-flash" ? {
               reasoning: { effort: isRecovery ? "minimal" : "low" },
-            }),
+            } : {}),
             response_format: { type: "json_object" },
           }),
           cache: "no-store",
@@ -477,11 +480,11 @@ export async function POST(request: Request) {
           model: typeof payload.model === "string" ? payload.model : model,
           brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
           visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
-          generation: { recoveryAttempted: isRecovery, finishReason },
+          generation: { recoveryAttempted: isRecovery, finishReason, modelIndex: modelIndex + 1, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt },
         }, { headers });
       } catch (error) {
         errors.push(model + (isRecovery ? " compact retry" : "") + ": " +
-          (controller.signal.aborted ? "timed out after 65 seconds" : error instanceof Error ? error.message.slice(0, 200) : "request failed"));
+          (controller.signal.aborted ? "timed out after " + attemptTimeoutMs + "ms" : error instanceof Error ? error.message.slice(0, 200) : "request failed"));
         if (!isRecovery) continue;
         break;
       } finally {

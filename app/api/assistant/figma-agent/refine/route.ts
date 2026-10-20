@@ -109,9 +109,9 @@ export async function POST(request: Request) {
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
   const models = OPENROUTER_MODELS;
   const errors: string[] = [];
-  for (const model of models) {
+  for (const [modelIndex, model] of models.entries()) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 40000);
+    const timer = setTimeout(() => controller.abort(), modelIndex === 0 ? 24000 : 15000);
     try {
       const response = await fetch(endpoint, {
         method: "POST",

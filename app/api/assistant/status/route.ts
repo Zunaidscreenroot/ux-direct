@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { OPENROUTER_MODELS } from "@/src/providers/openrouter-models";
+import { OPENROUTER_MODELS, OPENROUTER_MODEL_LABELS } from "@/src/providers/openrouter-models";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,12 +72,9 @@ export async function GET(request: Request) {
     provider: "OpenRouter",
     defaultModel: OPENROUTER_MODELS[0],
     fallbackModel: OPENROUTER_MODELS[1],
-    models: [
-      { id: OPENROUTER_MODELS[0], name: "MiniMax M3.1 Flash · free primary" },
-      { id: OPENROUTER_MODELS[1], name: "OpenRouter Auto · unfiltered fallback" },
-    ],
+    models: OPENROUTER_MODELS.map((id, index) => ({ id, name: OPENROUTER_MODEL_LABELS[index] })),
     checkedAt: new Date().toISOString(),
-    ...(connected ? {} : { error: keyError || "MiniMax and OpenRouter Auto are not ready." }),
+    ...(connected ? {} : { error: keyError || "The configured OpenRouter model chain is not ready." }),
     uxAudit: { reachable: auditReachable, baseUrl: auditBase, ...(auditReachable ? {} : { error: "Could not reach the UX Audit Worker." }) },
     brain: { reachable: brainReachable, ...brainDiagnostics, ...(brainReachable ? {} : { error: "Shared-brain health check failed or its server key is not configured." }) },
   }, { headers: corsHeaders(origin) });

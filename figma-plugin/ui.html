@@ -704,7 +704,7 @@
 
       stage("scanning", "Scanning selected screen, nested layers, text and styles…");
       const canvas = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 4, maxNodes: 100, includeStyles: true
+        scope: "selection", maxDepth: 4, maxNodes: 100
       }, 90000);
       const selectedNodes = Array.isArray(canvas && canvas.nodes) ? canvas.nodes : [];
       const expectsSelection = /\b(selected|selection|this frame|this screen|current frame|variation|variant|duplicate|redesign this|improve this)\b/i.test(prompt);
@@ -721,9 +721,9 @@
         throw new Error("The selection is " + (sourceNode.type || "a layer") + ", not a frame/container. Select the full screen.");
       }
 
-      stage("capturing", "Exporting a compact PNG of the selected screen…");
+      stage("capturing", "Rendering a compact JPEG preview of the selected screen…");
       const renderedCapture = sourceNode && sourceNode.id
-        ? await captureRenderedNodePng(sourceNode.id)
+        ? await captureRenderedNodePreview(sourceNode.id)
         : { dataUrl: null, scale: 0, warning: "No selected node ID was available for image export." };
       const renderedScreen = renderedCapture.dataUrl;
       const visualCaptureWarning = renderedCapture.warning || "";
@@ -783,7 +783,6 @@
       const plannedNodeCount = countPlanNodes(plan.elements);
       async function createPlanChildren(parentId, elements, depth) {
         if (depth > 4) throw new Error("Design hierarchy exceeded the safe nesting depth.");
-        await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [parentId] }, 90000);
         let cursor = 0;
         while (cursor < elements.length) {
           const element = elements[cursor];
@@ -793,14 +792,13 @@
             const spec = Object.assign({}, element);
             delete spec.children;
             const created = await runNativeCanvasCommand("write-canvas", {
-              confirm: true, operation: "create-elements", target: "selection", elements: [spec]
+              confirm: true, operation: "create-elements", target: "node", parentNodeId: parentId, elements: [spec]
             }, 90000);
             const container = created && Array.isArray(created.nodes) ? created.nodes[0] : null;
             if (!container || typeof container.id !== "string") throw new Error("Figma did not return a native frame ID for " + element.name + ".");
             completedElementCount += 1;
             stage("creating", "Creating nested frame · " + element.name + " · " + completedElementCount + "/" + plannedNodeCount + " layers…");
             await createPlanChildren(container.id, children, depth + 1);
-            await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [parentId] }, 90000);
             cursor += 1;
             continue;
           }
@@ -815,7 +813,7 @@
           }
           if (!batch.length) continue;
           const result = await runNativeCanvasCommand("write-canvas", {
-            confirm: true, operation: "create-elements", target: "selection", elements: batch
+            confirm: true, operation: "create-elements", target: "node", parentNodeId: parentId, elements: batch
           }, 90000);
           completedElementCount += Number(result && result.createdCount) || batch.length;
           stage("creating", "Building editable layout · " + completedElementCount + "/" + plannedNodeCount + " native layers…");
@@ -828,14 +826,14 @@
       let lastReview = null;
       let visualQAComplete = false;
       let visualQAError = "";
-      for (let iteration = 1; iteration <= 3; iteration++) {
-        stage("rendering", "Rendering the new screen for visual QA · pass " + iteration + " of 3…");
-        const outputCapture = await captureRenderedNodePng(createdFrameId);
+      for (let iteration = 1; iteration <= 2; iteration++) {
+        stage("rendering", "Rendering the new screen for visual QA · pass " + iteration + " of 2…");
+        const outputCapture = await captureRenderedNodePreview(createdFrameId);
         const outputImage = outputCapture.dataUrl;
         stage("reviewing", outputImage
           ? "Comparing the rendered result for hierarchy, spacing, clipping and source fidelity…"
           : "Rendered output unavailable · " + (outputCapture.warning || "checking native geometry only").slice(0, 180));
-        const outputRead = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 4, maxNodes: 100 }, 90000);
+        const outputRead = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100 }, 90000);
         const outputCanvas = frameOnlyRead(outputRead, createdFrameId);
         const reviewResponse = await fetch(API + "/api/assistant/figma-agent/review", {
           method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
@@ -856,7 +854,7 @@
         // Continue refinement while the review shows actionable defects or misses the quality threshold.
         const reviewGatePassed = !!(reviewPayload && reviewPayload.qualityGate && reviewPayload.qualityGate.passed === true);
         const hasActionableIssues = lastReview.issues.length > 0;
-        if ((reviewGatePassed || (!hasActionableIssues && lastReview.score >= 82)) || iteration === 3) break;
+        if ((reviewGatePassed || (!hasActionableIssues && lastReview.score >= 82)) || iteration === 2) break;
         if (!hasActionableIssues) {
           visualQAError = "Quality score " + lastReview.score + "/100 is below the required 82/100; review returned no actionable fixes.";
           break;
@@ -893,7 +891,7 @@
       // Read to the maximum supported depth so nested native FRAMEs are included.
       // The previous depth-2 read made otherwise-valid nested designs look incomplete.
       const verified = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 4, maxNodes: 100, includeStyles: true
+        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true
       }, 90000);
       const verifiedNode = verified && Array.isArray(verified.nodes)
         ? verified.nodes.find(function (node) { return node.id === createdFrameId; })
@@ -922,7 +920,7 @@
       const model = typeof payload.model === "string" ? payload.model : "OpenRouter";
       const quality = lastReview
         ? (visualQAComplete
-          ? " Visual QA score: " + lastReview.score + "/100. " + (lastReview.issues.length ? lastReview.issues.length + " issue(s) remain after up to two refinement passes." : "No actionable visual issues were reported.")
+          ? " Visual QA score: " + lastReview.score + "/100. " + (lastReview.issues.length ? lastReview.issues.length + " issue(s) remain after one targeted refinement pass." : "No actionable visual issues were reported.")
           : " Structural QA completed; screenshots were not both available for visual comparison.")
         : " Visual QA service unavailable; structural verification completed." + (visualQAError ? " Review detail: " + visualQAError.slice(0, 400) : "");
       return "Created and verified \"" + plan.frame.name + "\" as a separate editable Figma variation with " +
@@ -932,27 +930,28 @@
         "\nThe source frame was preserved. The new variation is selected on the canvas." + quality;
     }
 
-    async function captureRenderedNodePng(nodeId) {
+    async function captureRenderedNodePreview(nodeId) {
       const attempts = [];
-      for (const scale of [0.35, 0.25, 0.2]) {
+      // JPEG preserves the actual Figma render while greatly reducing payload size; retry once only.
+      for (const scale of [0.6, 0.45]) {
         try {
           const result = await runNativeCanvasCommand("write-canvas", {
             confirm: true,
             operation: "export-node",
             nodeId: nodeId,
-            format: "PNG",
+            format: "JPG",
             scale: scale
-          }, 90000);
+          }, 30000);
           if (result && typeof result.base64 === "string" && result.base64.length > 0 && result.base64.length <= 48000) {
-            return { dataUrl: "data:image/png;base64," + result.base64, scale: scale, warning: "" };
+            return { dataUrl: "data:image/jpeg;base64," + result.base64, scale: scale, warning: "" };
           }
-          const details = result && result.error ? String(result.error) : "Figma export returned no PNG bytes.";
+          const details = result && result.error ? String(result.error) : "Figma export returned no JPEG bytes.";
           attempts.push(Math.round(scale * 100) + "%: " + details.slice(0, 140));
         } catch (error) {
-          attempts.push(Math.round(scale * 100) + "%: " + String(error && error.message || "export failed").slice(0, 140));
+          attempts.push(Math.round(scale * 100) + "%: " + String(error && error.message || "JPEG export failed").slice(0, 140));
         }
       }
-      return { dataUrl: null, scale: 0, warning: "PNG export failed at 35%, 25%, and 20%. " + attempts.join(" | ").slice(0, 500) };
+      return { dataUrl: null, scale: 0, warning: "JPEG preview export failed at 60% and 45%. " + attempts.join(" | ").slice(0, 500) };
     }
 
     function countPlanNodes(nodes) {
@@ -963,7 +962,9 @@
     function countNativeTree(node) {
       if (!node || typeof node !== "object") return 0;
       const children = Array.isArray(node.children) ? node.children : [];
-      return 1 + children.reduce(function (total, child) { return total + countNativeTree(child); }, 0);
+      const reportedChildren = Number(node.childCount) || 0;
+      const unexpandedChildren = Math.max(0, reportedChildren - children.length);
+      return 1 + unexpandedChildren + children.reduce(function (total, child) { return total + countNativeTree(child); }, 0);
     }
 
     function frameOnlyRead(result, frameId) {

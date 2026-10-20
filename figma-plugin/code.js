@@ -1138,7 +1138,7 @@ async function readCanvasCommand(payload) {
   assertUxDirectFileScope("read canvas");
   payload = payload || {};
   var scope = payload.scope === "current-page" ? "current-page" : "selection";
-  var maxDepth = Math.max(0, Math.min(4, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
+  var maxDepth = Math.max(0, Math.min(5, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
   var maxNodes = Math.max(1, Math.min(100, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
   var isSearch = (typeof payload.queryName === "string" && payload.queryName.trim()) ||
     (typeof payload.queryType === "string" && payload.queryType.trim());
@@ -1198,7 +1198,7 @@ function parseHexColor(hex) {
     b: parseInt(hex.slice(5, 7), 16) / 255
   };
 }
-async function resolveCanvasWriteParent(target) {
+async function resolveCanvasWriteParent(target, parentNodeId) {
   assertUxDirectFileScope("resolve canvas write target");
   if (target === "current-page" || !target) return figma.currentPage;
   if (target === "selection") {
@@ -1207,6 +1207,16 @@ async function resolveCanvasWriteParent(target) {
       throw new Error("Select exactly one frame or container layer before writing to selection.");
     }
     return selected[0];
+  }
+  if (target === "node") {
+    if (typeof parentNodeId !== "string" || !parentNodeId.trim()) {
+      throw new Error("target=node requires parentNodeId.");
+    }
+    var parentNode = figma.currentPage.findOne(function (item) { return item.id === parentNodeId; }) || null;
+    if (!parentNode || !("children" in parentNode) || typeof parentNode.appendChild !== "function") {
+      throw new Error("parentNodeId must identify a writable container on the current page.");
+    }
+    return parentNode;
   }
   if (target === "test-lab") {
     await figma.loadAllPagesAsync();
@@ -1353,7 +1363,7 @@ async function writeCanvasCommand(payload) {
     if (!Array.isArray(payload.elements) || payload.elements.length < 1 || payload.elements.length > 20) {
       throw new Error("create-elements requires 1 to 20 validated elements.");
     }
-    var parent = await resolveCanvasWriteParent(payload.target || "current-page");
+    var parent = await resolveCanvasWriteParent(payload.target || "current-page", payload.parentNodeId);
     var created = [];
     for (var i = 0; i < payload.elements.length; i++) {
       assertUxDirectFileScope("create canvas element");
@@ -1779,7 +1789,7 @@ async function writeCanvasCommand(payload) {
   if (payload.operation === "export-node") {
     var genericExportTarget = requireCanvasNode(payload.nodeId, "export-node");
     var exportFormat = payload.format;
-    if (!["PNG", "PDF", "SVG_STRING"].includes(exportFormat)) throw new Error("export-node format must be PNG, PDF, or SVG_STRING.");
+    if (!["PNG", "JPG", "PDF", "SVG_STRING"].includes(exportFormat)) throw new Error("export-node format must be PNG, JPG, PDF, or SVG_STRING.");
     if (exportFormat === "SVG_STRING") {
       var svgOutput = await genericExportTarget.exportAsync({ format: "SVG_STRING" });
       if (svgOutput.length > 35000) throw new Error("SVG export exceeds the safe 35 KB response limit; export a smaller node.");
@@ -1787,7 +1797,7 @@ async function writeCanvasCommand(payload) {
         node: nodeSummary(genericExportTarget), format: exportFormat, byteLength: svgOutput.length, data: svgOutput };
     }
     var exportOptions = { format: exportFormat };
-    if (exportFormat === "PNG" && Number.isFinite(payload.scale)) {
+    if ((exportFormat === "PNG" || exportFormat === "JPG") && Number.isFinite(payload.scale)) {
       exportOptions.constraint = { type: "SCALE", value: Math.max(0.2, Math.min(1, payload.scale)) };
     }
     var exportBytes = await genericExportTarget.exportAsync(exportOptions);

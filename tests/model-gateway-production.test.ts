@@ -18,7 +18,7 @@ test("home opens the unified chat-first workspace instead of the operations dash
   assert.equal(page.includes("ModelGatewayPanel"), false);
 });
 
-test("UX Direct uses MiniMax M3.1 Flash free then unfiltered OpenRouter Auto", () => {
+test("UX Direct uses Gemini 3.7 Flash with cost-ordered OpenRouter fallbacks", () => {
   const route = read("app/api/assistant/chat/route.ts");
   const figmaAgent = read("app/api/assistant/figma-agent/route.ts");
   const review = read("app/api/assistant/figma-agent/review/route.ts");
@@ -31,8 +31,11 @@ test("UX Direct uses MiniMax M3.1 Flash free then unfiltered OpenRouter Auto", (
   assert.equal(route.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.ok(route.includes("FIRST_TEXT_TIMEOUT_MS = 30_000"));
   assert.ok(route.includes("OPENROUTER_API_KEY"));
-  assert.ok(policy.includes('"minimax/minimax-m3.1-flash:free"'));
-  assert.ok(policy.includes('"openrouter/auto"'));
+  assert.ok(policy.includes('"google/gemini-3.7-flash"'));
+  assert.ok(policy.includes('"qwen/qwen3.5-35b-a3b"'));
+  assert.ok(policy.includes('"qwen/qwen3.5-397b-a17b"'));
+  assert.ok(policy.includes('"google/gemini-3.5-flash-lite"'));
+  assert.equal(policy.includes('"openrouter/auto"'), false);
   assert.ok(policy.includes("UX_DIRECT_DESIGN_ROLE"));
   for (const routeText of [figmaAgent, review, refine]) {
     assert.ok(routeText.includes("OPENROUTER_MODELS"));
@@ -43,8 +46,8 @@ test("UX Direct uses MiniMax M3.1 Flash free then unfiltered OpenRouter Auto", (
   assert.equal(route.includes('plugins: [{ id: "auto-router"'), false);
   assert.ok(status.includes("defaultModel: OPENROUTER_MODELS[0]"));
   assert.ok(status.includes("fallbackModel: OPENROUTER_MODELS[1]"));
-  assert.ok(status.includes('name: "MiniMax M3.1 Flash · free primary"'));
-  assert.ok(status.includes('name: "OpenRouter Auto · unfiltered fallback"'));
+  assert.ok(status.includes("OPENROUTER_MODEL_LABELS[index]"));
+  assert.ok(status.includes("Gemini 3.7 Flash"));
   assert.equal(status.includes("anthropic/claude-sonnet"), false);
   assert.equal(status.includes("openai/gpt-6-luna"), false);
   assert.equal(status.includes("openrouter.ai/api/v1/models"), false);
