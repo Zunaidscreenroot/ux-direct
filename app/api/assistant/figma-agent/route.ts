@@ -262,8 +262,30 @@ function normalizePlan(value: unknown, canvas: Record<string, unknown>): unknown
         const normalizedColor = normalizeColor(raw);
         if (normalizedColor) normalized[targetKey] = normalizedColor;
       } else if (sourceKey === "clipsContent" && typeof raw === "boolean") normalized[targetKey] = raw;
-      else if (typeof raw === "number" && Number.isFinite(raw)) normalized[targetKey] = raw;
-      else if (typeof raw === "string") normalized[targetKey] = raw;
+      else if (typeof raw === "number" && Number.isFinite(raw)) {
+        const ranges: Record<string, [number, number]> = {
+          strokeWeight: [0, 20], opacity: [0, 1], cornerRadius: [0, 128],
+          itemSpacing: [0, 160], paddingLeft: [0, 160], paddingRight: [0, 160],
+          paddingTop: [0, 160], paddingBottom: [0, 160], shadowBlur: [0, 80],
+          shadowX: [-30, 30], shadowY: [-30, 30], shadowSpread: [-30, 30],
+        };
+        const range = ranges[targetKey];
+        normalized[targetKey] = range ? Math.max(range[0], Math.min(range[1], raw)) : raw;
+      } else if (typeof raw === "string") {
+        const enumKeys = new Set([
+          "layoutMode", "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode",
+          "counterAxisSizingMode", "textAlignHorizontal", "textAlignVertical", "textAutoResize",
+          "textCase", "textDecoration",
+        ]);
+        let enumValue = raw.trim().toUpperCase().replace(/[ -]+/g, "_");
+        if (targetKey === "textCase") {
+          if (enumValue === "UPPERCASE" || enumValue === "UPPER_CASE") enumValue = "UPPER";
+          if (enumValue === "LOWERCASE" || enumValue === "LOWER_CASE") enumValue = "LOWER";
+          if (enumValue === "TITLE_CASE") enumValue = "TITLE";
+        }
+        if (enumKeys.has(targetKey)) normalized[targetKey] = enumValue;
+        else normalized[targetKey] = raw.trim().slice(0, 100);
+      }
     }
     return normalized;
   });
