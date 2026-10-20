@@ -10,6 +10,7 @@ const bridge = read("app/api/plugin-bridge/route.ts");
 const plugin = read("figma-plugin/code.js");
 const pluginUi = read("figma-plugin/ui.html");
 const agent = read("app/api/assistant/figma-agent/route.ts");
+const planNormalizer = read("src/figma-agent/normalize-plan.ts");
 const chatRoute = read("app/api/assistant/chat/route.ts");
 
 test("conversational cockpit inline JavaScript parses successfully", () => {
@@ -151,9 +152,10 @@ test("native plugin bridge accepts in-plugin commands only with the live allowli
 });
 
 test("Figma agent normalizes provider-native design fields and uses the requested model order", () => {
-  assert.ok(agent.includes("function normalizePlan("), "Provider responses must be normalized before strict schema validation.");
-  assert.ok(agent.includes("item.fill ?? item.backgroundColor"), "Provider fill aliases must map to the native Figma color field.");
-  assert.ok(agent.includes("item.kind ?? item.elementType ?? item.nodeType"), "Provider layer type aliases must be normalized.");
+  assert.ok(agent.includes('import { normalizePlan } from "@/src/figma-agent/normalize-plan";'), "The design route must normalize provider output before strict schema validation.");
+  assert.ok(planNormalizer.includes("export function normalizePlan("), "The reusable normalizer must be directly testable.");
+  assert.ok(planNormalizer.includes("item.fill ?? item.backgroundColor"), "Provider fill aliases must map to the native Figma color field.");
+  assert.ok(planNormalizer.includes("item.kind ?? item.elementType ?? item.nodeType"), "Provider layer type aliases must be normalized.");
   assert.ok(agent.includes("const models = [\"openai/gpt-6-luna\", \"openrouter/auto\"];"), "GPT-6 Luna must be primary and OpenRouter Auto fallback.");
   assert.ok(agent.includes("const normalizedPlan = normalizePlan(rawPlan, canvas);"), "A normalized model plan must be validated before any canvas write.");
   assert.ok(agent.includes('PlanSchema.safeParse(normalizedPlan)'), "Native plan schema validation must remain mandatory.");
