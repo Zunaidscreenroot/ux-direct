@@ -335,6 +335,8 @@ test("native editor applies Auto Layout sizing and exposes image/variable operat
   assert.ok(agent.includes("variables: compactResourceList(canvas.variables, 120)"));
   assert.ok(agent.includes("const invalidStyleAction = actions.find"));
   assert.ok(agent.includes("const invalidVariableAction = actions.find"));
+  assert.ok(agent.includes("const rawStyles = isRecord(canvasRaw.styles) ? canvasRaw.styles : {}"));
+  assert.ok(agent.includes("variableCollections = Array.isArray(canvasRaw.variableCollections)"));
   assert.ok(agent.includes('paintStyleId: z.string().trim().min(1).max(300).optional()'));
   assert.ok(bridge.includes('"create-image-fill", "insert-image"].includes(step.operation)') || bridge.includes('"create-image-fill", "insert-image"].includes(step.operation)'));
 });

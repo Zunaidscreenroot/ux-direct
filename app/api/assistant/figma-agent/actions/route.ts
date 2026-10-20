@@ -238,7 +238,26 @@ export async function POST(request: Request) {
   const state = { count: 0 };
   const roots = Array.isArray(canvasRaw.nodes) ? canvasRaw.nodes : [];
   const canvasNodes = roots.slice(0, 8).map(v => compactNode(v, state)).filter((v): v is Record<string, unknown> => !!v);
-  const canvas = { pageName: typeof canvasRaw.pageName === "string" ? canvasRaw.pageName.slice(0, 100) : "", nodes: canvasNodes, nodeCount: state.count };
+  const compactResourceList = (value: unknown, limit = 50) => Array.isArray(value) ? value.slice(0, limit).flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") return [];
+    return [{ id: entry.id.slice(0, 300), name: entry.name.slice(0, 120),
+      ...(typeof entry.type === "string" ? { type: entry.type.slice(0, 40) } : {}),
+      ...(typeof entry.collectionName === "string" ? { collectionName: entry.collectionName.slice(0, 100) } : {}),
+      ...(typeof entry.collectionId === "string" ? { collectionId: entry.collectionId.slice(0, 300) } : {}) }];
+  }) : [];
+  const rawStyles = isRecord(canvasRaw.styles) ? canvasRaw.styles : {};
+  const styles = { paint: compactResourceList(rawStyles.paint), text: compactResourceList(rawStyles.text),
+    effect: compactResourceList(rawStyles.effect), grid: compactResourceList(rawStyles.grid) };
+  const variables = compactResourceList(canvasRaw.variables, 120);
+  const variableCollections = Array.isArray(canvasRaw.variableCollections) ? canvasRaw.variableCollections.slice(0, 30).flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") return [];
+    return [{ id: entry.id.slice(0, 300), name: entry.name.slice(0, 100),
+      modes: Array.isArray(entry.modes) ? entry.modes.slice(0, 8).flatMap((mode) =>
+        isRecord(mode) && typeof mode.modeId === "string" && typeof mode.name === "string"
+          ? [{ modeId: mode.modeId.slice(0, 100), name: mode.name.slice(0, 100) }] : []) : [] }];
+  }) : [];
+  const canvas = { pageName: typeof canvasRaw.pageName === "string" ? canvasRaw.pageName.slice(0, 100) : "",
+    nodes: canvasNodes, nodeCount: state.count, styles, variables, variableCollections };
   const allowedIds = flattenNodes(canvasNodes);
   if (allowedIds.size === 0) return NextResponse.json({ error: "Select a layer/container first so the action planner can target real Figma node IDs." }, { status: 400, headers });
   const referenceImage = typeof input.data.referenceImage === "string" &&
