@@ -108,6 +108,8 @@ export function extractPlanJson(value: unknown): unknown {
     value.input,
     functionRecord?.arguments,
     ...(Array.isArray(value.tool_calls) ? value.tool_calls : []),
+    ...(Array.isArray(value.choices) ? value.choices : []),
+    value.message,
   ]) {
     const found = extractPlanJson(candidate);
     if (found !== null) return found;
