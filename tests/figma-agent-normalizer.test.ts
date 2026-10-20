@@ -22,24 +22,31 @@ test("normalizes OpenRouter layer fields that previously failed strict Figma pla
 
   assert.equal(normalized.frame.name, "Manage loans · Variation");
   assert.equal(normalized.frame.backgroundColor, "#FAFAFA");
-  assert.equal(normalized.elements.length, 6);
+  assert.equal(normalized.elements.length, 5, "Flat provider output should be wrapped into five named native frame sections.");
+  assert.ok(normalized.elements.every((element) => element.type === "FRAME"), "The top-level tree should contain frames, not loose shapes/text.");
 
-  assert.equal(normalized.elements[0].type, "RECTANGLE");
-  assert.equal(normalized.elements[0].name, "Rectangle 1");
-  assert.equal(normalized.elements[0].color, "#FFFFFF");
-  assert.equal("fill" in normalized.elements[0], false);
+  const allNodes: Array<Record<string, unknown>> = [];
+  const collect = (nodes: Array<Record<string, unknown>>) => {
+    for (const node of nodes) {
+      allNodes.push(node);
+      if (Array.isArray(node.children)) collect(node.children as Array<Record<string, unknown>>);
+    }
+  };
+  collect(normalized.elements);
+  assert.ok(allNodes.filter((node) => node.type === "FRAME" && Array.isArray(node.children) && node.children.length > 0).length >= 4,
+    "Multiple meaningful frame groups should contain native child layers.");
 
-  assert.equal(normalized.elements[1].type, "TEXT");
-  assert.equal(normalized.elements[1].name, "Text · Manage loans");
-  assert.equal(normalized.elements[1].text, "Manage loans");
-  assert.equal(normalized.elements[1].color, "#202124");
-  assert.equal(normalized.elements[1].fontSize, 96, "Oversized model typography should be clamped to the native executor schema.");
+  const heading = allNodes.find((node) => node.type === "TEXT" && node.text === "Manage loans");
+  assert.ok(heading, "Text content should survive the hierarchical normalization.");
+  assert.equal(heading?.color, "#202124");
+  assert.equal(heading?.fontSize, 96, "Oversized model typography should be clamped to the native executor schema.");
+  assert.equal("fill" in (heading || {}), false);
 
-  assert.equal(normalized.elements[2].type, "FRAME");
-  assert.equal(normalized.elements[2].name, "Pay EMI");
-  assert.equal(normalized.elements[2].cornerRadius, 12);
+  const button = allNodes.find((node) => node.type === "FRAME" && node.name === "Pay EMI");
+  assert.ok(button, "Button aliases should normalize to styled native frames.");
+  assert.equal(button?.cornerRadius, 12);
 
-  assert.equal(normalized.elements[4].type, "TEXT");
-  assert.equal(normalized.elements[4].text, "Next EMI due 25 Oct");
-  assert.equal(normalized.elements[4].name, "Text · Next EMI due 25 Oct");
+  const due = allNodes.find((node) => node.type === "TEXT" && node.text === "Next EMI due 25 Oct");
+  assert.ok(due, "Nested body copy should be preserved.");
+  assert.equal(due?.name, "Text · Next EMI due 25 Oct");
 });
