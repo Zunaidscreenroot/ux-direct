@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     if (input.action === "save") {
       validateBrainScopes([input.feedback.scopeKey || "UX_SHARED_BRAIN"]);
       const result = await saveBrainFeedback(input.feedback);
-      return Response.json({ feedback: result, activation: "draft-only", nextAction: "Review and explicitly approve the feedback before it affects future model context." }, { status: 201, headers: brainNoStoreHeaders() });
+      return Response.json({ feedback: result, activation: result.activated === true ? "automatic" : "not_reactivated", nextAction: result.activated === true ? "The eligible reusable lesson is active; no manual approval is required." : "The matching item was previously rejected or archived and was not reactivated." }, { status: 201, headers: brainNoStoreHeaders() });
     }
     if (input.action === "list") {
       const feedback = await listBrainFeedback(input);

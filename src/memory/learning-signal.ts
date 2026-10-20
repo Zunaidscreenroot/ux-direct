@@ -36,6 +36,103 @@ const ALLOWED_SCOPE_KEYS = new Set([
   "project:general-ux","project:dmi-finance","project:ujjivan-sfb","project:express-computers",
 ]);
 
+type RelevanceSignal = { label: string; pattern: RegExp };
+
+const GENERAL_RELEVANCE_SIGNALS: RelevanceSignal[] = [
+  { label: "ux-design", pattern: /\b(ux|user experience|design(?:ed|ing)?|usability)\b/i },
+  { label: "interface", pattern: /\b(ui|interface|screen|wireframe|prototype|canvas|frame)\b/i },
+  { label: "interaction", pattern: /\b(interaction|action|behavior|behaviour|flow|journey|workflow)\b/i },
+  { label: "visual-system", pattern: /\b(layout|spacing|alignment|typography|hierarchy|visual|component|design system)\b/i },
+  { label: "accessibility", pattern: /\b(accessibility|accessible|wcag|a11y|keyboard|screen reader|contrast)\b/i },
+  { label: "content-and-clarity", pattern: /\b(copy|microcopy|label|content|clarity|clear|disclosure|transparency|consent|customer control)\b/i },
+  { label: "task-quality", pattern: /\b(task|requirement|feedback|error|retry|state|quality)\b/i },
+  { label: "finding-quality", pattern: /\b(findings?|evidence|audit|severity|benchmark)\b/i },
+  { label: "recommendation-quality", pattern: /\brecommendations?\b/i },
+  { label: "rule-and-guidance", pattern: /\b(rule|guidance|principle|heuristic|mistake|wrong|missed|output)\b/i },
+  { label: "learning-and-tools", pattern: /\b(figma|plugin|agent|mcp|memory|knowledge|retrieval|learning|token|model|iteration|execution)\b/i },
+  { label: "product-and-users", pattern: /\b(product|service|customer|user|persona|form|navigation|cta|button|component)\b/i },
+];
+
+const SCOPE_RELEVANCE_SIGNALS: Record<string, RelevanceSignal[]> = {
+  "indian-bfsi": [
+    { label: "banking", pattern: /\b(bank|banking|sfb|financial services|finance|nbfc)\b/i },
+    { label: "lending", pattern: /\b(loan|lending|emi|repayment|interest|credit bureau|eligibility)\b/i },
+    { label: "identity-and-consent", pattern: /\b(kyc|vkyc|pan|otp|consent|credit|privacy)\b/i },
+    { label: "accounts-and-products", pattern: /\b(account|deposit|savings|upi|card|insurance|wealth|fees|charges|rbi|irdai)\b/i },
+  ],
+  "project:ux-direct": [
+    { label: "figma-execution", pattern: /\b(figma|plugin|canvas|node|selection|frame)\b/i },
+    { label: "agent-workflow", pattern: /\b(agent|task|command|execution|iteration|workflow|orchestration)\b/i },
+    { label: "brain-and-retrieval", pattern: /\b(memory|knowledge base|retrieval|learning|context|token|model)\b/i },
+    { label: "product-design", pattern: /\b(design|screen|interface|component|prototype|quality|review)\b/i },
+  ],
+  "project:ux-audit": [
+    { label: "audit-evidence", pattern: /\b(audit|finding|evidence|severity|recommendation)\b/i },
+    { label: "ia-and-journey", pattern: /\b(ia|information architecture|navigation|journey|workflow)\b/i },
+    { label: "benchmarking", pattern: /\b(benchmark|competitor|comparison|pattern|reference)\b/i },
+    { label: "visual-validation", pattern: /\b(screenshot|viewport|accessibility|usability|responsive)\b/i },
+  ],
+  "project:general-ux": [
+    { label: "user-centered-design", pattern: /\b(user|persona|task|usability|research|journey)\b/i },
+    { label: "interface-design", pattern: /\b(interface|screen|layout|component|prototype|wireframe)\b/i },
+    { label: "interaction-design", pattern: /\b(interaction|flow|state|feedback|error|recovery)\b/i },
+    { label: "quality", pattern: /\b(accessibility|consistency|hierarchy|clarity|recommendation)\b/i },
+  ],
+  "project:dmi-finance": [
+    { label: "dmi-context", pattern: /\b(dmi|hfc|housing finance|dmi wealth)\b/i },
+    { label: "lending-journey", pattern: /\b(loan|lending|emi|repayment|eligibility|application)\b/i },
+    { label: "identity-and-consent", pattern: /\b(kyc|vkyc|pan|otp|consent|credit bureau)\b/i },
+    { label: "finance-products", pattern: /\b(finance|wealth|housing|credit|whitelisting|payment)\b/i },
+  ],
+  "project:ujjivan-sfb": [
+    { label: "ujjivan-context", pattern: /\b(ujjivan|sfb|small finance bank)\b/i },
+    { label: "banking-products", pattern: /\b(bank|banking|savings|deposit|loan|card|account|branch)\b/i },
+    { label: "website-navigation", pattern: /\b(website|homepage|navigation|menu|cta|product catalog)\b/i },
+    { label: "digital-journey", pattern: /\b(digital banking|mobile banking|customer|application|onboarding)\b/i },
+  ],
+  "project:express-computers": [
+    { label: "business-context", pattern: /\b(express computers|computer|laptop|desktop|hardware|monitor)\b/i },
+    { label: "catalog-and-product", pattern: /\b(product page|catalog|specification|inventory|batch|device)\b/i },
+    { label: "purchase-journey", pattern: /\b(purchase|quote|cart|checkout|warranty|support)\b/i },
+    { label: "interface-design", pattern: /\b(interface|screen|layout|component|navigation|filter)\b/i },
+  ],
+};
+
+export type BrainRelevanceAssessment = {
+  score: number;
+  threshold: 0.5;
+  eligible: boolean;
+  method: "scope-keyword-v1";
+  generalSignals: string[];
+  scopeSignals: string[];
+};
+
+/**
+ * Deterministic, zero-model-call eligibility score for auto-ingestion.
+ * For shared/global material, at least two distinct UX/product signals are required.
+ * For explicitly scoped material, the selected scope counts as one scope signal;
+ * one UX/product signal plus that scope is 50% eligible, while topic matches increase confidence.
+ */
+export function assessBrainRelevance(title: string, content: string, scopeKey: string): BrainRelevanceAssessment {
+  const text = (String(title || "") + "\n" + String(content || "")).normalize("NFKC");
+  const scope = scopeKey === "UX_SHARED_BRAIN" ? scopeKey : String(scopeKey || "").toLowerCase();
+  const generalSignals = GENERAL_RELEVANCE_SIGNALS.filter(signal => signal.pattern.test(text)).map(signal => signal.label);
+  const scopeSignals = (SCOPE_RELEVANCE_SIGNALS[scope] || []).filter(signal => signal.pattern.test(text)).map(signal => signal.label);
+  const scopedSignalCount = scope === "UX_SHARED_BRAIN" ? scopeSignals.length : Math.max(1, scopeSignals.length);
+  const score = scope === "UX_SHARED_BRAIN"
+    ? Math.min(1, generalSignals.length / 4)
+    : Math.min(1, Math.min(2, generalSignals.length) * 0.25 + Math.min(2, scopedSignalCount) * 0.25);
+  const roundedScore = Math.round(score * 100) / 100;
+  return {
+    score: roundedScore,
+    threshold: 0.5,
+    eligible: roundedScore >= 0.5,
+    method: "scope-keyword-v1",
+    generalSignals,
+    scopeSignals,
+  };
+}
+
 export function detectCoachingSignal(text: string): boolean {
   const value = text.trim();
   return value.length >= 5 && CORRECTION_SIGNAL.some(pattern => pattern.test(value));

@@ -717,7 +717,7 @@ const TOOLS = [
   },
   {
     name: "ux_direct_brain_save_feedback",
-    description: "Internal coaching tool. When the owner explains in Hindi/Hinglish/English what UX Direct, UX Audit, or the Figma plugin got wrong or should learn, interpret the feedback yourself and create a compact reusable rule; do not ask the owner to copy a special instruction. Preserve the original wording. Classify the lesson, rationale, scope, keywords, and optional example/audit reference. Save as draft by default. If the owner explicitly asks to train/remember/store it for future use, call the review tool after saving and approve it; do not approve a routine correction without that clear reuse intent. Keep client-specific findings out of global shared scope.",
+    description: "Internal coaching tool. Capture reusable corrections and explicit learning signals in Hindi/Hinglish/English, preserve original wording, and normalize the lesson with rationale, scope, keywords, and examples. Eligible material is automatically activated after deterministic relevance (>=50%) and scope checks; no manual approval is required. Skip ordinary chat and likely secrets. Never promote client-specific evidence into global scope.",
     inputSchema: {
       type: "object",
       properties: {
@@ -749,25 +749,25 @@ const TOOLS = [
   },
   {
     name: "ux_direct_brain_review_feedback",
-    description: "Approve a saved coaching lesson into canonical shared memory, reject it, or archive it. Approve only after the owner explicitly confirms the lesson should become active. Archive a wrong/outdated rule instead of silently replacing it. Approval activates the short normalized rule for future retrieval; it does not fine-tune model weights.",
+    description: "Manage coaching lessons: approve legacy drafts, or reject/archive incorrect, stale, or out-of-scope lessons. New eligible lessons activate automatically after relevance and scope checks. Activation adds retrievable context; it does not fine-tune model weights.",
     inputSchema: { type: "object", properties: { feedbackId: { type: "string", format: "uuid" }, decision: { type: "string", enum: ["approve","reject","archive"] }, reviewNote: { type: "string", maxLength: 1000 }, sourceProduct: { type: "string", enum: ["ux-direct","ux-audit","figma-plugin","chatgpt","local-model","benchmark","knowledge-ingestion"] } }, required: ["feedbackId","decision"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   },
   {
     name: "ux_direct_brain_add_reference",
-    description: "Add reusable product-agnostic UX, design-system, accessibility, interaction, cost, or Indian BFSI reference material to the shared brain. Save as a draft for human review. Do not bulk-import client past findings or confidential client artefacts as shared reference material.",
+    description: "Add reusable UX, design-system, accessibility, interaction, cost, or Indian BFSI reference material. Documents with at least 50% deterministic UX/product relevance are chunked and automatically activated after scope checks and successful writes; no human approval is required. Record relevance metadata. Do not bulk-import client-specific Past Findings or confidential client artifacts into global scope.",
     inputSchema: { type: "object", properties: { title: { type: "string", minLength: 1, maxLength: 240 }, content: { type: "string", minLength: 1, maxLength: 100000 }, projectKey: { type: "string", enum: ["UX_SHARED_BRAIN","indian-bfsi","project:ux-direct","project:ux-audit","project:general-ux","project:dmi-finance","project:ujjivan-sfb","project:express-computers"] }, sourceUrl: { type: "string", format: "uri", maxLength: 1800 }, sourceType: { type: "string", maxLength: 60 }, sourceAuthority: { type: "string", maxLength: 60 }, sourceProduct: { type: "string", enum: ["ux-direct","ux-audit","figma-plugin","chatgpt","local-model","benchmark","knowledge-ingestion"] } }, required: ["title","content"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   },
   {
     name: "ux_direct_brain_list_references",
-    description: "List ingested reference documents and their draft/approved status in the shared product brain.",
+    description: "List reference documents and their ingestion status and relevance metadata in the shared product brain.",
     inputSchema: { type: "object", properties: { status: { type: "string", enum: ["all","draft","approved","rejected","archived","failed"] }, limit: { type: "integer", minimum: 1, maximum: 100 } }, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "ux_direct_brain_review_reference",
-    description: "Approve a reference document so its chunks can be retrieved, reject it, or archive it. Only approved documents are included in future model context.",
+    description: "Reject or archive a problematic reference to remove it from future retrieval; approval remains available for legacy drafts. Only approved, in-scope documents are included in model context.",
     inputSchema: { type: "object", properties: { documentId: { type: "string", format: "uuid" }, decision: { type: "string", enum: ["approve","reject","archive"] } }, required: ["documentId","decision"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   },
@@ -1183,7 +1183,7 @@ async function callTool(name: string, args: unknown, request: Request) {
       sourceFindingTitle: typeof input.sourceFindingTitle === "string" ? input.sourceFindingTitle : undefined,
       idempotencyKey: typeof input.idempotencyKey === "string" ? input.idempotencyKey : undefined,
     });
-    return toolText({ feedback: result, active: false, nextAction: "Wait for explicit approval before calling ux_direct_brain_review_feedback with decision approve." });
+    return toolText({ feedback: result, active: result.activated === true, activation: result.activated === true ? "automatic" : "not_reactivated", nextAction: result.activated === true ? "Eligible lesson is active for future scoped retrieval; no approval step is required." : "This matching item remains inactive because it was previously rejected or archived." });
   }
 
   if (name === "ux_direct_brain_list_feedback") {
@@ -1217,7 +1217,7 @@ async function callTool(name: string, args: unknown, request: Request) {
       sourceAuthority: typeof input.sourceAuthority === "string" ? input.sourceAuthority : "internal",
       sourceProduct: typeof input.sourceProduct === "string" ? input.sourceProduct : "knowledge-ingestion",
     });
-    return toolText({ document: result, active: false, nextAction: "Review and approve the reference before any product can retrieve it." });
+    return toolText({ document: result, active: result.active === true, activation: "automatic", nextAction: result.active === true ? "Eligible reference is active for scoped retrieval; no approval step is required." : "Reference is not active. Inspect the result and ingestion error." });
   }
 
   if (name === "ux_direct_brain_list_references") {
