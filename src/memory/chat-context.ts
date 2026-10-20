@@ -28,7 +28,7 @@ export function buildRetrievalQuery(currentUserMessage: string, previousUserMess
  */
 export function resolveBrainScopes(query: string): string[] {
   const normalized = query.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, " ");
-  const scopes = ["UX_SHARED_BRAIN", "indian-bfsi", "project:ux-direct"];
+  const scopes = ["UX_SHARED_BRAIN", "indian-bfsi", "project:ux-direct", "project:general-ux"];
   if (/\b(ux\s*audit|uxaudit|audit|benchmark|past findings|audit findings)\b/.test(normalized)) {
     scopes.push("project:ux-audit");
   }
