@@ -23,18 +23,23 @@ test("UX Direct prefers Gemini 3.7 Flash and orders multimodal fallbacks by esti
   assert.equal(OPENROUTER_MODELS.includes("openrouter/auto" as never), false);
 });
 
-test("chat, design generation, visual QA and refinement use the shared explicit model chain", () => {
-  const paths = [
-    "app/api/assistant/chat/route.ts",
+test("homepage chat is separate; Figma routes use Auto LOW and price-ordered fallbacks", () => {
+  for (const path of ["app/api/assistant/chat/route.ts"]) {
+    const source = read(path);
+    assert.ok(source.includes("OPENROUTER_MODELS"), path + " keeps the general chat model order");
+    assert.ok(source.includes("UX_DIRECT_DESIGN_ROLE"), path + " uses the UX design role");
+    assert.equal(source.includes('"openrouter/auto"'), false, path + " remains on the separate chat chain");
+  }
+
+  for (const path of [
     "app/api/assistant/figma-agent/route.ts",
     "app/api/assistant/figma-agent/review/route.ts",
     "app/api/assistant/figma-agent/refine/route.ts",
-  ];
-  for (const path of paths) {
+  ]) {
     const source = read(path);
-    assert.ok(source.includes("OPENROUTER_MODELS"), path + " uses the shared model order");
-    assert.ok(source.includes("UX_DIRECT_DESIGN_ROLE"), path + " uses the UI/UX designer role");
-    assert.equal(source.includes('"openrouter/auto"'), false, path + " never invokes OpenRouter Auto");
-    assert.equal(source.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false, path + " has no provider allowlist");
+    assert.ok(source.includes("FIGMA_AGENT_MODELS"), path + " uses the shared Auto-first Figma chain");
+    assert.ok(source.includes('model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}'),
+      path + " constrains Auto to the LOW cost tier");
+    assert.equal(source.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false, path + " has no stale provider allowlist");
   }
 });

@@ -100,18 +100,23 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("payload_keys="), "Empty provider responses should report envelope shape for diagnosis.");
 });
 
-test("Figma agent uses explicit cost-ordered models without Auto or plugin live QA", () => {
+test("Figma agent uses Auto LOW first, cost-ordered fallbacks, and no plugin live QA", () => {
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   const catalog = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
-  assert.ok(route.includes("const models = [...OPENROUTER_MODELS]"), "Generation should use the explicit shared model chain.");
-  assert.ok(route.includes("const attemptsForModel = modelIndex === 0 ? 2 : 1"), "Retry the primary compactly once, then move to fallbacks.");
-  assert.ok(route.includes('reasoning: { effort: isRecovery ? "minimal" : "low" }'), "Gemini reasoning should leave room for design JSON.");
-  assert.ok(route.includes('model === "google/gemini-3.7-flash" ? {'), "Gemini 3.7 Flash is the explicit primary route.");
-  assert.equal(route.includes('"openrouter/auto"'), false, "Design generation must never invoke OpenRouter Auto.");
-  assert.ok(catalog.includes('id: "google/gemini-3.7-flash"'), "Gemini 3.7 Flash is the configured primary.");
-  assert.ok(catalog.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "google/gemini-3.7-flash"'));
-  assert.equal(catalog.includes('"openrouter/auto"'), false, "The shared agent catalog must not use Auto.");
-  assert.equal(route.includes("Promise.all(models"), false, "Model requests must remain sequential.");
+  assert.ok(route.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Generation uses the shared Figma-specific chain.");
+  assert.ok(route.includes('model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}'), "Auto is explicitly constrained to LOW cost tier.");
+  assert.ok(route.includes("const attemptsForModel = modelIndex === 0 ? 2 : 1"), "Auto gets one compact retry before fallbacks are tried.");
+  assert.ok(route.includes("provider returned an empty response body"), "Empty provider bodies are diagnosed clearly.");
+  assert.ok(route.includes("provider returned a non-JSON response body"), "Invalid response bodies are diagnosed clearly.");
+  assert.equal(route.includes("Promise.all(models"), false, "Model requests stay sequential.");
+  assert.ok(catalog.includes('id: "openrouter/auto"'), "OpenRouter Auto is the primary model.");
+  assert.ok(catalog.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto"'));
+  assert.ok(catalog.indexOf('"qwen/qwen3.5-35b-a3b"') < catalog.indexOf('"google/gemini-3.1-flash-lite"'));
+  assert.ok(catalog.indexOf('"google/gemini-3.1-flash-lite"') < catalog.indexOf('"qwen/qwen3.5-397b-a17b"'));
+  const review = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/review/route.ts"), "utf8");
+  const refine = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/refine/route.ts"), "utf8");
+  assert.ok(review.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
+  assert.ok(refine.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
 
   const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
   assert.equal(ui.includes('fetch(API + "/api/assistant/figma-agent/live-qa"'), false, "The plugin must not run live browser QA.");

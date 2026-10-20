@@ -3,7 +3,7 @@ import { z } from "zod";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveBrainScopes } from "@/src/memory/chat-context";
 import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
-import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 import { normalizeVisualReview } from "@/src/figma-agent/normalize-visual-review";
 
@@ -129,8 +129,8 @@ export async function POST(request: Request) {
   if (outputImage) userContent.push({ type: "image_url", image_url: { url: outputImage } });
 
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // Explicit sequential model chain; never route through OpenRouter Auto.
-  const models = [...OPENROUTER_MODELS];
+  // Figma review uses the same Auto-first LOW-cost chain if explicitly invoked.
+  const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
   const errors: string[] = [];
   for (const [modelIndex, model] of models.entries()) {
     const controller = new AbortController();
@@ -147,6 +147,7 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           model,
+          ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
           messages: [
             {
               role: "system",

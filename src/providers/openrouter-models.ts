@@ -1,21 +1,42 @@
 /**
- * Explicit models for UX Direct's native Figma design tasks.
- * Fallbacks are sequential and cost-ordered; OpenRouter Auto is intentionally not used.
+ * Figma design generation uses OpenRouter Auto first, capped at LOW cost tier.
+ * If Auto returns no valid plan, try vision-capable low-cost models in ascending price order.
  */
 export const FIGMA_AGENT_MODELS = [
   {
-    id: "google/gemini-3.7-flash",
-    label: "Gemini 3.7 Flash · primary",
-    description: "Primary model for source-faithful native Figma design generation.",
-    price: "Primary route; fallbacks are called only if a valid plan is not returned",
+    id: "openrouter/auto",
+    label: "OpenRouter Auto · LOW cost tier",
+    description: "Primary route; OpenRouter selects a capable model within the LOW cost tier.",
+    price: "LOW cost tier only",
+  },
+  {
+    id: "qwen/qwen3.5-35b-a3b",
+    label: "Qwen 3.5 35B-A3B · cheapest fallback",
+    description: "Vision-language fallback with low input and output cost.",
+    price: "$0.08/M input · $0.75/M output",
+  },
+  {
+    id: "google/gemini-3.1-flash-lite",
+    label: "Gemini 3.1 Flash Lite · low-cost fallback",
+    description: "Multimodal fallback for structured native Figma plan generation.",
+    price: "$0.25/M input · $1.50/M output",
+  },
+  {
+    id: "qwen/qwen3.5-397b-a17b",
+    label: "Qwen 3.5 397B-A17B · quality fallback",
+    description: "Higher-capability vision-language fallback, tried only after cheaper routes fail.",
+    price: "$0.39/M input · $2.34/M output",
   },
 ] as const;
 
 export type FigmaAgentModelId = typeof FIGMA_AGENT_MODELS[number]["id"];
-export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "google/gemini-3.7-flash";
-/** Compatibility alias; review endpoints use the same shared explicit fallback chain. */
-export const FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "google/gemini-3.7-flash";
+export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto";
+export const FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openrouter/auto";
 
+/**
+ * General assistant/chat routing stays separate, so design model changes do not
+ * silently change homepage chat behavior.
+ */
 export const OPENROUTER_MODELS = [
   "google/gemini-3.7-flash",
   "qwen/qwen3.5-35b-a3b",
