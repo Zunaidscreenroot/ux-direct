@@ -65,8 +65,9 @@ async function executeNativeApiHealthCheck() {
   var cleanupErrors = [];
 
   function add(category, name, level, status, reason) {
-    checks.push({ category: category, name: name, level: level, status: status,
-      reason: reason || (status === "success" ? "Executed and verified" : "Operation failed") });
+    checks.push({ category: String(category || "General").slice(0, 80), name: String(name || "Unnamed check").slice(0, 120),
+      level: level, status: status,
+      reason: String(reason || (status === "success" ? "Executed and verified" : "Operation failed")).slice(0, 400) });
   }
   function assertLab(name) {
     assertUxDirectFileScope(name);
