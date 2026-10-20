@@ -881,7 +881,7 @@
         ? (visualQAComplete
           ? " Visual QA score: " + lastReview.score + "/100. " + (lastReview.issues.length ? lastReview.issues.length + " issue(s) remain after up to two refinement passes." : "No actionable visual issues were reported.")
           : " Structural QA completed; screenshots were not both available for visual comparison.")
-        : " Visual QA service unavailable; structural verification completed.";
+        : " Visual QA service unavailable; structural verification completed." + (visualQAError ? " Review detail: " + visualQAError.slice(0, 400) : "");
       return "Created and verified \"" + plan.frame.name + "\" as a separate editable Figma variation with " +
         completedElementCount + " native layers. " + String(plan.summary || "The variation is ready for review.") +
         "\n\nModel: " + model + " · UX Direct Brain: " + memory +
