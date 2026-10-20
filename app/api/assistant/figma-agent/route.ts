@@ -427,9 +427,18 @@ export async function POST(request: Request) {
           ?? extractPlanJson(providerMessage.tool_calls)
           ?? extractPlanJson(providerMessage)
           ?? extractPlanJson(firstChoice);
-        const finishReason = typeof firstChoice.finish_reason === "string"
-          ? firstChoice.finish_reason
-          : typeof firstChoice.native_finish_reason === "string" ? firstChoice.native_finish_reason : "unknown";
+        const finishReason = typeof firstChoice.finish_reason === "string" ? firstChoice.finish_reason : "unknown";
+        const nativeFinishReason = typeof firstChoice.native_finish_reason === "string" ? firstChoice.native_finish_reason : "unknown";
+        const wasTruncated = finishReason === "length" || nativeFinishReason === "length";
+        if (wasTruncated) {
+          errors.push(model + (isRecovery ? " compact retry" : "") +
+            ": provider hit the output length limit (finish_reason=" + finishReason +
+            ", native_finish_reason=" + nativeFinishReason + ", content=" +
+            describeModelContent(providerMessage.content) + ").");
+          // A valid-looking prefix can still be incomplete. Never write it; retry compactly.
+          if (!isRecovery) continue;
+          break;
+        }
         if (rawPlan === null) {
           const messageKeys = Object.keys(providerMessage).slice(0, 10).join(",") || "none";
           const choiceKeys = Object.keys(firstChoice).slice(0, 10).join(",") || "none";
