@@ -177,7 +177,7 @@ export async function POST(request: Request) {
             duplicate: saved.duplicate === true,
           };
           recordOperationalEvent({
-            source: sourceProduct,
+            source: sourceProduct === "figma-plugin" ? "figma-plugin" : "dashboard",
             event: active ? "Shared brain task lesson activated" : "Shared brain task lesson not activated",
             status: active ? "success" : "info",
             summary: active
@@ -191,7 +191,7 @@ export async function POST(request: Request) {
           const filtered = /below the 50% ingestion threshold/i.test(message);
           learningCapture = { status: filtered ? "filtered" : "failed" };
           recordOperationalEvent({
-            source: sourceProduct,
+            source: sourceProduct === "figma-plugin" ? "figma-plugin" : "dashboard",
             event: filtered ? "Shared brain task lesson filtered" : "Shared brain task lesson capture failed",
             status: filtered ? "info" : "warning",
             summary: filtered
