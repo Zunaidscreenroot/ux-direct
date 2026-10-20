@@ -929,10 +929,12 @@
         if (!answer.trim()) {
           assistantMessage.bubble.textContent = "I couldn't produce a response this time. Please try again.";
           assistantMessage.bubble.classList.add("error");
+          setProcessState("error", "No response received · please retry");
           chatHistory.push({ role: "assistant", content: assistantMessage.bubble.textContent });
           await sendTelemetry("Cockpit chat returned empty response", "error", "The model stream contained no assistant text.", { durationMs: Date.now() - startedAt });
         } else {
           chatHistory.push({ role: "assistant", content: answer });
+          setProcessState("done", "Response ready · UX Direct Brain replied");
           await sendTelemetry("Cockpit chat response completed", "success", "UX Direct returned a conversational response from its internal model route.", { durationMs: Date.now() - startedAt, answerChars: answer.length });
         }
       } catch (error) {
