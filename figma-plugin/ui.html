@@ -902,12 +902,25 @@
       }
 
       stage("verifying", "Checking the final native layer tree and frame bounds…");
-      const verified = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 2, maxNodes: 100 }, 90000);
+      // Read to the maximum supported depth so nested native FRAMEs are included.
+      // The previous depth-2 read made otherwise-valid nested designs look incomplete.
+      const verified = await runNativeCanvasCommand("read-canvas", {
+        scope: "selection", maxDepth: 4, maxNodes: 100, includeStyles: true
+      }, 90000);
       const verifiedNode = verified && Array.isArray(verified.nodes)
         ? verified.nodes.find(function (node) { return node.id === createdFrameId; })
         : null;
-      if (!verifiedNode || Math.max(countNativeTree(verifiedNode) - 1, Number(verifiedNode.childCount) || 0) < completedElementCount) {
-        throw new Error("The variation was written, but read-back could not verify all native layers. The source frame remains untouched.");
+      const verifiedChildCount = verifiedNode
+        ? Math.max(countNativeTree(verifiedNode) - 1, Number(verifiedNode.childCount) || 0)
+        : 0;
+      const readbackTruncated = !!(verified && verified.truncated);
+      if (!verifiedNode || verifiedChildCount < completedElementCount || readbackTruncated) {
+        const problem = !verifiedNode
+          ? "The generated frame was not returned by the native read-back."
+          : readbackTruncated
+            ? "The native read-back was truncated at the 100-node safety limit."
+            : "Expected " + completedElementCount + " generated child layers, but read-back confirmed " + verifiedChildCount + ".";
+        throw new Error(problem + " The variation may be partial; the source frame remains untouched. Inspect the new frame before retrying.");
       }
       const qualityPassed = !!(lastReview && Array.isArray(lastReview.issues) &&
         lastReview.score >= 82 && lastReview.issues.length === 0 &&
