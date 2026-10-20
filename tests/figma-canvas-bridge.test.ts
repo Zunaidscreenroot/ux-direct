@@ -2,12 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { Script } from "node:vm";
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 const mcp = read("app/api/mcp/route.ts");
 const bridge = read("app/api/plugin-bridge/route.ts");
 const plugin = read("figma-plugin/code.js");
 const pluginUi = read("figma-plugin/ui.html");
+
+test("conversational cockpit inline JavaScript parses successfully", () => {
+  const match = pluginUi.match(/<script>([\\s\\S]*?)<\\/script>/i);
+  assert.ok(match, "Figma plugin UI must contain its main script block.");
+  assert.doesNotThrow(() => new Script(match[1], { filename: "figma-plugin/ui.html" }));
+});
 
 test("Figma execution remains implemented but is hidden from ChatGPT's tool list", () => {
   assert.ok(mcp.includes('name: "ux_direct_figma_canvas_read"'));
