@@ -786,8 +786,8 @@
 
       let lastReview = null;
       let visualQAComplete = false;
-      for (let iteration = 1; iteration <= 2; iteration++) {
-        stage("rendering", "Rendering the new screen for visual QA · pass " + iteration + " of 2…");
+      for (let iteration = 1; iteration <= 3; iteration++) {
+        stage("rendering", "Rendering the new screen for visual QA · pass " + iteration + " of 3…");
         let outputImage = null;
         try {
           const capture = await runNativeCanvasCommand("write-canvas", {
@@ -813,7 +813,7 @@
         const reviewPayload = await reviewResponse.json().catch(function () { return {}; });
         lastReview = reviewPayload && reviewPayload.review ? reviewPayload.review : null;
         visualQAComplete = !!(reviewPayload && reviewPayload.visualInspection === true);
-        if (!reviewResponse.ok || !lastReview || !Array.isArray(lastReview.issues) || !lastReview.issues.length || iteration === 2) break;
+        if (!reviewResponse.ok || !lastReview || !Array.isArray(lastReview.issues) || !lastReview.issues.length || iteration === 3) break;
 
         const refineResponse = await fetch(API + "/api/assistant/figma-agent/refine", {
           method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
@@ -851,7 +851,7 @@
       const model = typeof payload.model === "string" ? payload.model : "OpenRouter";
       const quality = lastReview
         ? (visualQAComplete
-          ? " Visual QA score: " + lastReview.score + "/100. " + (lastReview.issues.length ? lastReview.issues.length + " issue(s) remain after the bounded refinement loop." : "No actionable visual issues were reported.")
+          ? " Visual QA score: " + lastReview.score + "/100. " + (lastReview.issues.length ? lastReview.issues.length + " issue(s) remain after up to two refinement passes." : "No actionable visual issues were reported.")
           : " Structural QA completed; screenshots were not both available for visual comparison.")
         : " Visual QA service unavailable; structural verification completed.";
       return "Created and verified \"" + plan.frame.name + "\" as a separate editable Figma variation with " +
