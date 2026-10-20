@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     if (input.action === "add") {
       validateBrainScopes([input.document.projectKey || "UX_SHARED_BRAIN"]);
       const result = await addBrainKnowledgeDocument(input.document);
-      return Response.json({ document: result, nextAction: "Review and approve the reference before retrieval can use it." }, { status: 201, headers: brainNoStoreHeaders() });
+      return Response.json({ document: result, activation: "automatic", nextAction: "No approval is required. Eligible knowledge is active immediately after chunk storage and verification." }, { status: 201, headers: brainNoStoreHeaders() });
     }
     if (input.action === "list") {
       const documents = await listBrainKnowledgeDocuments(input);
