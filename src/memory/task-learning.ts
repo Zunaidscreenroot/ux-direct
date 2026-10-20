@@ -25,14 +25,14 @@ export function buildFigmaFailureLesson(errorMessage: string): FigmaFailureLesso
 
   if (/\b(allowlist|allowlisted|file[- ]key|approved file|permission|not authorized)\b/.test(value)) {
     category = "file-scope";
+  } else if (/\b(invalid payload|payload is invalid|validation|schema|requires .{1,50}|required field|must be provided)\b/.test(value)) {
+    category = "invalid-payload";
   } else if (/\b(node.{0,30}(not found|unknown|missing)|unknown node|invalid node.?id|node id.{0,30}(not found|invalid|stale))\b/.test(value)) {
     category = "stale-node-id";
   } else if (/\b(expired|timed out|timeout|no longer active|stopped responding|offline)\b/.test(value)) {
     category = "timeout-or-expired";
   } else if (/\b(unsupported|not supported|is not a function|api.{0,20}(missing|unavailable))\b/.test(value)) {
     category = "unsupported-api";
-  } else if (/\b(invalid payload|payload is invalid|validation|schema|requires .{1,50}|required field|must be provided)\b/.test(value)) {
-    category = "invalid-payload";
   }
 
   if (!category) return null;
