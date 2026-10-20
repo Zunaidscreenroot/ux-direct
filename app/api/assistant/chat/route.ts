@@ -33,7 +33,9 @@ type BrainContextInfo = {
   memoryCount: number;
   knowledgeChunkCount: number;
   durationMs: number;
-  learningStatus?: "none" | "draft_saved" | "skipped_sensitive" | "failed";
+  learningStatus?: "none" | "learned" | "skipped_sensitive" | "failed";
+  learningRecordId?: string;
+  /** @deprecated Retained for older cockpit clients; this now identifies an activated learning record. */
   learningDraftId?: string;
 };
 
@@ -66,7 +68,11 @@ function brainHeaders(brain: BrainContextInfo, model?: string, request?: Request
     "X-UXD-Brain-Latency-Ms": String(Math.max(0, Math.round(brain.durationMs))),
     "X-UXD-Learning-Status": brain.learningStatus || "none",
   });
-  if (brain.learningDraftId) headers.set("X-UXD-Learning-Draft-Id", brain.learningDraftId);
+  if (brain.learningRecordId) {
+    headers.set("X-UXD-Learning-Record-Id", brain.learningRecordId);
+    // Backwards-compatible header for older plugin/cockpit builds.
+    headers.set("X-UXD-Learning-Draft-Id", brain.learningRecordId);
+  }
   if (model) headers.set("X-UXD-Model", model);
   if (request) {
     new Headers(corsHeaders(request)).forEach((value, key) => headers.set(key, value));
@@ -102,8 +108,8 @@ async function retrieveMemory(_request: Request, query: string): Promise<BrainCo
 }
 
 type ChatLearningCapture = {
-  status: "none" | "draft_saved" | "skipped_sensitive" | "failed";
-  draftId?: string;
+  status: "none" | "learned" | "skipped_sensitive" | "failed";
+  recordId?: string;
 };
 
 function learningKind(text: string): "cost_optimization" | "duplicate_finding" | "severity_calibration" | "accessibility" | "design_system" | "general" {
@@ -139,17 +145,17 @@ async function captureChatLearning(text: string, taskContext = ""): Promise<Chat
       rawFeedback: captured,
       summary: captured.slice(0, 500),
       title: learningTitle(captured),
-      normalizedRule: "Owner-provided reusable guidance to review (original wording preserved): " + captured,
-      rationale: "Captured from an explicit chat coaching/correction signal. This remains a draft and must be approved before it affects shared-brain retrieval.",
+      normalizedRule: "Reusable guidance extracted from an owner correction (original wording preserved): " + captured,
+      rationale: "Captured from an explicit chat coaching/correction signal and activated automatically after relevance and project-scope checks.",
       scopeKey: resolveChatLearningScope(captured + "\nConversation task context: " + taskContext.slice(0, 1800)),
       feedbackKind: learningKind(captured),
       keywords: learningKeywords(captured),
       originalLanguage: /[\u0900-\u097f]/.test(captured) ? "Hindi" : /\b(yaad|aage se|galat|galti|karo|karna|hoga|chahiye|mein|hai)\b/i.test(captured) ? "Hinglish" : "English",
       sourceProduct: "ux-direct",
       idempotencyKey: "uxd-chat-learning-" + createHash("sha256").update(captured).digest("hex"),
-      metadata: { capturedFrom: "ux-direct-chat", captureVersion: 1, requiresOwnerApproval: true, inferenceCalls: 0 },
+      metadata: { capturedFrom: "ux-direct-chat", captureVersion: 2, requiresOwnerApproval: false, automaticActivation: true, inferenceCalls: 0 },
     });
-    return { status: "draft_saved", draftId: saved.id };
+    return { status: saved.activated === true ? "learned" : "none", recordId: saved.id };
   } catch {
     return { status: "failed" };
   }
@@ -272,7 +278,11 @@ export async function POST(request: Request) {
     retrieveMemory(request, retrievalQuery),
     captureChatLearning(lastUserMessage, previousUserMessage),
   ]);
-  const brain: BrainContextInfo = { ...brainBase, learningStatus: learning.status, ...(learning.draftId ? { learningDraftId: learning.draftId } : {}) };
+  const brain: BrainContextInfo = {
+    ...brainBase,
+    learningStatus: learning.status,
+    ...(learning.recordId ? { learningRecordId: learning.recordId, learningDraftId: learning.recordId } : {}),
+  };
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
   const candidates = [ROUTER_MODEL, FALLBACK_MODEL];
