@@ -84,6 +84,9 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("if (!isRecovery) continue;"), "Missing content and invalid schemas must cause a compact retry.");
   assert.ok(route.includes("compactRecoveryCanvas(canvas)"), "The retry should send a bounded source layer tree.");
   assert.ok(route.includes("18–26 native nodes total INCLUDING all nested children"), "The retry must explicitly cap output complexity.");
+  assert.ok(route.includes("max_completion_tokens: isRecovery ? 6000 : 10000"), "Use OpenRouter's current completion token parameter.");
+  assert.ok(route.includes('reasoning: { effort: isRecovery ? "minimal" : "low" }'), "MiniMax reasoning must leave room for its visible JSON output.");
+  assert.ok(route.includes('model === "openrouter/auto" ? {}'), "Do not add reasoning or provider restrictions to unfiltered Auto.");
 });
 
 test("compact recovery is model-agnostic and does not add OpenRouter provider filters", () => {
