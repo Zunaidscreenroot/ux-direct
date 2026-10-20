@@ -182,18 +182,26 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
       { name: "Details & breakdown", start: 0.55, end: 0.78 },
       { name: "Actions & support", start: 0.78, end: 1.5 },
     ];
+    const isFullScreenBackdrop = (item: Record<string, unknown>) =>
+      item.type === "RECTANGLE" && (Number(item.x) || 0) <= 2 && (Number(item.y) || 0) <= 2 &&
+      (Number(item.width) || 0) >= frame.width * 0.94 && (Number(item.height) || 0) >= frame.height * 0.9;
+    const eligibleLeaves = allLeaves.filter((item) => !isFullScreenBackdrop(item));
     const assigned = new Set<Record<string, unknown>>();
     const groups = bands.map((band) => {
-      const bucket = allLeaves.filter((item) => {
+      let bucket = eligibleLeaves.filter((item) => {
         if (assigned.has(item)) return false;
-        const x = Number(item.x) || 0;
         const y = Number(item.y) || 0;
         const h = Number(item.height) || 0;
-        const w = Number(item.width) || 0;
         const centerY = y + h / 2;
-        if (item.type === "RECTANGLE" && x <= 2 && y <= 2 && w >= frame.width * 0.94 && h >= frame.height * 0.9) return false;
         return centerY / frame.height >= band.start && centerY / frame.height < band.end;
       }).slice(0, 30);
+      if (!bucket.length) {
+        const targetY = frame.height * (band.start + band.end) / 2;
+        const fallback = eligibleLeaves.filter((item) => !assigned.has(item))
+          .sort((a, b) => Math.abs((Number(a.y) || 0) + (Number(a.height) || 0) / 2 - targetY) -
+            Math.abs((Number(b.y) || 0) + (Number(b.height) || 0) / 2 - targetY))[0];
+        if (fallback) bucket = [fallback];
+      }
       bucket.forEach((item) => assigned.add(item));
       const minX = bucket.length ? Math.max(0, Math.min(...bucket.map((item) => Number(item.x) || 0))) : 16;
       const minY = bucket.length ? Math.max(0, Math.min(...bucket.map((item) => Number(item.y) || 0))) : Math.round(frame.height * band.start);
