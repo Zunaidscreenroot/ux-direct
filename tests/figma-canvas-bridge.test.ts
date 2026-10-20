@@ -204,7 +204,7 @@ test("bridge supports saved health reports above the legacy 100-check ceiling", 
   assert.ok(bridge.includes('mode === "health-state"'));
 });
 
-test("normal conversational chat uses only Anthropic models through OpenRouter", () => {
+test("normal conversational chat uses MiniMax free then unfiltered OpenRouter Auto", () => {
   assert.ok(chatRoute.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0];"));
   assert.ok(chatRoute.includes("const FALLBACK_MODEL = OPENROUTER_MODELS[1];"));
   assert.equal(chatRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
@@ -257,6 +257,14 @@ test("Figma plugin cockpit has a morphing orb and visible process stages", () =>
 
 test("Figma visual capture failures do not invalidate the full design request", () => {
   const reviewRoute = read("app/api/assistant/figma-agent/review/route.ts");
+  const refinementRoute = read("app/api/assistant/figma-agent/refine/route.ts");
+  assert.ok(reviewRoute.includes("extractJsonObject(message.content)"), "Visual QA must accept structured content variants.");
+  assert.ok(reviewRoute.includes("normalizeVisualReview(decodedRecord)"), "Provider response fields must be normalized before strict QA validation.");
+  assert.ok(refinementRoute.includes("extractJsonObject(message.content)"), "Refinement must parse structured content variants.");
+  assert.ok(reviewRoute.includes("const models = OPENROUTER_MODELS;"));
+  assert.ok(refinementRoute.includes("const models = OPENROUTER_MODELS;"));
+  assert.equal(reviewRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
+  assert.equal(refinementRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.ok(agent.includes("renderedScreen: z.string().max(52000).nullable().optional()"));
   assert.ok(agent.includes('error: "Invalid Figma agent request."'));
   assert.ok(agent.includes('issue.path.join(".")'));
