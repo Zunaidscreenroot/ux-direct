@@ -434,7 +434,7 @@ export async function POST(request: Request) {
         let responseJsonInvalid = false;
         if (responseText.trim()) {
           try {
-            rawPayload = JSON.parse(responseText.replace(/^\\uFEFF/, "")) as unknown;
+            rawPayload = JSON.parse(responseText.replace(/^\uFEFF/, "")) as unknown;
           } catch {
             responseJsonInvalid = true;
           }
