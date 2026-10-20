@@ -396,7 +396,12 @@ export async function POST(request: Request) {
               { role: "user", content: userContent },
             ],
             temperature: isRecovery ? 0.15 : 0.25,
-            max_tokens: isRecovery ? 6000 : 10000,
+            max_completion_tokens: isRecovery ? 6000 : 10000,
+            // M3.1 Flash supports effort controls. Keep its reasoning budget low enough
+            // to leave tokens for the visible JSON plan. Do not constrain OpenRouter Auto.
+            ...(model === "openrouter/auto" ? {} : {
+              reasoning: { effort: isRecovery ? "minimal" : "low" },
+            }),
             response_format: { type: "json_object" },
           }),
           cache: "no-store",
