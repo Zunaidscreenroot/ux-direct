@@ -241,7 +241,7 @@ async function persistInlineTaskLearning(
       },
     });
     recordOperationalEvent({
-      source: sourceProduct,
+      source: sourceProduct === "figma-plugin" ? "figma-plugin" : "dashboard",
       event: "Inline task learning evaluated",
       status: saved.activated === true ? "success" : "info",
       summary: saved.activated === true
@@ -252,7 +252,7 @@ async function persistInlineTaskLearning(
   } catch (error) {
     const filtered = error instanceof Error && /below the 50% ingestion threshold/i.test(error.message);
     recordOperationalEvent({
-      source: sourceProduct,
+      source: sourceProduct === "figma-plugin" ? "figma-plugin" : "dashboard",
       event: filtered ? "Inline task learning filtered" : "Inline task learning capture failed",
       status: filtered ? "info" : "warning",
       summary: filtered
@@ -380,8 +380,8 @@ export async function POST(request: Request) {
   const lastUserMessage = userTurns[userTurns.length - 1]?.content || "";
   const previousUserMessage = userTurns[userTurns.length - 2]?.content || "";
   const retrievalQuery = buildRetrievalQuery(lastUserMessage, previousUserMessage);
-  const origin = request.headers.get("origin");
-  const chatSourceProduct = origin && ALLOWED_FIGMA_ORIGINS.has(origin) ? "figma-plugin" : "ux-direct";
+  const chatOrigin = request.headers.get("origin");
+  const chatSourceProduct = chatOrigin && ALLOWED_FIGMA_ORIGINS.has(chatOrigin) ? "figma-plugin" : "ux-direct";
   const [brainBase, learning] = await Promise.all([
     retrieveMemory(request, retrievalQuery),
     captureChatLearning(lastUserMessage, previousUserMessage, chatSourceProduct),
