@@ -864,7 +864,15 @@
           ? String((reviewPayload && reviewPayload.error) || "HTTP " + reviewResponse.status) +
             (Array.isArray(reviewPayload && reviewPayload.details) ? " · " + reviewPayload.details.join(" | ") : "")
           : lastReview ? "" : "Review API returned no structured review.";
-        if (!reviewResponse.ok || !lastReview || !Array.isArray(lastReview.issues) || !lastReview.issues.length || iteration === 3) break;
+        if (!reviewResponse.ok || !lastReview || !Array.isArray(lastReview.issues)) break;
+        // Continue refinement while the review shows actionable defects or misses the quality threshold.
+        const reviewGatePassed = !!(reviewPayload && reviewPayload.qualityGate && reviewPayload.qualityGate.passed === true);
+        const hasActionableIssues = lastReview.issues.length > 0;
+        if ((reviewGatePassed || (!hasActionableIssues && lastReview.score >= 82)) || iteration === 3) break;
+        if (!hasActionableIssues) {
+          visualQAError = "Quality score " + lastReview.score + "/100 is below the required 82/100; review returned no actionable fixes.";
+          break;
+        }
 
         const refineResponse = await fetch(API + "/api/assistant/figma-agent/refine", {
           method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
@@ -872,7 +880,10 @@
           body: JSON.stringify({ prompt: prompt, review: lastReview, outputCanvas: outputCanvas, iteration: iteration })
         });
         const refinePayload = await refineResponse.json().catch(function () { return {}; });
-        if (!refineResponse.ok || !Array.isArray(refinePayload.patch) || !refinePayload.patch.length) break;
+        if (!refineResponse.ok || !Array.isArray(refinePayload.patch) || !refinePayload.patch.length) {
+          visualQAError = "Quality gate failed, but targeted refinement returned no applicable layer patches.";
+          break;
+        }
 
         stage("refining", "Applying " + refinePayload.patch.length + " targeted visual corrections…");
         const generatedFrame = outputCanvas && Array.isArray(outputCanvas.nodes) ? outputCanvas.nodes[0] : null;
@@ -898,7 +909,15 @@
       if (!verifiedNode || Math.max(countNativeTree(verifiedNode) - 1, Number(verifiedNode.childCount) || 0) < completedElementCount) {
         throw new Error("The variation was written, but read-back could not verify all native layers. The source frame remains untouched.");
       }
-      stage("done", "Design created · verification complete");
+      const qualityPassed = !!(lastReview && Array.isArray(lastReview.issues) &&
+        lastReview.score >= 82 && lastReview.issues.length === 0 &&
+        (visualQAComplete ? true : false));
+      if (!qualityPassed) {
+        throw new Error("The variation was written and its native layers were verified, but UX Direct could not confirm production-ready visual quality. " +
+          (lastReview ? ("QA score: " + lastReview.score + "/100; unresolved issues: " + lastReview.issues.length + ". ") : "") +
+          (visualQAError || "Run a targeted refinement and review again. The source frame remains untouched."));
+      }
+      stage("done", "Design created · structural and visual QA passed");
       const model = typeof payload.model === "string" ? payload.model : "OpenRouter";
       const quality = lastReview
         ? (visualQAComplete
