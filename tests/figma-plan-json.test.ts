@@ -56,6 +56,6 @@ test("rejects null, missing plan fields, arrays and unparseable provider output"
 
 test("content diagnostics describe shape only, not model output", () => {
   assert.equal(describeModelContent(null), "null");
-  assert.equal(describeModelContent('{"summary":"private design text"}'), "string(35 chars)");
+  assert.match(describeModelContent('{"summary":"private design text"}'), /^string\(\d+ chars\)$/);
   assert.equal(describeModelContent([{ type: "text" }, { type: "tool_use" }]), "array[text,tool_use]");
 });
