@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveBrainScopes } from "@/src/memory/chat-context";
+import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -158,7 +159,7 @@ export async function POST(request: Request) {
               role: "system",
               content: [
                 "You are a rigorous senior product designer and visual QA reviewer inside a native Figma design agent.",
-                "Return JSON only with keys: issues (array of {severity:'high'|'medium'|'low', issue:string, evidence:string, fix:string}), score (number 0–100), summary (string).",
+                "Return JSON only with required keys: issues (array of {severity:'high'|'medium'|'low', issue:string, evidence:string, fix:string}), score (number 0–100), summary (string); optional learningCandidate (null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}) only if this review revealed a durable reusable design or execution lesson. Do not turn one-off screen defects, client-specific details, screenshots, node IDs, or private text into a general lesson. Use the narrowest safe scope; the backend validates the candidate and applies the existing 50% relevance gate.",
                 "Compare the source screenshot with the generated screenshot when both exist. Evaluate whether the result meaningfully preserves the selected screen's specific purpose/components and improves craft. Look for generic redesign patterns, clipped text, poor spacing, hierarchy, alignment, contrast, content density and weak CTA priority.",
                 "If screenshots are missing, treat the review as structural-only. Do not claim to see visual details. If no actionable issues remain, return an empty issues array.",
                 memoryContext,
@@ -185,6 +186,10 @@ export async function POST(request: Request) {
       const choice = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : {};
       const message = choice.message && typeof choice.message === "object" ? choice.message as Record<string, unknown> : {};
       const decoded = parseJsonObject(message.content);
+      const decodedRecord = decoded && typeof decoded === "object" && !Array.isArray(decoded)
+        ? { ...(decoded as Record<string, unknown>) } : {};
+      const learningCandidate = decodedRecord.learningCandidate;
+      delete decodedRecord.learningCandidate;
       const reviewSchema = z.object({
         issues: z.array(z.object({
           severity: z.enum(["high", "medium", "low"]),
@@ -195,14 +200,20 @@ export async function POST(request: Request) {
         score: z.number().min(0).max(100),
         summary: z.string().trim().min(1).max(500),
       }).strict();
-      const validated = reviewSchema.safeParse(decoded);
+      const validated = reviewSchema.safeParse(decodedRecord);
       if (!validated.success) {
         errors.push(model + ": response did not match the visual QA schema");
         continue;
       }
+      const learningStatus = await captureFigmaTaskLearning(
+        learningCandidate,
+        parsed.data.prompt,
+        "automatic-figma-visual-review",
+      );
       return NextResponse.json({
         ok: true,
         review: validated.data,
+        learning: learningStatus,
         visualInspection: !!sourceImage && !!outputImage,
         outputImageInspected: !!outputImage,
         model: typeof record.model === "string" ? record.model : model,
