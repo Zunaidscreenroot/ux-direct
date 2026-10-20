@@ -118,7 +118,8 @@ test("compact recovery is model-agnostic and does not add OpenRouter provider fi
   assert.ok(models.includes('"google/gemini-3.7-flash"'));
   assert.ok(models.includes('"anthropic/claude-haiku-5.5"'));
   assert.ok(models.includes('"qwen/qwen3.5-35b-a3b"'));
-  assert.equal(models.includes('"openrouter/auto"'), false);
+  assert.ok(models.includes('id: "openrouter/auto"'), "OpenRouter Auto must be selectable in the design model catalog.");
+  assert.ok(models.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto"'), "Auto should be the default until the user chooses a fixed model.");
   assert.equal(route.includes("provider: {"), false);
   assert.equal(route.includes("plugins: [{ id: \"auto-router\""), false);
 });

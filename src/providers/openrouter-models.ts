@@ -4,6 +4,7 @@
  * layer data and must return structured JSON for editable native layers.
  */
 export const FIGMA_AGENT_MODELS = [
+  { id: "openrouter/auto", label: "OpenRouter Auto · Recommended", description: "Selects a suitable model for the request; OpenRouter reports the model actually used.", price: "Variable · billed at the routed model's rate" },
   { id: "google/gemini-3.7-flash", label: "Gemini 3.7 Flash · Recommended", description: "Multimodal baseline with structured JSON output.", price: "$0.75 input / $3.75 output per 1M tokens" },
   { id: "anthropic/claude-sonnet-5.5", label: "Claude Sonnet 5.5 · Premium", description: "Premium visual/instruction-following comparison.", price: "$2.00 input / $10.00 output per 1M tokens" },
   { id: "openai/gpt-5.4", label: "GPT-5.4 · Premium", description: "Strong instruction following and multimodal reasoning.", price: "$2.50 input / $15.00 output per 1M tokens" },
@@ -12,7 +13,7 @@ export const FIGMA_AGENT_MODELS = [
 ] as const;
 
 export type FigmaAgentModelId = typeof FIGMA_AGENT_MODELS[number]["id"];
-export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "google/gemini-3.7-flash";
+export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto";
 /** Fixed visual-QA judge so model comparisons use a consistent reviewer. */
 export const FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "google/gemini-3.7-flash";
 
