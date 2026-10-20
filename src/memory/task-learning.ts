@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto";
+import { resolveLearningScope } from "./learning-signal";
+import { saveBrainFeedback } from "./shared-brain";
+import { referencesUnstatedClient, sanitizeInlineLearningCandidate, type InlineLearningCandidate } from "./inline-learning";
+
 export type FigmaFailureCategory =
   | "file-scope"
   | "stale-node-id"
@@ -75,4 +80,60 @@ export function buildFigmaFailureLesson(errorMessage: string): FigmaFailureLesso
     keywords: selected.keywords,
     idempotencyKey: "uxd-figma-recovery-" + category,
   };
+}
+
+
+export type AutomaticFigmaLearningStatus = "not-extracted" | "filtered" | "active" | "inactive" | "failed";
+
+/**
+ * Persist a validated reusable lesson extracted during an existing Figma inference.
+ * Raw prompts, canvas text/nodes, screenshots and review evidence are not stored.
+ */
+export async function captureFigmaTaskLearning(
+  value: unknown,
+  taskContext: string,
+  captureMode: "automatic-figma-generation" | "automatic-figma-visual-review",
+): Promise<AutomaticFigmaLearningStatus> {
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      (value as Record<string, unknown>).activate !== true) return "not-extracted";
+
+  const candidate: InlineLearningCandidate | null = sanitizeInlineLearningCandidate(value);
+  if (!candidate || referencesUnstatedClient(candidate, taskContext)) return "filtered";
+  const scopeKey = resolveLearningScope(candidate.scopeKey, "general", taskContext);
+  const rule = candidate.normalizedRule.trim();
+  if (!rule) return "filtered";
+
+  try {
+    const sourceProduct = "figma-plugin";
+    const idempotencyKey = "uxd-inline-task-learning-" + createHash("sha256")
+      .update([sourceProduct, scopeKey, rule.toLowerCase()].join("|"))
+      .digest("hex");
+    const saved = await saveBrainFeedback({
+      rawFeedback: "Task-derived reusable lesson: " + rule,
+      summary: rule.slice(0, 500),
+      title: candidate.title,
+      normalizedRule: rule,
+      rationale: "Reusable lesson abstracted from Figma task execution or visual QA. Raw design prompt, canvas content, screenshots and evidence are not persisted.",
+      scopeKey,
+      feedbackKind: candidate.feedbackKind,
+      keywords: candidate.keywords,
+      examples: [],
+      originalLanguage: candidate.originalLanguage,
+      sourceProduct,
+      idempotencyKey,
+      metadata: {
+        captureMode,
+        rawTaskContextPersisted: false,
+        rawCanvasContentPersisted: false,
+        rawScreenshotPersisted: false,
+        requiresOwnerApproval: false,
+        automaticActivation: true,
+        inferenceCalls: 0,
+      },
+    });
+    return saved.activated === true ? "active" : "inactive";
+  } catch (error) {
+    if (error instanceof Error && /below the 50% ingestion threshold/i.test(error.message)) return "filtered";
+    return "failed";
+  }
 }
