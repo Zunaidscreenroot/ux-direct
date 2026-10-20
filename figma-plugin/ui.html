@@ -75,6 +75,12 @@
     .prompt::placeholder { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); }
     .routing-note { margin:0 2px 7px; color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; line-height:1.4; }
     .composer-bottom { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .composer-tools { display:flex; align-items:center; min-width:0; gap:7px; }
+    .composer-attach { flex:0 0 auto; padding:5px 8px; border:1px solid var(--figma-color-border,#ddd); border-radius:8px; background:var(--figma-color-bg-secondary,#f8f8f8); color:var(--figma-color-text,#333); font-size:10px; }
+    .composer-attach:hover { background:var(--figma-color-bg-tertiary,var(--figma-color-bg-secondary,#eee)); }
+    .attachment-chip { display:flex; align-items:center; gap:7px; margin:2px 0 7px; padding:5px 7px; border:1px solid var(--figma-color-border,#ddd); border-radius:8px; color:var(--figma-color-text-secondary,#777); font-size:10px; }
+    .attachment-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .attachment-remove { flex:0 0 auto; padding:0 4px; border:0; background:transparent; color:var(--figma-color-text-secondary,#777); font-size:16px; }
     .composer-hint { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; }
     .send { display:grid; place-items:center; width:31px; height:31px; flex:0 0 31px; border:0; border-radius:10px; background:var(--figma-color-bg-brand,#0d99ff); color:#fff; font-size:17px; font-weight:700; line-height:1; }
     .send:disabled { cursor:not-allowed; opacity:.4; }
@@ -190,10 +196,18 @@
     <div id="selectionChip" class="context-chip" hidden><span aria-hidden="true">▣</span><span id="selectionName" class="context-name"></span></div>
     <form id="chatForm" class="composer">
       <div id="beamRoot" aria-hidden="true"></div>
-      <div class="routing-note" role="note">Design model: OpenRouter Auto · LOW cost tier · no separate model fallbacks</div>
-      <textarea id="prompt" class="prompt" maxlength="5000" rows="2" aria-label="Message UX Direct" placeholder="Ask UX Direct to create or improve something…" required></textarea>
+      <div class="routing-note" role="note">Design model: OpenRouter Auto · native design + canvas editing</div>
+      <div id="attachmentChip" class="attachment-chip" hidden>
+        <span aria-hidden="true">▧</span><span id="attachmentName" class="attachment-name"></span>
+        <button id="removeAttachment" class="attachment-remove" type="button" aria-label="Remove attached image" title="Remove image">×</button>
+      </div>
+      <input id="imageFileInput" type="file" accept="image/*" hidden />
+      <textarea id="prompt" class="prompt" maxlength="5000" rows="2" aria-label="Message UX Direct" placeholder="Ask UX Direct to create, edit, or improve something…" required></textarea>
       <div class="composer-bottom">
-        <span class="composer-hint">Enter to send · Shift + Enter for a new line</span>
+        <div class="composer-tools">
+          <button id="attachImage" class="composer-attach" type="button" title="Attach an image to place on the canvas">＋ Image</button>
+          <span class="composer-hint">Enter to send · Shift + Enter for a new line</span>
+        </div>
         <button id="send" class="send" type="submit" aria-label="Send message" title="Send message" disabled>↑</button>
       </div>
     </form>
@@ -207,6 +221,8 @@
     let verifiedFileKey = null;
     let pluginSessionStarted = false;
     let currentSelection = { fileKey: null, pageName: "", selection: [] };
+    let attachedImageData = null;
+    let attachedImageName = "";
     let isSending = false;
     let backendHealthy = false;
     let providerHealthy = false;
@@ -694,6 +710,180 @@
       return /\b(create|build|generate|design|redesign|improve|refine|make|update|edit|modify|change|add|remove|fix|rework|duplicate|variation|variant|recreate)\b/i.test(prompt);
     }
 
+    function isDirectCanvasActionPrompt(prompt) {
+      return /\b(edit|update|rewrite|replace|rename|recolor|restyle|resize|move|align|reposition|set|apply|insert|attach|delete|remove|clone|duplicate|group|ungroup|reorder|wrap|bind|auto.?layout|hug|fill|stroke|padding|spacing|typography|line.?height|letter.?spacing|swap component|make component|create component|create variant|create variables?|bind variable|apply style)\b/i.test(prompt) ||
+        /\b(change|fix)\s+(?:the\s+)?(?:text|label|title|copy|value|fill|color|stroke|font|size|position|spacing|padding|layout|alignment|background|corner radius|shadow|constraint|variable|icon|button)\b/i.test(prompt) ||
+        /\b(add|insert|place)\s+(?:a|an|the|another|new)?\s*(?:image|photo|logo|icon|button|label|text|row|tab|card|divider|component|variant|variable|shape|frame)\b/i.test(prompt);
+    }
+
+    async function compressAttachedImage(file) {
+      return new Promise(function (resolve, reject) {
+        if (!file || !file.type || !file.type.startsWith("image/")) { reject(new Error("Choose an image file.")); return; }
+        const url = URL.createObjectURL(file);
+        const image = new Image();
+        image.onload = function () {
+          try {
+            const maxSides = [1400, 1200, 1000, 850, 720];
+            const qualities = [0.78, 0.68, 0.58, 0.48];
+            let best = null;
+            for (const maxSide of maxSides) {
+              const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height));
+              const canvas = document.createElement("canvas");
+              canvas.width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+              canvas.height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+              const context = canvas.getContext("2d");
+              if (!context) continue;
+              context.drawImage(image, 0, 0, canvas.width, canvas.height);
+              for (const quality of qualities) {
+                const data = canvas.toDataURL("image/jpeg", quality);
+                if (!best || data.length < best.length) best = data;
+                if (data.length <= 235000) { URL.revokeObjectURL(url); resolve(data); return; }
+              }
+            }
+            URL.revokeObjectURL(url);
+            if (best && best.length <= 248000) resolve(best);
+            else reject(new Error("Image is too large after compression. Choose a smaller image."));
+          } catch (error) { URL.revokeObjectURL(url); reject(error); }
+        };
+        image.onerror = function () { URL.revokeObjectURL(url); reject(new Error("Could not decode this image.")); };
+        image.src = url;
+      });
+    }
+
+    function renderAttachmentChip() {
+      $("attachmentChip").hidden = !attachedImageData;
+      $("attachmentName").textContent = attachedImageData ? attachedImageName + " · attached" : "";
+    }
+
+    async function executeNativeActionPlan(prompt, reportProgress) {
+      const notify = typeof reportProgress === "function" ? reportProgress : function () {};
+      function stage(state, message) { setProcessState(state, message); notify(message); }
+      stage("scanning", "Inspecting selected Figma layers, text, layout and styles…");
+      const canvas = await runNativeCanvasCommand("read-canvas", {
+        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true
+      }, 90000);
+      if (!canvas || !Array.isArray(canvas.nodes) || !canvas.nodes.length) {
+        throw new Error("Select the frame, text layer, shape, or component you want to edit first.");
+      }
+      if (canvas.nodes.length > 1) {
+        throw new Error("For this request, select one parent frame/container so edits stay inside the intended workspace.");
+      }
+      const root = canvas.nodes[0];
+      stage("capturing", "Capturing a compact visual preview to check the actual rendered design…");
+      const captured = root && root.id ? await captureRenderedNodePreview(root.id) : { dataUrl: null, warning: "No selected node ID." };
+      stage("planning", "UX Direct's design brain is planning minimal native Figma actions…");
+      const response = await fetch(API + "/api/assistant/figma-agent/actions", {
+        method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          prompt: prompt, canvas: canvas,
+          referenceImage: attachedImageData,
+          renderedScreen: captured.dataUrl || null
+        })
+      });
+      const payload = await response.json().catch(function () { return {}; });
+      if (!response.ok || payload.ok !== true || !Array.isArray(payload.actions) || !payload.actions.length) {
+        const details = Array.isArray(payload.details)
+          ? " " + payload.details.map(function (item) { return typeof item === "string" ? item : JSON.stringify(item); }).join(" | ")
+          : "";
+        throw new Error((payload.error || "Native action planning failed.") + details);
+      }
+
+      const actions = payload.actions;
+      const canvasIds = new Set();
+      function gatherIds(nodes) {
+        (Array.isArray(nodes) ? nodes : []).forEach(function (node) {
+          if (node && typeof node.id === "string") canvasIds.add(node.id);
+          if (node && Array.isArray(node.children)) gatherIds(node.children);
+        });
+      }
+      gatherIds(canvas.nodes);
+      let changed = 0;
+      async function createNested(parentId, elements, depth) {
+        if (depth > 5) throw new Error("Added layer nesting exceeded the safety depth.");
+        let cursor = 0;
+        while (cursor < elements.length) {
+          const item = elements[cursor];
+          const children = Array.isArray(item.children) ? item.children : [];
+          if (children.length) {
+            if (item.type !== "FRAME") throw new Error("Only FRAME nodes can contain child layers.");
+            const spec = Object.assign({}, item); delete spec.children;
+            const result = await runNativeCanvasCommand("write-canvas", {
+              confirm: true, operation: "create-elements", target: "node", parentNodeId: parentId, elements: [spec]
+            }, 90000);
+            const node = result && Array.isArray(result.nodes) ? result.nodes[0] : null;
+            if (!node || !node.id) throw new Error("Figma did not return a valid container ID for " + item.name + ".");
+            changed += 1;
+            await createNested(node.id, children, depth + 1);
+            cursor += 1;
+            continue;
+          }
+          const batch = [];
+          while (cursor < elements.length && batch.length < 20 &&
+            !(Array.isArray(elements[cursor].children) && elements[cursor].children.length)) {
+            const leaf = Object.assign({}, elements[cursor]); delete leaf.children;
+            batch.push(leaf); cursor += 1;
+          }
+          if (!batch.length) continue;
+          const result = await runNativeCanvasCommand("write-canvas", {
+            confirm: true, operation: "create-elements", target: "node", parentNodeId: parentId, elements: batch
+          }, 90000);
+          changed += Number(result && result.createdCount) || batch.length;
+        }
+      }
+
+      stage("creating", "Applying " + actions.length + " validated native Figma action(s)…");
+      for (let index = 0; index < actions.length; index += 1) {
+        const action = actions[index];
+        if (!action || typeof action.operation !== "string") throw new Error("Invalid action at step " + (index + 1) + ".");
+        const base = { confirm: true, operation: action.operation };
+        if (action.operation === "create-elements") {
+          const parentId = action.parentNodeId || root.id;
+          if (!canvasIds.has(parentId)) throw new Error("Target node was not in the inspected selection. No further actions were applied.");
+          await createNested(parentId, action.elements || [], 0);
+        } else if (action.operation === "insert-image") {
+          if (!attachedImageData) throw new Error("Attach an image first. A screenshot preview cannot be inserted as an asset.");
+          const parentId = action.parentNodeId || root.id;
+          if (!canvasIds.has(parentId)) throw new Error("Image target was not in the inspected selection.");
+          const result = await runNativeCanvasCommand("write-canvas", Object.assign({}, base, {
+            target: "node", parentNodeId: parentId, imageBase64: attachedImageData,
+            name: action.name || attachedImageName || "Image", x: action.x, y: action.y,
+            width: action.width || Math.min(360, Number(root.width) || 360),
+            height: action.height || Math.min(240, Number(root.height) || 240),
+            cornerRadius: action.cornerRadius, scaleMode: action.scaleMode || "FILL",
+            layoutPositioning: action.layoutPositioning,
+            layoutSizingHorizontal: action.layoutSizingHorizontal || "FILL",
+            layoutSizingVertical: action.layoutSizingVertical || "FIXED"
+          }), 90000);
+          if (!result || result.ok === false) throw new Error("Figma could not insert the attached image.");
+          changed += 1;
+        } else {
+          const keys = ["nodeId", "parentNodeId", "nodeIds", "index", "componentId", "styleKind", "styleId", "styleName",
+            "patch", "range", "target", "pageName", "pageId", "format", "collectionName", "modeName", "variables", "variableName", "property"];
+          const body = Object.assign({}, base);
+          keys.forEach(function (key) { if (action[key] !== undefined) body[key] = action[key]; });
+          const result = await runNativeCanvasCommand("write-canvas", body, 90000);
+          if (!result || result.ok === false) throw new Error("Figma rejected " + action.operation + ".");
+          changed += action.operation === "create-variables" ? 0 : 1;
+        }
+        stage("creating", "Applied " + (index + 1) + "/" + actions.length + " · " + action.operation);
+      }
+
+      if (attachedImageData && actions.some(function (a) { return a.operation === "insert-image"; })) {
+        attachedImageData = null; attachedImageName = ""; renderAttachmentChip();
+      }
+      stage("verifying", "Reading back the edited native properties…");
+      const verified = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true }, 90000);
+      if (!verified || !Array.isArray(verified.nodes) || !verified.nodes.some(function (node) { return node.id === root.id; })) {
+        throw new Error("Actions ran, but the selected root could not be verified by native read-back. Inspect the canvas before retrying.");
+      }
+      stage("done", "Native edits applied · Figma read-back verified");
+      return String(payload.summary || "Native Figma actions applied.") +
+        "\n\nApplied " + actions.length + " native action(s)" + (changed ? " across approximately " + changed + " node/action changes." : ".") +
+        "\nVerified against the selected layer tree and actual Figma properties." +
+        (captured.warning ? "\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
+    }
+
     async function createFigmaDesign(prompt, reportProgress) {
       const selectedModel = "openrouter/auto";
       let createdFrameId = "";
@@ -775,7 +965,17 @@
         elements: [{
           type: "FRAME", name: String(plan.frame.name || "UX Direct Variation").slice(0, 80),
           x: rootX, y: rootY, width: plan.frame.width, height: plan.frame.height,
-          color: plan.frame.backgroundColor, clipsContent: true
+          color: plan.frame.backgroundColor, clipsContent: true,
+          layoutMode: plan.frame.layoutMode || "VERTICAL",
+          itemSpacing: Number.isFinite(plan.frame.itemSpacing) ? plan.frame.itemSpacing : 16,
+          paddingLeft: Number.isFinite(plan.frame.paddingLeft) ? plan.frame.paddingLeft : 16,
+          paddingRight: Number.isFinite(plan.frame.paddingRight) ? plan.frame.paddingRight : 16,
+          paddingTop: Number.isFinite(plan.frame.paddingTop) ? plan.frame.paddingTop : 16,
+          paddingBottom: Number.isFinite(plan.frame.paddingBottom) ? plan.frame.paddingBottom : 16,
+          primaryAxisAlignItems: plan.frame.primaryAxisAlignItems || "MIN",
+          counterAxisAlignItems: plan.frame.counterAxisAlignItems || "MIN",
+          primaryAxisSizingMode: plan.frame.primaryAxisSizingMode || "FIXED",
+          counterAxisSizingMode: plan.frame.counterAxisSizingMode || "FIXED"
         }]
       }, 90000);
       const root = rootResult && Array.isArray(rootResult.nodes) ? rootResult.nodes[0] : null;
@@ -925,6 +1125,19 @@
       $("send").disabled = true;
       await sendTelemetry("Cockpit chat request started", "info", "The in-Figma UX Direct conversation received a user prompt.", { selectedCount: (currentSelection.selection || []).length });
       try {
+        if (isDirectCanvasActionPrompt(prompt)) {
+          typingRow.remove();
+          assistantMessage = appendMessage("assistant", "Inspecting selected layers and planning native edits…");
+          const answer = await executeNativeActionPlan(prompt, function (status) {
+            if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
+          });
+          assistantMessage.bubble.textContent = answer;
+          chatHistory.push({ role: "assistant", content: answer });
+          await sendTelemetry("Native Figma editing completed", "success", "UX Direct planned and executed native Figma editing operations, then verified the selected tree.", {
+            durationMs: Date.now() - startedAt, selectedCount: (currentSelection.selection || []).length, model: "figma-native-actions"
+          });
+          return;
+        }
         if (isDesignActionPrompt(prompt)) {
           typingRow.remove();
           assistantMessage = appendMessage("assistant", "Scanning selected screen and native layers…");
@@ -1017,6 +1230,27 @@
     $("chatForm").addEventListener("submit", function (event) {
       event.preventDefault();
       void submitPrompt($("prompt").value);
+    });
+    $("attachImage").addEventListener("click", function () { $("imageFileInput").click(); });
+    $("imageFileInput").addEventListener("change", async function () {
+      const file = this.files && this.files[0];
+      if (!file) return;
+      const button = $("attachImage");
+      button.disabled = true; button.textContent = "Optimizing…";
+      try {
+        attachedImageData = await compressAttachedImage(file);
+        attachedImageName = String(file.name || "Attached image").slice(0, 120);
+        renderAttachmentChip();
+        $("prompt").focus();
+      } catch (error) {
+        appendMessage("assistant", "Image could not be attached: " + String(error && error.message || error), { error: true });
+      } finally {
+        button.disabled = false; button.textContent = "＋ Image";
+        this.value = "";
+      }
+    });
+    $("removeAttachment").addEventListener("click", function () {
+      attachedImageData = null; attachedImageName = ""; renderAttachmentChip();
     });
     $("prompt").addEventListener("focus", function () {
       setBeamEmphasis(true);
