@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ANTHROPIC_OPENROUTER_MODELS } from "@/src/providers/anthropic-openrouter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,14 +70,15 @@ export async function GET(request: Request) {
   return NextResponse.json({
     connected,
     provider: "OpenRouter",
-    defaultModel: "openai/gpt-6-luna",
-    fallbackModel: "openrouter/auto",
+    defaultModel: ANTHROPIC_OPENROUTER_MODELS[0],
+    fallbackModel: ANTHROPIC_OPENROUTER_MODELS[1],
     models: [
-      { id: "openai/gpt-6-luna", name: "GPT-6 Luna · primary" },
-      { id: "openrouter/auto", name: "OpenRouter Auto · fallback" },
+      { id: ANTHROPIC_OPENROUTER_MODELS[0], name: "Claude Sonnet 5.5 · primary" },
+      { id: ANTHROPIC_OPENROUTER_MODELS[1], name: "Claude Sonnet 5 · fallback" },
+      { id: ANTHROPIC_OPENROUTER_MODELS[2], name: "Claude Haiku 5.5 · final fallback" },
     ],
     checkedAt: new Date().toISOString(),
-    ...(connected ? {} : { error: keyError || "OpenRouter is not ready for Auto Router requests." }),
+    ...(connected ? {} : { error: keyError || "Anthropic models through OpenRouter are not ready." }),
     uxAudit: { reachable: auditReachable, baseUrl: auditBase, ...(auditReachable ? {} : { error: "Could not reach the UX Audit Worker." }) },
     brain: { reachable: brainReachable, ...brainDiagnostics, ...(brainReachable ? {} : { error: "Shared-brain health check failed or its server key is not configured." }) },
   }, { headers: corsHeaders(origin) });

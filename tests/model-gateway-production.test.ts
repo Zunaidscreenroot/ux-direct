@@ -18,20 +18,31 @@ test("home opens the unified chat-first workspace instead of the operations dash
   assert.equal(page.includes("ModelGatewayPanel"), false);
 });
 
-test("UX Direct chat prefers GPT-6 Luna, falls back to OpenRouter Auto and uses throughput routing", () => {
+test("UX Direct chat and status expose Anthropic-only Claude routing through OpenRouter", () => {
   const route = read("app/api/assistant/chat/route.ts");
   const status = read("app/api/assistant/status/route.ts");
-  assert.ok(route.includes('const ROUTER_MODEL = "openai/gpt-6-luna"'));
-  assert.ok(route.includes('const FALLBACK_MODEL = "openrouter/auto"'));
-  assert.ok(route.includes("const fallback = startAttempt(FALLBACK_MODEL);"));
-  assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
-  assert.ok(route.includes('provider: { sort: "throughput" }'));
+  const policy = read("src/providers/anthropic-openrouter.ts");
+  assert.ok(route.includes("const ROUTER_MODEL = ANTHROPIC_OPENROUTER_MODELS[0]"));
+  assert.ok(route.includes("const FALLBACK_MODEL = ANTHROPIC_OPENROUTER_MODELS[1]"));
+  assert.ok(route.includes("const FINAL_FALLBACK_MODEL = ANTHROPIC_OPENROUTER_MODELS[2]"));
+  assert.ok(route.includes("for (const candidate of candidates)"));
+  assert.ok(route.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"));
   assert.ok(route.includes("FIRST_TEXT_TIMEOUT_MS = 30_000"));
   assert.ok(route.includes("OPENROUTER_API_KEY"));
-  assert.equal(route.includes('provider: { allow_fallbacks: false }'), false);
-  assert.equal(route.includes('model.endsWith(":free")'), false);
-  assert.ok(status.includes('defaultModel: "openai/gpt-6-luna"'));
-  assert.ok(status.includes('fallbackModel: "openrouter/auto"'));
+  assert.ok(policy.includes('"anthropic/claude-sonnet-5.5"'));
+  assert.ok(policy.includes('"anthropic/claude-sonnet-5"'));
+  assert.ok(policy.includes('"anthropic/claude-haiku-5.5"'));
+  assert.ok(policy.includes('only: ["anthropic"]'));
+  assert.ok(policy.includes("allow_fallbacks: false"));
+  assert.equal(route.includes("openrouter/auto"), false);
+  assert.equal(route.includes("openai/gpt-6-luna"), false);
+  assert.equal(route.includes('plugins: [{ id: "auto-router"'), false);
+  assert.ok(status.includes("defaultModel: ANTHROPIC_OPENROUTER_MODELS[0]"));
+  assert.ok(status.includes("fallbackModel: ANTHROPIC_OPENROUTER_MODELS[1]"));
+  assert.ok(status.includes('name: "Claude Sonnet 5.5 · primary"'));
+  assert.ok(status.includes('name: "Claude Haiku 5.5 · final fallback"'));
+  assert.equal(status.includes("openrouter/auto"), false);
+  assert.equal(status.includes("openai/gpt-6-luna"), false);
   assert.equal(status.includes("openrouter.ai/api/v1/models"), false);
 });
 

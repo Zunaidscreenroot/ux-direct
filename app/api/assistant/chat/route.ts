@@ -6,6 +6,7 @@ import { detectCoachingSignal, detectExplicitTrainingIntent, resolveChatLearning
 import { containsSensitiveMaterial, createLearningMarkerTransform, referencesUnstatedClient, type InlineLearningCandidate } from "@/src/memory/inline-learning";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
+import { ANTHROPIC_OPENROUTER_MODELS, ANTHROPIC_OPENROUTER_PROVIDER } from "@/src/providers/anthropic-openrouter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,8 +44,9 @@ type BrainContextInfo = {
 
 const MAX_MESSAGES = 100;
 const MAX_TOTAL_CHARS = 80000;
-const ROUTER_MODEL = "openai/gpt-6-luna";
-const FALLBACK_MODEL = "openrouter/auto";
+const ROUTER_MODEL = ANTHROPIC_OPENROUTER_MODELS[0];
+const FALLBACK_MODEL = ANTHROPIC_OPENROUTER_MODELS[1];
+const FINAL_FALLBACK_MODEL = ANTHROPIC_OPENROUTER_MODELS[2];
 const FIRST_TEXT_TIMEOUT_MS = 30_000;
 const SYSTEM_PROMPT = [
   "You are UX Direct, a thoughtful senior product UX partner.",
@@ -393,8 +395,8 @@ export async function POST(request: Request) {
   };
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const candidates = [ROUTER_MODEL, FALLBACK_MODEL];
-  let lastError = "No usable response was returned by OpenRouter Auto Router.";
+  const candidates = [ROUTER_MODEL, FALLBACK_MODEL, FINAL_FALLBACK_MODEL];
+  const failures: string[] = [];
   let lastStatus = 502;
   const origin = new URL(request.url).origin;
 
@@ -417,8 +419,7 @@ export async function POST(request: Request) {
             messages: [{ role: "system", content: systemContent }, ...promptMessages],
             stream: true,
             temperature: 0.4,
-            ...(currentModel === FALLBACK_MODEL ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
-            provider: { sort: "throughput" },
+            provider: ANTHROPIC_OPENROUTER_PROVIDER,
             usage: { include: true },
           }),
           cache: "no-store",
@@ -429,20 +430,20 @@ export async function POST(request: Request) {
           const status = providerResponse.status;
           const message = [401, 403].includes(status)
             ? "OpenRouter rejected the configured API key or account access (HTTP " + status + ")."
-            : "OpenRouter Auto Router (requested as " + currentModel + ") returned HTTP " + status + (details ? ": " + details : ".");
+            : "Anthropic model " + currentModel + " via OpenRouter returned HTTP " + status + (details ? ": " + details : ".");
           throw Object.assign(new Error(message), { status });
         }
         const probe = await probeForFirstText(providerResponse);
         if (!probe.hasText) {
           if (probe.reader) await probe.reader.cancel().catch(() => {});
-          throw Object.assign(new Error("OpenRouter Auto Router returned an empty text stream before its first token."), { status: 502 });
+          throw Object.assign(new Error("Anthropic model " + currentModel + " via OpenRouter returned an empty text stream before its first token."), { status: 502 });
         }
         // Stop the startup timer once the first visible text arrives; let the full answer stream without an app-imposed timeout.
         clearTimeout(timer);
         return { model: currentModel, probe, controller };
       } catch (error) {
         if (controller.signal.aborted) {
-          throw Object.assign(new Error("OpenRouter Auto Router did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
+          throw Object.assign(new Error("Anthropic model " + currentModel + " via OpenRouter did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
         }
         throw error;
       } finally {
@@ -452,28 +453,24 @@ export async function POST(request: Request) {
     return { controller, promise };
   };
 
-  const attempts = [startAttempt(ROUTER_MODEL)];
+  const attempts: Array<ReturnType<typeof startAttempt>> = [];
   let winner: { model: string; probe: ProbedStream; controller: AbortController } | null = null;
-  try {
-    winner = await attempts[0].promise;
-  } catch (error) {
-    lastError = error instanceof Error ? error.message : "GPT-6 Luna failed before producing text.";
-    lastStatus = typeof error === "object" && error !== null && "status" in error
-      ? Number((error as { status: unknown }).status)
-      : 502;
-  }
 
-  // Sequential fallback avoids starting or charging a second inference unless the primary fails.
-  if (!winner) {
-    const fallback = startAttempt(FALLBACK_MODEL);
-    attempts.push(fallback);
+  // Fail over sequentially across Anthropic-only model IDs. Never invoke OpenRouter Auto
+  // or allow the provider router to switch to a non-Anthropic provider.
+  for (const candidate of candidates) {
+    const attempt = startAttempt(candidate);
+    attempts.push(attempt);
     try {
-      winner = await fallback.promise;
+      winner = await attempt.promise;
+      break;
     } catch (error) {
-      lastError = lastError + " Fallback: " + (error instanceof Error ? error.message : "OpenRouter Auto failed before producing text.");
+      attempt.controller.abort();
+      const detail = error instanceof Error ? error.message : "The model failed before producing text.";
+      failures.push(candidate + ": " + detail);
       lastStatus = typeof error === "object" && error !== null && "status" in error
         ? Number((error as { status: unknown }).status)
-        : lastStatus;
+        : 502;
     }
   }
 
@@ -485,7 +482,7 @@ export async function POST(request: Request) {
   }
 
   for (const attempt of attempts) attempt.controller.abort();
-  const userMessage = "OpenRouter Auto Router failed. " + lastError;
+  const userMessage = "Anthropic Claude via OpenRouter failed for all configured Anthropic models. " + failures.join(" | ");
   return NextResponse.json(
     { error: userMessage, attemptedModels: candidates },
     { status: lastStatus === 429 ? 429 : 502, headers: brainHeaders(brain, undefined, request) },
