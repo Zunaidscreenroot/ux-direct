@@ -112,7 +112,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Generated variation contains no editable native node IDs." }, { status: 400, headers });
   }
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const models = ["openai/gpt-6-luna", "openrouter/auto"];
+  const models = ["anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5", "openrouter/auto"];
   const errors: string[] = [];
   for (const model of models) {
     const controller = new AbortController();
@@ -121,7 +121,7 @@ export async function POST(request: Request) {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", Accept: "application/json",
-          "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Design Refiner" },
+          "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Design Refiner · Anthropic Claude" },
         body: JSON.stringify({
           model,
           messages: [
