@@ -10,6 +10,9 @@ on:
       - "app/api/mcp/route.ts"
       - "app/api/plugin-bridge/route.ts"
       - "app/api/health/route.ts"
+      - "app/api/brain/**"
+      - "app/api/assistant/chat/route.ts"
+      - "src/memory/**"
       - "src/security/figma-access.ts"
       - ".github/workflows/deploy-cloudflare.yml"
 
