@@ -1,23 +1,23 @@
 /**
  * UX Direct model priority via OpenRouter.
  * Gemini 3.7 Flash is the quality-first multimodal primary.
- * Fallbacks are ordered by estimated combined input/output cost, cheapest first:
- * Qwen3.5-35B-A3B ($0.08/$0.75), Qwen3.5-397B-A17B ($0.39/$2.34),
- * Gemini 3.5 Flash Lite ($0.30/$2.50) per million tokens.
+ * Fallbacks are strictly ordered by input and output token price, cheapest first:
+ * Qwen3.5-35B-A3B ($0.08/$0.75), Gemini 3.1 Flash Lite ($0.25/$1.50),
+ * Qwen3.5-397B-A17B ($0.39/$2.34) per million tokens.
  * All requests use explicit model IDs; OpenRouter Auto is intentionally not in the chain.
  */
 export const OPENROUTER_MODELS = [
   "google/gemini-3.7-flash",
   "qwen/qwen3.5-35b-a3b",
+  "google/gemini-3.1-flash-lite",
   "qwen/qwen3.5-397b-a17b",
-  "google/gemini-3.5-flash-lite",
 ] as const;
 
 export const OPENROUTER_MODEL_LABELS = [
   "Gemini 3.7 Flash · primary",
   "Qwen 3.5 35B-A3B · cheapest fallback",
-  "Qwen 3.5 397B-A17B · quality fallback",
-  "Gemini 3.5 Flash Lite · final fallback",
+  "Gemini 3.1 Flash Lite · low-cost multimodal fallback",
+  "Qwen 3.5 397B-A17B · final quality fallback",
 ] as const;
 
 export const UX_DIRECT_DESIGN_ROLE =

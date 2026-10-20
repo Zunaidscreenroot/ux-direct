@@ -10,14 +10,14 @@ test("UX Direct prefers Gemini 3.7 Flash and orders multimodal fallbacks by esti
   assert.deepEqual(OPENROUTER_MODELS, [
     "google/gemini-3.7-flash",
     "qwen/qwen3.5-35b-a3b",
+    "google/gemini-3.1-flash-lite",
     "qwen/qwen3.5-397b-a17b",
-    "google/gemini-3.5-flash-lite",
   ]);
   assert.deepEqual(OPENROUTER_MODEL_LABELS, [
     "Gemini 3.7 Flash · primary",
     "Qwen 3.5 35B-A3B · cheapest fallback",
-    "Qwen 3.5 397B-A17B · quality fallback",
-    "Gemini 3.5 Flash Lite · final fallback",
+    "Gemini 3.1 Flash Lite · low-cost multimodal fallback",
+    "Qwen 3.5 397B-A17B · final quality fallback",
   ]);
   assert.ok(UX_DIRECT_DESIGN_ROLE.toLowerCase().includes("ui/ux designer"));
   assert.equal(OPENROUTER_MODELS.includes("openrouter/auto" as never), false);

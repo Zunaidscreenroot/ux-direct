@@ -129,8 +129,8 @@ test("in-Figma design agent retrieves approved brain context and validates nativ
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "No provider restrictions should be sent to OpenRouter.");
   assert.ok(modelPolicy.includes('"google/gemini-3.7-flash"'));
   assert.ok(modelPolicy.includes('"qwen/qwen3.5-35b-a3b"'));
+  assert.ok(modelPolicy.includes('"google/gemini-3.1-flash-lite"'));
   assert.ok(modelPolicy.includes('"qwen/qwen3.5-397b-a17b"'));
-  assert.ok(modelPolicy.includes('"google/gemini-3.5-flash-lite"'));
   assert.equal(modelPolicy.includes('"openrouter/auto"'), false);
   assert.ok(modelPolicy.includes("UX_DIRECT_DESIGN_ROLE"));
   assert.equal(modelPolicy.includes("only:"), false);

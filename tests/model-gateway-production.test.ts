@@ -33,8 +33,8 @@ test("UX Direct uses Gemini 3.7 Flash with cost-ordered OpenRouter fallbacks", (
   assert.ok(route.includes("OPENROUTER_API_KEY"));
   assert.ok(policy.includes('"google/gemini-3.7-flash"'));
   assert.ok(policy.includes('"qwen/qwen3.5-35b-a3b"'));
+  assert.ok(policy.includes('"google/gemini-3.1-flash-lite"'));
   assert.ok(policy.includes('"qwen/qwen3.5-397b-a17b"'));
-  assert.ok(policy.includes('"google/gemini-3.5-flash-lite"'));
   assert.equal(policy.includes('"openrouter/auto"'), false);
   assert.ok(policy.includes("UX_DIRECT_DESIGN_ROLE"));
   for (const routeText of [figmaAgent, review, refine]) {
