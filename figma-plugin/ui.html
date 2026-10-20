@@ -390,7 +390,7 @@
       list.scrollTop = savedScrollTop;
     }
 
-    function runNativeHealthChecks()
+    function runNativeHealthChecks() {
       if (nativeHealthRunning || !verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
       if (isSending) {
         nativeHealthProgress = "Finish the current design operation before running API checks.";
