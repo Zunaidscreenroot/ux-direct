@@ -81,7 +81,7 @@
     .health-summary-meta { display:block; margin-top:3px; color:var(--figma-color-text-secondary,#777); font-size:10px; line-height:1.45; }
     .health-summary-action { flex:0 0 auto; color:var(--figma-color-text-secondary,#777); font-size:10px; font-weight:650; white-space:nowrap; }
     .health-details { padding:10px; border-top:1px solid var(--figma-color-border,#ddd); }
-    .health-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; }
+    .health-metrics { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:5px; }
     .health-metric { min-width:0; padding:7px 3px; border-radius:7px; background:var(--figma-color-bg-secondary,#f5f5f5); text-align:center; }
     .health-metric strong { display:block; font-size:13px; line-height:1.25; font-variant-numeric:tabular-nums; }
     .health-metric span { display:block; margin-top:3px; color:var(--figma-color-text-secondary,#777); font-size:9px; }
@@ -132,6 +132,7 @@
         <div class="health-metrics">
           <div class="health-metric"><strong id="healthPassed">—</strong><span>Passed</span></div>
           <div class="health-metric"><strong id="healthAvailable">—</strong><span>Available</span></div>
+          <div class="health-metric"><strong id="healthUnavailable">—</strong><span>Unavailable</span></div>
           <div class="health-metric"><strong id="healthFailed">—</strong><span>Failed</span></div>
           <div class="health-metric"><strong id="healthNotTested">—</strong><span>Not tested</span></div>
         </div>
@@ -307,7 +308,8 @@
         checks: checks,
         passed: checks.filter(function (check) { return check.level === "functional" && check.status === "success"; }).length,
         available: checks.filter(function (check) { return check.level === "availability" && check.status === "success"; }).length,
-        failed: checks.filter(function (check) { return check.status === "error"; }).length,
+        unavailable: checks.filter(function (check) { return check.level === "availability" && check.status === "error"; }).length,
+        failed: checks.filter(function (check) { return check.level !== "availability" && check.status === "error"; }).length,
         notTested: checks.filter(function (check) { return check.status === "not-tested"; }).length
       };
     }
@@ -322,6 +324,7 @@
         $("healthSummaryAction").textContent = "Running…";
       } else if (report) {
         $("healthSummaryMeta").textContent = counts.passed + " passed · " + counts.available + " available" +
+          (counts.unavailable ? " · " + counts.unavailable + " unavailable" : "") +
           (counts.failed ? " · " + counts.failed + " failed" : "") +
           (counts.notTested ? " · " + counts.notTested + " not tested" : "");
         $("healthSummaryAction").textContent = healthDetailsOpen ? "Hide actions ↑" : "View actions ↓";
@@ -331,18 +334,21 @@
       }
       $("healthPassed").textContent = report ? String(counts.passed) : "—";
       $("healthAvailable").textContent = report ? String(counts.available) : "—";
+      $("healthUnavailable").textContent = report ? String(counts.unavailable) : "—";
       $("healthFailed").textContent = report ? String(counts.failed) : "—";
       $("healthNotTested").textContent = report ? String(counts.notTested) : "—";
       $("runHealthChecks").disabled = nativeHealthRunning;
       $("runHealthChecks").textContent = nativeHealthRunning ? "Running…" : report ? "Rerun checks" : "Run checks";
       $("healthListCount").textContent = report ? counts.checks.length + " checks" : "";
       const list = $("healthCheckList");
+      const savedScrollTop = list.scrollTop;
       list.replaceChildren();
       if (!report) {
         const empty = document.createElement("div");
         empty.className = "health-empty";
         empty.textContent = nativeHealthRunning ? (nativeHealthProgress || "Inspecting Figma native APIs…") : "Run the native health checks to inspect supported actions, API availability and functional test results.";
         list.appendChild(empty);
+        list.scrollTop = savedScrollTop;
         return;
       }
       if (!counts.checks.length) {
@@ -350,6 +356,7 @@
         empty.className = "health-empty";
         empty.textContent = "No displayable checks were returned. Folder/file/library access checks are intentionally excluded.";
         list.appendChild(empty);
+        list.scrollTop = savedScrollTop;
         return;
       }
       counts.checks.forEach(function (check) {
@@ -364,7 +371,8 @@
         const status = document.createElement("span");
         let statusClass = "not-tested";
         let statusText = "NOT TESTED";
-        if (check.status === "error") { statusClass = "failed"; statusText = "FAILED"; }
+        if (check.status === "error" && check.level === "availability") { statusClass = "failed"; statusText = "UNAVAILABLE"; }
+        else if (check.status === "error") { statusClass = "failed"; statusText = "FAILED"; }
         else if (check.status === "success" && check.level === "availability") { statusClass = "available"; statusText = "AVAILABLE"; }
         else if (check.status === "success") { statusClass = "passed"; statusText = "PASSED"; }
         status.className = "health-check-status " + statusClass;
@@ -379,9 +387,10 @@
         }
         list.appendChild(row);
       });
+      list.scrollTop = savedScrollTop;
     }
 
-    function runNativeHealthChecks() {
+    function runNativeHealthChecks()
       if (nativeHealthRunning || !verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
       if (isSending) {
         nativeHealthProgress = "Finish the current design operation before running API checks.";
