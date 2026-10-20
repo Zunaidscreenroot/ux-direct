@@ -103,7 +103,7 @@ const PlanSchema = z.object({
     }
   };
   count(plan.elements as unknown[]);
-  if (plan.elements.some((element: any) => element.type !== "FRAME")) {
+  if (plan.elements.some((element) => (element as Record<string, unknown>).type !== "FRAME")) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Top-level design sections must be named FRAME containers." });
   }
   if (namedContainers < 4) {
