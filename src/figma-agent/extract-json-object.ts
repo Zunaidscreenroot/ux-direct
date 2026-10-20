@@ -4,7 +4,7 @@ function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function isUsefulResponseObject(value: unknown): value is JsonRecord {
+function isUsefulResponseObject(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return ["issues", "findings", "defects", "problems", "patch", "summary", "assessment", "overallAssessment", "score", "qualityScore", "visualScore", "overallScore", "frame", "elements"].some((key) => key in value);
 }
@@ -20,7 +20,7 @@ function parseJsonRecordText(text: string): JsonRecord | null {
   for (const candidateText of candidates) {
     try {
       const parsed: unknown = JSON.parse(candidateText);
-      if (isUsefulResponseObject(parsed)) return parsed;
+      if (isUsefulResponseObject(parsed)) return parsed as JsonRecord;
       if (isRecord(parsed)) {
         const nested = extractJsonObject(parsed);
         if (nested) return nested;
