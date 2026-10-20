@@ -32,6 +32,31 @@ jobs:
         run: npm install --no-audit --no-fund --prefer-offline
       - name: Build for Cloudflare Workers
         run: npm run cf:build
+      - name: Diagnose Cloudflare dashboard metadata access
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: cb73bfd260a197b57210ae47f427db06
+        run: |
+          set -u
+          paths=(
+            "/workers/services/ux-direct"
+            "/workers/services/ux-direct/environments/production/bindings"
+            "/workers/services/ux-direct/environments/production/routes?show_zonename=true"
+            "/workers/domains/records?page=0&per_page=5&service=ux-direct&environment=production"
+            "/workers/services/ux-direct/environments/production/subdomain"
+            "/workers/services/ux-direct/environments/production"
+            "/workers/scripts/ux-direct/schedules"
+          )
+          for path in "${paths[@]}"; do
+            response_file="$(mktemp)"
+            status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              --header "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID$path" || true)"
+            summary="$(jq -c '{success: .success, errors: .errors, messages: .messages}' "$response_file" 2>/dev/null || printf 'unparseable_response')"
+            printf 'Cloudflare metadata probe: HTTP %s %s %s\n' "$status" "${path%%\?*}" "$summary"
+            rm -f "$response_file"
+          done
       - name: Deploy production Worker
         run: npx opennextjs-cloudflare deploy --config wrangler.jsonc -- --keep-vars
         env:
