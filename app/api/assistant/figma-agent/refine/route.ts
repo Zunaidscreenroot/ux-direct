@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { ANTHROPIC_OPENROUTER_MODELS, ANTHROPIC_OPENROUTER_PROVIDER } from "@/src/providers/anthropic-openrouter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -112,7 +113,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Generated variation contains no editable native node IDs." }, { status: 400, headers });
   }
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const models = ["anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5", "anthropic/claude-haiku-5.5"];
+  const models = ANTHROPIC_OPENROUTER_MODELS;
   const errors: string[] = [];
   for (const model of models) {
     const controller = new AbortController();
@@ -137,7 +138,7 @@ export async function POST(request: Request) {
           temperature: 0.1,
           max_tokens: 2400,
           response_format: { type: "json_object" },
-          provider: { only: ["anthropic"], allow_fallbacks: false, sort: "throughput" },
+          provider: ANTHROPIC_OPENROUTER_PROVIDER,
         }),
         cache: "no-store",
         signal: controller.signal,
