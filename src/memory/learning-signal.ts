@@ -45,8 +45,11 @@ const GENERAL_RELEVANCE_SIGNALS: RelevanceSignal[] = [
   { label: "visual-system", pattern: /\b(layout|spacing|alignment|typography|hierarchy|visual|component|design system)\b/i },
   { label: "accessibility", pattern: /\b(accessibility|accessible|wcag|a11y|keyboard|screen reader|contrast)\b/i },
   { label: "content-and-clarity", pattern: /\b(copy|microcopy|label|content|clarity|clear|disclosure|transparency|consent|customer control)\b/i },
-  { label: "task-quality", pattern: /\b(task|requirement|feedback|error|retry|state|recommendation|finding|evidence|quality|correct|wrong|missed|mistake|rule|guidance|output)\b/i },
-  { label: "learning-and-tools", pattern: /\b(figma|plugin|agent|mcp|memory|knowledge|retrieval|learning|token|model|iteration|execution|benchmark|audit)\b/i },
+  { label: "task-quality", pattern: /\b(task|requirement|feedback|error|retry|state|quality)\b/i },
+  { label: "finding-quality", pattern: /\b(findings?|evidence|audit|severity|benchmark)\b/i },
+  { label: "recommendation-quality", pattern: /\brecommendations?\b/i },
+  { label: "rule-and-guidance", pattern: /\b(rule|guidance|principle|heuristic|mistake|wrong|missed|output)\b/i },
+  { label: "learning-and-tools", pattern: /\b(figma|plugin|agent|mcp|memory|knowledge|retrieval|learning|token|model|iteration|execution)\b/i },
   { label: "product-and-users", pattern: /\b(product|service|customer|user|persona|form|navigation|cta|button|component)\b/i },
 ];
 
