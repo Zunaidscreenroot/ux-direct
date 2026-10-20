@@ -83,3 +83,24 @@ test("strips private markers from multimodal text-part deltas", async () => {
   assert.deepEqual(extracted[0], candidate);
   assert.doesNotMatch(output, /UXD_LEARNING|Preserve existing design-system components/);
 });
+
+test("rejects a client name copied into a broader candidate when the task did not mention it", () => {
+  const { referencesUnstatedClient, sanitizeInlineLearningCandidate } = require("../src/memory/inline-learning") as typeof import("../src/memory/inline-learning");
+  const candidate = sanitizeInlineLearningCandidate({
+    title: "Ujjivan onboarding CTA lesson",
+    normalizedRule: "Make the onboarding CTA more visible and keep the hierarchy consistent.",
+    rationale: "Reusable UX principle.",
+    scopeKey: "project:ujjivan-sfb",
+    feedbackKind: "recommendation_quality",
+    keywords: ["cta", "onboarding"],
+  });
+  assert.ok(candidate);
+  assert.equal(referencesUnstatedClient(candidate, "Make onboarding CTA more visible."), true);
+  assert.equal(referencesUnstatedClient(candidate, "Ujjivan SFB onboarding revamp"), false);
+});
+
+test("normalizes language metadata to a safe fixed vocabulary", () => {
+  const value = parseInlineLearningCandidate(JSON.stringify({ ...candidate, originalLanguage: "caller@example.com" }));
+  assert.ok(value);
+  assert.equal(value.originalLanguage, "English");
+});
