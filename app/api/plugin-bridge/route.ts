@@ -41,6 +41,7 @@ const CANVAS_ELEMENT = z.object({
   fontFamily: z.string().trim().min(1).max(100).optional(),
   fontStyle: z.string().trim().min(1).max(100).optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  noFill: z.boolean().optional(),
   strokeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   strokeWeight: z.number().finite().min(0).max(100).optional(),
   opacity: z.number().finite().min(0).max(1).optional(),

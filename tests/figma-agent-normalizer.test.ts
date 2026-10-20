@@ -22,24 +22,64 @@ test("normalizes OpenRouter layer fields that previously failed strict Figma pla
 
   assert.equal(normalized.frame.name, "Manage loans · Variation");
   assert.equal(normalized.frame.backgroundColor, "#FAFAFA");
-  assert.equal(normalized.elements.length, 6);
+  assert.equal(normalized.elements.length, 5, "Flat provider output should be wrapped into five named native frame sections.");
+  assert.ok(normalized.elements.every((element) => element.type === "FRAME"), "The top-level tree should contain frames, not loose shapes/text.");
 
-  assert.equal(normalized.elements[0].type, "RECTANGLE");
-  assert.equal(normalized.elements[0].name, "Rectangle 1");
-  assert.equal(normalized.elements[0].color, "#FFFFFF");
-  assert.equal("fill" in normalized.elements[0], false);
+  const allNodes: Array<Record<string, unknown>> = [];
+  const collect = (nodes: Array<Record<string, unknown>>) => {
+    for (const node of nodes) {
+      allNodes.push(node);
+      if (Array.isArray(node.children)) collect(node.children as Array<Record<string, unknown>>);
+    }
+  };
+  collect(normalized.elements);
+  assert.ok(allNodes.filter((node) => node.type === "FRAME" && Array.isArray(node.children) && node.children.length > 0).length >= 4,
+    "Multiple meaningful frame groups should contain native child layers.");
 
-  assert.equal(normalized.elements[1].type, "TEXT");
-  assert.equal(normalized.elements[1].name, "Text · Manage loans");
-  assert.equal(normalized.elements[1].text, "Manage loans");
-  assert.equal(normalized.elements[1].color, "#202124");
-  assert.equal(normalized.elements[1].fontSize, 96, "Oversized model typography should be clamped to the native executor schema.");
+  const heading = allNodes.find((node) => node.type === "TEXT" && node.text === "Manage loans");
+  assert.ok(heading, "Text content should survive the hierarchical normalization.");
+  assert.equal(heading?.color, "#202124");
+  assert.equal(heading?.fontSize, 96, "Oversized model typography should be clamped to the native executor schema.");
+  assert.equal("fill" in (heading || {}), false);
 
-  assert.equal(normalized.elements[2].type, "FRAME");
-  assert.equal(normalized.elements[2].name, "Pay EMI");
-  assert.equal(normalized.elements[2].cornerRadius, 12);
+  const button = allNodes.find((node) => node.type === "FRAME" && node.name === "Pay EMI");
+  assert.ok(button, "Button aliases should normalize to styled native frames.");
+  assert.equal(button?.cornerRadius, 12);
 
-  assert.equal(normalized.elements[4].type, "TEXT");
-  assert.equal(normalized.elements[4].text, "Next EMI due 25 Oct");
-  assert.equal(normalized.elements[4].name, "Text · Next EMI due 25 Oct");
+  const due = allNodes.find((node) => node.type === "TEXT" && node.text === "Next EMI due 25 Oct");
+  assert.ok(due, "Nested body copy should be preserved.");
+  assert.equal(due?.name, "Text · Next EMI due 25 Oct");
+});
+
+test("preserves model-authored nested FRAME containers and relative child coordinates", () => {
+  const input = {
+    summary: "A structured Manage Loans variation with native section frames.",
+    frame: { name: "Manage Loans — variation", width: 360, height: 800, backgroundColor: "#101010" },
+    elements: [
+      { type: "FRAME", name: "Header & navigation", x: 0, y: 12, width: 360, height: 64, noFill: true,
+        children: [{ type: "TEXT", name: "Screen title", x: 18, y: 12, width: 260, height: 32, text: "Manage Loans", fontSize: 24, color: "#FFFFFF" }] },
+      { type: "FRAME", name: "Loan status tabs", x: 16, y: 88, width: 328, height: 58, noFill: true,
+        children: [{ type: "TEXT", name: "Active tab", x: 0, y: 8, width: 96, height: 30, text: "Active", fontSize: 15, color: "#FFFFFF" }] },
+      { type: "FRAME", name: "Active loan summary", x: 16, y: 160, width: 328, height: 200, color: "#292929", cornerRadius: 8,
+        children: [{ type: "TEXT", name: "Loan amount", x: 16, y: 24, width: 280, height: 26, text: "₹40,000", fontSize: 24, color: "#FFFFFF" }] },
+      { type: "FRAME", name: "Loan-wise breakdown", x: 16, y: 372, width: 328, height: 130, color: "#202020",
+        children: [{ type: "TEXT", name: "Outstanding", x: 16, y: 16, width: 280, height: 24, text: "Outstanding · ₹20,000", fontSize: 15, color: "#15C8F2" }] },
+      { type: "FRAME", name: "Actions & support", x: 16, y: 530, width: 328, height: 110, noFill: true,
+        children: [{ type: "FRAME", name: "View loan details", x: 0, y: 0, width: 328, height: 48, color: "#00AEEF", cornerRadius: 2,
+          children: [{ type: "TEXT", name: "CTA label", x: 20, y: 12, width: 250, height: 24, text: "View loan details", fontSize: 15, color: "#FFFFFF" }] }] },
+    ],
+  };
+  const normalized = normalizePlan(input, { pageName: "Loans", nodes: [] }) as {
+    elements: Array<Record<string, unknown>>;
+  };
+  assert.equal(normalized.elements.length, 5);
+  assert.ok(normalized.elements.every((node) => node.type === "FRAME"));
+  assert.equal(normalized.elements[0].name, "Header & navigation");
+  const title = (normalized.elements[0].children as Array<Record<string, unknown>>)[0];
+  assert.equal(title.text, "Manage Loans");
+  assert.equal(title.x, 18, "Nested node coordinates must remain relative to their direct parent.");
+  const actions = normalized.elements[4].children as Array<Record<string, unknown>>;
+  const cta = actions[0];
+  assert.equal(cta.type, "FRAME");
+  assert.equal((cta.children as Array<Record<string, unknown>>)[0].text, "View loan details");
 });

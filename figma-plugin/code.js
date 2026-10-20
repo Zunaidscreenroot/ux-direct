@@ -1288,7 +1288,8 @@ async function writeCanvasCommand(payload) {
   function applyCreateProperties(node, spec) {
     if (Number.isFinite(spec.opacity) && "opacity" in node) node.opacity = Math.max(0, Math.min(1, spec.opacity));
     if (Number.isFinite(spec.rotation) && "rotation" in node) node.rotation = Math.max(-360, Math.min(360, spec.rotation));
-    if (typeof spec.color === "string" && "fills" in node) setSolidPaint(node, "fills", spec.color);
+    if (node.type === "FRAME" && spec.noFill === true && "fills" in node) node.fills = [];
+    else if (typeof spec.color === "string" && "fills" in node) setSolidPaint(node, "fills", spec.color);
     if (typeof spec.strokeColor === "string" && "strokes" in node) setSolidPaint(node, "strokes", spec.strokeColor);
     if (Number.isFinite(spec.strokeWeight) && "strokeWeight" in node) node.strokeWeight = Math.max(0, Math.min(100, spec.strokeWeight));
     if (Number.isFinite(spec.cornerRadius) && "cornerRadius" in node) node.cornerRadius = Math.max(0, Math.min(512, spec.cornerRadius));

@@ -126,7 +126,9 @@ test("in-Figma design agent retrieves approved brain context and validates nativ
   assert.ok(agent.includes('const models = ["openai/gpt-6-luna", "openrouter/auto"];'), "GPT-6 Luna must be primary and OpenRouter Auto fallback.");
   assert.ok(agent.includes('response_format: { type: "json_object" }'), "The design agent must request structured output.");
   assert.ok(agent.includes('PlanSchema.safeParse('), "The provider plan must be schema-validated before canvas execution.");
-  assert.ok(agent.includes('elements: z.array(ElementSchema).min(5).max(80)'), "Native element count must be bounded.");
+  assert.ok(agent.includes('elements: z.array(ElementSchema).min(5).max(12)'), "Top-level design sections must be bounded.");
+  assert.ok(agent.includes("Top-level design sections must be named FRAME containers"), "Design plans must include semantic frame groups.");
+  assert.ok(agent.includes("Only FRAME elements may contain nested children") || agent.includes("Only FRAME may contain nested children"), "Nested nodes must be valid native frame children.");
   assert.ok(agent.includes('No canvas changes were made.'), "Planning failures must not imply a canvas write.");
 });
 
@@ -135,10 +137,11 @@ test("conversational cockpit executes, batches, selects, zooms and verifies nati
   assert.ok(pluginUi.includes('runNativeCanvasCommand("read-canvas"'), "Design agent must inspect real layer contents first.");
   assert.ok(pluginUi.includes('"/api/assistant/figma-agent"'), "Design requests must call the structured planner.");
   assert.ok(pluginUi.includes('operation: "create-elements"'), "Design agent must write native nodes.");
-  assert.ok(pluginUi.includes('start += 20'), "Large native layouts must be chunked into bridge-safe writes.");
+  assert.ok(pluginUi.includes('batch.length < 20'), "Large sibling batches must stay within the bridge-safe limit.");
+  assert.ok(pluginUi.includes("async function createPlanChildren(parentId, elements, depth)"), "Native designs must be constructed recursively from the nested frame hierarchy.");
   assert.ok(pluginUi.includes('operation: "set-selection"'), "The resulting variation should be selected.");
   assert.ok(pluginUi.includes('operation: "zoom-to-nodes"'), "The resulting variation should be brought into view.");
-  assert.ok(pluginUi.includes('scope: "selection", maxDepth: 2, maxNodes: 100'), "Written design must be read back.");
+  assert.ok(pluginUi.includes('scope: "selection", maxDepth: 4, maxNodes: 100'), "Written frame hierarchy must be read back.");
   assert.ok(pluginUi.includes('verifiedNode.childCount'), "Success must require a verification result.");
 });
 
@@ -257,4 +260,15 @@ test("selected and generated frame screenshot export falls back to progressively
   assert.ok(pluginUi.includes("PNG export failed at 35%, 25%, and 20%."));
   assert.ok(pluginUi.includes("const outputCapture = await captureRenderedNodePng(createdFrameId)"));
   assert.ok(pluginUi.includes("outputCapture.warning"));
+});
+
+test("native Figma design creation builds nested frame containers before their children", () => {
+  assert.ok(pluginUi.includes("async function createPlanChildren(parentId, elements, depth)"));
+  assert.ok(pluginUi.includes('target: "selection", elements: [spec]'));
+  assert.ok(pluginUi.includes("await createPlanChildren(container.id, children, depth + 1)"));
+  assert.ok(pluginUi.includes("countPlanNodes(plan.elements)"));
+  assert.ok(plugin.includes('node.type === "FRAME" && spec.noFill === true && "fills" in node'));
+  assert.ok(bridge.includes("noFill: z.boolean().optional()"));
+  assert.ok(agent.includes('children: z.array(ElementSchema).max(80).optional()'));
+  assert.ok(agent.includes("Use a real Figma layer tree: Screen -> named sections/cards (FRAME)"));
 });

@@ -769,20 +769,54 @@
         throw new Error("Figma did not return the new frame ID. Inspect the current page before retrying.");
       }
       createdFrameId = root.id;
-      await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [createdFrameId] }, 90000);
-      for (let start = 0; start < plan.elements.length; start += 20) {
-        const batch = plan.elements.slice(start, start + 20);
-        const result = await runNativeCanvasCommand("write-canvas", {
-          confirm: true, operation: "create-elements", target: "selection", elements: batch
-        }, 90000);
-        completedElementCount += Number(result && result.createdCount) || batch.length;
-        stage("creating", "Executing native layers · " + completedElementCount + " of " + plan.elements.length + "…");
+      const plannedNodeCount = countPlanNodes(plan.elements);
+      async function createPlanChildren(parentId, elements, depth) {
+        if (depth > 4) throw new Error("Design hierarchy exceeded the safe nesting depth.");
+        await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [parentId] }, 90000);
+        let cursor = 0;
+        while (cursor < elements.length) {
+          const element = elements[cursor];
+          const children = Array.isArray(element.children) ? element.children : [];
+          if (children.length) {
+            if (element.type !== "FRAME") throw new Error("Only native FRAME containers may have child layers.");
+            const spec = Object.assign({}, element);
+            delete spec.children;
+            const created = await runNativeCanvasCommand("write-canvas", {
+              confirm: true, operation: "create-elements", target: "selection", elements: [spec]
+            }, 90000);
+            const container = created && Array.isArray(created.nodes) ? created.nodes[0] : null;
+            if (!container || typeof container.id !== "string") throw new Error("Figma did not return a native frame ID for " + element.name + ".");
+            completedElementCount += 1;
+            stage("creating", "Creating nested frame · " + element.name + " · " + completedElementCount + "/" + plannedNodeCount + " layers…");
+            await createPlanChildren(container.id, children, depth + 1);
+            await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [parentId] }, 90000);
+            cursor += 1;
+            continue;
+          }
+          const batch = [];
+          while (cursor < elements.length && batch.length < 20) {
+            const candidate = elements[cursor];
+            if (Array.isArray(candidate.children) && candidate.children.length) break;
+            const spec = Object.assign({}, candidate);
+            delete spec.children;
+            batch.push(spec);
+            cursor += 1;
+          }
+          if (!batch.length) continue;
+          const result = await runNativeCanvasCommand("write-canvas", {
+            confirm: true, operation: "create-elements", target: "selection", elements: batch
+          }, 90000);
+          completedElementCount += Number(result && result.createdCount) || batch.length;
+          stage("creating", "Building editable layout · " + completedElementCount + "/" + plannedNodeCount + " native layers…");
+        }
       }
+      await createPlanChildren(createdFrameId, plan.elements, 0);
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [createdFrameId] }, 90000);
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "zoom-to-nodes", nodeIds: [createdFrameId] }, 90000);
 
       let lastReview = null;
       let visualQAComplete = false;
+      let visualQAError = "";
       for (let iteration = 1; iteration <= 3; iteration++) {
         stage("rendering", "Rendering the new screen for visual QA · pass " + iteration + " of 3…");
         const outputCapture = await captureRenderedNodePng(createdFrameId);
@@ -803,6 +837,10 @@
         const reviewPayload = await reviewResponse.json().catch(function () { return {}; });
         lastReview = reviewPayload && reviewPayload.review ? reviewPayload.review : null;
         visualQAComplete = !!(reviewPayload && reviewPayload.visualInspection === true);
+        visualQAError = !reviewResponse.ok
+          ? String((reviewPayload && reviewPayload.error) || "HTTP " + reviewResponse.status) +
+            (Array.isArray(reviewPayload && reviewPayload.details) ? " · " + reviewPayload.details.join(" | ") : "")
+          : lastReview ? "" : "Review API returned no structured review.";
         if (!reviewResponse.ok || !lastReview || !Array.isArray(lastReview.issues) || !lastReview.issues.length || iteration === 3) break;
 
         const refineResponse = await fetch(API + "/api/assistant/figma-agent/refine", {
@@ -834,7 +872,7 @@
       const verifiedNode = verified && Array.isArray(verified.nodes)
         ? verified.nodes.find(function (node) { return node.id === createdFrameId; })
         : null;
-      if (!verifiedNode || (Number(verifiedNode.childCount) || 0) < completedElementCount) {
+      if (!verifiedNode || Math.max(countNativeTree(verifiedNode) - 1, Number(verifiedNode.childCount) || 0) < completedElementCount) {
         throw new Error("The variation was written, but read-back could not verify all native layers. The source frame remains untouched.");
       }
       stage("done", "Design created · verification complete");
@@ -843,7 +881,7 @@
         ? (visualQAComplete
           ? " Visual QA score: " + lastReview.score + "/100. " + (lastReview.issues.length ? lastReview.issues.length + " issue(s) remain after up to two refinement passes." : "No actionable visual issues were reported.")
           : " Structural QA completed; screenshots were not both available for visual comparison.")
-        : " Visual QA service unavailable; structural verification completed.";
+        : " Visual QA service unavailable; structural verification completed." + (visualQAError ? " Review detail: " + visualQAError.slice(0, 400) : "");
       return "Created and verified \"" + plan.frame.name + "\" as a separate editable Figma variation with " +
         completedElementCount + " native layers. " + String(plan.summary || "The variation is ready for review.") +
         "\n\nModel: " + model + " · UX Direct Brain: " + memory +
@@ -872,6 +910,17 @@
         }
       }
       return { dataUrl: null, scale: 0, warning: "PNG export failed at 35%, 25%, and 20%. " + attempts.join(" | ").slice(0, 500) };
+    }
+
+    function countPlanNodes(nodes) {
+      return (Array.isArray(nodes) ? nodes : []).reduce(function (total, node) {
+        return total + 1 + countPlanNodes(node && Array.isArray(node.children) ? node.children : []);
+      }, 0);
+    }
+    function countNativeTree(node) {
+      if (!node || typeof node !== "object") return 0;
+      const children = Array.isArray(node.children) ? node.children : [];
+      return 1 + children.reduce(function (total, child) { return total + countNativeTree(child); }, 0);
     }
 
     function frameOnlyRead(result, frameId) {

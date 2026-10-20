@@ -54,28 +54,20 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
     name: String(rawFrame.name ?? rawFrame.title ?? root.frameName ?? "UX Direct Variation").trim().slice(0, 80) || "UX Direct Variation",
     width: Math.max(280, Math.min(1440, Math.round(Number.isFinite(frameWidth) ? frameWidth : 393))),
     height: Math.max(360, Math.min(4096, Math.round(Number.isFinite(frameHeight) ? frameHeight : 852))),
-    backgroundColor: normalizeColor(rawFrame.backgroundColor ?? rawFrame.background ?? rawFrame.fill ?? rawFrame.color) || "#F7F8FA",
+    backgroundColor: normalizeColor(rawFrame.backgroundColor ?? rawFrame.background ?? rawFrame.fill ?? rawFrame.color)
+      || (Array.isArray(sourceNode.fillColors) && typeof sourceNode.fillColors[0] === "string" ? normalizeColor(sourceNode.fillColors[0]) : null)
+      || "#F7F8FA",
   };
   const inputElements = root.elements ?? root.layers ?? root.nodes ?? root.children;
   if (!Array.isArray(inputElements)) {
     return { summary: root.summary ?? root.description ?? "A UX Direct native design variation.", frame, elements: inputElements };
   }
 
-  const flattened: Array<{ item: Record<string, unknown>; offsetX: number; offsetY: number }> = [];
-  function flatten(items: unknown[], offsetX = 0, offsetY = 0, depth = 0) {
-    if (depth > 4 || flattened.length >= 80) return;
-    for (const raw of items) {
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-      const item = raw as Record<string, unknown>;
-      const x = typeof item.x === "number" && Number.isFinite(item.x) ? item.x : 0;
-      const y = typeof item.y === "number" && Number.isFinite(item.y) ? item.y : 0;
-      flattened.push({ item, offsetX, offsetY });
-      if (Array.isArray(item.children) && depth < 4) flatten(item.children, offsetX + x, offsetY + y, depth + 1);
-      if (flattened.length >= 80) break;
-    }
-  }
-  flatten(inputElements);
-  const elements = flattened.map(({ item, offsetX, offsetY }, index) => {
+  let visited = 0;
+  function normalizeNode(raw: unknown, index: number, depth: number): Record<string, unknown> | null {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || depth > 4 || visited >= 75) return null;
+    const item = raw as Record<string, unknown>;
+    visited += 1;
     const type = normalizeElementType(item.type ?? item.kind ?? item.elementType ?? item.nodeType, item);
     const textValue = item.text ?? item.content ?? item.characters ?? item.value;
     const text = typeof textValue === "string" ? textValue.slice(0, 1800) : undefined;
@@ -84,14 +76,15 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
     const name = (typeof nameValue === "string" && nameValue.trim() ? nameValue.trim() : fallbackName).slice(0, 80);
     const explicitX = item.x ?? item.left;
     const explicitY = item.y ?? item.top;
-    const gridX = 20 + (index % 3) * 8;
-    const gridY = 20 + Math.floor(index / 3) * 48;
-    const x = Math.max(-1000, Math.min(5000, offsetX + (typeof explicitX === "number" && Number.isFinite(explicitX) ? explicitX : gridX)));
-    const y = Math.max(-1000, Math.min(5000, offsetY + (typeof explicitY === "number" && Number.isFinite(explicitY) ? explicitY : gridY)));
     const widthValue = item.width ?? item.w;
     const heightValue = item.height ?? item.h;
-    const width = typeof widthValue === "number" && Number.isFinite(widthValue) ? widthValue : (type === "TEXT" ? 280 : 160);
-    const height = typeof heightValue === "number" && Number.isFinite(heightValue) ? heightValue : (type === "TEXT" ? 34 : 60);
+    const width = typeof widthValue === "number" && Number.isFinite(widthValue)
+      ? widthValue : type === "FRAME" ? Math.max(1, frame.width - 32) : type === "TEXT" ? 280 : 160;
+    const height = typeof heightValue === "number" && Number.isFinite(heightValue)
+      ? heightValue : type === "FRAME" ? 100 : type === "TEXT" ? 34 : 60;
+    const x = Math.max(-1000, Math.min(5000, typeof explicitX === "number" && Number.isFinite(explicitX) ? explicitX : 16));
+    const y = Math.max(-1000, Math.min(5000, typeof explicitY === "number" && Number.isFinite(explicitY)
+      ? explicitY : type === "FRAME" ? 16 + index * 120 : 16 + index * 44));
     const color = normalizeColor(item.color ?? item.fill ?? item.backgroundColor ?? item.background ?? item.fillColor);
     const strokeColor = normalizeColor(item.strokeColor ?? item.stroke ?? item.borderColor);
     const fontRaw = item.font && typeof item.font === "object" && !Array.isArray(item.font) ? item.font as Record<string, unknown> : {};
@@ -107,6 +100,7 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
     if (typeof item.fontStyle === "string" || typeof fontRaw.style === "string" || typeof fontRaw.weight === "string") normalized.fontStyle = String(item.fontStyle ?? fontRaw.style ?? fontRaw.weight).trim().slice(0, 100) || "Regular";
     if (color) normalized.color = color;
     if (strokeColor) normalized.strokeColor = strokeColor;
+    if (typeof item.noFill === "boolean") normalized.noFill = item.noFill;
     const aliases: Array<[string, string]> = [
       ["strokeWeight", "strokeWeight"], ["opacity", "opacity"], ["cornerRadius", "cornerRadius"],
       ["clipsContent", "clipsContent"], ["layoutMode", "layoutMode"], ["itemSpacing", "itemSpacing"],
@@ -118,13 +112,13 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
       ["shadowBlur", "shadowBlur"], ["shadowX", "shadowX"], ["shadowY", "shadowY"], ["shadowSpread", "shadowSpread"],
     ];
     for (const [sourceKey, targetKey] of aliases) {
-      const raw = item[sourceKey] ?? (sourceKey === "cornerRadius" ? item.radius ?? item.borderRadius : undefined);
-      if (raw === undefined) continue;
+      const rawValue = item[sourceKey] ?? (sourceKey === "cornerRadius" ? item.radius ?? item.borderRadius : undefined);
+      if (rawValue === undefined) continue;
       if (sourceKey === "shadowColor") {
-        const normalizedColor = normalizeColor(raw);
+        const normalizedColor = normalizeColor(rawValue);
         if (normalizedColor) normalized[targetKey] = normalizedColor;
-      } else if (sourceKey === "clipsContent" && typeof raw === "boolean") normalized[targetKey] = raw;
-      else if (typeof raw === "number" && Number.isFinite(raw)) {
+      } else if (sourceKey === "clipsContent" && typeof rawValue === "boolean") normalized[targetKey] = rawValue;
+      else if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
         const ranges: Record<string, [number, number]> = {
           strokeWeight: [0, 20], opacity: [0, 1], cornerRadius: [0, 128],
           itemSpacing: [0, 160], paddingLeft: [0, 160], paddingRight: [0, 160],
@@ -132,29 +126,130 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
           shadowX: [-30, 30], shadowY: [-30, 30], shadowSpread: [-30, 30],
         };
         const range = ranges[targetKey];
-        normalized[targetKey] = range ? Math.max(range[0], Math.min(range[1], raw)) : raw;
-      } else if (typeof raw === "string") {
+        normalized[targetKey] = range ? Math.max(range[0], Math.min(range[1], rawValue)) : rawValue;
+      } else if (typeof rawValue === "string") {
         const enumKeys = new Set([
           "layoutMode", "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode",
-          "counterAxisSizingMode", "textAlignHorizontal", "textAlignVertical", "textAutoResize",
-          "textCase", "textDecoration",
+          "counterAxisSizingMode", "textAlignHorizontal", "textAlignVertical", "textAutoResize", "textCase", "textDecoration",
         ]);
-        let enumValue = raw.trim().toUpperCase().replace(/[ -]+/g, "_");
+        let enumValue = rawValue.trim().toUpperCase().replace(/[ -]+/g, "_");
         if (targetKey === "textCase") {
           if (enumValue === "UPPERCASE" || enumValue === "UPPER_CASE") enumValue = "UPPER";
           if (enumValue === "LOWERCASE" || enumValue === "LOWER_CASE") enumValue = "LOWER";
           if (enumValue === "TITLE_CASE") enumValue = "TITLE";
         }
-        if (enumKeys.has(targetKey)) normalized[targetKey] = enumValue;
-        else normalized[targetKey] = raw.trim().slice(0, 100);
+        normalized[targetKey] = enumKeys.has(targetKey) ? enumValue : rawValue.trim().slice(0, 100);
       }
     }
+    if (Array.isArray(item.children) && depth < 4) {
+      const children: Record<string, unknown>[] = [];
+      for (const [childIndex, child] of item.children.slice(0, 35).entries()) {
+        const nested = normalizeNode(child, childIndex, depth + 1);
+        if (nested) children.push(nested);
+        if (visited >= 75) break;
+      }
+      if (children.length) normalized.children = children;
+    }
     return normalized;
-  });
+  }
+
+  let normalized = inputElements.map((item, index) => normalizeNode(item, index, 0)).filter((item): item is Record<string, unknown> => !!item);
+  const countTree = (nodes: Record<string, unknown>[]): number => nodes.reduce((count, node) =>
+    count + 1 + (Array.isArray(node.children) ? countTree(node.children as Record<string, unknown>[]) : 0), 0);
+  const namedFrameGroups = normalized.filter((node) => node.type === "FRAME" && Array.isArray(node.children) && node.children.length > 0).length;
+  const alreadyStructured = normalized.length >= 5 && normalized.length <= 12 &&
+    normalized.every((node) => node.type === "FRAME" && Array.isArray(node.children) && node.children.length > 0) &&
+    namedFrameGroups >= 4 && countTree(normalized) <= 80;
+
+  if (!alreadyStructured) {
+    const allLeaves: Array<Record<string, unknown>> = [];
+    const collect = (nodes: Record<string, unknown>[]) => {
+      for (const node of nodes) {
+        const children = Array.isArray(node.children) ? node.children as Record<string, unknown>[] : [];
+        if (children.length) {
+          allLeaves.push(node);
+          // Preserve a model-authored component frame as one leaf rather than destroying its nested contents.
+        } else {
+          allLeaves.push(node);
+        }
+      }
+    };
+    collect(normalized);
+    const bands = [
+      { name: "Header & navigation", start: 0, end: 0.14 },
+      { name: "Status & section tabs", start: 0.14, end: 0.30 },
+      { name: "Primary information", start: 0.30, end: 0.55 },
+      { name: "Details & breakdown", start: 0.55, end: 0.78 },
+      { name: "Actions & support", start: 0.78, end: 1.5 },
+    ];
+    const isFullScreenBackdrop = (item: Record<string, unknown>) =>
+      item.type === "RECTANGLE" && (Number(item.x) || 0) <= 2 && (Number(item.y) || 0) <= 2 &&
+      (Number(item.width) || 0) >= frame.width * 0.94 && (Number(item.height) || 0) >= frame.height * 0.9;
+    const eligibleLeaves = allLeaves.filter((item) => !isFullScreenBackdrop(item));
+    const buckets: Array<Array<Record<string, unknown>>> = bands.map((band) =>
+      eligibleLeaves.filter((item) => {
+        const centerY = (Number(item.y) || 0) + (Number(item.height) || 0) / 2;
+        return centerY / frame.height >= band.start && centerY / frame.height < band.end;
+      }).slice(0, 30)
+    );
+    // Flat model plans sometimes place most nodes in one region. Rebalance only when necessary so each semantic section gets a unique child without duplicating any Figma layer.
+    for (let emptyIndex = 0; emptyIndex < buckets.length; emptyIndex += 1) {
+      if (buckets[emptyIndex].length) continue;
+      const targetY = frame.height * (bands[emptyIndex].start + bands[emptyIndex].end) / 2;
+      let donorIndex = -1, nodeIndex = -1, bestDistance = Number.POSITIVE_INFINITY;
+      for (let groupIndex = 0; groupIndex < buckets.length; groupIndex += 1) {
+        if (buckets[groupIndex].length <= 1) continue;
+        for (let candidateIndex = 0; candidateIndex < buckets[groupIndex].length; candidateIndex += 1) {
+          const candidate = buckets[groupIndex][candidateIndex];
+          const centerY = (Number(candidate.y) || 0) + (Number(candidate.height) || 0) / 2;
+          const distance = Math.abs(centerY - targetY);
+          if (distance < bestDistance) { bestDistance = distance; donorIndex = groupIndex; nodeIndex = candidateIndex; }
+        }
+      }
+      if (donorIndex >= 0 && nodeIndex >= 0) {
+        const moved = buckets[donorIndex].splice(nodeIndex, 1)[0];
+        buckets[emptyIndex].push(moved);
+      }
+    }
+    const groups = bands.map((band, index) => {
+      const bucket = buckets[index];
+      const minX = bucket.length ? Math.max(0, Math.min(...bucket.map((item) => Number(item.x) || 0))) : 16;
+      const minY = bucket.length ? Math.max(0, Math.min(...bucket.map((item) => Number(item.y) || 0))) : Math.round(frame.height * band.start);
+      const maxX = bucket.length ? Math.max(...bucket.map((item) => (Number(item.x) || 0) + (Number(item.width) || 1))) : frame.width - 16;
+      const maxY = bucket.length ? Math.max(...bucket.map((item) => (Number(item.y) || 0) + (Number(item.height) || 1))) : minY + 1;
+      const children = bucket.map((item) => {
+        const nested = { ...item, x: Math.max(0, (Number(item.x) || 0) - minX), y: Math.max(0, (Number(item.y) || 0) - minY) };
+        return nested;
+      });
+      return {
+        type: "FRAME", name: band.name, x: minX, y: minY,
+        width: Math.max(1, Math.min(frame.width, maxX - minX)),
+        height: Math.max(1, Math.min(frame.height, maxY - minY)),
+        noFill: true, clipsContent: false, children,
+      };
+    });
+    normalized = groups;
+  }
+
+  // Hard cap the full hierarchy because every node is materialized as a native Figma object.
+  function prune(nodes: Record<string, unknown>[], allowance: { count: number }, depth = 0): Record<string, unknown>[] {
+    const result: Record<string, unknown>[] = [];
+    for (const node of nodes) {
+      if (allowance.count >= 80 || depth > 4) break;
+      allowance.count += 1;
+      const copy = { ...node };
+      if (Array.isArray(copy.children)) {
+        copy.children = prune(copy.children as Record<string, unknown>[], allowance, depth + 1);
+        if (!(copy.children as unknown[]).length) delete copy.children;
+      }
+      result.push(copy);
+    }
+    return result;
+  }
+  normalized = prune(normalized, { count: 0 });
   return {
-    summary: String(root.summary ?? root.description ?? root.rationale ?? "A polished native Figma design variation.").trim().slice(0, 700),
+    summary: String(root.summary ?? root.description ?? root.rationale ?? "A structured, high-fidelity native Figma design variation.").trim().slice(0, 700),
     frame,
-    elements,
+    elements: normalized,
   };
 }
-
