@@ -148,3 +148,43 @@ test("native plugin bridge accepts in-plugin commands only with the live allowli
   assert.ok(bridge.includes('CANVAS_WRITE_PAYLOAD.safeParse(body.payload)'));
   assert.ok(bridge.includes('expiresAt: new Date(now.getTime() + 240000).toISOString()'));
 });
+
+test("Figma agent normalizes provider-native design fields and uses the requested model order", () => {
+  assert.ok(agent.includes("function normalizePlan("), "Provider responses must be normalized before strict schema validation.");
+  assert.ok(agent.includes("item.fill ?? item.backgroundColor"), "Provider fill aliases must map to the native Figma color field.");
+  assert.ok(agent.includes("item.kind ?? item.elementType ?? item.nodeType"), "Provider layer type aliases must be normalized.");
+  assert.ok(agent.includes("const models = [\"openai/gpt-6-luna\", \"openrouter/auto\"];"), "GPT-6 Luna must be primary and OpenRouter Auto fallback.");
+  assert.ok(agent.includes("const normalizedPlan = normalizePlan(rawPlan, canvas);"), "A normalized model plan must be validated before any canvas write.");
+  assert.ok(agent.includes('PlanSchema.safeParse(normalizedPlan)'), "Native plan schema validation must remain mandatory.");
+});
+
+test("connection panel exposes an expandable native Figma health-check report", () => {
+  assert.ok(pluginUi.includes('id="healthSummary"'), "Connection details must expose a clickable health-check label.");
+  assert.ok(pluginUi.includes('id="healthDetails"'), "Health-check label must expand a native action inventory.");
+  assert.ok(pluginUi.includes('id="healthCheckList"'), "All checks must be rendered in the detailed list.");
+  assert.ok(pluginUi.includes("function visibleHealthChecks(report)"), "Folder, file, and library access must be filtered from the user-facing list.");
+  assert.ok(pluginUi.includes('mode: "health-state"'), "The panel should load the last saved report for this plugin session.");
+  assert.ok(pluginUi.includes('type: "run-native-health-check"'), "The user can explicitly run or rerun the native checks.");
+});
+
+test("native health check catalogue includes more than 100 non-file API probes and all native writer actions", () => {
+  const start = plugin.indexOf("var nativeCapabilityProbes = [");
+  const end = plugin.indexOf("nativeCapabilityProbes.forEach", start);
+  assert.ok(start >= 0 && end > start, "Native capability inventory must exist.");
+  const catalogue = plugin.slice(start, end);
+  const probeCount = (catalogue.match(/\["[^"]+",\s*"[^"]+",\s*function/g) || []).length;
+  assert.ok(probeCount >= 100, "Expected 100+ API capability probes, got " + probeCount);
+  assert.doesNotMatch(catalogue, /\["[^"]+",\s*"[^"]*(?:folder|file access|team library)[^"]*"/i, "Folder/file access must not be part of the capability catalogue.");
+  for (const operation of [
+    "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+    "reparent-node", "group-nodes", "ungroup-node", "flatten-nodes", "boolean-operation",
+    "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance",
+    "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page",
+    "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
+  ]) assert.ok(plugin.includes('"' + operation + '"'), "Missing native operation in health inventory: " + operation);
+});
+
+test("bridge supports saved health reports above the legacy 100-check ceiling", () => {
+  assert.ok(bridge.includes("checks: z.array(CHECK).max(300)"));
+  assert.ok(bridge.includes('mode === "health-state"'));
+});
