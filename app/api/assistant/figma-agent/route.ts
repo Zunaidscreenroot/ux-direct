@@ -299,7 +299,6 @@ export async function POST(request: Request) {
   if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
   // Ignore a model override from older plugin UI builds. Figma generation is intentionally
   // locked to OpenRouter Auto's LOW cost tier to prevent app-level model fan-out.
-  const requestedModel = FIGMA_AGENT_DEFAULT_MODEL;
   const renderedScreen = typeof parsedInput.data.renderedScreen === "string" &&
     parsedInput.data.renderedScreen.length <= 52000 &&
     new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.renderedScreen)
