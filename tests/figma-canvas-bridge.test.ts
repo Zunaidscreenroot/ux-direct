@@ -292,7 +292,7 @@ test("native Figma design creation builds nested frame containers before their c
 });
 
 test("short Figma prompts inherit the complete design-variation workflow", () => {
-  assert.ok(agent.includes("short request expresses the desired change; it is NOT expected to contain the procedure"));
+  assert.ok(agent.includes("Users can give a short request. Infer the design procedure and execute the full playbook automatically"));
   assert.ok(agent.includes("preservation inventory from the selected layer tree"));
   assert.ok(agent.includes("Auto Layout for card content, stacks, tab rows, repeated information rows"));
   assert.ok(agent.includes("TARGET SCOPE: COMPONENT/CARD"));
