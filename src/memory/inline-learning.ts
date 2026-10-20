@@ -28,11 +28,7 @@ function containsSensitiveMaterial(value: string): boolean {
     || /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(value);
 }
 
-export function parseInlineLearningCandidate(raw: string): InlineLearningCandidate | null {
-  const value = raw.trim();
-  if (!value || value.length > 5000) return null;
-  let parsed: unknown;
-  try { parsed = JSON.parse(value); } catch { return null; }
+export function sanitizeInlineLearningCandidate(parsed: unknown): InlineLearningCandidate | null {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const item = parsed as Record<string, unknown>;
   if (typeof item.title !== "string" || typeof item.normalizedRule !== "string" ||
@@ -48,15 +44,32 @@ export function parseInlineLearningCandidate(raw: string): InlineLearningCandida
     ? [...new Set(item.keywords.filter((entry): entry is string => typeof entry === "string")
       .map(entry => entry.trim().toLowerCase()).filter(entry => entry.length > 0 && entry.length <= 64 && !containsSensitiveMaterial(entry)))].slice(0, 20)
     : [];
-  return {
-    title,
-    normalizedRule,
-    rationale,
-    scopeKey: item.scopeKey,
-    feedbackKind,
-    keywords,
-    originalLanguage: typeof item.originalLanguage === "string" ? item.originalLanguage.slice(0, 60) : "English",
-  };
+  const languageValue = typeof item.originalLanguage === "string" ? item.originalLanguage.trim().toLowerCase() : "english";
+  const originalLanguage = languageValue === "hindi" ? "Hindi"
+    : languageValue === "hinglish" ? "Hinglish"
+    : languageValue === "mixed" ? "Mixed"
+    : languageValue === "unknown" ? "unknown"
+    : "English";
+  return { title, normalizedRule, rationale, scopeKey: item.scopeKey, feedbackKind, keywords, originalLanguage };
+}
+
+export function parseInlineLearningCandidate(raw: string): InlineLearningCandidate | null {
+  const value = raw.trim();
+  if (!value || value.length > 5000) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { return null; }
+  return sanitizeInlineLearningCandidate(parsed);
+}
+
+/** Prevent a model from copying a client name into a broader scope when the task did not name that client. */
+export function referencesUnstatedClient(candidate: InlineLearningCandidate, context: string): boolean {
+  const output = [candidate.title, candidate.normalizedRule, candidate.rationale, ...candidate.keywords].join(" ");
+  const names: Array<{ pattern: RegExp; contextPattern: RegExp }> = [
+    { pattern: /\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\b/i, contextPattern: /\b(ujjivan|ujjivan sfb|ujjivan small finance bank)\b/i },
+    { pattern: /\b(dmi|dmi hfc|dmi finance|dmi wealth)\b/i, contextPattern: /\b(dmi|dmi hfc|dmi finance|dmi wealth)\b/i },
+    { pattern: /\bexpress computers\b/i, contextPattern: /\bexpress computers\b/i },
+  ];
+  return names.some(({ pattern, contextPattern }) => pattern.test(output) && !contextPattern.test(context));
 }
 
 /**
