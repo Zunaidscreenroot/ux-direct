@@ -204,7 +204,7 @@ test("Figma visual analysis receives a scaled rendered PNG together with native 
   assert.ok(pluginUi.includes('operation: "export-node", nodeId: sourceNode.id, format: "PNG", scale: 0.35'));
   assert.ok(plugin.includes('exportOptions.constraint = { type: "SCALE"'));
   assert.ok(bridge.includes('scale: z.number().finite().min(0.2).max(1).optional()'));
-  assert.ok(agent.includes('renderedScreen: z.string().max(52000).optional()'));
+  assert.ok(agent.includes('renderedScreen: z.string().max(52000).nullable().optional()'));
   assert.ok(agent.includes('type: "image_url"'));
   assert.ok(agent.includes("Analyse BOTH the attached rendered screen image and native layer tree"));
 });
@@ -217,6 +217,8 @@ test("Figma visual review and refinement endpoints are wired and bounded", () =>
   assert.ok(pluginUi.includes("iteration <= 3"));
   assert.ok(pluginUi.includes("iteration === 3"));
   assert.ok(review.includes('type: "image_url"'));
+  assert.ok(review.includes('sourceImage: z.string().max(52000).nullable().optional()'));
+  assert.ok(review.includes('outputImage: z.string().max(52000).nullable().optional()'));
   assert.ok(review.includes("visualInspection: !!sourceImage && !!outputImage"));
   assert.ok(refine.includes("PatchSchema"));
   assert.ok(refine.includes("found.get(entry.nodeId)"));
@@ -232,4 +234,13 @@ test("Figma plugin cockpit has a morphing orb and visible process stages", () =>
   }
   const manifest = read("figma-plugin/manifest.json");
   assert.ok(manifest.includes("scaled PNG previews"));
+});
+
+test("Figma visual capture failures do not invalidate the full design request", () => {
+  assert.ok(agent.includes("renderedScreen: z.string().max(52000).nullable().optional()"));
+  assert.ok(agent.includes('error: "Invalid Figma agent request."'));
+  assert.ok(agent.includes('issue.path.join(".")'));
+  assert.ok(review.includes('sourceImage: z.string().max(52000).nullable().optional()'));
+  assert.ok(review.includes('outputImage: z.string().max(52000).nullable().optional()'));
+  assert.ok(pluginUi.includes('detail.message || "Invalid input"'));
 });
