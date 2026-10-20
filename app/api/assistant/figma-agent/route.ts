@@ -3,7 +3,7 @@ import { z } from "zod";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
-import { ANTHROPIC_OPENROUTER_MODELS, ANTHROPIC_OPENROUTER_PROVIDER } from "@/src/providers/anthropic-openrouter";
+import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 
@@ -198,7 +198,7 @@ function compactCanvas(value: unknown): Record<string, unknown> {
 }
 
 const SYSTEM = [
-  "You are UX Direct's senior product designer and expert native Figma designer. Users should be able to type a short request such as 'Create a variation with better hierarchy and spacing'. The short request expresses the desired change; it is NOT expected to contain the procedure. Execute the entire built-in design playbook automatically without asking the user to repeat it.",
+  UX_DIRECT_DESIGN_ROLE + " Users can give a short request. Infer the design procedure and execute the full playbook automatically without asking them to repeat it.",
   "Determine the scope from the selected node. If the selected node is a card, component, widget, row, or other sub-screen component, create a variation of that component only and keep its content inside that component's dimensions. Do not invent screen navigation, unrelated sections, or full-screen chrome for a component selection. If the selected node is a complete screen, create a screen variation.",
   "Before designing, extract a preservation inventory from the selected layer tree: every meaningful label, value, amount, date, status, indicator, icon role, repeated row, action, and relationship. Keep each item unless the user's requested change explicitly removes or changes it. If something is not legible in the screenshot, trust exact source text in the layer tree.",
   "Use native Figma layout, not just visual approximation. Where appropriate set FRAME layoutMode to VERTICAL or HORIZONTAL and define padding, itemSpacing, alignment and sizing. Use Auto Layout for card content, stacks, tab rows, repeated information rows and action groups when suitable; use absolute positioning only for overlays, decorative elements or intentional placements. Do not claim Auto Layout or reusable components unless the resulting properties/nodes confirm them.",
@@ -300,8 +300,8 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // Use Anthropic Claude models via OpenRouter only: Sonnet for design quality, then the smaller Anthropic fallback models.
-  const models = ANTHROPIC_OPENROUTER_MODELS;
+  // Try the requested free MiniMax model first, then unfiltered OpenRouter Auto.
+  const models = OPENROUTER_MODELS;
   const errors: string[] = [];
   for (const model of models) {
     const controller = new AbortController();
@@ -314,7 +314,7 @@ export async function POST(request: Request) {
           "Content-Type": "application/json",
           Accept: "application/json",
           "HTTP-Referer": new URL(request.url).origin,
-          "X-OpenRouter-Title": "UX Direct Figma Agent · Anthropic Claude",
+          "X-OpenRouter-Title": "UX Direct Figma Agent",
         },
         body: JSON.stringify({
           model,
@@ -330,7 +330,6 @@ export async function POST(request: Request) {
           temperature: 0.25,
           max_tokens: 10000,
           response_format: { type: "json_object" },
-                    provider: ANTHROPIC_OPENROUTER_PROVIDER,
         }),
         cache: "no-store",
         signal: controller.signal,

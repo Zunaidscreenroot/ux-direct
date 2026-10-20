@@ -3,7 +3,9 @@ import { z } from "zod";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveBrainScopes } from "@/src/memory/chat-context";
 import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
-import { ANTHROPIC_OPENROUTER_MODELS, ANTHROPIC_OPENROUTER_PROVIDER } from "@/src/providers/anthropic-openrouter";
+import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
+import { normalizeVisualReview } from "@/src/figma-agent/normalize-visual-review";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,15 +68,6 @@ function compactCanvas(value: unknown): Record<string, unknown> {
     nodes,
   };
 }
-function parseJsonObject(value: unknown): unknown {
-  if (typeof value !== "string") return null;
-  const text = value.trim();
-  const first = text.indexOf("{");
-  const last = text.lastIndexOf("}");
-  if (first < 0 || last <= first) return null;
-  try { return JSON.parse(text.slice(first, last + 1)); } catch { return null; }
-}
-
 export async function OPTIONS(request: Request) {
   const headers = corsHeaders(request);
   if (!isAllowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
@@ -138,7 +131,7 @@ export async function POST(request: Request) {
   if (outputImage) userContent.push({ type: "image_url", image_url: { url: outputImage } });
 
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const models = ANTHROPIC_OPENROUTER_MODELS;
+  const models = OPENROUTER_MODELS;
   const errors: string[] = [];
   for (const model of models) {
     const controller = new AbortController();
@@ -151,7 +144,7 @@ export async function POST(request: Request) {
           "Content-Type": "application/json",
           Accept: "application/json",
           "HTTP-Referer": new URL(request.url).origin,
-          "X-OpenRouter-Title": "UX Direct Visual QA · Anthropic Claude",
+          "X-OpenRouter-Title": "UX Direct Visual QA",
         },
         body: JSON.stringify({
           model,
@@ -159,7 +152,8 @@ export async function POST(request: Request) {
             {
               role: "system",
               content: [
-                "You are a rigorous senior product designer and visual QA reviewer inside a native Figma design agent.",
+                UX_DIRECT_DESIGN_ROLE,
+                "You are the visual QA reviewer inside a native Figma design agent. Compare source and output honestly and return evidence-based actionable defects.",
                 "Return JSON only with required keys: issues (array of {severity:'high'|'medium'|'low', issue:string, evidence:string, fix:string}), score (number 0–100), summary (string); optional learningCandidate (null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}) only if this review revealed a durable reusable design or execution lesson. Do not turn one-off screen defects, client-specific details, screenshots, node IDs, or private text into a general lesson. Use the narrowest safe scope; the backend validates the candidate and applies the existing 50% relevance gate.",
                 "Compare the source screenshot with the generated screenshot when both exist. Evaluate whether the result meaningfully preserves the selected screen's specific purpose/components and improves craft. Look for generic redesign patterns, clipped text, poor spacing, hierarchy, alignment, contrast, content density and weak CTA priority.",
                 "If screenshots are missing, treat the review as structural-only. Do not claim to see visual details. If no actionable issues remain, return an empty issues array.",
@@ -172,7 +166,6 @@ export async function POST(request: Request) {
           temperature: 0.1,
           max_tokens: 1800,
           response_format: { type: "json_object" },
-          provider: ANTHROPIC_OPENROUTER_PROVIDER,
         }),
         cache: "no-store",
         signal: controller.signal,
@@ -187,11 +180,14 @@ export async function POST(request: Request) {
       const choices = Array.isArray(record.choices) ? record.choices : [];
       const choice = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : {};
       const message = choice.message && typeof choice.message === "object" ? choice.message as Record<string, unknown> : {};
-      const decoded = parseJsonObject(message.content);
-      const decodedRecord = decoded && typeof decoded === "object" && !Array.isArray(decoded)
-        ? { ...(decoded as Record<string, unknown>) } : {};
+      const decoded = extractJsonObject(message.content)
+        ?? extractJsonObject(message.parsed)
+        ?? extractJsonObject(message.tool_calls)
+        ?? extractJsonObject(message);
+      const decodedRecord = decoded ? { ...decoded } : {};
       const learningCandidate = decodedRecord.learningCandidate;
       delete decodedRecord.learningCandidate;
+      const normalizedReview = normalizeVisualReview(decodedRecord);
       const reviewSchema = z.object({
         issues: z.array(z.object({
           severity: z.enum(["high", "medium", "low"]),
@@ -202,9 +198,11 @@ export async function POST(request: Request) {
         score: z.number().min(0).max(100),
         summary: z.string().trim().min(1).max(500),
       }).strict();
-      const validated = reviewSchema.safeParse(decodedRecord);
+      const validated = reviewSchema.safeParse(normalizedReview);
       if (!validated.success) {
-        errors.push(model + ": response did not match the visual QA schema");
+        const returnedFields = decodedRecord ? Object.keys(decodedRecord).slice(0, 10).join(",") : "no-json-object";
+        errors.push(model + ": response did not normalize to the visual QA schema (fields=" + returnedFields +
+          ", issue-array=" + String(Boolean(decodedRecord.issues || decodedRecord.findings || decodedRecord.defects || decodedRecord.problems)) + ").");
         continue;
       }
       const learningStatus = await captureFigmaTaskLearning(
