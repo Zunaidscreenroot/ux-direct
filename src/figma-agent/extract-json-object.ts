@@ -6,7 +6,7 @@ function isRecord(value: unknown): value is JsonRecord {
 
 function isUsefulResponseObject(value: unknown): value is JsonRecord {
   if (!isRecord(value)) return false;
-  return ["issues", "findings", "patch", "summary", "score", "qualityScore", "frame", "elements"].some((key) => key in value);
+  return ["issues", "findings", "defects", "problems", "patch", "summary", "assessment", "overallAssessment", "score", "qualityScore", "visualScore", "overallScore", "frame", "elements"].some((key) => key in value);
 }
 
 function parseJsonRecordText(text: string): JsonRecord | null {
