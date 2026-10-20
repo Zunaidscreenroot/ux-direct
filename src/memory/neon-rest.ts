@@ -8,6 +8,25 @@ const ALLOWED_TABLES = new Set([
   "uxd_brain_eval_cases",
 ]);
 
+// The Neon/Postgres driver treats JavaScript arrays as PostgreSQL arrays by
+// default. JSONB columns such as examples must receive JSON text instead,
+// or an empty JS array becomes an object-like PostgreSQL array and violates
+// the JSON-array constraint.
+const JSONB_COLUMNS: Record<string, ReadonlySet<string>> = {
+  uxd_brain_feedback: new Set(["examples", "metadata"]),
+  uxd_knowledge_documents: new Set(["metadata"]),
+  uxd_knowledge_chunks: new Set(["metadata"]),
+  uxd_brain_eval_cases: new Set(["last_run_result", "metadata"]),
+};
+
+function serializeDatabaseValue(table: string, column: string, value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (JSONB_COLUMNS[table]?.has(column) && typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return value;
+}
+
 function databaseUrl(): string {
   const value = process.env.DATABASE_URL
     || process.env.POSTGRES_PRISMA_URL
@@ -143,7 +162,7 @@ export async function neonRequest(path: string, init: RequestInit = {}): Promise
       if (!columns.length) throw new Error("Database insert body is empty.");
       const colSql = columns.map(quoteIdentifier).join(", ");
       const placeholders = columns.map((_, index) => "$" + (index + 1)).join(", ");
-      const values = columns.map(column => row[column]);
+      const values = columns.map(column => serializeDatabaseValue(table, column, row[column]));
       const conflict = params.get("on_conflict");
       let conflictSql = "";
       if (conflict && /resolution=merge-duplicates/i.test(prefer)) {
@@ -168,7 +187,7 @@ export async function neonRequest(path: string, init: RequestInit = {}): Promise
     const columns = Object.keys(row);
     if (!columns.length) return null;
     const setSql = columns.map((column, index) => `${quoteIdentifier(column)} = $${index + 1}`).join(", ");
-    const values = columns.map(column => row[column]);
+    const values = columns.map(column => serializeDatabaseValue(table, column, row[column]));
     const conditions = addWhere(params, values, 1);
     const whereSql = conditions.length ? " WHERE " + conditions.join(" AND ") : "";
     const result = await execute(
