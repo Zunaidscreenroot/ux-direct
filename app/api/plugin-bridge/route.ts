@@ -199,6 +199,7 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   booleanOperation: z.enum(["UNION", "SUBTRACT", "INTERSECT", "EXCLUDE"]).optional(),
   componentId: z.string().trim().min(1).max(100).optional(),
   format: z.enum(["PNG", "PDF", "SVG_STRING"]).optional(),
+  scale: z.number().finite().min(0.2).max(1).optional(),
   range: CANVAS_TEXT_RANGE.optional(),
   imageBase64: z.string().max(250000).optional(),
   scaleMode: z.enum(["FILL", "FIT", "CROP", "TILE"]).optional(),
