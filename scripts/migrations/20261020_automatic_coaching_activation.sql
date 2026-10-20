@@ -59,12 +59,10 @@ BEGIN
       RAISE EXCEPTION 'A normalized rule is required before activation';
     END IF;
 
-    normalized_key := encode(
-      digest(
-        lower(regexp_replace(normalized_scope || '|' || coalesce(feedback_row.title, '') || '|' || feedback_row.normalized_rule, '\s+', ' ', 'g')),
-        'sha256'
-      ),
-      'hex'
+    -- Built-in md5 is sufficient for a non-security deduplication key and does
+    -- not depend on pgcrypto being installed in this Neon database.
+    normalized_key := md5(
+      lower(regexp_replace(normalized_scope || '|' || coalesce(feedback_row.title, '') || '|' || feedback_row.normalized_rule, '\s+', ' ', 'g'))
     );
 
     memory_content := trim(feedback_row.normalized_rule) ||
