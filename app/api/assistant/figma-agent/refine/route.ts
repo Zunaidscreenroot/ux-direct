@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { FIGMA_AGENT_DEFAULT_MODEL, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 
 export const runtime = "nodejs";
@@ -112,11 +112,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Generated variation contains no editable native node IDs." }, { status: 400, headers });
   }
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const models = [FIGMA_AGENT_DEFAULT_MODEL];
+  const models = [...OPENROUTER_MODELS];
   const errors: string[] = [];
   for (const [modelIndex, model] of models.entries()) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), modelIndex === 0 ? 24000 : 15000);
+    const timer = setTimeout(() => controller.abort(), modelIndex === 0 ? 24000 : 20000);
     try {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -124,7 +124,6 @@ export async function POST(request: Request) {
           "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Design Refiner" },
         body: JSON.stringify({
           model,
-          ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
           messages: [
             { role: "system", content: [
               UX_DIRECT_DESIGN_ROLE + " You are UX Direct's surgical native-Figma refinement agent. Return JSON only: {patch:[{nodeId:string,patch:object}]}.",

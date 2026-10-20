@@ -3,7 +3,7 @@ import { z } from "zod";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
-import { FIGMA_AGENT_DEFAULT_MODEL, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 
@@ -359,10 +359,9 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // OpenRouter Auto routes within the LOW cost tier. UX Direct makes no separate model
-  // fallback calls. At most one compact retry is sent to the same Auto route if the first
-  // response is malformed; that retry is sequential, never parallel.
-  const models = [FIGMA_AGENT_DEFAULT_MODEL];
+  // Explicit, sequential, cost-ordered chain. The primary gets one compact retry;
+  // each fallback gets a single attempt before moving on. No Auto route or parallel fan-out.
+  const models = [...OPENROUTER_MODELS];
   const errors: string[] = [];
   const recoveryContext = JSON.stringify({
     prompt: parsedInput.data.prompt,
@@ -385,10 +384,10 @@ export async function POST(request: Request) {
   const generationStartedAt = Date.now();
   for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
-    const attemptsForModel = 2;
+    const attemptsForModel = modelIndex === 0 ? 2 : 1;
     for (let recoveryAttempt = 0; recoveryAttempt < attemptsForModel; recoveryAttempt += 1) {
       const isRecovery = recoveryAttempt === 1;
-      const attemptTimeoutMs = isRecovery ? 16000 : 28000;
+      const attemptTimeoutMs = isRecovery ? 16000 : (modelIndex === 0 ? 28000 : 22000);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
       try {
@@ -419,9 +418,8 @@ export async function POST(request: Request) {
               { role: "user", content: userContent },
             ],
             ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
-            // OpenRouter Auto stays in its lowest cost band. It selects one model per
-            // request; no candidate models are launched in parallel by UX Direct.
-            ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
+            // Keep Gemini's reasoning budget low so it leaves room for visible design JSON.
+            ...(model === "google/gemini-3.7-flash" ? { reasoning: { effort: isRecovery ? "minimal" : "low" } } : {}),
             max_tokens: isRecovery ? 6500 : 12000,
             // JSON mode is enabled for the first attempt. Compact retries use normal text mode
             // because some provider/model routes have returned successful but empty choices.
@@ -430,7 +428,17 @@ export async function POST(request: Request) {
           cache: "no-store",
           signal: controller.signal,
         });
-        const rawPayload: unknown = await response.json().catch(() => null);
+        const responseContentType = response.headers.get("content-type") || "unknown";
+        const responseText = await response.text().catch(() => "");
+        let rawPayload: unknown = null;
+        let responseJsonInvalid = false;
+        if (responseText.trim()) {
+          try {
+            rawPayload = JSON.parse(responseText.replace(/^\\uFEFF/, "")) as unknown;
+          } catch {
+            responseJsonInvalid = true;
+          }
+        }
         const payload = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
           ? rawPayload as Record<string, unknown>
           : {};
@@ -441,6 +449,27 @@ export async function POST(request: Request) {
           const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
           errors.push(model + (isRecovery ? " compact retry" : "") + ": " + detail);
           if (!isRecovery && [408, 429, 500, 502, 503, 504].includes(response.status)) continue;
+          break;
+        }
+        if (!responseText.trim()) {
+          errors.push(model + (isRecovery ? " compact retry" : "") +
+            ": provider returned an empty response body (HTTP " + response.status +
+            ", content-type=" + responseContentType + ").");
+          if (!isRecovery) continue;
+          break;
+        }
+        if (responseJsonInvalid) {
+          errors.push(model + (isRecovery ? " compact retry" : "") +
+            ": provider returned a non-JSON response body (HTTP " + response.status +
+            ", content-type=" + responseContentType + ", chars=" + responseText.length + ").");
+          if (!isRecovery) continue;
+          break;
+        }
+        if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
+          const payloadType = rawPayload === null ? "null" : Array.isArray(rawPayload) ? "array" : typeof rawPayload;
+          errors.push(model + (isRecovery ? " compact retry" : "") +
+            ": provider returned a non-object JSON envelope (type=" + payloadType + ").");
+          if (!isRecovery) continue;
           break;
         }
         const nestedData = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)

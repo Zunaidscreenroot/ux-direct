@@ -1,22 +1,23 @@
 /**
- * Models curated for UX Direct's native Figma screen-generation task.
- * The agent consumes a rendered screenshot (when available) plus native Figma
- * layer data and must return structured JSON for editable native layers.
+ * Explicit models for UX Direct's native Figma design tasks.
+ * Fallbacks are sequential and cost-ordered; OpenRouter Auto is intentionally not used.
  */
 export const FIGMA_AGENT_MODELS = [
-  { id: "openrouter/auto", label: "OpenRouter Auto · LOW cost", description: "Routes each request through OpenRouter's LOW cost tier.", price: "Variable · restricted to the LOW cost tier" },
+  {
+    id: "google/gemini-3.7-flash",
+    label: "Gemini 3.7 Flash · primary",
+    description: "Primary model for source-faithful native Figma design generation.",
+    price: "Primary route; fallbacks are called only if a valid plan is not returned",
+  },
 ] as const;
 
-
 export type FigmaAgentModelId = typeof FIGMA_AGENT_MODELS[number]["id"];
-export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto";
-/** Fixed visual-QA judge so model comparisons use a consistent reviewer. */
-export const FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openrouter/auto";
+export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "google/gemini-3.7-flash";
+/** Compatibility alias; review endpoints use the same shared explicit fallback chain. */
+export const FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "google/gemini-3.7-flash";
 
-/** Legacy fallback order retained for endpoints outside selected-model generation. */
 export const OPENROUTER_MODELS = [
   "google/gemini-3.7-flash",
-  "anthropic/claude-haiku-5.5",
   "qwen/qwen3.5-35b-a3b",
   "google/gemini-3.1-flash-lite",
   "qwen/qwen3.5-397b-a17b",
@@ -24,8 +25,7 @@ export const OPENROUTER_MODELS = [
 
 export const OPENROUTER_MODEL_LABELS = [
   "Gemini 3.7 Flash · primary",
-  "Claude Haiku 5.5 · structured-output fallback",
-  "Qwen 3.5 35B-A3B · low-cost fallback",
+  "Qwen 3.5 35B-A3B · cheapest fallback",
   "Gemini 3.1 Flash Lite · low-cost multimodal fallback",
   "Qwen 3.5 397B-A17B · final quality fallback",
 ] as const;

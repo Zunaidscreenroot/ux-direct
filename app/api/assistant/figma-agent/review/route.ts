@@ -3,7 +3,7 @@ import { z } from "zod";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveBrainScopes } from "@/src/memory/chat-context";
 import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
-import { FIGMA_AGENT_QA_MODEL, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 import { normalizeVisualReview } from "@/src/figma-agent/normalize-visual-review";
 
@@ -129,12 +129,12 @@ export async function POST(request: Request) {
   if (outputImage) userContent.push({ type: "image_url", image_url: { url: outputImage } });
 
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // Keep one fixed reviewer across all selected generation models.
-  const models = [FIGMA_AGENT_QA_MODEL];
+  // Explicit sequential model chain; never route through OpenRouter Auto.
+  const models = [...OPENROUTER_MODELS];
   const errors: string[] = [];
   for (const [modelIndex, model] of models.entries()) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), modelIndex === 0 ? 24000 : 15000);
+    const timer = setTimeout(() => controller.abort(), modelIndex === 0 ? 24000 : 20000);
     try {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -147,7 +147,6 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           model,
-          ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
           messages: [
             {
               role: "system",

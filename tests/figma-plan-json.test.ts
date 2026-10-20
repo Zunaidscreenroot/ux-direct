@@ -100,25 +100,21 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("payload_keys="), "Empty provider responses should report envelope shape for diagnosis.");
 });
 
-test("Figma generation uses only OpenRouter Auto LOW and never fans out to separate models", () => {
+test("Figma agent uses explicit cost-ordered models without Auto or plugin live QA", () => {
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   const catalog = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
-  assert.ok(route.includes("const models = [FIGMA_AGENT_DEFAULT_MODEL]"), "Only one OpenRouter Auto route should run.");
-  assert.equal(route.includes("FIGMA_AGENT_FALLBACK_MODELS"), false, "Generation must not call separate model fallbacks.");
-  assert.ok(route.includes('model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}'), "Auto must use the LOW tier.");
-  assert.ok(route.includes("const attemptsForModel = 2"), "Only one compact retry is allowed after a failed first attempt.");
-  assert.ok(route.includes("const isRecovery = recoveryAttempt === 1"), "The retry must target the same Auto route.");
-  assert.equal(route.includes("Promise.all(models"), false, "Model calls must never run in parallel.");
-  assert.ok(catalog.includes('id: "openrouter/auto"'), "Auto is the only selectable Figma design model.");
-  assert.ok(catalog.includes('FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openrouter/auto"'), "QA uses the same LOW-cost Auto route.");
-  assert.equal(catalog.includes("FIGMA_AGENT_FALLBACK_MODELS"), false, "No app-level Figma model fallback catalog should remain.");
+  assert.ok(route.includes("const models = [...OPENROUTER_MODELS]"), "Generation should use the explicit shared model chain.");
+  assert.ok(route.includes("const attemptsForModel = modelIndex === 0 ? 2 : 1"), "Retry the primary compactly once, then move to fallbacks.");
+  assert.ok(route.includes('reasoning: { effort: isRecovery ? "minimal" : "low" }'), "Gemini reasoning should leave room for design JSON.");
+  assert.ok(route.includes('model === "google/gemini-3.7-flash" ? {'), "Gemini 3.7 Flash is the explicit primary route.");
+  assert.equal(route.includes('"openrouter/auto"'), false, "Design generation must never invoke OpenRouter Auto.");
+  assert.ok(catalog.includes('id: "google/gemini-3.7-flash"'), "Gemini 3.7 Flash is the configured primary.");
+  assert.ok(catalog.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "google/gemini-3.7-flash"'));
+  assert.equal(catalog.includes('"openrouter/auto"'), false, "The shared agent catalog must not use Auto.");
+  assert.equal(route.includes("Promise.all(models"), false, "Model requests must remain sequential.");
+
   const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
-  assert.equal(ui.includes('id="designModel"'), false, "The model dropdown must be removed.");
-  assert.equal(ui.includes("model-picker"), false, "No model selector styling should remain.");
-  assert.ok(ui.includes("OpenRouter Auto · LOW cost tier"), "The fixed route should be shown as a non-interactive label.");
-  assert.equal(ui.includes("model: selectedModel"), false, "The UI must not offer model overrides.");
-  assert.ok(ui.includes('fetch(API + "/api/assistant/figma-agent/live-qa"'), "The plugin must call TinyFish for live browser QA.");
-  assert.ok(ui.includes('fetch(API + "/api/assistant/figma-agent/refine"'), "At most one low-cost repair call follows QA.");
-  assert.equal(ui.includes("for (let iteration = 1; iteration <= 2; iteration++)"), false, "Refinement must remain bounded rather than loop indefinitely.");
-  assert.ok(ui.includes('runLiveVisualQA("verification"'), "After one repair batch, TinyFish verifies once.");
+  assert.equal(ui.includes('fetch(API + "/api/assistant/figma-agent/live-qa"'), false, "The plugin must not run live browser QA.");
+  assert.equal(ui.includes('fetch(API + "/api/assistant/figma-agent/refine"'), false, "The plugin must not invoke QA-based automatic repairs.");
+  assert.equal(ui.includes("TinyFish"), false, "TinyFish should be removed from the plugin flow.");
 });
