@@ -711,26 +711,22 @@
       }
 
       stage("capturing", "Exporting a compact PNG of the selected screen…");
-      let renderedScreen = null;
-      let visualCaptureWarning = "";
-      try {
-        const exportResult = sourceNode && sourceNode.id ? await runNativeCanvasCommand("write-canvas", {
-          confirm: true, operation: "export-node", nodeId: sourceNode.id, format: "PNG", scale: 0.35
-        }, 90000) : null;
-        if (exportResult && typeof exportResult.base64 === "string" && exportResult.base64.length <= 48000) {
-          renderedScreen = "data:image/png;base64," + exportResult.base64;
-        } else {
-          visualCaptureWarning = "Rendered screenshot export was unavailable; visual confidence is reduced.";
-        }
-      } catch (error) {
-        visualCaptureWarning = "Rendered screenshot capture failed: " + String(error && error.message || "unknown error").slice(0, 150);
+      const renderedCapture = sourceNode && sourceNode.id
+        ? await captureRenderedNodePng(sourceNode.id)
+        : { dataUrl: null, scale: 0, warning: "No selected node ID was available for image export." };
+      const renderedScreen = renderedCapture.dataUrl;
+      const visualCaptureWarning = renderedCapture.warning || "";
+      if (!renderedScreen) {
+        stage("capturing", "Screenshot unavailable · " + visualCaptureWarning.slice(0, 180) + " · continuing with native layers");
+      } else {
+        stage("capturing", "Rendered screenshot captured at " + Math.round(renderedCapture.scale * 100) + "% scale");
       }
 
       stage("brain", "Connecting to UX Direct Brain and resolving project context…");
       stage("memory", "Searching shared memories and Knowledge Base patterns…");
       stage("planning", renderedScreen
         ? "Analysing rendered appearance and native layers together…"
-        : "Analysing native layers; rendered image unavailable…");
+        : "Analysing native layers only · " + (visualCaptureWarning || "rendered screenshot unavailable").slice(0, 180));
 
       const response = await fetch(API + "/api/assistant/figma-agent", {
         method: "POST",
@@ -789,18 +785,11 @@
       let visualQAComplete = false;
       for (let iteration = 1; iteration <= 3; iteration++) {
         stage("rendering", "Rendering the new screen for visual QA · pass " + iteration + " of 3…");
-        let outputImage = null;
-        try {
-          const capture = await runNativeCanvasCommand("write-canvas", {
-            confirm: true, operation: "export-node", nodeId: createdFrameId, format: "PNG", scale: 0.35
-          }, 90000);
-          if (capture && typeof capture.base64 === "string" && capture.base64.length <= 48000) {
-            outputImage = "data:image/png;base64," + capture.base64;
-          }
-        } catch (_) {}
+        const outputCapture = await captureRenderedNodePng(createdFrameId);
+        const outputImage = outputCapture.dataUrl;
         stage("reviewing", outputImage
           ? "Comparing the rendered result for hierarchy, spacing, clipping and source fidelity…"
-          : "Rendered output export unavailable · checking native layer structure instead…");
+          : "Rendered output unavailable · " + (outputCapture.warning || "checking native geometry only").slice(0, 180));
         const outputRead = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 4, maxNodes: 100 }, 90000);
         const outputCanvas = frameOnlyRead(outputRead, createdFrameId);
         const reviewResponse = await fetch(API + "/api/assistant/figma-agent/review", {
@@ -860,6 +849,29 @@
         "\n\nModel: " + model + " · UX Direct Brain: " + memory +
         (visualCaptureWarning ? "\nVisual capture note: " + visualCaptureWarning : "") +
         "\nThe source frame was preserved. The new variation is selected on the canvas." + quality;
+    }
+
+    async function captureRenderedNodePng(nodeId) {
+      const attempts = [];
+      for (const scale of [0.35, 0.25, 0.2]) {
+        try {
+          const result = await runNativeCanvasCommand("write-canvas", {
+            confirm: true,
+            operation: "export-node",
+            nodeId: nodeId,
+            format: "PNG",
+            scale: scale
+          }, 90000);
+          if (result && typeof result.base64 === "string" && result.base64.length > 0 && result.base64.length <= 48000) {
+            return { dataUrl: "data:image/png;base64," + result.base64, scale: scale, warning: "" };
+          }
+          const details = result && result.error ? String(result.error) : "Figma export returned no PNG bytes.";
+          attempts.push(Math.round(scale * 100) + "%: " + details.slice(0, 140));
+        } catch (error) {
+          attempts.push(Math.round(scale * 100) + "%: " + String(error && error.message || "export failed").slice(0, 140));
+        }
+      }
+      return { dataUrl: null, scale: 0, warning: "PNG export failed at 35%, 25%, and 20%. " + attempts.join(" | ").slice(0, 500) };
     }
 
     function frameOnlyRead(result, frameId) {
