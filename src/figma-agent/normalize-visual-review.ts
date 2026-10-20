@@ -51,7 +51,7 @@ function issueRecord(value: unknown): JsonRecord | null {
  */
 export function normalizeVisualReview(value: unknown): unknown {
   if (!isRecord(value)) return null;
-  const rawIssues = value.issues ?? value.findings ?? value.defects ?? value.problems;
+  const rawIssues = [value.issues, value.findings, value.defects, value.problems].find(Array.isArray);
   if (!Array.isArray(rawIssues)) return null;
 
   const issues: JsonRecord[] = [];
