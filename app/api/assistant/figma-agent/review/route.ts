@@ -3,7 +3,7 @@ import { z } from "zod";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveBrainScopes } from "@/src/memory/chat-context";
 import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
-import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { FIGMA_AGENT_QA_MODEL, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 import { normalizeVisualReview } from "@/src/figma-agent/normalize-visual-review";
 
@@ -86,7 +86,6 @@ export async function POST(request: Request) {
     outputCanvas: z.unknown(),
     sourceImage: z.string().max(52000).nullable().optional(),
     outputImage: z.string().max(52000).nullable().optional(),
-    iteration: z.number().int().min(1).max(2),
   }).strict();
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Visual review input is invalid.", details: parsed.error.issues }, { status: 400, headers });
@@ -111,7 +110,6 @@ export async function POST(request: Request) {
     type: "text",
     text: JSON.stringify({
       userRequest: parsed.data.prompt,
-      iteration: parsed.data.iteration,
       sourceCanvas,
       outputCanvas,
       sourceScreenshotAvailable: !!sourceImage,
@@ -124,14 +122,15 @@ export async function POST(request: Request) {
         "component consistency and action hierarchy",
         "specificity of content instead of generic cards",
       ],
-      instruction: "Return only evidence-based actionable defects. If screenshots are absent, do not invent visual observations. Keep fixes small enough to express as native Figma property updates.",
+      instruction: "Return evidence-based findings and manual fix suggestions only. This is a single advisory QA pass; do not imply that patches will be applied automatically. If screenshots are absent, do not invent visual observations.",
     }),
   }];
   if (sourceImage) userContent.push({ type: "image_url", image_url: { url: sourceImage } });
   if (outputImage) userContent.push({ type: "image_url", image_url: { url: outputImage } });
 
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const models = OPENROUTER_MODELS;
+  // Keep one fixed reviewer across all selected generation models.
+  const models = [FIGMA_AGENT_QA_MODEL];
   const errors: string[] = [];
   for (const [modelIndex, model] of models.entries()) {
     const controller = new AbortController();
@@ -222,7 +221,7 @@ export async function POST(request: Request) {
           issueCount: validated.data.issues.length,
           message: qualityGatePassed
             ? "Visual QA passed."
-            : "Visual QA found unresolved issues. Apply targeted refinement and review again; do not mark this variation as complete."
+            : "Visual QA found issues for manual review. This workflow does not apply automatic design refinements."
         },
         learning: learningStatus,
         visualInspection: !!sourceImage && !!outputImage,

@@ -9,9 +9,9 @@
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     body { height: 100vh; min-height: 0; margin: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--figma-color-bg,#fff); color: var(--figma-color-text,#202124); }
-    button, textarea { font: inherit; }
-    button { cursor: pointer; }
-    button:focus-visible, textarea:focus-visible { outline: 2px solid var(--figma-color-bg-brand,#0d99ff); outline-offset: 2px; }
+    button, textarea, select { font: inherit; }
+    button, select { cursor: pointer; }
+    button:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--figma-color-bg-brand,#0d99ff); outline-offset: 2px; }
     .topbar { flex: 0 0 auto; min-height: 48px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding: 8px 14px; border-bottom: 1px solid var(--figma-color-border,#e5e5e5); }
     .brand { display:flex; align-items:center; gap:9px; min-width:0; font-size:14px; font-weight:700; letter-spacing:-.25px; }
     .brand-mark { display:grid; place-items:center; width:27px; height:27px; flex:0 0 27px; border-radius:8px; background:var(--figma-color-text,#202124); color:var(--figma-color-bg,#fff); font-size:12px; font-weight:800; letter-spacing:-.7px; }
@@ -73,6 +73,10 @@
     .prompt { display:block; width:100%; min-height:51px; max-height:130px; padding:3px 2px 8px; border:0; border-radius:8px; outline:none; resize:vertical; background:transparent; color:var(--figma-color-text,#222); font-size:12px; line-height:1.5; }
     .prompt:focus-visible { outline:none; }
     .prompt::placeholder { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); }
+    .model-picker { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:7px; margin:0 0 5px; padding:1px 2px 6px; }
+    .model-picker label { color:var(--figma-color-text-secondary,#777); font-size:10px; font-weight:650; white-space:nowrap; }
+    .model-picker select { min-width:0; width:100%; padding:6px 8px; border:1px solid var(--figma-color-border,#ddd); border-radius:8px; background:var(--figma-color-bg-secondary,#f7f7f7); color:var(--figma-color-text,#222); font-size:10px; }
+    .model-picker-note { grid-column:1 / -1; margin-top:-3px; color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; line-height:1.35; }
     .composer-bottom { display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .composer-hint { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; }
     .send { display:grid; place-items:center; width:31px; height:31px; flex:0 0 31px; border:0; border-radius:10px; background:var(--figma-color-bg-brand,#0d99ff); color:#fff; font-size:17px; font-weight:700; line-height:1; }
@@ -189,6 +193,17 @@
     <div id="selectionChip" class="context-chip" hidden><span aria-hidden="true">▣</span><span id="selectionName" class="context-name"></span></div>
     <form id="chatForm" class="composer">
       <div id="beamRoot" aria-hidden="true"></div>
+      <div class="model-picker">
+        <label for="designModel">Design model</label>
+        <select id="designModel" aria-label="Model used to generate the selected-frame variation" title="Choose the model that will generate the next Figma variation">
+          <option value="google/gemini-3.7-flash" selected>Gemini 3.7 Flash · $0.75 / $3.75</option>
+          <option value="anthropic/claude-sonnet-5.5">Claude Sonnet 5.5 · $2 / $10</option>
+          <option value="openai/gpt-5.4">GPT-5.4 · $2.50 / $15</option>
+          <option value="anthropic/claude-haiku-5.5">Claude Haiku 5.5 · $0.10 / $0.50</option>
+          <option value="google/gemini-3.1-flash-lite">Gemini 3.1 Flash Lite · $0.25 / $1.50</option>
+        </select>
+        <span class="model-picker-note">Input/output price per 1M tokens · one QA check · no automatic design refinements</span>
+      </div>
       <textarea id="prompt" class="prompt" maxlength="5000" rows="2" aria-label="Message UX Direct" placeholder="Ask UX Direct to create or improve something…" required></textarea>
       <div class="composer-bottom">
         <span class="composer-hint">Enter to send · Shift + Enter for a new line</span>
@@ -231,7 +246,6 @@
       creating: "Creating editable Figma layers",
       rendering: "Rendering the generated screen",
       reviewing: "Inspecting visual quality",
-      refining: "Applying targeted refinements",
       verifying: "Verifying the final canvas result",
       done: "Design created and verified",
       error: "The task needs attention"
@@ -247,7 +261,7 @@
       if (window.UXDEffects && typeof window.UXDEffects.setProcessState === "function") {
         window.UXDEffects.setProcessState(state);
       }
-      const activeTaskStates = ["scanning","capturing","brain","memory","planning","waiting","creating","rendering","reviewing","refining","verifying"];
+      const activeTaskStates = ["scanning","capturing","brain","memory","planning","waiting","creating","rendering","reviewing","verifying"];
       setBeamEmphasis(activeTaskStates.includes(state) || document.activeElement === $("prompt"));
       const label = $("processStatus");
       const labelText = $("processStatusText");
@@ -694,6 +708,7 @@
     }
 
     async function createFigmaDesign(prompt, reportProgress) {
+      const selectedModel = $("designModel").value || "google/gemini-3.7-flash";
       let createdFrameId = "";
       let completedElementCount = 0;
       const notify = typeof reportProgress === "function" ? reportProgress : function () {};
@@ -743,7 +758,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, visualCaptureWarning: visualCaptureWarning })
+        body: JSON.stringify({ prompt: prompt, model: selectedModel, canvas: canvas, renderedScreen: renderedScreen, visualCaptureWarning: visualCaptureWarning })
       });
       const payload = await response.json().catch(function () { return {}; });
       if (!response.ok || payload.ok !== true || !payload.plan || !Array.isArray(payload.plan.elements)) {
@@ -826,21 +841,21 @@
       let lastReview = null;
       let visualQAComplete = false;
       let visualQAError = "";
-      for (let iteration = 1; iteration <= 2; iteration++) {
-        stage("rendering", "Rendering the new screen for visual QA · pass " + iteration + " of 2…");
-        const outputCapture = await captureRenderedNodePreview(createdFrameId);
-        const outputImage = outputCapture.dataUrl;
-        stage("reviewing", outputImage
-          ? "Comparing the rendered result for hierarchy, spacing, clipping and source fidelity…"
-          : "Rendered output unavailable · " + (outputCapture.warning || "checking native geometry only").slice(0, 180));
-        const outputRead = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100 }, 90000);
-        const outputCanvas = frameOnlyRead(outputRead, createdFrameId);
+      stage("rendering", "Rendering the new variation for one visual QA check…");
+      const outputCapture = await captureRenderedNodePreview(createdFrameId);
+      const outputImage = outputCapture.dataUrl;
+      stage("reviewing", outputImage
+        ? "Checking hierarchy, spacing, text fit and source fidelity…"
+        : "Rendered output unavailable · " + (outputCapture.warning || "checking native structure only").slice(0, 180));
+      const outputRead = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100 }, 90000);
+      const outputCanvas = frameOnlyRead(outputRead, createdFrameId);
+      try {
         const reviewResponse = await fetch(API + "/api/assistant/figma-agent/review", {
           method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
           cache: "no-store",
           body: JSON.stringify({
             prompt: prompt, sourceCanvas: canvas, outputCanvas: outputCanvas,
-            sourceImage: renderedScreen, outputImage: outputImage, iteration: iteration
+            sourceImage: renderedScreen, outputImage: outputImage
           })
         });
         const reviewPayload = await reviewResponse.json().catch(function () { return {}; });
@@ -850,43 +865,9 @@
           ? String((reviewPayload && reviewPayload.error) || "HTTP " + reviewResponse.status) +
             (Array.isArray(reviewPayload && reviewPayload.details) ? " · " + reviewPayload.details.join(" | ") : "")
           : lastReview ? "" : "Review API returned no structured review.";
-        if (!reviewResponse.ok || !lastReview || !Array.isArray(lastReview.issues)) break;
-        // Continue refinement while the review shows actionable defects or misses the quality threshold.
-        const reviewGatePassed = !!(reviewPayload && reviewPayload.qualityGate && reviewPayload.qualityGate.passed === true);
-        const hasActionableIssues = lastReview.issues.length > 0;
-        if ((reviewGatePassed || (!hasActionableIssues && lastReview.score >= 82)) || iteration === 2) break;
-        if (!hasActionableIssues) {
-          visualQAError = "Quality score " + lastReview.score + "/100 is below the required 82/100; review returned no actionable fixes.";
-          break;
-        }
-
-        const refineResponse = await fetch(API + "/api/assistant/figma-agent/refine", {
-          method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
-          cache: "no-store",
-          body: JSON.stringify({ prompt: prompt, review: lastReview, outputCanvas: outputCanvas, iteration: iteration })
-        });
-        const refinePayload = await refineResponse.json().catch(function () { return {}; });
-        if (!refineResponse.ok || !Array.isArray(refinePayload.patch) || !refinePayload.patch.length) {
-          visualQAError = "Quality gate failed, but targeted refinement returned no applicable layer patches.";
-          break;
-        }
-
-        stage("refining", "Applying " + refinePayload.patch.length + " targeted visual corrections…");
-        const generatedFrame = outputCanvas && Array.isArray(outputCanvas.nodes) ? outputCanvas.nodes[0] : null;
-        const allowedIds = new Set();
-        (function collect(node) {
-          if (!node) return;
-          if (typeof node.id === "string") allowedIds.add(node.id);
-          if (Array.isArray(node.children)) node.children.forEach(collect);
-        })(generatedFrame);
-        for (const item of refinePayload.patch.slice(0, 20)) {
-          if (!item || typeof item.nodeId !== "string" || !allowedIds.has(item.nodeId) || !item.patch) continue;
-          await runNativeCanvasCommand("write-canvas", {
-            confirm: true, operation: "update-node", nodeId: item.nodeId, patch: item.patch
-          }, 90000);
-        }
+      } catch (reviewError) {
+        visualQAError = reviewError && reviewError.message ? String(reviewError.message).slice(0, 300) : "Visual QA request failed.";
       }
-
       stage("verifying", "Checking the final native layer tree and frame bounds…");
       // Read to the maximum supported depth so nested native FRAMEs are included.
       // The previous depth-2 read made otherwise-valid nested designs look incomplete.
@@ -908,26 +889,33 @@
             : "Expected " + completedElementCount + " generated child layers, but read-back confirmed " + verifiedChildCount + ".";
         throw new Error(problem + " The variation may be partial; the source frame remains untouched. Inspect the new frame before retrying.");
       }
-      const qualityPassed = !!(lastReview && Array.isArray(lastReview.issues) &&
-        lastReview.score >= 82 && lastReview.issues.length === 0 &&
-        (visualQAComplete ? true : false));
-      if (!qualityPassed) {
-        throw new Error("The variation was written and its native layers were verified, but UX Direct could not confirm production-ready visual quality. " +
-          (lastReview ? ("QA score: " + lastReview.score + "/100; unresolved issues: " + lastReview.issues.length + ". ") : "") +
-          (visualQAError || "Run a targeted refinement and review again. The source frame remains untouched."));
+      const qaIssues = lastReview && Array.isArray(lastReview.issues) ? lastReview.issues : [];
+      const qualityPassed = !!(lastReview && qaIssues.length === 0 && lastReview.score >= 82 && visualQAComplete);
+      stage("done", qualityPassed
+        ? "Variation created · one-pass visual QA passed"
+        : "Variation created · native structure verified · review the QA notes");
+      const model = typeof payload.model === "string" ? payload.model : selectedModel;
+      let quality = "";
+      if (lastReview && Array.isArray(lastReview.issues)) {
+        quality = " One-pass visual QA: " + lastReview.score + "/100; " + qaIssues.length +
+          " issue(s) flagged. " + (qualityPassed
+            ? "No actionable visual issues were reported."
+            : "No automatic refinement edits were made; review the issues or create a fresh variation with another model.");
+        const issueNotes = qaIssues.slice(0, 3).map(function (issue, index) {
+          return (index + 1) + ". " + String(issue.issue || "Visual issue").slice(0, 180) +
+            (issue.evidence ? " — " + String(issue.evidence).slice(0, 140) : "");
+        }).join("\\n");
+        if (issueNotes) quality += "\\nQA notes:\\n" + issueNotes;
+        if (!visualQAComplete) quality += " Screenshot-based comparison was not fully available.";
+      } else {
+        quality = " Visual QA unavailable; no automatic refinement was run." +
+          (visualQAError ? " Review detail: " + visualQAError.slice(0, 350) : "");
       }
-      stage("done", "Design created · structural and visual QA passed");
-      const model = typeof payload.model === "string" ? payload.model : "OpenRouter";
-      const quality = lastReview
-        ? (visualQAComplete
-          ? " Visual QA score: " + lastReview.score + "/100. " + (lastReview.issues.length ? lastReview.issues.length + " issue(s) remain after one targeted refinement pass." : "No actionable visual issues were reported.")
-          : " Structural QA completed; screenshots were not both available for visual comparison.")
-        : " Visual QA service unavailable; structural verification completed." + (visualQAError ? " Review detail: " + visualQAError.slice(0, 400) : "");
-      return "Created and verified \"" + plan.frame.name + "\" as a separate editable Figma variation with " +
+      return "Created \"" + plan.frame.name + "\" as a separate editable Figma variation with " +
         completedElementCount + " native layers. " + String(plan.summary || "The variation is ready for review.") +
-        "\n\nModel: " + model + " · UX Direct Brain: " + memory +
-        (visualCaptureWarning ? "\nVisual capture note: " + visualCaptureWarning : "") +
-        "\nThe source frame was preserved. The new variation is selected on the canvas." + quality;
+        "\\n\\nGeneration model: " + model + " · UX Direct Brain: " + memory +
+        (visualCaptureWarning ? "\\nVisual capture note: " + visualCaptureWarning : "") +
+        "\\nThe source frame was preserved. The new variation is selected on the canvas." + quality;
     }
 
     async function captureRenderedNodePreview(nodeId) {

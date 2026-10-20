@@ -103,7 +103,18 @@ test("missing final content remains invalid and is handled by the route recovery
 test("compact recovery is model-agnostic and does not add OpenRouter provider filters", () => {
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   const models = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
-  assert.ok(route.includes("const models = OPENROUTER_MODELS;"));
+  assert.ok(route.includes("const models = [requestedModel];"));
+  assert.ok(route.includes("requestedModel = parsedInput.data.model || FIGMA_AGENT_DEFAULT_MODEL"));
+  assert.ok(route.includes("Unsupported Figma design model"));
+  const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
+  assert.ok(ui.includes('id="designModel"'), "The plugin must expose a model selector.");
+  assert.ok(ui.includes("model: selectedModel"), "The selected model must reach the design endpoint.");
+  assert.equal(ui.includes('fetch(API + "/api/assistant/figma-agent/refine"'), false, "Automatic refinement must be disabled.");
+  assert.equal(ui.includes("for (let iteration = 1; iteration <= 2; iteration++)"), false, "Visual QA must run once.");
+  const catalog = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
+  assert.ok(catalog.includes('"anthropic/claude-sonnet-5.5"'));
+  assert.ok(catalog.includes('"openai/gpt-5.4"'));
+  assert.ok(catalog.includes('"google/gemini-3.1-flash-lite"'));
   assert.ok(models.includes('"google/gemini-3.7-flash"'));
   assert.ok(models.includes('"anthropic/claude-haiku-5.5"'));
   assert.ok(models.includes('"qwen/qwen3.5-35b-a3b"'));

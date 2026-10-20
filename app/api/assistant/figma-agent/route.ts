@@ -3,7 +3,7 @@ import { z } from "zod";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
-import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { FIGMA_AGENT_DEFAULT_MODEL, FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 
@@ -257,6 +257,7 @@ const SYSTEM = [
   "Preserve the source's user intent, content taxonomy, and brand tone while producing a genuinely improved variation rather than copying its layout mechanically. Preserve every visible meaningful datum and repeated row. Use the selected frame's actual scope and size. Keep the source untouched.",
   "For Indian BFSI designs, emphasize transparency, clear amount/date/status hierarchy, user control and accessible legibility. Never make up actual interest rates, contractual terms, or legal-compliance claims. Label illustrative financial values as sample.",
   "Keep all elements within frame bounds, use reasonable minimum touch targets for CTAs, and include the primary action and meaningful secondary paths where appropriate. Limit to 80 elements and use only supported properties.",
+  "CRITICAL GEOMETRY CHECK BEFORE RETURNING: check every sibling for accidental overlap and make each text box wide/tall enough for its full copy. Never put different labels or amounts at the same coordinates. Use each card's styled FRAME as its background, with its own labels, values, dividers and buttons nested inside; never cover sibling content with an opaque backplate. Avoid giant empty white/grey panels inside dark screens or leaving most of the screen blank. Align labels with their values and group each label/value pair in an appropriate row FRAME. The first plan must be visually coherent without any later automatic design refinements.",
   "Return a concise user-facing summary of what you designed, not hidden reasoning. Never return null, an array at the root, a tool call, or explanatory text. Return one complete JSON object with summary, frame and elements keys; use learningCandidate:null when there is no durable reusable lesson."
 ].join("\n");
 
@@ -276,12 +277,17 @@ export async function POST(request: Request) {
   try { input = await request.json(); } catch { return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400, headers }); }
   const requestSchema = z.object({
     prompt: z.string().trim().min(2).max(5000),
+    model: z.string().trim().min(1).max(100).optional(),
     canvas: z.unknown(),
     renderedScreen: z.string().max(52000).nullable().optional(),
     visualCaptureWarning: z.string().max(400).optional(),
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
   if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
+  const requestedModel = parsedInput.data.model || FIGMA_AGENT_DEFAULT_MODEL;
+  if (!FIGMA_AGENT_MODELS.some((candidate) => candidate.id === requestedModel)) {
+    return NextResponse.json({ error: "Unsupported Figma design model. Choose one of the models shown in the UX Direct dropdown." }, { status: 400, headers });
+  }
   const renderedScreen = typeof parsedInput.data.renderedScreen === "string" &&
     parsedInput.data.renderedScreen.length <= 52000 &&
     new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.renderedScreen)
@@ -308,7 +314,7 @@ export async function POST(request: Request) {
       "Use both the rendered screenshot (when available) and native layer tree to infer visual style, layout, information hierarchy, reusable patterns, and content density before planning.",
       "Translate only the requested improvement into a meaningful variation; preserve the source product identity and do not replace specific UI with generic cards.",
       "Build editable semantic FRAME containers with logically nested layers. Use Auto Layout on suitable vertical stacks, horizontal rows, cards and repeated groups; set layoutMode, padding, itemSpacing and alignment deliberately. Use absolute coordinates only where appropriate.",
-      "Render, inspect, refine actionable defects, and verify the actual native hierarchy. Report unavailable visual checks honestly."
+      "Create a complete high-quality variation in the first plan. After native-layer creation, the plugin runs one advisory visual QA review only; it does not automatically patch or refine the result. Preserve the source frame."
     ],
     visualCapture: renderedScreen ? "Rendered selected-node image is attached." :
       parsedInput.data.visualCaptureWarning || "No rendered image available; use native layer evidence and do not claim visual inspection.",
@@ -342,8 +348,9 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // Gemini is primary. Give it one compact recovery retry; attempt each explicitly priced fallback once.
-  const models = OPENROUTER_MODELS;
+  // Do not silently change the model selected by the user. A compact retry, if needed,
+  // repeats the same model so comparisons stay fair.
+  const models = [requestedModel];
   const errors: string[] = [];
   const recoveryContext = JSON.stringify({
     prompt: parsedInput.data.prompt,
@@ -399,7 +406,7 @@ export async function POST(request: Request) {
               { role: "system", content: isRecovery ? recoverySystem : system },
               { role: "user", content: userContent },
             ],
-            temperature: isRecovery ? 0.15 : 0.25,
+            ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
             max_tokens: isRecovery ? 6500 : 12000,
             // Keep Gemini's reasoning budget low so tokens remain available for native layer JSON.
             ...(model === "google/gemini-3.7-flash" ? {
