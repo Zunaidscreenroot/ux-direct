@@ -12,6 +12,7 @@ import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 import { retrieveBrainContext, saveBrainFeedback } from "@/src/memory/shared-brain";
 import { resolveLearningScope } from "@/src/memory/learning-signal";
+import { referencesUnstatedClient, sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 
 const requestSchema = z.object({
   title: z.string().trim().min(1).max(160),
@@ -121,9 +122,20 @@ export async function POST(request: Request) {
     const result = await planUXTask({ ...taskInput, requestId, provider: selectedProvider, memoryContext, learningRequested });
     let learningCapture: { status: "not-requested" | "not-extracted" | "active" | "inactive" | "filtered" | "failed"; feedbackId?: string; scopeKey?: string; duplicate?: boolean } = { status: "not-requested" };
     if (learningRequested) {
-      const candidate = result.plan.learningCandidate;
-      if (!candidate || candidate.activate !== true) {
+      const modelCandidate = result.plan.learningCandidate;
+      const candidate = modelCandidate?.activate === true ? sanitizeInlineLearningCandidate(modelCandidate) : null;
+      if (!candidate) {
         learningCapture = { status: "not-extracted" };
+      } else if (referencesUnstatedClient(candidate, originalUserInput + "\n" + parsed.data.title)) {
+        learningCapture = { status: "filtered" };
+        recordOperationalEvent({
+          source: isPluginRequest ? "figma-plugin" : "ux-direct",
+          event: "Shared brain task lesson filtered",
+          status: "info",
+          summary: "A task-derived candidate named a client not present in the task context; nothing was stored.",
+          requestId,
+          project: parsed.data.project,
+        });
       } else {
         const sourceProduct = isPluginRequest ? "figma-plugin" : "ux-direct";
         try {
@@ -139,8 +151,7 @@ export async function POST(request: Request) {
             summary: normalizedRule.slice(0, 500),
             title: candidate.title,
             normalizedRule,
-            rationale: (candidate.rationale || "Reusable lesson extracted from the task plan.") +
-              " Captured from the task-planning inference; raw task brief was not persisted in the shared brain.",
+            rationale: "Reusable lesson abstracted from a task-planning inference. Raw task brief and canvas material were not persisted in the shared brain.",
             scopeKey,
             feedbackKind: candidate.feedbackKind,
             keywords: candidate.keywords,
