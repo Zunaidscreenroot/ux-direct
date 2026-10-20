@@ -323,7 +323,7 @@ export async function POST(request: Request) {
       const actions = parsedActions.data.actions;
       const badId = actions.flatMap(idsUsedByAction).find(id => !allowedIds.has(id));
       if (badId) { errors.push(model + ": action used a node ID not present in the inspected selection"); continue; }
-      const styles = isRecord(canvas.styles) ? canvas.styles : {};
+      const styles: Record<string, unknown> = isRecord(canvas.styles) ? canvas.styles : {};
       const invalidStyleAction = actions.find((action) => {
         if (action.operation !== "apply-style" || !action.styleKind) return false;
         const catalogue = Array.isArray(styles[action.styleKind]) ? styles[action.styleKind] as Array<Record<string, unknown>> : [];
