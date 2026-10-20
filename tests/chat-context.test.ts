@@ -21,3 +21,11 @@ test("short follow-ups retain task context for scope-safe memory lookup", () => 
   assert.match(query, /Ujjivan SFB website navigation/);
   assert.match(query, /fix this/);
 });
+
+
+test("generic housing-finance and small-finance-bank terms do not inject a client scope", () => {
+  const housing = resolveBrainScopes("Housing finance application onboarding");
+  assert.ok(!housing.includes("project:dmi-finance"));
+  const sfb = resolveBrainScopes("Small finance bank website navigation");
+  assert.ok(!sfb.includes("project:ujjivan-sfb"));
+});
