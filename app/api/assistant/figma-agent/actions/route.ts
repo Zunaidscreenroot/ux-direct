@@ -192,7 +192,7 @@ const actionSchema = z.object({
   if (v.operation === "create-variables" && (!v.collectionName || !v.variables?.length)) ctx.addIssue({ code: "custom", path: [], message: "create-variables requires collectionName and variables." });
   if (v.operation === "bind-variable" && (!v.nodeId || !v.variableName || !v.property)) ctx.addIssue({ code: "custom", path: [], message: "bind-variable requires nodeId, variableName and property." });
   if (v.operation === "apply-style" && (!v.nodeId || !v.styleKind || (!v.styleId && !v.styleName))) ctx.addIssue({ code: "custom", path: [], message: "apply-style requires a target and local style identifier/name." });
-}));
+});
 
 function flattenNodes(nodes: unknown[], ids = new Set<string>()) {
   for (const value of nodes) {
