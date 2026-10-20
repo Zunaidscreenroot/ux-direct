@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { buildBrainSystemPrompt, buildRetrievalQuery, resolveBrainScopes } from "@/src/memory/chat-context";
 import { retrieveBrainContext, saveBrainFeedback } from "@/src/memory/shared-brain";
 import { detectCoachingSignal, detectExplicitTrainingIntent, resolveChatLearningScope, resolveLearningScope } from "@/src/memory/learning-signal";
-import { createLearningMarkerTransform, type InlineLearningCandidate } from "@/src/memory/inline-learning";
+import { createLearningMarkerTransform, referencesUnstatedClient, type InlineLearningCandidate } from "@/src/memory/inline-learning";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
 
@@ -204,6 +204,16 @@ async function persistInlineTaskLearning(
   try {
     // Explicit coaching already has its own capture path; avoid writing a duplicate.
     if (detectCoachingSignal(context) || detectExplicitTrainingIntent(context)) return;
+    if (referencesUnstatedClient(candidate, context)) {
+      recordOperationalEvent({
+        source: sourceProduct,
+        event: "Inline task learning filtered",
+        status: "info",
+        summary: "A task-derived candidate named a client not present in the task context; nothing was stored.",
+        category: "Shared Brain",
+      });
+      return;
+    }
     const scopeKey = resolveLearningScope(candidate.scopeKey, "general", context);
     const rule = candidate.normalizedRule.trim();
     const idempotencyKey = "uxd-inline-task-learning-" + createHash("sha256")
