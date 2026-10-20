@@ -1785,7 +1785,11 @@ async function writeCanvasCommand(payload) {
       return { ok: true, operation: "export-node", fileKey: figma.fileKey, pageName: figma.currentPage.name,
         node: nodeSummary(genericExportTarget), format: exportFormat, byteLength: svgOutput.length, data: svgOutput };
     }
-    var exportBytes = await genericExportTarget.exportAsync({ format: exportFormat });
+    var exportOptions = { format: exportFormat };
+    if (exportFormat === "PNG" && Number.isFinite(payload.scale)) {
+      exportOptions.constraint = { type: "SCALE", value: Math.max(0.2, Math.min(1, payload.scale)) };
+    }
+    var exportBytes = await genericExportTarget.exportAsync(exportOptions);
     if (!(exportBytes instanceof Uint8Array)) throw new Error("Figma did not return encoded bytes for " + exportFormat + ".");
     if (exportBytes.length > 35000) throw new Error(exportFormat + " export exceeds the safe 35 KB binary response limit; export a smaller node.");
     var exportBinary = "";

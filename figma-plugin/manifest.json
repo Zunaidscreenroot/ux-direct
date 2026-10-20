@@ -11,7 +11,7 @@
     "allowedDomains": [
       "https://ux-direct.zunaid-cb7.workers.dev"
     ],
-    "reasoning": "UX Direct sends task prompts and bounded selection metadata; the backend may queue allowlisted, bounded read/write commands executed inside this plugin. It does not upload screenshots or expose arbitrary code execution."
+    "reasoning": "UX Direct sends task prompts, bounded selected-layer metadata, and scaled PNG previews of selected/generated screens to the UX Direct backend for visual analysis and quality review. The configured model provider may process these previews. Canvas changes use allowlisted native Figma commands; arbitrary code execution is not exposed."
   },
   "enablePrivatePluginApi": true,
   "documentAccess": "dynamic-page"

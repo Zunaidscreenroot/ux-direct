@@ -31,6 +31,37 @@
     .welcome-mark { display:grid; place-items:center; width:42px; height:42px; border:1px solid var(--figma-color-border,#dedede); border-radius:13px; color:var(--figma-color-text,#222); font-size:18px; font-weight:800; margin-bottom:4px; }
     .welcome h1 { max-width:330px; margin:0; font-size:23px; font-weight:650; line-height:1.2; letter-spacing:-.8px; }
     .welcome p { max-width:295px; margin:0; color:var(--figma-color-text-secondary,#777); font-size:12px; line-height:1.6; }
+    .uxd-hero-orb{position:relative;width:190px;height:190px;margin:0 auto 5px;flex:0 0 auto;perspective:600px;transition:width .42s ease,height .42s ease,margin .42s ease;filter:drop-shadow(0 14px 34px #5a7dff30)}
+    .uxd-orb-glow{position:absolute;inset:18%;border-radius:50%;background:radial-gradient(circle,#8ef0d8aa 0%,#9c88ff66 32%,transparent 72%);filter:blur(18px);animation:uxd-orb-glow 4s ease-in-out infinite}
+    .uxd-orb-ring{position:absolute;inset:13%;border:1px solid #91e7e65e;border-radius:45% 55% 52% 48%;box-shadow:inset 0 0 20px #8bcfef17,0 0 20px #8bcfef17}
+    .uxd-orb-ring-one{animation:uxd-orb-morph-one 8s ease-in-out infinite,uxd-orb-spin 20s linear infinite}
+    .uxd-orb-ring-two{inset:22% 9%;border-color:#b5a2ff88;transform:rotate(55deg);animation:uxd-orb-morph-two 6s ease-in-out infinite,uxd-orb-spin-reverse 16s linear infinite}
+    .uxd-orb-core{position:absolute;inset:26%;display:grid;place-items:center;overflow:hidden;border-radius:42% 58% 53% 47%;background:radial-gradient(circle at 32% 25%,#dcfff5,#7be2d5 18%,#776ee6 52%,#1d6b8b 78%,#10182a);box-shadow:inset -12px -15px 24px #0a122c99,inset 5px 5px 20px #e1fff880,0 0 28px #8cb3ff40;animation:uxd-orb-core-morph 5.5s ease-in-out infinite}
+    .uxd-orb-core span{color:#fff;font-size:23px;font-weight:850;letter-spacing:-1px;text-shadow:0 1px 12px #111827a0}
+    .uxd-orb-spark{position:absolute;width:7px;height:7px;border-radius:50%;background:#c8fff0;box-shadow:0 0 14px #a5ffe8}
+    .uxd-orb-spark-a{left:22%;top:28%;animation:uxd-orb-spark 2.2s ease-in-out infinite}
+    .uxd-orb-spark-b{right:20%;bottom:27%;width:4px;height:4px;background:#c8baff;box-shadow:0 0 13px #c8baff;animation:uxd-orb-spark 1.7s ease-in-out infinite reverse}
+    .uxd-hero-orb[data-state="thinking"] .uxd-orb-core{animation-duration:1.2s;filter:hue-rotate(18deg) saturate(1.2)}
+    .uxd-hero-orb[data-state="creating"] .uxd-orb-core{border-radius:28% 72% 37% 63%;animation-duration:.75s;background:conic-gradient(from 10deg,#7df0d9,#9f85ff,#51bed3,#9cf2d9,#927cff)}
+    .uxd-hero-orb[data-state="reviewing"] .uxd-orb-core{animation-duration:2s;filter:hue-rotate(-25deg)}
+    .uxd-hero-orb[data-state="done"] .uxd-orb-core{filter:saturate(1.25)}
+    .uxd-hero-orb[data-state="error"] .uxd-orb-core{filter:saturate(.4) hue-rotate(-30deg)}
+    .welcome.has-started{min-height:0;flex:0 0 auto;padding:8px 4px;gap:6px}
+    .welcome.has-started .uxd-hero-orb{width:76px;height:76px;margin:-11px auto 0}
+    .welcome.has-started .uxd-orb-core span{font-size:12px}
+    .welcome.has-started .uxd-orb-spark{width:4px;height:4px}
+    .welcome.has-started h1{font-size:17px;letter-spacing:-.4px}
+    .welcome.has-started p,.welcome.has-started .suggestions{display:none}
+    .process-status{position:sticky;top:0;z-index:3;width:100%;padding:8px 12px;border:1px solid var(--figma-color-border,#dedede);border-radius:10px;color:var(--figma-color-text-secondary,#737373);background:var(--figma-color-bg-secondary,#f7f7f7);font-size:10px;line-height:1.45}
+    .process-status::before{content:"";display:inline-block;width:6px;height:6px;margin-right:8px;border-radius:50%;background:#19a974;vertical-align:middle}
+    body[data-process-state="error"] .process-status::before{background:#d24b4b}
+    @media(prefers-reduced-motion:reduce){.uxd-hero-orb *{animation-duration:.01ms!important;animation-iteration-count:1!important}}
+    @keyframes uxd-orb-glow{0%,100%{transform:scale(.92);opacity:.65}50%{transform:scale(1.15);opacity:1}}
+    @keyframes uxd-orb-morph-one{0%,100%{border-radius:45% 55% 52% 48%}50%{border-radius:56% 44% 40% 60%}}
+    @keyframes uxd-orb-morph-two{0%,100%{border-radius:60% 40% 48% 52%}50%{border-radius:38% 62% 60% 40%}}
+    @keyframes uxd-orb-core-morph{0%,100%{border-radius:42% 58% 53% 47%;transform:rotate(0) scale(1)}50%{border-radius:59% 41% 44% 56%;transform:rotate(8deg) scale(1.05)}}
+    @keyframes uxd-orb-spin{to{transform:rotate(360deg)}}@keyframes uxd-orb-spin-reverse{to{transform:rotate(-360deg)}}
+    @keyframes uxd-orb-spark{0%,100%{transform:translateY(0) scale(.7);opacity:.4}50%{transform:translateY(-5px) scale(1.3);opacity:1}}
     .suggestions { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:7px; max-width:360px; margin-top:13px; }
     .suggestion { padding:8px 10px; border:1px solid var(--figma-color-border,#dedede); border-radius:10px; background:var(--figma-color-bg,#fff); color:var(--figma-color-text,#333); font-size:11px; line-height:1.35; text-align:left; }
     .suggestion:hover { background:var(--figma-color-bg-secondary,#f5f5f5); }
@@ -152,8 +183,16 @@
 
   <main id="conversation" class="conversation">
     <div id="chatLog" class="chat-log" role="log" aria-live="polite" aria-relevant="additions text">
+      <div id="processStatus" class="process-status" aria-live="polite" hidden>Ready for a design task</div>
       <section id="welcome" class="welcome">
-        <div class="welcome-mark">ux</div>
+        <div class="uxd-hero-orb" data-state="idle" aria-label="UX Direct is ready">
+          <div class="uxd-orb-glow"></div>
+          <div class="uxd-orb-ring uxd-orb-ring-one"></div>
+          <div class="uxd-orb-ring uxd-orb-ring-two"></div>
+          <div class="uxd-orb-core"><span>ux</span></div>
+          <div class="uxd-orb-spark uxd-orb-spark-a"></div>
+          <div class="uxd-orb-spark uxd-orb-spark-b"></div>
+        </div>
         <h1>What are we designing today?</h1>
         <p>Describe what you want to create, improve, or explore. UX Direct will use your current Figma selection as context.</p>
         <div class="suggestions" aria-label="Suggested prompts">
@@ -198,6 +237,39 @@
     let heartbeatTimer = null;
     let connectionError = "";
     const chatHistory = [];
+    const processLabels = {
+      idle: "Ready for a design task",
+      scanning: "Scanning the selected screen and its native layers",
+      capturing: "Capturing the rendered screen",
+      brain: "Connecting to UX Direct Brain",
+      memory: "Searching shared memories and Knowledge Base",
+      planning: "Planning layout and visual design",
+      creating: "Creating editable Figma layers",
+      rendering: "Rendering the generated screen",
+      reviewing: "Inspecting visual quality",
+      refining: "Applying targeted refinements",
+      verifying: "Verifying the final canvas result",
+      done: "Design created and verified",
+      error: "The task needs attention"
+    };
+    function setProcessState(state, message) {
+      const welcome = $("welcome");
+      if (welcome) {
+        welcome.classList.toggle("has-started", state !== "idle");
+        const orb = welcome.querySelector(".uxd-hero-orb");
+        if (orb) {
+          orb.dataset.state = ["scanning","capturing","brain","memory","planning"].includes(state) ? "thinking"
+            : ["creating","refining"].includes(state) ? "creating"
+            : ["rendering","reviewing","verifying"].includes(state) ? "reviewing" : state;
+        }
+      }
+      const label = $("processStatus");
+      if (label) {
+        label.hidden = false;
+        label.textContent = message || processLabels[state] || state;
+      }
+      document.body.dataset.processState = state;
+    }
     const handledBridgeCommands = new Set();
     const pendingCanvasCommands = new Map();
 
@@ -538,7 +610,8 @@
     }
 
     function appendTyping() {
-      $("welcome").hidden = true;
+      $("welcome").classList.add("has-started");
+      setProcessState("brain", "Preparing request · connecting to UX Direct Brain…");
       const row = document.createElement("article");
       row.className = "message assistant";
       row.setAttribute("aria-label", "UX Direct is thinking");
@@ -612,31 +685,58 @@
     async function createFigmaDesign(prompt, reportProgress) {
       let createdFrameId = "";
       let completedElementCount = 0;
-      const updateProgress = typeof reportProgress === "function" ? reportProgress : function () {};
-      updateProgress("Reading the selected frame and its layer contents…");
+      const notify = typeof reportProgress === "function" ? reportProgress : function () {};
+      function stage(state, message) {
+        setProcessState(state, message);
+        notify(message || processLabels[state] || state);
+      }
+
+      stage("scanning", "Scanning selected screen, nested layers, text and styles…");
       const canvas = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 4, maxNodes: 80, includeStyles: true
+        scope: "selection", maxDepth: 4, maxNodes: 100, includeStyles: true
       }, 90000);
       const selectedNodes = Array.isArray(canvas && canvas.nodes) ? canvas.nodes : [];
       const expectsSelection = /\b(selected|selection|this frame|this screen|current frame|variation|variant|duplicate|redesign this|improve this)\b/i.test(prompt);
       if (expectsSelection && selectedNodes.length === 0) {
-        throw new Error("Select the frame you want UX Direct to work from, then send the prompt again. I read and inspect the real layer tree before creating anything.");
+        throw new Error("Select the frame you want UX Direct to work from, then send the prompt again.");
       }
       if (expectsSelection && selectedNodes.length > 1) {
-        throw new Error("Select one frame or container at a time so UX Direct can create a correctly placed variation without changing the originals.");
+        throw new Error("Select one frame or container at a time so UX Direct can analyse and preserve the correct screen.");
       }
       const sourceNode = selectedNodes.length === 1 ? selectedNodes[0] : null;
       if (sourceNode && /\b(frame|screen|variation|variant|duplicate|redesign)\b/i.test(prompt) &&
           !Array.isArray(sourceNode.children) &&
           !["COMPONENT", "COMPONENT_SET", "INSTANCE", "SECTION", "GROUP"].includes(sourceNode.type)) {
-        throw new Error("The selection is " + (sourceNode.type || "a layer") + ", not a frame/container. Select the full frame or screen to create a variation.");
+        throw new Error("The selection is " + (sourceNode.type || "a layer") + ", not a frame/container. Select the full screen.");
       }
-      updateProgress("Consulting the UX Direct Brain and planning a native Figma layout…");
+
+      stage("capturing", "Exporting a compact PNG of the selected screen…");
+      let renderedScreen = null;
+      let visualCaptureWarning = "";
+      try {
+        const exportResult = sourceNode && sourceNode.id ? await runNativeCanvasCommand("write-canvas", {
+          confirm: true, operation: "export-node", nodeId: sourceNode.id, format: "PNG", scale: 0.35
+        }, 90000) : null;
+        if (exportResult && typeof exportResult.base64 === "string" && exportResult.base64.length <= 48000) {
+          renderedScreen = "data:image/png;base64," + exportResult.base64;
+        } else {
+          visualCaptureWarning = "Rendered screenshot export was unavailable; visual confidence is reduced.";
+        }
+      } catch (error) {
+        visualCaptureWarning = "Rendered screenshot capture failed: " + String(error && error.message || "unknown error").slice(0, 150);
+      }
+
+      stage("brain", "Connecting to UX Direct Brain and resolving project context…");
+      stage("memory", "Searching shared memories and Knowledge Base patterns…");
+      stage("planning", renderedScreen
+        ? "Analysing rendered appearance and native layers together…"
+        : "Analysing native layers; rendered image unavailable…");
+
       const response = await fetch(API + "/api/assistant/figma-agent", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ prompt: prompt, canvas: canvas })
+        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, visualCaptureWarning: visualCaptureWarning })
       });
       const payload = await response.json().catch(function () { return {}; });
       if (!response.ok || payload.ok !== true || !payload.plan || !Array.isArray(payload.plan.elements)) {
@@ -647,6 +747,11 @@
       if (plan.elements.length < 5 || plan.elements.length > 80) {
         throw new Error("The proposed design plan has an unsupported layer count. No canvas changes were made.");
       }
+      const memory = payload.brain && payload.brain.status === "complete"
+        ? String(payload.brain.memories || 0) + " memories and " + String(payload.brain.knowledgeChunks || 0) + " Knowledge Base chunks retrieved"
+        : "shared-memory retrieval unavailable for this run";
+      stage("planning", "Plan validated · " + memory + (renderedScreen ? " · rendered screenshot analysed" : " · layer-only analysis"));
+
       const viewport = canvas && canvas.viewport && canvas.viewport.bounds ? canvas.viewport.bounds : {};
       const rootX = sourceNode && Number.isFinite(sourceNode.x)
         ? Math.max(-10000, Math.min(9000, sourceNode.x + (Number(sourceNode.width) || Number(plan.frame.width) || 393) + 100))
@@ -654,61 +759,113 @@
       const rootY = sourceNode && Number.isFinite(sourceNode.y)
         ? Math.max(-10000, Math.min(9000, sourceNode.y))
         : Math.max(40, Math.min(9000, Number(viewport.y) + 80 || 80));
-      updateProgress("Creating a separate variation frame; the original stays untouched…");
+      stage("creating", "Creating a separate editable variation; the original stays untouched…");
       const rootResult = await runNativeCanvasCommand("write-canvas", {
-        confirm: true,
-        operation: "create-elements",
-        target: "current-page",
+        confirm: true, operation: "create-elements", target: "current-page",
         elements: [{
-          type: "FRAME",
-          name: String(plan.frame.name || "UX Direct Variation").slice(0, 80),
-          x: rootX, y: rootY,
-          width: plan.frame.width, height: plan.frame.height,
-          color: plan.frame.backgroundColor,
-          clipsContent: true
+          type: "FRAME", name: String(plan.frame.name || "UX Direct Variation").slice(0, 80),
+          x: rootX, y: rootY, width: plan.frame.width, height: plan.frame.height,
+          color: plan.frame.backgroundColor, clipsContent: true
         }]
       }, 90000);
       const root = rootResult && Array.isArray(rootResult.nodes) ? rootResult.nodes[0] : null;
       if (!root || typeof root.id !== "string") {
-        throw new Error("Figma did not return the new frame ID. The frame may have been created; inspect the current page before retrying.");
+        throw new Error("Figma did not return the new frame ID. Inspect the current page before retrying.");
       }
       createdFrameId = root.id;
-      updateProgress("Building " + plan.elements.length + " editable native layers…");
-      await runNativeCanvasCommand("write-canvas", {
-        confirm: true, operation: "set-selection", nodeIds: [createdFrameId]
-      }, 90000);
+      await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [createdFrameId] }, 90000);
       for (let start = 0; start < plan.elements.length; start += 20) {
         const batch = plan.elements.slice(start, start + 20);
         const result = await runNativeCanvasCommand("write-canvas", {
           confirm: true, operation: "create-elements", target: "selection", elements: batch
         }, 90000);
         completedElementCount += Number(result && result.createdCount) || batch.length;
-        updateProgress("Building editable layers… " + completedElementCount + " of " + plan.elements.length);
+        stage("creating", "Executing native layers · " + completedElementCount + " of " + plan.elements.length + "…");
       }
-      await runNativeCanvasCommand("write-canvas", {
-        confirm: true, operation: "set-selection", nodeIds: [createdFrameId]
-      }, 90000);
-      await runNativeCanvasCommand("write-canvas", {
-        confirm: true, operation: "zoom-to-nodes", nodeIds: [createdFrameId]
-      }, 90000);
-      updateProgress("Verifying the result on the Figma canvas…");
-      const verified = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 2, maxNodes: 100
-      }, 90000);
+      await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [createdFrameId] }, 90000);
+      await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "zoom-to-nodes", nodeIds: [createdFrameId] }, 90000);
+
+      let lastReview = null;
+      let visualQAComplete = false;
+      for (let iteration = 1; iteration <= 3; iteration++) {
+        stage("rendering", "Rendering the new screen for visual QA · pass " + iteration + " of 3…");
+        let outputImage = null;
+        try {
+          const capture = await runNativeCanvasCommand("write-canvas", {
+            confirm: true, operation: "export-node", nodeId: createdFrameId, format: "PNG", scale: 0.35
+          }, 90000);
+          if (capture && typeof capture.base64 === "string" && capture.base64.length <= 48000) {
+            outputImage = "data:image/png;base64," + capture.base64;
+          }
+        } catch (_) {}
+        stage("reviewing", outputImage
+          ? "Comparing the rendered result for hierarchy, spacing, clipping and source fidelity…"
+          : "Rendered output export unavailable · checking native layer structure instead…");
+        const outputRead = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 4, maxNodes: 100 }, 90000);
+        const outputCanvas = frameOnlyRead(outputRead, createdFrameId);
+        const reviewResponse = await fetch(API + "/api/assistant/figma-agent/review", {
+          method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({
+            prompt: prompt, sourceCanvas: canvas, outputCanvas: outputCanvas,
+            sourceImage: renderedScreen, outputImage: outputImage, iteration: iteration
+          })
+        });
+        const reviewPayload = await reviewResponse.json().catch(function () { return {}; });
+        lastReview = reviewPayload && reviewPayload.review ? reviewPayload.review : null;
+        visualQAComplete = !!(reviewPayload && reviewPayload.visualInspection === true);
+        if (!reviewResponse.ok || !lastReview || !Array.isArray(lastReview.issues) || !lastReview.issues.length || iteration === 3) break;
+
+        const refineResponse = await fetch(API + "/api/assistant/figma-agent/refine", {
+          method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ prompt: prompt, review: lastReview, outputCanvas: outputCanvas, iteration: iteration })
+        });
+        const refinePayload = await refineResponse.json().catch(function () { return {}; });
+        if (!refineResponse.ok || !Array.isArray(refinePayload.patch) || !refinePayload.patch.length) break;
+
+        stage("refining", "Applying " + refinePayload.patch.length + " targeted visual corrections…");
+        const generatedFrame = outputCanvas && Array.isArray(outputCanvas.nodes) ? outputCanvas.nodes[0] : null;
+        const allowedIds = new Set();
+        (function collect(node) {
+          if (!node) return;
+          if (typeof node.id === "string") allowedIds.add(node.id);
+          if (Array.isArray(node.children)) node.children.forEach(collect);
+        })(generatedFrame);
+        for (const item of refinePayload.patch.slice(0, 20)) {
+          if (!item || typeof item.nodeId !== "string" || !allowedIds.has(item.nodeId) || !item.patch) continue;
+          await runNativeCanvasCommand("write-canvas", {
+            confirm: true, operation: "update-node", nodeId: item.nodeId, patch: item.patch
+          }, 90000);
+        }
+      }
+
+      stage("verifying", "Checking the final native layer tree and frame bounds…");
+      const verified = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 2, maxNodes: 100 }, 90000);
       const verifiedNode = verified && Array.isArray(verified.nodes)
         ? verified.nodes.find(function (node) { return node.id === createdFrameId; })
         : null;
       if (!verifiedNode || (Number(verifiedNode.childCount) || 0) < completedElementCount) {
-        throw new Error("The variation was written, but the read-back check did not confirm all layers. The original frame remains untouched; inspect the new variation named \"" + plan.frame.name + "\".");
+        throw new Error("The variation was written, but read-back could not verify all native layers. The source frame remains untouched.");
       }
+      stage("done", "Design created · verification complete");
       const model = typeof payload.model === "string" ? payload.model : "OpenRouter";
-      const memory = payload.brain && payload.brain.status === "complete"
-        ? String(payload.brain.memories || 0) + " memories + " + String(payload.brain.knowledgeChunks || 0) + " knowledge chunks"
-        : "retrieval unavailable for this run";
+      const quality = lastReview
+        ? (visualQAComplete
+          ? " Visual QA score: " + lastReview.score + "/100. " + (lastReview.issues.length ? lastReview.issues.length + " issue(s) remain after up to two refinement passes." : "No actionable visual issues were reported.")
+          : " Structural QA completed; screenshots were not both available for visual comparison.")
+        : " Visual QA service unavailable; structural verification completed.";
       return "Created and verified \"" + plan.frame.name + "\" as a separate editable Figma variation with " +
         completedElementCount + " native layers. " + String(plan.summary || "The variation is ready for review.") +
         "\n\nModel: " + model + " · UX Direct Brain: " + memory +
-        "\nThe source frame was preserved. The new variation is selected on the canvas.";
+        (visualCaptureWarning ? "\nVisual capture note: " + visualCaptureWarning : "") +
+        "\nThe source frame was preserved. The new variation is selected on the canvas." + quality;
+    }
+
+    function frameOnlyRead(result, frameId) {
+      const nodes = result && Array.isArray(result.nodes) ? result.nodes : [];
+      const frame = nodes.find(function (node) { return node.id === frameId; }) || null;
+      return { pageName: result && result.pageName || "", nodes: frame ? [frame] : nodes };
     }
 
     async function submitPrompt(rawPrompt) {
@@ -732,7 +889,7 @@
       try {
         if (isDesignActionPrompt(prompt)) {
           typingRow.remove();
-          assistantMessage = appendMessage("assistant", "Reading the selected frame and its layer contents…");
+          assistantMessage = appendMessage("assistant", "Scanning selected screen and native layers…");
           const answer = await createFigmaDesign(prompt, function (status) {
             if (assistantMessage) {
               assistantMessage.bubble.textContent = status;
@@ -773,15 +930,18 @@
         if (!answer.trim()) {
           assistantMessage.bubble.textContent = "I couldn't produce a response this time. Please try again.";
           assistantMessage.bubble.classList.add("error");
+          setProcessState("error", "No response received · please retry");
           chatHistory.push({ role: "assistant", content: assistantMessage.bubble.textContent });
           await sendTelemetry("Cockpit chat returned empty response", "error", "The model stream contained no assistant text.", { durationMs: Date.now() - startedAt });
         } else {
           chatHistory.push({ role: "assistant", content: answer });
+          setProcessState("done", "Response ready · UX Direct Brain replied");
           await sendTelemetry("Cockpit chat response completed", "success", "UX Direct returned a conversational response from its internal model route.", { durationMs: Date.now() - startedAt, answerChars: answer.length });
         }
       } catch (error) {
         typingRow.remove();
         const detail = error && error.message ? error.message : "Unknown UX Direct error.";
+        setProcessState("error", "Task paused · " + detail.slice(0, 180));
         if (assistantMessage) {
           assistantMessage.bubble.textContent = "I couldn't complete that request. " + detail;
           assistantMessage.bubble.classList.add("error");

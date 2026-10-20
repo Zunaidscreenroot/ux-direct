@@ -199,3 +199,37 @@ test("normal conversational chat prefers GPT-6 Luna and only starts Auto after p
   assert.ok(chatRoute.includes("const fallback = startAttempt(FALLBACK_MODEL);"));
   assert.ok(chatRoute.includes('currentModel === FALLBACK_MODEL ? { plugins: [{ id: "auto-router", cost_tier: "low" }] }'));
 });
+
+test("Figma visual analysis receives a scaled rendered PNG together with native layer data", () => {
+  assert.ok(pluginUi.includes('operation: "export-node", nodeId: sourceNode.id, format: "PNG", scale: 0.35'));
+  assert.ok(plugin.includes('exportOptions.constraint = { type: "SCALE"'));
+  assert.ok(bridge.includes('scale: z.number().finite().min(0.2).max(1).optional()'));
+  assert.ok(agent.includes('renderedScreen: z.string().max(52000).optional()'));
+  assert.ok(agent.includes('type: "image_url"'));
+  assert.ok(agent.includes("Analyse BOTH the attached rendered screen image and native layer tree"));
+});
+
+test("Figma visual review and refinement endpoints are wired and bounded", () => {
+  const review = read("app/api/assistant/figma-agent/review/route.ts");
+  const refine = read("app/api/assistant/figma-agent/refine/route.ts");
+  assert.ok(pluginUi.includes("/api/assistant/figma-agent/review"));
+  assert.ok(pluginUi.includes("/api/assistant/figma-agent/refine"));
+  assert.ok(pluginUi.includes("iteration <= 3"));
+  assert.ok(pluginUi.includes("iteration === 3"));
+  assert.ok(review.includes('type: "image_url"'));
+  assert.ok(review.includes("visualInspection: !!sourceImage && !!outputImage"));
+  assert.ok(refine.includes("PatchSchema"));
+  assert.ok(refine.includes("found.get(entry.nodeId)"));
+  assert.ok(pluginUi.includes("allowedIds.has(item.nodeId)"));
+});
+
+test("Figma plugin cockpit has a morphing orb and visible process stages", () => {
+  assert.ok(pluginUi.includes('class="uxd-hero-orb"'));
+  assert.ok(pluginUi.includes('id="processStatus"'));
+  assert.ok(pluginUi.includes("function setProcessState"));
+  for (const stage of ['"scanning"', '"capturing"', '"brain"', '"memory"', '"planning"', '"creating"', '"rendering"', '"reviewing"', '"refining"', '"verifying"', '"error"']) {
+    assert.ok(pluginUi.includes(stage), "Missing process state " + stage);
+  }
+  const manifest = read("figma-plugin/manifest.json");
+  assert.ok(manifest.includes("scaled PNG previews"));
+});
