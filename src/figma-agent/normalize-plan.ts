@@ -186,23 +186,33 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
       item.type === "RECTANGLE" && (Number(item.x) || 0) <= 2 && (Number(item.y) || 0) <= 2 &&
       (Number(item.width) || 0) >= frame.width * 0.94 && (Number(item.height) || 0) >= frame.height * 0.9;
     const eligibleLeaves = allLeaves.filter((item) => !isFullScreenBackdrop(item));
-    const assigned = new Set<Record<string, unknown>>();
-    const groups = bands.map((band) => {
-      let bucket = eligibleLeaves.filter((item) => {
-        if (assigned.has(item)) return false;
-        const y = Number(item.y) || 0;
-        const h = Number(item.height) || 0;
-        const centerY = y + h / 2;
+    const buckets: Array<Array<Record<string, unknown>>> = bands.map((band) =>
+      eligibleLeaves.filter((item) => {
+        const centerY = (Number(item.y) || 0) + (Number(item.height) || 0) / 2;
         return centerY / frame.height >= band.start && centerY / frame.height < band.end;
-      }).slice(0, 30);
-      if (!bucket.length) {
-        const targetY = frame.height * (band.start + band.end) / 2;
-        const fallback = eligibleLeaves.filter((item) => !assigned.has(item))
-          .sort((a, b) => Math.abs((Number(a.y) || 0) + (Number(a.height) || 0) / 2 - targetY) -
-            Math.abs((Number(b.y) || 0) + (Number(b.height) || 0) / 2 - targetY))[0];
-        if (fallback) bucket = [fallback];
+      }).slice(0, 30)
+    );
+    // Flat model plans sometimes place most nodes in one region. Rebalance only when necessary so each semantic section gets a unique child without duplicating any Figma layer.
+    for (let emptyIndex = 0; emptyIndex < buckets.length; emptyIndex += 1) {
+      if (buckets[emptyIndex].length) continue;
+      const targetY = frame.height * (bands[emptyIndex].start + bands[emptyIndex].end) / 2;
+      let donorIndex = -1, nodeIndex = -1, bestDistance = Number.POSITIVE_INFINITY;
+      for (let groupIndex = 0; groupIndex < buckets.length; groupIndex += 1) {
+        if (buckets[groupIndex].length <= 1) continue;
+        for (let candidateIndex = 0; candidateIndex < buckets[groupIndex].length; candidateIndex += 1) {
+          const candidate = buckets[groupIndex][candidateIndex];
+          const centerY = (Number(candidate.y) || 0) + (Number(candidate.height) || 0) / 2;
+          const distance = Math.abs(centerY - targetY);
+          if (distance < bestDistance) { bestDistance = distance; donorIndex = groupIndex; nodeIndex = candidateIndex; }
+        }
       }
-      bucket.forEach((item) => assigned.add(item));
+      if (donorIndex >= 0 && nodeIndex >= 0) {
+        const moved = buckets[donorIndex].splice(nodeIndex, 1)[0];
+        buckets[emptyIndex].push(moved);
+      }
+    }
+    const groups = bands.map((band, index) => {
+      const bucket = buckets[index];
       const minX = bucket.length ? Math.max(0, Math.min(...bucket.map((item) => Number(item.x) || 0))) : 16;
       const minY = bucket.length ? Math.max(0, Math.min(...bucket.map((item) => Number(item.y) || 0))) : Math.round(frame.height * band.start);
       const maxX = bucket.length ? Math.max(...bucket.map((item) => (Number(item.x) || 0) + (Number(item.width) || 1))) : frame.width - 16;
