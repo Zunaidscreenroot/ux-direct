@@ -150,11 +150,25 @@ export function createLearningMarkerTransform(
     const choices = Array.isArray(frame.choices) ? frame.choices : [];
     const first = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : null;
     const delta = first?.delta && typeof first.delta === "object" ? first.delta as Record<string, unknown> : null;
-    if (!delta || typeof delta.content !== "string") {
+    if (!delta) {
       controller.enqueue(encoder.encode(line + "\n"));
       return;
     }
-    delta.content = consumeText(delta.content);
+    if (typeof delta.content === "string") {
+      delta.content = consumeText(delta.content);
+    } else if (Array.isArray(delta.content)) {
+      delta.content = delta.content.map((part) => {
+        if (typeof part === "string") return consumeText(part);
+        if (!part || typeof part !== "object" || Array.isArray(part)) return part;
+        const textPart = part as Record<string, unknown>;
+        return typeof textPart.text === "string" && (textPart.type === "text" || textPart.type === undefined)
+          ? { ...textPart, text: consumeText(textPart.text) }
+          : part;
+      });
+    } else {
+      controller.enqueue(encoder.encode(line + "\n"));
+      return;
+    }
     controller.enqueue(encoder.encode("data: " + JSON.stringify(frame) + "\n"));
   }
 
