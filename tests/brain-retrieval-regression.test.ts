@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildBrainSystemPrompt, buildRetrievalQuery, resolveBrainScopes } from "../src/memory/chat-context";
+import { sanitizeLegacyLearningPolicyMemory } from "../src/memory/shared-brain";
 
 const base = {
   memoryCount: 0,
@@ -96,4 +97,35 @@ test("adds the previous user task to short follow-ups without an LLM query-rewri
 test("caps retrieval-only query context so long chats cannot create oversized search inputs", () => {
   const query = buildRetrievalQuery("continue", "x".repeat(10000));
   assert.ok(query.length <= 3000);
+});
+
+
+test("suppresses superseded approval-first memory and refreshes the Past Findings policy", () => {
+  const stale = {
+    id: "ef64b595-7f6b-4786-a799-c3e7e5a1015b",
+    project_key: "UX_SHARED_BRAIN",
+    memory_type: "workflow_procedure",
+    title: "Selective learning from conversational feedback",
+    content: "Keep every new learning draft inactive until the owner explicitly approves it.",
+    structured_data: {},
+    tags: ["approval"],
+    source: "human-approved",
+    source_product: "ux-direct",
+    source_reference: "owner-request:chat-learning-policy:2026-10-18",
+    confidence: 0.97,
+    usage_count: 0,
+  };
+  assert.equal(sanitizeLegacyLearningPolicyMemory(stale), null);
+
+  const pastFindings = {
+    ...stale,
+    id: "33e70e65-76df-4cb9-82fb-26ff2bed2c52",
+    title: "Past Findings versus Knowledge Base",
+    source_reference: "owner-approved-bootstrap:2026-10-18",
+    content: "Keep client-specific audit findings in Past Findings. Keep new feedback and reference documents as drafts until explicitly reviewed and approved.",
+  };
+  const sanitized = sanitizeLegacyLearningPolicyMemory(pastFindings);
+  assert.ok(sanitized);
+  assert.match(sanitized.content, /auto-activate/);
+  assert.doesNotMatch(sanitized.content, /until explicitly reviewed and approved/i);
 });

@@ -118,6 +118,35 @@ function safeUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
+/**
+ * Remove seed-era memory that conflicts with the owner's current universal
+ * auto-learning policy. Keep the Past Findings/Knowledge Base distinction while
+ * replacing its obsolete manual-approval clause in runtime retrieval.
+ */
+export function sanitizeLegacyLearningPolicyMemory(memory: BrainMemory): BrainMemory | null {
+  const id = String(memory.id || "").toLowerCase();
+  const title = String(memory.title || "").trim().toLowerCase();
+  const reference = String(memory.source_reference || "").toLowerCase();
+
+  if (
+    id === "ef64b595-7f6b-4786-a799-c3e7e5a1015b" ||
+    title === "selective learning from conversational feedback" ||
+    reference === "owner-request:chat-learning-policy:2026-10-18"
+  ) {
+    return null;
+  }
+
+  if (title === "past findings versus knowledge base") {
+    const content = String(memory.content || "").replace(
+      /Keep new feedback and reference documents as drafts until explicitly reviewed and approved\.?/i,
+      "Eligible reusable feedback and relevant research may auto-activate after deterministic relevance, scope, privacy and deduplication checks; no manual approval step is required."
+    );
+    return content === memory.content ? memory : { ...memory, content };
+  }
+
+  return memory;
+}
+
 function compactContext(memories: BrainMemory[], knowledge: BrainKnowledgeChunk[], maxChars = MAX_CONTEXT_CHARS): string {
   const sections: string[] = [];
   for (const memory of memories.slice(0, MAX_MEMORIES)) {
@@ -177,7 +206,9 @@ export async function retrieveBrainContext(input: {
           return [];
         });
     const [memoryResult, knowledgeResult] = await Promise.all([memoryPromise, knowledgePromise]);
-    const memories = Array.isArray(memoryResult) ? memoryResult as BrainMemory[] : [];
+    const memories = (Array.isArray(memoryResult) ? memoryResult as BrainMemory[] : [])
+      .map(sanitizeLegacyLearningPolicyMemory)
+      .filter((memory): memory is BrainMemory => memory !== null);
     const knowledge = Array.isArray(knowledgeResult) ? knowledgeResult as BrainKnowledgeChunk[] : [];
     const contextText = compactContext(memories, knowledge, maxChars);
     return {
