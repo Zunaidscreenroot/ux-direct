@@ -1177,7 +1177,7 @@
     }
 
     async function createFigmaDesign(prompt, reportProgress) {
-      const selectedModel = "qwen/qwen3.5-397b-a17b";
+      const selectedModel = "openai/gpt-6-luna";
       const taskStartedAt = Date.now();
       let taskRunId = "";
       let taskRetrieval = null;
@@ -1372,33 +1372,10 @@
             : "Expected " + completedElementCount + " generated child layers, but read-back confirmed " + verifiedChildCount + ".";
         throw new Error(problem + " The variation may be partial; the source frame remains untouched. Inspect the new frame before retrying.");
       }
-      let visualNote = "";
-      const qualityTree = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true }, 90000);
-      if (!qualityTree || !Array.isArray(qualityTree.nodes) || !qualityTree.nodes.some(function (node) { return node.id === createdFrameId; })) {
-        throw new Error("The generated variation could not be read back for final visual verification. It will not be accepted.");
-      }
-      const qa = await runVisualQualityLoop({
-        prompt: prompt, sourceCanvas: canvas, outputCanvas: qualityTree, sourceImage: renderedScreen,
-        allowRepair: true, reportProgress: stage,
-        onReviewResult: function (result) {
-          if (result && result.qualityGate && result.qualityGate.passed === true && result.learningCandidate) {
-            learningCandidate = result.learningCandidate;
-          }
-        }
-      });
-      visualNote = qa && qa.text ? "\n\n" + qa.text : "";
-      if (!qa || qa.passed !== true) {
-        stage("error", "Visual quality gate failed · rejecting variation");
-        try {
-          await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "delete-node", nodeId: createdFrameId }, 90000);
-        } catch (_) {
-          visualNote += "\nThe failed variation could not be removed automatically; inspect or delete it manually.";
-        }
-        throw new Error("UX Direct rejected this variation because final rendered visual QA did not pass. " +
-          String(qa && qa.text || "Visual quality could not be verified."));
-      }
-      visualNote += await finalizeTaskOutcome("verified", qa.text || "Final visual quality gate passed.", "");
-      stage("done", "Variation created · native structure and visual quality gate passed");
+      let visualNote = "\\n\\nPost-variation visual QA disabled as requested; native layer read-back passed.";
+      visualNote += await finalizeTaskOutcome("verified",
+        "Native structure/read-back passed; post-variation visual QA disabled as requested.", "");
+      stage("done", "Variation created · native structure read-back passed");
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
       return 'Created "' + plan.frame.name + '" as a separate editable Figma variation with ' +
         completedElementCount + ' native layers. ' + String(plan.summary || "The variation is ready for review.") +
