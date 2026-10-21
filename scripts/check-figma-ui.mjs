@@ -4,11 +4,11 @@ import { fileURLToPath } from "node:url";
 
 const htmlPath = fileURLToPath(new URL("../figma-plugin/ui.html", import.meta.url));
 const html = readFileSync(htmlPath, "utf8");
-const inlineScripts = [...html.matchAll(/<script\\b([^>]*)>([\\s\\S]*?)<\\/script\\s*>/gi)]
+const inlineScripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)]
   .filter((match) => {
     const attributes = match[1] || "";
-    if (/\\bsrc\\s*=/i.test(attributes)) return false;
-    const type = attributes.match(/\\btype\\s*=\\s*["']?([^\\s"'>]+)/i)?.[1]?.toLowerCase();
+    if (/\bsrc\s*=/i.test(attributes)) return false;
+    const type = attributes.match(/\btype\s*=\s*["']?([^\s"'>]+)/i)?.[1]?.toLowerCase();
     return !type || ["text/javascript", "application/javascript", "module", "text/ecmascript", "application/ecmascript"].includes(type);
   });
 
@@ -22,10 +22,10 @@ for (const [index, match] of inlineScripts.entries()) {
     encoding: "utf8",
   });
   if (result.status !== 0) {
-    process.stderr.write("Inline Figma UI script " + (index + 1) + " failed syntax validation.\\n");
-    process.stderr.write(result.stderr || result.stdout || "node --check failed.\\n");
+    process.stderr.write("Inline Figma UI script " + (index + 1) + " failed syntax validation.\n");
+    process.stderr.write(result.stderr || result.stdout || "node --check failed.\n");
     process.exit(result.status || 1);
   }
 }
 
-process.stdout.write("Validated " + inlineScripts.length + " inline JavaScript block(s) in figma-plugin/ui.html.\\n");
+process.stdout.write("Validated " + inlineScripts.length + " inline JavaScript block(s) in figma-plugin/ui.html.\n");
