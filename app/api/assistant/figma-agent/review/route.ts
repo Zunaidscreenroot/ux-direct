@@ -126,7 +126,7 @@ export async function POST(request: Request) {
         "component consistency and action hierarchy",
         "specificity of content instead of generic cards",
       ],
-      instruction: "Return evidence-based findings and manual fix suggestions only. This is a single advisory QA pass; do not imply that patches will be applied automatically. If screenshots are absent, do not invent visual observations.",
+      instruction: "Return evidence-based actionable findings and the smallest concrete fix for each. The plugin may run bounded native repair passes from these findings; do not claim a repair has already been applied. If screenshots are absent, do not invent visual observations.",
     }),
   }];
   if (sourceImage) userContent.push({ type: "image_url", image_url: { url: sourceImage } });
