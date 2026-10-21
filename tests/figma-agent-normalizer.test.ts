@@ -51,6 +51,28 @@ test("normalizes OpenRouter layer fields that previously failed strict Figma pla
   assert.equal(due?.name, "Text · Next EMI due 25 Oct");
 });
 
+test("adds explicit native surface fills and transparent structural wrappers", () => {
+  const normalized = normalizePlan({
+    summary: "A valid manage loans screen.",
+    frame: { name: "Manage Loans", width: 360, height: 800, backgroundColor: "#F7F8FA" },
+    elements: [
+      { type: "FRAME", name: "Screen Header", x: 0, y: 0, width: 360, height: 64,
+        children: [{ type: "TEXT", name: "Title", text: "Manage Loans", x: 16, y: 16, width: 240, height: 28 }] },
+      { type: "FRAME", name: "Back Arrow", x: 8, y: 8, width: 40, height: 40,
+        children: [{ type: "TEXT", name: "Back", text: "‹", x: 8, y: 4, width: 24, height: 28 }] },
+      { type: "FRAME", name: "Active Tab", x: 12, y: 72, width: 100, height: 40,
+        children: [{ type: "TEXT", name: "Active", text: "Active", x: 8, y: 8, width: 84, height: 24 }] },
+      { type: "FRAME", name: "Loan Card Container", x: 16, y: 124, width: 328, height: 160,
+        children: [{ type: "TEXT", name: "Amount", text: "₹40,000", x: 12, y: 12, width: 200, height: 28 }] },
+    ],
+  }, { pageName: "Loans", nodes: [] }) as { elements: Array<Record<string, unknown>> };
+  const find = (name: string) => normalized.elements.find((node) => node.name === name);
+  assert.equal(find("Screen Header")?.noFill, true, "Structural frames should not inherit Figma's implicit white fill.");
+  assert.equal(find("Back Arrow")?.noFill, true);
+  assert.equal(find("Active Tab")?.color, "#DDF4EC", "An active tab needs an explicit surface.");
+  assert.equal(find("Loan Card Container")?.color, "#FFFFFF", "A semantic card needs an explicit surface.");
+});
+
 test("preserves model-authored nested FRAME containers and relative child coordinates", () => {
   const input = {
     summary: "A structured Manage Loans variation with native section frames.",
