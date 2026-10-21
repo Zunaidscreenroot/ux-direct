@@ -390,3 +390,14 @@ test("native action planner covers Figma page, export, boolean, flatten and imag
   assert.ok(mcp.includes('"create-image-fill", "insert-image", "create-variables", "bind-variable"'), "MCP runtime permits the safe native image and token actions.");
   assert.ok(mcp.includes('["current-page", "selection", "node", "test-lab"].includes(String(input.target))'), "MCP and bridge agree on the node target.");
 });
+
+
+test("visual QA exits without model calls when rendered evidence is missing", () => {
+  const start = pluginUi.indexOf("async function runVisualQualityLoop");
+  const end = pluginUi.indexOf("function downloadNativeExport", start);
+  assert.ok(start >= 0 && end > start, "Visual quality loop must be present.");
+  const qualityLoop = pluginUi.slice(start, end);
+  assert.ok(qualityLoop.includes("if (!sourceImage)"));
+  assert.ok(qualityLoop.includes("if (!capture || !capture.dataUrl)"));
+  assert.ok(qualityLoop.includes("Visual QA blocked because the repaired output screenshot could not be captured"));
+});
