@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
-import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
+import { resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/task-learning";
+import { deferTaskWork, finishTaskRun, startTaskRun, type RetrievalRecord } from "@/src/memory/task-run-log";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
@@ -412,7 +414,12 @@ export async function POST(request: Request) {
   });
   if (userContext.length > 52000) return NextResponse.json({ error: "Selection context is too large. Select a smaller frame or reduce the number of layers." }, { status: 413, headers });
 
+  const taskRunId = randomUUID();
+  const taskProject = resolveFigmaTaskProject(parsedInput.data.prompt);
+  const taskScope = resolveFigmaTaskScope(taskProject, parsedInput.data.prompt);
+
   let brain: BrainContextPromptInput = { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
+  let taskRetrieval: RetrievalRecord = { status: "degraded", memoryIds: [], chunkIds: [], chars: 0 };
   const brainStarted = Date.now();
   try {
     const retrieved = await retrieveBrainContext({
@@ -429,9 +436,12 @@ export async function POST(request: Request) {
       knowledgeChunkCount: Math.max(0, retrieved.retrieval.knowledgeChunkCount || 0),
       durationMs: Date.now() - brainStarted,
     };
+    taskRetrieval = { status: retrieved.retrieval.status, memoryIds: retrieved.retrieval.memoryIds,
+      chunkIds: retrieved.retrieval.chunkIds, chars: retrieved.retrieval.chars };
   } catch {
     brain = { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: Date.now() - brainStarted };
   }
+  deferTaskWork(startTaskRun({ id: taskRunId, projectKey: taskScope, title: "Figma task", requestSummary: parsedInput.data.prompt, retrieval: taskRetrieval }));
 
   const scopeInstructions = componentSelection
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
@@ -601,8 +611,6 @@ export async function POST(request: Request) {
           if (!isRecovery) continue;
           break;
         }
-        const rawPlanRecord = rawPlan && typeof rawPlan === "object" && !Array.isArray(rawPlan)
-          ? rawPlan as Record<string, unknown> : {};
         const normalizedPlan = normalizePlan(rawPlan, canvas);
         const parsedPlan = PlanSchema.safeParse(normalizedPlan);
         if (!parsedPlan.success) {
@@ -634,15 +642,13 @@ export async function POST(request: Request) {
           if (!isRecovery) continue;
           break;
         }
-        const learningStatus = await captureFigmaTaskLearning(
-          rawPlanRecord.learningCandidate,
-          parsedInput.data.prompt,
-          "automatic-figma-generation",
-        );
         return NextResponse.json({
           ok: true,
+          taskRunId,
+          taskProject,
+          retrieval: taskRetrieval,
           plan: parsedPlan.data,
-          learning: learningStatus,
+          learning: "awaiting-verification",
           model: typeof payload.model === "string" ? payload.model : model,
           brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
           visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
@@ -658,6 +664,8 @@ export async function POST(request: Request) {
       }
     }
   }
+  deferTaskWork(finishTaskRun({ id: taskRunId, outcome: "failed", durationMs: Date.now() - requestStartedAt,
+    retrieval: taskRetrieval, errorSummary: errors[0] || "Plan generation failed." }));
   return NextResponse.json({
     error: "UX Direct could not produce a valid native Figma design plan. No canvas changes were made.",
     attemptedModels: models,

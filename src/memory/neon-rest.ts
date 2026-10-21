@@ -6,6 +6,8 @@ const ALLOWED_TABLES = new Set([
   "uxd_knowledge_documents",
   "uxd_knowledge_chunks",
   "uxd_brain_eval_cases",
+  "uxd_task_runs",
+  "uxd_model_learning_events",
 ]);
 
 // The Neon/Postgres driver treats JavaScript arrays as PostgreSQL arrays by
@@ -17,6 +19,8 @@ const JSONB_COLUMNS: Record<string, ReadonlySet<string>> = {
   uxd_knowledge_documents: new Set(["metadata"]),
   uxd_knowledge_chunks: new Set(["metadata"]),
   uxd_brain_eval_cases: new Set(["last_run_result", "metadata"]),
+  uxd_task_runs: new Set(["metadata", "plan", "retrieval", "lesson"]),
+  uxd_model_learning_events: new Set(["operation_profile"]),
 };
 
 export function serializeDatabaseValue(table: string, column: string, value: unknown): unknown {
@@ -109,6 +113,21 @@ export async function neonRequest(path: string, init: RequestInit = {}): Promise
         "SELECT * FROM public.uxd_brain_search_knowledge($1::text,$2::text[],$3::integer)",
         [args.p_query ?? "", args.p_scope_keys ?? ["UX_SHARED_BRAIN"], args.p_limit ?? 6],
       );
+    }
+    if (name === "uxd_brain_mark_used") {
+      const rows = await execute("SELECT public.uxd_brain_mark_used($1::uuid[]) AS result", [args.ids ?? []]);
+      return rows[0]?.result ?? null;
+    }
+    if (name === "uxd_brain_capture_task_lesson") {
+      const rows = await execute(
+        "SELECT public.uxd_brain_capture_task_lesson($1::text,$2::text,$3::text,$4::text,$5::text[],$6::text) AS result",
+        [args.p_scope, args.p_memory_type, args.p_title, args.p_content, args.p_tags ?? [], args.p_dedupe_key],
+      );
+      return rows[0]?.result ?? null;
+    }
+    if (name === "uxd_task_claim_lesson") {
+      const rows = await execute("SELECT public.uxd_task_claim_lesson($1::uuid) AS result", [args.p_task_run_id]);
+      return rows[0]?.result ?? false;
     }
     if (name === "uxd_brain_review_feedback") {
       const rows = await execute(

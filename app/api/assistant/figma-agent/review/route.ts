@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveBrainScopes } from "@/src/memory/chat-context";
-import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
+import { captureVerifiedTaskLesson, resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/task-learning";
+import { deferTaskWork, finishTaskRun, startTaskRun } from "@/src/memory/task-run-log";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 import { normalizeVisualReview } from "@/src/figma-agent/normalize-visual-review";
@@ -81,18 +82,42 @@ export async function OPTIONS(request: Request) {
 export async function POST(request: Request) {
   const headers = corsHeaders(request);
   if (!isAllowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (!apiKey) return NextResponse.json({ error: "OpenRouter is not configured." }, { status: 503, headers });
   const body: unknown = await request.json().catch(() => null);
   const schema = z.object({
     prompt: z.string().trim().min(2).max(5000),
-    sourceCanvas: z.unknown(),
-    outputCanvas: z.unknown(),
+    sourceCanvas: z.unknown().optional(),
+    outputCanvas: z.unknown().optional(),
     sourceImage: z.string().max(52000).nullable().optional(),
     outputImage: z.string().max(52000).nullable().optional(),
+    taskRunId: z.string().uuid().optional(),
+    executionFailure: z.string().trim().min(3).max(2000).optional(),
+    durationMs: z.number().int().min(0).max(86_400_000).optional(),
+    retrieval: z.object({
+      status: z.enum(["complete", "empty", "degraded", "disabled"]),
+      memoryIds: z.array(z.string().uuid()).max(12), chunkIds: z.array(z.string().max(200)).max(8), chars: z.number().int().min(0).max(5200),
+    }).strict().optional(),
   }).strict();
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Visual review input is invalid.", details: parsed.error.issues }, { status: 400, headers });
+  const retrieval = parsed.data.retrieval || { status: "disabled" as const, memoryIds: [], chunkIds: [], chars: 0 };
+  const project = resolveFigmaTaskProject(parsed.data.prompt);
+  if (parsed.data.executionFailure && parsed.data.taskRunId) {
+    deferTaskWork((async () => {
+      await startTaskRun({ id: parsed.data.taskRunId!, projectKey: resolveFigmaTaskScope(project, parsed.data.prompt), title: "Figma task",
+        requestSummary: parsed.data.prompt, retrieval });
+      const learned = await captureVerifiedTaskLesson({ id: parsed.data.taskRunId!, outcome: "failed", project,
+        taskContext: parsed.data.prompt, failureMessage: parsed.data.executionFailure, durationMs: parsed.data.durationMs, retrieval });
+      await finishTaskRun({ id: parsed.data.taskRunId!, outcome: "failed", durationMs: parsed.data.durationMs || 0,
+        retrieval, lesson: learned.lesson ? { ...learned.lesson, status: learned.status } : null,
+        errorSummary: parsed.data.executionFailure });
+    })());
+    return NextResponse.json({ ok: true, logged: true }, { headers });
+  }
+  if (!parsed.data.sourceCanvas || !parsed.data.outputCanvas) {
+    return NextResponse.json({ error: "Source and output canvas evidence are required for visual review." }, { status: 400, headers });
+  }
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) return NextResponse.json({ error: "OpenRouter is not configured." }, { status: 503, headers });
   const sourceImage = safeImage(parsed.data.sourceImage);
   const outputImage = safeImage(parsed.data.outputImage);
   const sourceCanvas = compactCanvas(parsed.data.sourceCanvas);
@@ -158,7 +183,7 @@ export async function POST(request: Request) {
               content: [
                 UX_DIRECT_DESIGN_ROLE,
                 "You are the visual QA reviewer inside a native Figma design agent. Compare source and output honestly and return evidence-based actionable defects.",
-                "Return JSON only with required keys: issues (array of {severity:'high'|'medium'|'low', issue:string, evidence:string, fix:string}), score (number 0–100), summary (string); optional learningCandidate (null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}) only if this review revealed a durable reusable design or execution lesson. Do not turn one-off screen defects, client-specific details, screenshots, node IDs, or private text into a general lesson. Use the narrowest safe scope; the backend validates the candidate and applies the existing 50% relevance gate.",
+                "Return JSON only with required keys: issues (array of {severity:'high'|'medium'|'low', issue:string, evidence:string, fix:string}), score (number 0–100), summary (string); learningCandidate (null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}). When quality gate passes, provide one reusable, generalized native Figma workflow/design pattern. Do not turn one-off screen defects, client-specific details, screenshots, node IDs, or private text into a lesson. Use the narrowest safe scope; the backend validates scope, privacy and the existing 50% relevance gate.",
                 "Compare the source screenshot with the generated screenshot when both exist. Evaluate whether the result meaningfully preserves the selected screen's specific purpose/components and improves craft. Look for generic redesign patterns, clipped text, poor spacing, hierarchy, alignment, contrast, content density and weak CTA priority.",
                 "If screenshots are missing, treat the review as structural-only. Do not claim to see visual details. If no actionable issues remain, return an empty issues array.",
                 "Be conservative about passing: score the result against professional production-ready quality, not merely basic validity. Penalize empty/placeholder groups, content loss, repeated generic cards, missing important source values, weak hierarchy, insufficient contrast, overflow, and incomplete layer trees. A high score requires evidence that the actual output is materially complete and specific to the user's task.",
@@ -209,13 +234,23 @@ export async function POST(request: Request) {
           ", issue-array=" + String(Boolean(decodedRecord.issues || decodedRecord.findings || decodedRecord.defects || decodedRecord.problems)) + ").");
         continue;
       }
-      const learningStatus = await captureFigmaTaskLearning(
-        learningCandidate,
-        parsed.data.prompt,
-        "automatic-figma-visual-review",
-      );
       const unresolvedHighSeverity = validated.data.issues.some(issue => issue.severity === "high");
       const qualityGatePassed = validated.data.score >= 82 && !unresolvedHighSeverity && validated.data.issues.length === 0;
+      const taskRunId = parsed.data.taskRunId;
+      if (taskRunId) {
+        const outcome = qualityGatePassed ? "verified" as const : "failed" as const;
+        const failureMessage = validated.data.issues.map(issue => issue.issue + " " + issue.evidence).join(" ").slice(0, 1900);
+        deferTaskWork((async () => {
+          await startTaskRun({ id: taskRunId, projectKey: resolveFigmaTaskScope(project, parsed.data.prompt), title: "Figma task",
+            requestSummary: parsed.data.prompt, retrieval });
+          const learned = await captureVerifiedTaskLesson({ id: taskRunId, outcome, project,
+            taskContext: parsed.data.prompt, candidate: learningCandidate, failureMessage,
+            durationMs: parsed.data.durationMs, retrieval });
+          await finishTaskRun({ id: taskRunId, outcome, durationMs: parsed.data.durationMs || 0,
+            retrieval, lesson: learned.lesson ? { ...learned.lesson, status: learned.status } : null,
+            summary: validated.data.summary, errorSummary: outcome === "failed" ? failureMessage : undefined });
+        })());
+      }
       return NextResponse.json({
         ok: true,
         review: validated.data,
@@ -228,7 +263,7 @@ export async function POST(request: Request) {
             ? "Visual QA passed."
             : "Visual QA found issues for manual review. This workflow does not apply automatic design refinements."
         },
-        learning: learningStatus,
+        learning: taskRunId ? (qualityGatePassed ? "queued" : "filtered-unless-categorized") : "no-task-run",
         visualInspection: !!sourceImage && !!outputImage,
         outputImageInspected: !!outputImage,
         model: typeof record.model === "string" ? record.model : model,

@@ -37,10 +37,13 @@ export type BrainContext = {
   knowledge: BrainKnowledgeChunk[];
   contextText: string;
   retrieval: {
-    status: "complete" | "empty" | "degraded";
+    status: "complete" | "empty" | "degraded" | "disabled";
     memoryCount: number;
     knowledgeChunkCount: number;
     maxChars: number;
+    memoryIds: string[];
+    chunkIds: string[];
+    chars: number;
   };
 };
 
@@ -211,6 +214,13 @@ export async function retrieveBrainContext(input: {
       .filter((memory): memory is BrainMemory => memory !== null);
     const knowledge = Array.isArray(knowledgeResult) ? knowledgeResult as BrainKnowledgeChunk[] : [];
     const contextText = compactContext(memories, knowledge, maxChars);
+    const memoryIds = memories.map(memory => memory.id).filter(safeUuid);
+    if (memoryIds.length) {
+      void supabaseRequest("rpc/uxd_brain_mark_used", {
+        method: "POST",
+        body: JSON.stringify({ ids: memoryIds }),
+      }).catch(error => console.warn("[uxd-brain] usage tracking failed:", error instanceof Error ? error.message.slice(0, 160) : "unknown"));
+    }
     return {
       memories, knowledge, contextText,
       retrieval: {
@@ -218,11 +228,18 @@ export async function retrieveBrainContext(input: {
         memoryCount: memories.length,
         knowledgeChunkCount: knowledge.length,
         maxChars,
+        memoryIds,
+        chunkIds: knowledge.map(chunk => chunk.chunk_id).filter(Boolean),
+        chars: contextText.length,
       },
     };
   } catch (error) {
     console.warn("[uxd-brain] retrieval degraded:", error instanceof Error ? error.message.slice(0, 200) : "unknown");
-    return { memories: [], knowledge: [], contextText: "", retrieval: { status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, maxChars } };
+    const disabled = !process.env.DATABASE_URL && !process.env.POSTGRES_PRISMA_URL && !process.env.POSTGRES_URL_NON_POOLING;
+    return { memories: [], knowledge: [], contextText: "", retrieval: {
+      status: disabled ? "disabled" : "degraded", memoryCount: 0, knowledgeChunkCount: 0, maxChars,
+      memoryIds: [], chunkIds: [], chars: 0,
+    } };
   }
 }
 
