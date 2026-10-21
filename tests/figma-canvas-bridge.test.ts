@@ -289,12 +289,16 @@ test("Figma source visual capture failures block unverified design generation", 
   assert.ok(reviewRoute.includes("evaluateVisualQualityGate"));
 });
 
-test("selected and generated frame screenshot export falls back to progressively smaller scales", () => {
+test("source screenshot export retries smaller scales and variation completion uses native read-back only", () => {
   assert.ok(pluginUi.includes("const scales = [0.6, 0.45, 0.3, 0.2, 0.12, 0.08]"));
   assert.ok(pluginUi.includes("JPEG preview export failed at all attempted scales (60%, 45%, 30%, 20%, 12%, 8%)."));
-  assert.ok(pluginUi.includes("const qualityTree = await runNativeCanvasCommand"));
-  assert.ok(pluginUi.includes("outputCanvas: qualityTree"));
-  assert.ok(pluginUi.includes("sourceImage: renderedScreen"));
+  assert.ok(pluginUi.includes("const renderedCapture = sourceNode && sourceNode.id"));
+  assert.ok(pluginUi.includes('const verified = await runNativeCanvasCommand("read-canvas"'));
+  assert.ok(pluginUi.includes("const verifiedChildCount = verifiedNode"));
+  assert.equal(pluginUi.includes("const qualityTree = await runNativeCanvasCommand"), false,
+    "Variation completion must not perform a second QA-only canvas read.");
+  assert.equal(pluginUi.includes("sourceImage: renderedScreen"), false,
+    "Variation completion must not call the visual reviewer after the native read-back.");
 });
 
 test("native Figma design creation builds nested frame containers before their children", () => {
