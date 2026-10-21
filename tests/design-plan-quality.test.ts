@@ -223,15 +223,24 @@ test("repairs overflowing loan-card Auto Layout geometry without removing source
       ],
     }],
   };
-  const repaired = repairPlanGeometry(plan) as typeof plan;
-  const card = repaired.elements[0];
-  const summary = card.children[0];
-  const breakup = card.children[1];
-  const firstRow = breakup.children[1];
-  assert.equal(card.children.some(child => child.type === "TEXT" && child.text === "Current"), true);
-  assert.ok(card.height > 180, "the parent card should grow to contain repaired nested content");
-  assert.ok(summary.children.reduce((sum, child) => sum + child.width, 0) <= summary.width - summary.paddingLeft - summary.paddingRight - summary.itemSpacing * (summary.children.length - 1) + 2);
-  assert.ok(breakup.height > 100, "the fixed-height breakdown should expand rather than clip its rows");
-  assert.ok(firstRow.children.reduce((sum, child) => sum + child.width, 0) <= firstRow.width - firstRow.paddingLeft - firstRow.paddingRight - firstRow.itemSpacing * (firstRow.children.length - 1) + 2);
-  assert.equal(summary.children.some(child => child.type === "TEXT" && child.text === "₹1,07,649"), true);
+  const repaired = repairPlanGeometry(plan) as Record<string, unknown>;
+  const elements = repaired.elements as Array<Record<string, unknown>>;
+  const card = elements[0];
+  const cardChildren = card.children as Array<Record<string, unknown>>;
+  const summary = cardChildren[0];
+  const summaryChildren = summary.children as Array<Record<string, unknown>>;
+  const breakup = cardChildren[1];
+  const breakupChildren = breakup.children as Array<Record<string, unknown>>;
+  const firstRow = breakupChildren[1];
+  const rowChildren = firstRow.children as Array<Record<string, unknown>>;
+  const hasText = (nodes: Record<string, unknown>[], text: string) =>
+    nodes.some(child => child.type === "TEXT" && child.text === text);
+  const childWidths = (nodes: Record<string, unknown>[]) =>
+    nodes.reduce((sum, child) => sum + Number(child.width || 0), 0);
+  assert.equal(hasText(cardChildren, "Current"), true);
+  assert.ok(Number(card.height) > 180, "the parent card should grow to contain repaired nested content");
+  assert.ok(childWidths(summaryChildren) <= Number(summary.width) - Number(summary.paddingLeft || 0) - Number(summary.paddingRight || 0) - Number(summary.itemSpacing || 0) * (summaryChildren.length - 1) + 2);
+  assert.ok(Number(breakup.height) > 100, "the fixed-height breakdown should expand rather than clip its rows");
+  assert.ok(childWidths(rowChildren) <= Number(firstRow.width) - Number(firstRow.paddingLeft || 0) - Number(firstRow.paddingRight || 0) - Number(firstRow.itemSpacing || 0) * (rowChildren.length - 1) + 2);
+  assert.equal(hasText(summaryChildren, "₹1,07,649"), true);
 });
