@@ -127,7 +127,8 @@ test("in-Figma design agent retrieves approved brain context and validates nativ
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "No provider restrictions should be sent to OpenRouter.");
   const generalModels = modelPolicy.slice(modelPolicy.indexOf("export const OPENROUTER_MODELS"), modelPolicy.indexOf("export const OPENROUTER_MODEL_LABELS"));
   assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
-  assert.ok(modelPolicy.includes('"qwen/qwen3.5-35b-a3b"'), "Figma's independent model chain retains its lower-cost explicit route.");
+  const figmaModels = modelPolicy.slice(modelPolicy.indexOf("export const FIGMA_AGENT_MODELS"), modelPolicy.indexOf("export type FigmaAgentModelId"));
+  assert.deepEqual([...figmaModels.matchAll(/id: "([^"]+)"/g)].map((match) => match[1]), ["openai/gpt-6-luna", "openrouter/auto"], "Figma's independent chain prioritizes GPT-6 Luna with Auto fallback.");
   assert.ok(modelPolicy.includes("UX_DIRECT_DESIGN_ROLE"));
   assert.ok(modelPolicy.includes("UX_DIRECT_DESIGN_ROLE"));
   assert.equal(modelPolicy.includes("only:"), false);
