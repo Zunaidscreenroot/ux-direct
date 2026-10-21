@@ -18,7 +18,7 @@ test("home opens the unified chat-first workspace instead of the operations dash
   assert.equal(page.includes("ModelGatewayPanel"), false);
 });
 
-test("UX Direct uses Gemini 3.7 Flash with cost-ordered OpenRouter fallbacks", () => {
+test("UX Direct uses low-cost OpenRouter Auto for chat and keeps Figma routes separately configured", () => {
   const route = read("app/api/assistant/chat/route.ts");
   const figmaAgent = read("app/api/assistant/figma-agent/route.ts");
   const review = read("app/api/assistant/figma-agent/review/route.ts");
@@ -26,28 +26,26 @@ test("UX Direct uses Gemini 3.7 Flash with cost-ordered OpenRouter fallbacks", (
   const status = read("app/api/assistant/status/route.ts");
   const policy = read("src/providers/openrouter-models.ts");
   assert.ok(route.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0]"));
-  assert.ok(route.includes("const FALLBACK_MODEL = OPENROUTER_MODELS[1]"));
-  assert.ok(route.includes("for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1)"));
+  assert.equal(route.includes("FALLBACK_MODEL"), false);
+  assert.ok(route.includes("const candidates = [ROUTER_MODEL];"));
+  assert.ok(route.includes("max_tokens: 25000"));
+  assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
+  assert.ok(route.includes('provider: { sort: "throughput" }'));
   assert.equal(route.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.ok(route.includes("FIRST_TEXT_TIMEOUT_MS = 30_000"));
   assert.ok(route.includes("OPENROUTER_API_KEY"));
-  assert.ok(policy.includes('"google/gemini-3.7-flash"'));
   assert.ok(policy.includes('"qwen/qwen3.5-35b-a3b"'));
-  assert.ok(policy.includes('"google/gemini-3.1-flash-lite"'));
-  assert.ok(policy.includes('"qwen/qwen3.5-397b-a17b"'));
-  const generalModels = policy.slice(policy.indexOf("export const OPENROUTER_MODELS"), policy.indexOf("export const OPENROUTER_MODEL_LABELS"));
-  assert.equal(generalModels.includes('"openrouter/auto"'), false, "Auto routing is limited to Figma-specific generation; normal chat retains its explicit model chain.");
   assert.ok(policy.includes("UX_DIRECT_DESIGN_ROLE"));
+  const generalModels = policy.slice(policy.indexOf("export const OPENROUTER_MODELS"), policy.indexOf("export const OPENROUTER_MODEL_LABELS"));
+  assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
   for (const routeText of [figmaAgent, review, refine]) {
     assert.ok(routeText.includes("FIGMA_AGENT_MODELS"));
     assert.equal(routeText.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
     assert.ok(routeText.includes("UX_DIRECT_DESIGN_ROLE"));
   }
   assert.equal(route.includes("openai/gpt-6-luna"), false);
-  assert.equal(route.includes('plugins: [{ id: "auto-router"'), false);
   assert.ok(status.includes("defaultModel: OPENROUTER_MODELS[0]"));
-  assert.ok(status.includes("fallbackModel: OPENROUTER_MODELS[1]"));
-  assert.ok(status.includes("OPENROUTER_MODEL_LABELS[index]"));
+  assert.ok(status.includes("fallbackModel: null"));
   assert.ok(status.includes("OPENROUTER_MODEL_LABELS[index]"));
   assert.equal(status.includes("anthropic/claude-sonnet"), false);
   assert.equal(status.includes("openai/gpt-6-luna"), false);
