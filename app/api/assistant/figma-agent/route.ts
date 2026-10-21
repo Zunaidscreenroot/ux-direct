@@ -4,6 +4,7 @@ import { z } from "zod";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/task-learning";
+import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { deferTaskWork, finishTaskRun, startTaskRun, type RetrievalRecord } from "@/src/memory/task-run-log";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
@@ -441,7 +442,8 @@ export async function POST(request: Request) {
   } catch {
     brain = { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: Date.now() - brainStarted };
   }
-  deferTaskWork(startTaskRun({ id: taskRunId, projectKey: taskScope, title: "Figma task", requestSummary: parsedInput.data.prompt, retrieval: taskRetrieval }));
+  // Persist the run before model work starts so a fast completion cannot race a late INSERT.
+  await startTaskRun({ id: taskRunId, projectKey: taskScope, title: "Figma task", requestSummary: parsedInput.data.prompt, retrieval: taskRetrieval });
 
   const scopeInstructions = componentSelection
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
@@ -611,6 +613,10 @@ export async function POST(request: Request) {
           if (!isRecovery) continue;
           break;
         }
+        const rawPlanRecord = rawPlan && typeof rawPlan === "object" && !Array.isArray(rawPlan)
+          ? rawPlan as Record<string, unknown>
+          : {};
+        const learningCandidate = sanitizeInlineLearningCandidate(rawPlanRecord.learningCandidate);
         const normalizedPlan = normalizePlan(rawPlan, canvas);
         const parsedPlan = PlanSchema.safeParse(normalizedPlan);
         if (!parsedPlan.success) {
@@ -648,6 +654,7 @@ export async function POST(request: Request) {
           taskProject,
           retrieval: taskRetrieval,
           plan: parsedPlan.data,
+          learningCandidate,
           learning: "awaiting-verification",
           model: typeof payload.model === "string" ? payload.model : model,
           brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
