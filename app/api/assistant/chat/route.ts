@@ -45,7 +45,6 @@ type BrainContextInfo = {
 const MAX_MESSAGES = 100;
 const MAX_TOTAL_CHARS = 80000;
 const ROUTER_MODEL = OPENROUTER_MODELS[0];
-const FALLBACK_MODEL = OPENROUTER_MODELS[1];
 const FIRST_TEXT_TIMEOUT_MS = 30_000;
 const SYSTEM_PROMPT = [
   UX_DIRECT_DESIGN_ROLE + " You are UX Direct, a thoughtful UI/UX design partner.",
@@ -394,7 +393,7 @@ export async function POST(request: Request) {
   };
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const candidates = [ROUTER_MODEL, FALLBACK_MODEL, ...OPENROUTER_MODELS.slice(2)];
+  const candidates = [ROUTER_MODEL];
   const failures: string[] = [];
   let lastStatus = 502;
   const origin = new URL(request.url).origin;
@@ -418,6 +417,9 @@ export async function POST(request: Request) {
             messages: [{ role: "system", content: systemContent }, ...promptMessages],
             stream: true,
             temperature: 0.4,
+            max_tokens: 25000,
+            plugins: [{ id: "auto-router", cost_tier: "low" }],
+            provider: { sort: "throughput" },
             usage: { include: true },
           }),
           cache: "no-store",
@@ -454,7 +456,7 @@ export async function POST(request: Request) {
   const attempts: Array<ReturnType<typeof startAttempt>> = [];
   let winner: { model: string; probe: ProbedStream; controller: AbortController } | null = null;
 
-  // Start with Gemini 3.7 Flash and use cost-ordered explicit fallbacks.
+  // One server-selected OpenRouter Auto route only; never retry on a named model.
   for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
     const candidate = candidates[candidateIndex];
     const attempt = startAttempt(candidate, candidateIndex === 0 ? FIRST_TEXT_TIMEOUT_MS : 16000);
@@ -480,7 +482,7 @@ export async function POST(request: Request) {
   }
 
   for (const attempt of attempts) attempt.controller.abort();
-  const userMessage = "All configured OpenRouter models failed to start a usable response. " + failures.join(" | ");
+  const userMessage = "OpenRouter Auto failed to start a usable response. " + failures.join(" | ");
   return NextResponse.json(
     { error: userMessage, attemptedModels: candidates },
     { status: lastStatus === 429 ? 429 : 502, headers: brainHeaders(brain, undefined, request) },
