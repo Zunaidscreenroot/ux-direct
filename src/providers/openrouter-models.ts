@@ -16,10 +16,10 @@ export const FIGMA_AGENT_MODELS = [
     price: "$0.08/M input · $0.75/M output",
   },
   {
-    id: "google/gemini-3.1-flash-lite",
-    label: "Gemini 3.1 Flash Lite · low-cost fallback",
-    description: "Multimodal fallback for structured native Figma plan generation.",
-    price: "$0.25/M input · $1.50/M output",
+    id: "deepseek/deepseek-v4.1-flash",
+    label: "DeepSeek V4.1 Flash · vision fallback",
+    description: "OpenRouter-hosted multimodal fallback for source-faithful Figma plans.",
+    price: "OpenRouter listed pricing varies by provider",
   },
   {
     id: "qwen/qwen3.5-397b-a17b",

@@ -242,7 +242,7 @@ function compactRecoveryNode(
   state: { count: number },
   depth = 0,
 ): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value) || depth > 3 || state.count >= 45) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value) || depth > 4 || state.count >= 60) return null;
   const source = value as Record<string, unknown>;
   if (typeof source.type !== "string") return null;
   state.count += 1;
@@ -259,12 +259,12 @@ function compactRecoveryNode(
     else if (typeof raw === "number" && Number.isFinite(raw)) out[key] = raw;
   }
   if (Array.isArray(source.fillColors)) out.fillColors = source.fillColors.filter((item): item is string => typeof item === "string").slice(0, 2);
-  if (Array.isArray(source.children) && depth < 3) {
+  if (Array.isArray(source.children) && depth < 4) {
     const children: Record<string, unknown>[] = [];
-    for (const child of source.children.slice(0, 8)) {
+    for (const child of source.children.slice(0, 10)) {
       const nested = compactRecoveryNode(child, state, depth + 1);
       if (nested) children.push(nested);
-      if (state.count >= 45) break;
+      if (state.count >= 60) break;
     }
     if (children.length) out.children = children;
   }
@@ -282,6 +282,27 @@ function compactRecoveryCanvas(canvas: Record<string, unknown>): Record<string, 
     scope: typeof canvas.scope === "string" ? canvas.scope.slice(0, 30) : "selection",
     nodes,
   };
+}
+
+
+function collectSourceTextInventory(nodes: unknown[]): Array<{ name: string; text: string }> {
+  const result: Array<{ name: string; text: string }> = [];
+  const visit = (items: unknown[], depth = 0) => {
+    if (depth > 8 || result.length >= 80) return;
+    for (const value of items) {
+      if (!value || typeof value !== "object" || Array.isArray(value) || result.length >= 80) continue;
+      const node = value as Record<string, unknown>;
+      if (node.type === "TEXT" && typeof node.text === "string" && node.text.trim()) {
+        result.push({
+          name: typeof node.name === "string" ? node.name.slice(0, 100) : "Text layer",
+          text: node.text.slice(0, 240),
+        });
+      }
+      if (Array.isArray(node.children)) visit(node.children, depth + 1);
+    }
+  };
+  visit(nodes);
+  return result;
 }
 
 function compactResourceList(value: unknown, limit = 50): Array<Record<string, string>> {
@@ -463,12 +484,14 @@ export async function POST(request: Request) {
     selectedNode: { name: selectedName, type: selectedType, width: selectedWidth, height: selectedHeight },
     screenshot: renderedScreen ? "Rendered screenshot attached to this request." : "No screenshot available; use native layer evidence only.",
     figmaCanvas: compactRecoveryCanvas(canvas),
+    sourceTextInventory: collectSourceTextInventory(Array.isArray(canvas.nodes) ? canvas.nodes : []),
   });
   const recoverySystem = [
     UX_DIRECT_DESIGN_ROLE,
     "Create an improved native Figma variation of the selected source. The user prompt is the design change, not the procedure.",
     scopeInstructions,
     "Preserve the screen/component scope, all meaningful source text and financial values, status, date, labels, rows, actions and relationships. Do not redesign it as a generic dashboard or generic stack of cards.",
+    "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Preserve every listed text string exactly, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
     "Use the attached screenshot and source layers when available. Use semantic nested FRAMEs, Auto Layout for suitable cards and rows, clear hierarchy, strong contrast, consistent spacing and editable native shapes/text. Do not invent contractual financial details.",
     "CONTENT DENSITY AND PAINT CONTRACT: at least 30% of all native nodes must be TEXT, with at least 6 meaningful task-specific text layers (or every meaningful source text item if the selection has fewer). Put actual labels, values, dates, statuses and action copy in TEXT nodes. Every FRAME must declare color for a visible surface or noFill:true when transparent. Make Auto Layout widths and paddings compatible; use FILL only when parent content width should determine the effective width.",
     "Return one complete JSON object only with root keys summary (string), frame ({name,width,height,backgroundColor}), elements (an array of 3–6 meaningful populated FRAME section containers), and learningCandidate:null. Every element must use supported native Figma fields. This is a schema contract, not text to copy. No markdown, explanation or reasoning.",
@@ -480,7 +503,7 @@ export async function POST(request: Request) {
   // OpenRouter sends HTTP 200 headers immediately and the body only once the full plan is
   // generated, so each attempt needs room for a complete multi-thousand-token plan. One shared
   // deadline keeps the sequential chain bounded.
-  const generationDeadlineMs = 135000;
+  const generationDeadlineMs = 150000;
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
     const attemptsForModel = modelIndex === 0 ? 2 : 1;
@@ -491,7 +514,7 @@ export async function POST(request: Request) {
         errors.push("Generation deadline reached before " + model + (isRecovery ? " compact retry" : "") + " could run.");
         break modelLoop;
       }
-      const attemptTimeoutMs = Math.min(isRecovery ? 16000 : (modelIndex === 0 ? 28000 : 22000), remainingMs);
+      const attemptTimeoutMs = Math.min(isRecovery ? 22000 : (modelIndex === 0 ? 36000 : 26000), remainingMs);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
       try {

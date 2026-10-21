@@ -27,7 +27,7 @@ test("Figma routes use Auto LOW first and keep cost-ordered fallbacks", () => {
   assert.deepEqual(FIGMA_AGENT_MODELS.map((entry) => entry.id), [
     "openrouter/auto",
     "qwen/qwen3.5-35b-a3b",
-    "google/gemini-3.1-flash-lite",
+    "deepseek/deepseek-v4.1-flash",
     "qwen/qwen3.5-397b-a17b",
   ]);
   for (const path of [
