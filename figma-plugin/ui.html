@@ -1090,11 +1090,21 @@
         if (["create-elements", "insert-image", "create-image-fill", "create-component", "create-component-set", "swap-component", "boolean-operation", "flatten-nodes"].includes(action.operation)) return true;
         if (action.operation !== "update-node" || !action.patch) return false;
         return Object.keys(action.patch).some(function (key) {
-          return ["text", "fontSize", "fontFamily", "fillColor", "strokeColor", "width", "height", "x", "y",
-            "layoutMode", "layoutSizingHorizontal", "layoutSizingVertical", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "cornerRadius"].includes(key);
+          return ["text", "fontSize", "fontFamily", "fontStyle", "textAlignHorizontal", "textAlignVertical",
+            "textAutoResize", "lineHeight", "letterSpacing", "fillColor", "fill", "fills", "color", "strokeColor",
+            "strokeWeight", "opacity", "visible", "rotation", "width", "height", "x", "y", "arcData",
+            "layoutMode", "layoutWrap", "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning",
+            "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "cornerRadius", "effects"].includes(key);
         });
       });
-      if (hasVisualMutations && canvas.nodes.length === 1 && Array.isArray(root.children)) {
+      if (hasVisualMutations) {
+        // A preview of only the first node cannot verify a multi-selection. Do not
+        // skip QA merely because a selected leaf (such as a text node) has no children.
+        if (canvas.nodes.length !== 1) {
+          stage("error", "Visual quality gate blocked · select one root");
+          return String(payload.summary || "Native Figma actions ran.") +
+            "\n\nNOT ACCEPTED: visual changes were applied to multiple selected roots, so UX Direct could not verify the complete result in one rendered preview. Inspect or revert the changes before using them.";
+        }
         const qa = await runVisualQualityLoop({
           prompt: prompt, sourceCanvas: canvas, outputCanvas: verified, sourceImage: captured.dataUrl,
           allowRepair: true, reportProgress: function (message) { stage("verifying", message); }
@@ -1108,10 +1118,13 @@
         }
         visualNote = "\n" + qa.text;
       }
-      stage("done", "Native edits applied · Figma read-back and visual quality gate passed");
+      stage("done", hasVisualMutations
+        ? "Native edits applied · read-back and visual quality gate passed"
+        : "Native action applied · native read-back passed");
       return String(payload.summary || "Native Figma actions applied.") +
         "\n\nApplied " + actions.length + " native action(s)" + (changed ? " across approximately " + changed + " node/action changes." : ".") +
         "\nVerified against the selected layer tree and actual Figma properties." + visualNote +
+        (hasVisualMutations ? "" : "\nRendered visual QA was not required for this non-visual action.") +
         (captured.warning ? "\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
     }
 
