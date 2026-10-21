@@ -147,8 +147,8 @@ test("Figma agent routes report body-read timeouts instead of empty bodies and b
 
 
 test("visual refinement receives the source and output images and exposes why a repair failed", () => {
-  const refine = read("app/api/assistant/figma-agent/refine/route.ts");
-  const ui = read("figma-plugin/ui.html");
+  const refine = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/refine/route.ts"), "utf8");
+  const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
   assert.ok(refine.includes("sourceImage: z.string().max(52000).nullable().optional()"));
   assert.ok(refine.includes("outputImage: z.string().max(52000).nullable().optional()"));
   assert.ok(refine.includes('type: "image_url"'), "The refiner should visually inspect source and output screenshots.");
