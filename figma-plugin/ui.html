@@ -804,9 +804,15 @@
       if (!outputCanvas || !Array.isArray(outputCanvas.nodes) || !outputCanvas.nodes.length) {
         return { text: "Visual QA skipped because the output layer tree was unavailable. Quality gate remains blocked.", score: null, repaired: false, passed: false, issues: [] };
       }
+      if (!sourceImage) {
+        return { text: "Visual QA blocked because the source screenshot is unavailable. No visual verification was performed.", score: null, repaired: false, passed: false, issues: [] };
+      }
       let capture = options.outputImage
         ? { dataUrl: options.outputImage, warning: "" }
         : await captureRenderedNodePreview(outputCanvas.nodes[0].id);
+      if (!capture || !capture.dataUrl) {
+        return { text: "Visual QA blocked because a rendered output screenshot could not be captured. Quality gate remains blocked.", score: null, repaired: false, passed: false, issues: [] };
+      }
       stage("Visual QA · comparing rendered output with the source and native layers…");
       let reviewResult = await reviewCanvas(outputCanvas, capture.dataUrl || null, "initial");
       if (!reviewResult) return {
@@ -880,6 +886,9 @@
         return { text: "Applied " + applied + " repair(s), but final read-back was unavailable. Quality gate remains blocked.", score: score, repaired: true, issues: issues, passed: false };
       }
       capture = await captureRenderedNodePreview(outputCanvas.nodes[0].id);
+      if (!capture || !capture.dataUrl) {
+        return { text: "Visual QA blocked because the repaired output screenshot could not be captured. Quality gate remains blocked.", score: score, repaired: true, issues: issues, passed: false };
+      }
       stage("Visual QA · checking the repaired output once…");
       const finalReview = await reviewCanvas(outputCanvas, capture.dataUrl || null, "after one bounded repair");
       if (finalReview && finalReview.review) {
