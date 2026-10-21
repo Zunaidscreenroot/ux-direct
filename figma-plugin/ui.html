@@ -1096,7 +1096,15 @@
       }
       let visualNote = "";
       const hasVisualMutations = actions.some(function (action) {
-        if (["create-elements", "insert-image", "create-image-fill", "create-component", "create-component-set", "swap-component", "boolean-operation", "flatten-nodes"].includes(action.operation)) return true;
+        if ([
+          "create-elements", "insert-image", "create-image-fill", "clone-node", "reorder-node",
+          "reparent-node", "group-nodes", "ungroup-node", "flatten-nodes", "boolean-operation",
+          "create-component", "create-component-set", "create-instance", "swap-component",
+          "detach-instance", "set-text-range", "apply-style", "bind-variable"
+        ].includes(action.operation)) return true;
+        // Deleting a child changes the rendered result. Deleting the selected
+        // root is handled by the native read-back failure path instead.
+        if (action.operation === "delete-node" && action.nodeId !== root.id) return true;
         if (action.operation !== "update-node" || !action.patch) return false;
         return Object.keys(action.patch).some(function (key) {
           return [
