@@ -1,6 +1,6 @@
 # Model gateway providers and free-first rollout
 
-The gateway itself is application code and costs **$0 in gateway fees**. It calls providers directly. This file separates the homepage's explicit free-model pool from internal requests routed dynamically through OpenRouter's low-cost Auto Router.
+The gateway itself is application code and costs **$0 in gateway fees**. It calls providers directly. UX Direct assistant chat and internal IA/UX requests use OpenRouter Auto Router with the low-cost tier. The generic gateway may also expose separately configured local/free providers for explicit API tasks.
 
 ## Four-hour MVP recommendation
 
@@ -17,7 +17,7 @@ For a wiring/demo smoke test, start with one explicit model, `google/gemma-4-31b
 3. **Google Gemini API free tier** — create a key in Google AI Studio; no gateway fee, and a free quota is available for eligible models/accounts. Model availability, regional access, quotas, and data-use terms vary. Do not send confidential client material until the applicable data terms have been reviewed.
 4. **Groq developer free tier** — requires a key; supported models and request/token quotas vary. Current gateway defaults include GPT OSS 120B and 20B, but verify exact model IDs and free-plan quotas in the provider console before enabling.
 5. **Cerebras free developer access** — requires a key; availability, exact model IDs and quotas are account-specific. Treat it as optional until its model ID is confirmed from your account.
-6. **OpenRouter free models and internal Auto Router** — requires an OpenRouter key. Homepage chat stays on explicit model IDs ending in `:free`. Internal IA/UX analysis uses `openrouter/auto` with `cost_tier: low`, which favors the cheapest capable models available to your account. Do not add additional per-token provider restrictions unless you have verified they leave eligible models; restrictive filters can return HTTP 404. Auto routing is not guaranteed to be free; usage is charged at the chosen model's rate. Free model inventory and rate limits change often.
+6. **OpenRouter Auto Router** — requires an OpenRouter key. UX Direct assistant chat offers only `openrouter/auto` and requests up to 25,000 output tokens with `cost_tier: low`. Internal IA/UX analysis also uses `openrouter/auto` with `cost_tier: low`, which favors the cheapest capable models available to your account. Do not add additional per-token provider restrictions unless you have verified they leave eligible models; restrictive filters can return HTTP 404. Auto routing is not guaranteed to be free; usage is charged at the chosen model's rate. Free model inventory and rate limits change often.
 7. **Paid providers (OpenAI)** — no key is required to build or test the gateway. Add keys only in the final activation step, after tests and local/free-tier checks pass. Anthropic's native Messages API is not implemented in this gateway yet and is intentionally not advertised as supported.
 
 Free API access still needs a provider account/key in most cases. "Free tier" does not mean unlimited, guaranteed availability, private processing, or no data retention.
