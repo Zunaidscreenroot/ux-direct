@@ -178,7 +178,7 @@ export async function POST(request: Request) {
         return !!node && typeof node.id === "string" && !["DOCUMENT", "PAGE"].includes(String(node.type || ""));
       });
       if (parsed.data.review.score < 90 && patch.length === 0) {
-        errors.push(model + ": quality score is below 82 but the model returned no actionable patches");
+        errors.push(model + ": quality score is below 90 but the model returned no actionable patches");
         continue;
       }
       return NextResponse.json({
