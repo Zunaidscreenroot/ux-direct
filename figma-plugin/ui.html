@@ -820,7 +820,7 @@
         const current = result && result.review;
         return !!(result && result.qualityGate && result.qualityGate.passed === true &&
           result.visualInspection === true && result.outputImageInspected === true &&
-          current && Number.isFinite(current.score) && current.score >= 82 &&
+          current && Number.isFinite(current.score) && current.score >= 90 &&
           Array.isArray(current.issues) && current.issues.length === 0);
       }
       const needsRepair = !reviewPassed(reviewResult);
