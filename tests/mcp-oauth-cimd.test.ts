@@ -39,3 +39,9 @@ test("token exchange keeps the authorization code bound to client, redirect URI 
   assert.ok(token.includes("claims.code_challenge"));
   assert.ok(token.includes("refresh.client_id !== clientId"));
 });
+
+test("authorization page lets the registered callback origin receive the redirect", () => {
+  assert.ok(authorize.includes("const callbackOrigin = new URL(input.redirectUri).origin"));
+  assert.ok(authorize.includes(`form-action 'self' " + callbackOrigin + "`));
+  assert.equal(authorize.includes("form-action 'self' https://chatgpt.com"), false);
+});
