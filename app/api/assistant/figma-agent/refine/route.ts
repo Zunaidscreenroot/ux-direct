@@ -68,7 +68,7 @@ const PatchSchema = z.object({
 
 function safeImage(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 52000) return null;
-  return /^data:image\\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value) ? value : null;
+  return /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value) ? value : null;
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
