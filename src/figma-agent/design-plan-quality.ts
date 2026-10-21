@@ -26,7 +26,8 @@ function childrenOf(node: RecordLike): RecordLike[] {
 }
 
 function fold(value: string): string {
-  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^a-z0-9₹]/g, "");
+  // Keep letters and numbers from every script; UX Direct also reviews Hindi and other localized interfaces.
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}₹]/gu, "");
 }
 
 function collectText(nodes: RecordLike[], output: string[] = [], depth = 0): string[] {
@@ -46,18 +47,22 @@ function hasExplicitRemoval(text: string, prompt: string): boolean {
   const escaped = text.trim().split("").map((character) =>
     "\\.^$|?*+()[]{}".includes(character) ? "\\" + character : character
   ).join("");
+  // English action words can surround source text in any script. Use Unicode-aware
+  // source-text boundaries instead of \\b, whose word definition misses Devanagari and other scripts.
+  const sourceStartBoundary = "(?:^|[^\\p{L}\\p{N}])";
+  const sourceEndBoundary = "(?=$|[^\\p{L}\\p{N}])";
   const mentionedAfterRemovalVerb = new RegExp(
-    "\\b(remove|delete|hide|omit|exclude|replace|rewrite|rename)\\b[^.!?]{0,80}\\b" + escaped + "\\b",
-    "i",
+    "\\b(remove|delete|hide|omit|exclude|replace|rewrite|rename)\\b[^.!?]{0,80}" + escaped + sourceEndBoundary,
+    "iu",
   ).test(prompt);
   const mentionedBeforeRemovalVerb = new RegExp(
-    "\\b" + escaped + "\\b[^.!?]{0,80}\\b(remove|delete|hide|omit|exclude|replace|rewrite|rename)\\b",
-    "i",
+    sourceStartBoundary + escaped + "[^.!?]{0,80}\\b(remove|delete|hide|omit|exclude|replace|rewrite|rename)\\b",
+    "iu",
   ).test(prompt);
   const explicitCopyChange = new RegExp(
-    "\\b(change|update|rewrite|rename|replace)\\b[^.!?]{0,80}\\b" + escaped +
-      "\\b[^.!?]{0,60}\\b(to|as|with)\\b",
-    "i",
+    "\\b(change|update|rewrite|rename|replace)\\b[^.!?]{0,80}" + escaped +
+      sourceEndBoundary + "[^.!?]{0,60}\\b(to|as|with)\\b",
+    "iu",
   ).test(prompt);
   return mentionedAfterRemovalVerb || mentionedBeforeRemovalVerb || explicitCopyChange;
 }
