@@ -35,15 +35,3 @@ test("Figma routes retain their separate quality-first explicit model chain", ()
     assert.equal(source.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false, path + " has no stale provider allowlist");
   }
 });
-
-  for (const path of [
-    "app/api/assistant/figma-agent/route.ts",
-    "app/api/assistant/figma-agent/review/route.ts",
-    "app/api/assistant/figma-agent/refine/route.ts",
-  ]) {
-    const source = read(path);
-    assert.ok(source.includes("FIGMA_AGENT_MODELS"), path + " uses the shared Figma chain");
-    assert.equal(source.includes("openrouter/auto"), false, path + " never routes Figma work through Auto");
-    assert.equal(source.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false, path + " has no stale provider allowlist");
-  }
-});
