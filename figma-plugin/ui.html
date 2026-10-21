@@ -1117,7 +1117,7 @@
         if (canvas.nodes.length !== 1) {
           stage("error", "Visual quality gate blocked · select one root");
           return String(payload.summary || "Native Figma actions ran.") +
-            "\\n\\nNOT ACCEPTED: visual changes were applied to multiple selected roots, so UX Direct could not verify the complete result in one rendered preview. Inspect or revert the changes before using them.";
+            "\n\nNOT ACCEPTED: visual changes were applied to multiple selected roots, so UX Direct could not verify the complete result in one rendered preview. Inspect or revert the changes before using them.";
         }
         const qa = await runVisualQualityLoop({
           prompt: prompt, sourceCanvas: canvas, outputCanvas: verified, sourceImage: captured.dataUrl,
@@ -1126,20 +1126,20 @@
         if (!qa || qa.passed !== true) {
           stage("error", "Visual quality gate failed · edits are not accepted");
           return String(payload.summary || "Native Figma actions ran.") +
-            "\\n\\nNOT ACCEPTED: rendered visual QA did not pass. " +
+            "\n\nNOT ACCEPTED: rendered visual QA did not pass. " +
             String(qa && qa.text || "Visual quality could not be verified.") +
-            "\\nThe edit exists on the canvas, but UX Direct is not claiming it is complete. Inspect or revert it before using it.";
+            "\nThe edit exists on the canvas, but UX Direct is not claiming it is complete. Inspect or revert it before using it.";
         }
-        visualNote = "\\n" + qa.text;
+        visualNote = "\n" + qa.text;
       }
       stage("done", hasVisualMutations
         ? "Native edits applied · read-back and visual quality gate passed"
         : "Native action applied · native read-back passed");
       return String(payload.summary || "Native Figma actions applied.") +
-        "\\n\\nApplied " + actions.length + " native action(s)" + (changed ? " across approximately " + changed + " node/action changes." : ".") +
-        "\\nVerified against the selected layer tree and actual Figma properties." + visualNote +
-        (hasVisualMutations ? "" : "\\nRendered visual QA was not required for this non-visual action.") +
-        (captured.warning ? "\\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
+        "\n\nApplied " + actions.length + " native action(s)" + (changed ? " across approximately " + changed + " node/action changes." : ".") +
+        "\nVerified against the selected layer tree and actual Figma properties." + visualNote +
+        (hasVisualMutations ? "" : "\nRendered visual QA was not required for this non-visual action.") +
+        (captured.warning ? "\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
     }
 
     async function createFigmaDesign(prompt, reportProgress) {
