@@ -397,3 +397,17 @@ test("native action planner covers Figma page, export, boolean, flatten and imag
   assert.ok(mcp.includes('"create-image-fill", "insert-image", "create-variables", "bind-variable"'), "MCP runtime permits the safe native image and token actions.");
   assert.ok(mcp.includes('["current-page", "selection", "node", "test-lab"].includes(String(input.target))'), "MCP and bridge agree on the node target.");
 });
+
+
+test("native visual edits cannot bypass final QA for leaf nodes or multiple roots", () => {
+  const start = pluginUi.indexOf("async function executeNativeActionPlan");
+  const end = pluginUi.indexOf("async function createFigmaDesign", start);
+  assert.ok(start >= 0 && end > start, "Native action executor must be present.");
+  const actionFlow = pluginUi.slice(start, end);
+  assert.ok(actionFlow.includes("if (hasVisualMutations)"));
+  assert.equal(actionFlow.includes("if (hasVisualMutations && canvas.nodes.length === 1 && Array.isArray(root.children))"), false);
+  assert.ok(actionFlow.includes("if (canvas.nodes.length !== 1)"));
+  assert.ok(actionFlow.includes("if (!qa || qa.passed !== true)"));
+  assert.ok(actionFlow.includes('"apply-style", "bind-variable"'));
+  assert.ok(actionFlow.includes('"opacity", "visible", "rotation"'));
+});
