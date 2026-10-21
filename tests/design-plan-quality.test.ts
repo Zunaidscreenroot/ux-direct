@@ -99,3 +99,74 @@ test("allows removing a specifically named source label when explicitly requeste
   const report = auditDesignPlanQuality(plan, sourceCanvas, "Remove Pay now from this screen");
   assert.equal(report.findings.some((finding) => finding.code === "missing-source-content"), false);
 });
+
+const hindiSourceCanvas = {
+  nodes: [{
+    type: "FRAME",
+    name: "खाता विवरण",
+    children: [
+      { type: "TEXT", name: "Account title", text: "खाता विवरण" },
+      { type: "TEXT", name: "Balance", text: "₹25,000" },
+    ],
+  }],
+};
+
+function simpleHindiPlan() {
+  return {
+    frame: {
+      name: "Account",
+      width: 360,
+      height: 800,
+      backgroundColor: "#121212",
+      layoutMode: "NONE",
+      itemSpacing: 0,
+      paddingLeft: 16,
+      paddingRight: 16,
+      paddingTop: 16,
+      paddingBottom: 16,
+      primaryAxisSizingMode: "FIXED",
+      counterAxisSizingMode: "FIXED",
+    },
+    elements: [{
+      type: "FRAME",
+      name: "Account content",
+      x: 0,
+      y: 0,
+      width: 328,
+      height: 160,
+      color: "#252525",
+      layoutMode: "VERTICAL",
+      itemSpacing: 8,
+      paddingLeft: 12,
+      paddingRight: 12,
+      paddingTop: 12,
+      paddingBottom: 12,
+      primaryAxisSizingMode: "FIXED",
+      children: [{
+        type: "TEXT",
+        name: "Balance",
+        x: 0,
+        y: 0,
+        width: 304,
+        height: 20,
+        text: "₹25,000",
+        color: "#FFFFFF",
+        fontSize: 14,
+      }],
+    }],
+  };
+}
+
+test("detects dropped Devanagari source copy instead of normalizing it to an empty string", () => {
+  const report = auditDesignPlanQuality(simpleHindiPlan(), hindiSourceCanvas, "Refine the selected account screen");
+  assert.equal(report.passed, false);
+  assert.ok(report.findings.some((finding) =>
+    finding.code === "missing-source-content" && finding.message.includes("खाता विवरण")
+  ), JSON.stringify(report.findings));
+});
+
+test("allows an explicitly requested removal of Devanagari source copy", () => {
+  const report = auditDesignPlanQuality(simpleHindiPlan(), hindiSourceCanvas, "Remove खाता विवरण from this screen");
+  assert.equal(report.findings.some((finding) => finding.code === "missing-source-content"), false,
+    JSON.stringify(report.findings));
+});
