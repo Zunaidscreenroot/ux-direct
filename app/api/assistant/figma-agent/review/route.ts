@@ -133,7 +133,7 @@ export async function POST(request: Request) {
   if (outputImage) userContent.push({ type: "image_url", image_url: { url: outputImage } });
 
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // Figma review uses the same Auto-first LOW-cost chain if explicitly invoked.
+  // Visual QA uses the same explicit quality-first OpenRouter routes as design generation.
   const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
   const errors: string[] = [];
   for (const [modelIndex, model] of models.entries()) {
