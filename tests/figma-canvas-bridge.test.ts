@@ -123,7 +123,7 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
 test("in-Figma design agent retrieves approved brain context and validates native layer plans", () => {
   assert.ok(agent.includes('retrieveBrainContext('), "Figma design planning must retrieve shared memory.");
   assert.ok(agent.includes('resolveBrainScopes('), "Brain retrieval must be scope-filtered.");
-  assert.ok(agent.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Figma generation must use Auto LOW followed by explicit cost-ordered fallbacks.");
+  assert.ok(agent.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Figma generation must use GPT-6 Luna with OpenRouter Auto fallback.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "No provider restrictions should be sent to OpenRouter.");
   const generalModels = modelPolicy.slice(modelPolicy.indexOf("export const OPENROUTER_MODELS"), modelPolicy.indexOf("export const OPENROUTER_MODEL_LABELS"));
   assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
