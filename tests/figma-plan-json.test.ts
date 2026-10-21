@@ -94,9 +94,10 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("if (!isRecovery) continue;"), "Missing content and invalid schemas must cause a compact retry.");
   assert.ok(route.includes("compactRecoveryCanvas(canvas)"), "The retry should send a bounded source layer tree.");
   assert.ok(route.includes("28–42 native nodes total INCLUDING nested children"), "The retry must explicitly cap output complexity.");
-  assert.ok(route.includes("max_tokens: isRecovery ? 6500 : 12000"), "Use OpenRouter's current completion token parameter.");
-  assert.ok(route.includes("modelIndex === 0 ? 36000 : 26000"), "The primary model and fallback have bounded completion time for full plans.");
-  assert.ok(route.includes("isRecovery ? 22000"), "Compact retries have a bounded but useful completion window.");
+  assert.ok(route.includes("max_tokens: isRecovery ? 6000 : 9000"), "Keep generation output bounded to a complete native plan.");
+  assert.ok(route.includes("modelIndex === 0 ? 80000 : 70000"), "The primary and fallback get useful completion windows.");
+  assert.ok(route.includes('model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}'), "GPT-6 Luna prefers throughput and low reasoning effort for stability.");
+  assert.ok(route.includes("isRecovery ? 45000"), "Compact retries have a bounded but useful completion window.");
   assert.ok(route.includes("sourceTextInventory: collectSourceTextInventory"), "Compact retries retain a full bounded source-text checklist.");
   assert.ok(route.includes("depth > 4 || state.count >= 60"), "Recovery preserves short text layers nested inside instances/cards.");
   assert.ok(route.includes("at least 30% of all native nodes must be TEXT"), "Prompts require content-rich native layers.");
@@ -109,7 +110,7 @@ test("Figma agent uses GPT-6 Luna primary, Auto fallback, and no plugin live QA"
   const catalog = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
   assert.ok(route.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Generation uses the shared Figma-specific chain.");
   assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Figma generation includes the explicit low-cost Auto fallback.");
-  assert.ok(route.includes("const attemptsForModel = modelIndex === 0 ? 2 : 1"), "The primary model gets one compact retry before the fallback is tried.");
+  assert.ok(route.includes("const attemptsForModel = 2"), "The primary model and fallback each get one compact retry.");
   assert.ok(route.includes("provider returned an empty response body"), "Empty provider bodies are diagnosed clearly.");
   assert.ok(route.includes("provider returned a non-JSON response body"), "Invalid response bodies are diagnosed clearly.");
   assert.equal(route.includes("Promise.all(models"), false, "Model requests stay sequential.");
@@ -136,7 +137,7 @@ test("Figma agent routes report body-read timeouts instead of empty bodies and b
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   assert.equal(route.includes('response.text().catch(() => "")'), false, "An aborted body read must not be reported as an empty body.");
   assert.ok(route.includes("if (controller.signal.aborted) throw readError;"));
-  assert.ok(route.includes("const generationDeadlineMs = 150000;"), "The sequential chain has a bounded 150-second deadline.");
+  assert.ok(route.includes("const generationDeadlineMs = 270000;"), "The sequential chain has a bounded 270-second deadline.");
   assert.ok(route.includes('model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}'));
   for (const name of ["refine", "review", "actions"]) {
     const sub = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/" + name + "/route.ts"), "utf8");
@@ -155,4 +156,20 @@ test("visual refinement receives the source and output images and exposes why a 
   assert.ok(ui.includes("sourceImage: sourceImage, outputImage: capture.dataUrl || null"));
   assert.ok(ui.includes("Remaining issues: "));
   assert.ok(ui.includes("Repair diagnostics: "));
+});
+
+
+test("variation creation skips post-write model QA while retaining deterministic preflight and native read-back", () => {
+  const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
+  const start = ui.indexOf("async function createFigmaDesign(");
+  const end = ui.indexOf("async function captureRenderedNodePreview(", start);
+  assert.ok(start >= 0 && end > start, "The variation-generation function is present.");
+  const variationFlow = ui.slice(start, end);
+  assert.ok(variationFlow.includes("const verifiedNode"), "Native read-back still confirms that Figma created the new frame.");
+  assert.ok(variationFlow.includes("verifiedChildCount < completedElementCount"), "The generated native children must be present.");
+  assert.equal(variationFlow.includes("runVisualQualityLoop("), false, "Variation completion must not run the post-write model QA loop.");
+  assert.equal(variationFlow.includes("const qualityTree ="), false, "Variation completion must not do a second QA-only canvas read.");
+  assert.equal(variationFlow.includes('operation: "delete-node", nodeId: createdFrameId'), false, "A QA failure must not delete an otherwise-created variation.");
+  assert.ok(variationFlow.includes("post-variation visual QA disabled as requested"), "The completion message states that model QA was intentionally skipped.");
+  assert.ok(variationFlow.includes('stage("done", "Variation created · native structure read-back passed")'));
 });
