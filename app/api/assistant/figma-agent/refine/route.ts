@@ -66,6 +66,10 @@ const PatchSchema = z.object({
   shadowSpread: z.number().finite().min(-200).max(200).optional(),
 }).strict().refine((value) => Object.values(value).some((entry) => entry !== undefined), { message: "Empty patch." });
 
+function safeImage(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 52000) return null;
+  return /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value) ? value : null;
+}
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -109,6 +113,8 @@ export async function POST(request: Request) {
       summary: z.string().optional(),
     }).passthrough(),
     outputCanvas: z.unknown(),
+    sourceImage: z.string().max(52000).nullable().optional(),
+    outputImage: z.string().max(52000).nullable().optional(),
     iteration: z.number().int().min(1).max(2),
   }).strict().safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Refinement input is invalid.", details: parsed.error.issues }, { status: 400, headers });
@@ -138,18 +144,29 @@ export async function POST(request: Request) {
           messages: [
             { role: "system", content: [
               UX_DIRECT_DESIGN_ROLE + " You are UX Direct's surgical native-Figma refinement agent. Return JSON only: {patch:[{nodeId:string,patch:object}]}.",
-              "Fix only the supplied visual review issues with the smallest sensible adjustments. Preserve information architecture and visual language. Never redesign the screen wholesale.",
+              "Fix only the supplied visual review issues with the smallest sensible adjustments. Use source and output screenshots when supplied, compare against the named review evidence, and preserve information architecture, financial values, labels, actions and visual language. Never redesign the screen wholesale.",
               "Each nodeId MUST come from the supplied generated-frame tree. Allowed patch fields are limited to native Figma update-node: x,y,width,height,fillColor,strokeColor,strokeWeight,opacity,cornerRadius,fontFamily,fontStyle,fontSize,text,textAlignHorizontal,textAlignVertical,textAutoResize,lineHeight,letterSpacing,layoutMode,layoutWrap,layoutSizingHorizontal,layoutSizingVertical,layoutPositioning,layoutGrow,itemSpacing,paddingLeft,paddingRight,paddingTop,paddingBottom,primaryAxisAlignItems,counterAxisAlignItems,shadowColor,shadowBlur,shadowX,shadowY,shadowSpread,arcData. Only apply arcData to ELLIPSE nodes, text properties to TEXT nodes, container layout properties to FRAME nodes, and sizing/positioning to children of native Auto Layout parents.",
               "Do not target nodes outside the generated variation. Return no more than 20 patches.",
             ].join("\n") },
-            { role: "user", content: JSON.stringify({ prompt: parsed.data.prompt, iteration: parsed.data.iteration, score: parsed.data.review.score,
-              issues: parsed.data.review.issues, generatedFrameTree: modelTree }) },
+            { role: "user", content: [
+              { type: "text", text: JSON.stringify({
+                prompt: parsed.data.prompt,
+                iteration: parsed.data.iteration,
+                score: parsed.data.review.score,
+                reviewSummary: parsed.data.review.summary || "",
+                issues: parsed.data.review.issues,
+                generatedFrameTree: modelTree,
+                instruction: "Inspect both screenshots together with the native tree. Use the exact supplied node IDs and return concrete minimal patches for the highest-impact remaining issues. Do not return an empty patch when visual issues remain."
+              }) },
+              ...(safeImage(parsed.data.sourceImage) ? [{ type: "image_url", image_url: { url: safeImage(parsed.data.sourceImage)! } }] : []),
+              ...(safeImage(parsed.data.outputImage) ? [{ type: "image_url", image_url: { url: safeImage(parsed.data.outputImage)! } }] : []),
+            ] },
           ],
           ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
           temperature: 0.1,
           // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
           ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
-          max_tokens: 2400,
+          max_tokens: 3200,
           response_format: { type: "json_object" },
         }),
         cache: "no-store",
