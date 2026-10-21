@@ -63,3 +63,24 @@ test("dedupe key is md5 of scope and normalized title", () => {
   assert.ok(first);
   assert.equal(taskLessonDedupeKey(first), taskLessonDedupeKey({ ...first, title: first.title.toUpperCase().replace(/\s+/g, "   ") }));
 });
+
+import { sanitizeTaskSummary } from "../src/memory/task-run-log";
+
+test("task-run summaries redact emails, credentials, Indian PANs, mobile numbers and long numeric identifiers", () => {
+  const result = sanitizeTaskSummary(
+    "Contact jane@example.com; PAN ABCDE1234F; call 9876543210; account 123456789012; node 123:456; bearer abcdefghijklmnop123456",
+  );
+  assert.match(result, /\\[email\\]/);
+  assert.match(result, /\\[pan\\]/);
+  assert.match(result, /\\[phone\\]/);
+  assert.match(result, /\\[number\\]/);
+  assert.match(result, /\\[id\\]/);
+  assert.match(result, /\\[secret\\]/);
+  assert.doesNotMatch(result, /jane@example\\.com|ABCDE1234F|9876543210|123456789012|123:456|abcdefghijklmnop123456/);
+});
+
+test("task-run summaries collapse whitespace and remain bounded", () => {
+  const result = sanitizeTaskSummary("  useful   summary  ".repeat(200));
+  assert.equal(result, result.trim().replace(/\\s+/g, " "));
+  assert.ok(result.length <= 1900);
+});
