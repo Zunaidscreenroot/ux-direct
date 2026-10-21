@@ -94,8 +94,9 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("if (!isRecovery) continue;"), "Missing content and invalid schemas must cause a compact retry.");
   assert.ok(route.includes("compactRecoveryCanvas(canvas)"), "The retry should send a bounded source layer tree.");
   assert.ok(route.includes("28–42 native nodes total INCLUDING nested children"), "The retry must explicitly cap output complexity.");
-  assert.ok(route.includes("max_tokens: isRecovery ? 6500 : 12000"), "Use OpenRouter's current completion token parameter.");
+  assert.ok(route.includes("max_tokens: isRecovery ? 6000 : 9000"), "Keep generation output bounded to a complete native plan.");
   assert.ok(route.includes("modelIndex === 0 ? 80000 : 70000"), "The primary and fallback get useful completion windows.");
+  assert.ok(route.includes('model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}'), "GPT-6 Luna prefers throughput and low reasoning effort for stability.");
   assert.ok(route.includes("isRecovery ? 45000"), "Compact retries have a bounded but useful completion window.");
   assert.ok(route.includes("sourceTextInventory: collectSourceTextInventory"), "Compact retries retain a full bounded source-text checklist.");
   assert.ok(route.includes("depth > 4 || state.count >= 60"), "Recovery preserves short text layers nested inside instances/cards.");
