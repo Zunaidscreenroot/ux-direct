@@ -264,7 +264,7 @@ function compactRecoveryNode(
     for (const child of source.children.slice(0, 10)) {
       const nested = compactRecoveryNode(child, state, depth + 1);
       if (nested) children.push(nested);
-      if (state.count >= 45) break;
+      if (state.count >= 60) break;
     }
     if (children.length) out.children = children;
   }
