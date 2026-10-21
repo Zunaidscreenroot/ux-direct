@@ -41,10 +41,25 @@ function collectText(nodes: RecordLike[], output: string[] = [], depth = 0): str
 }
 
 function hasExplicitRemoval(text: string, prompt: string): boolean {
-  const normalizedPrompt = fold(prompt);
   const normalizedText = fold(text);
-  return Boolean(normalizedText && normalizedPrompt.includes(normalizedText) &&
-    /\b(remove|delete|hide|omit|exclude|replace|rewrite|rename|change|update)\b/i.test(prompt));
+  if (!normalizedText) return false;
+  const escaped = text.trim().split("").map((character) =>
+    "\\.^$|?*+()[]{}".includes(character) ? "\\" + character : character
+  ).join("");
+  const mentionedAfterRemovalVerb = new RegExp(
+    "\\b(remove|delete|hide|omit|exclude|replace|rewrite|rename)\\b[^.!?]{0,80}\\b" + escaped + "\\b",
+    "i",
+  ).test(prompt);
+  const mentionedBeforeRemovalVerb = new RegExp(
+    "\\b" + escaped + "\\b[^.!?]{0,80}\\b(remove|delete|hide|omit|exclude|replace|rewrite|rename)\\b",
+    "i",
+  ).test(prompt);
+  const explicitCopyChange = new RegExp(
+    "\\b(change|update|rewrite|rename|replace)\\b[^.!?]{0,80}\\b" + escaped +
+      "\\b[^.!?]{0,60}\\b(to|as|with)\\b",
+    "i",
+  ).test(prompt);
+  return mentionedAfterRemovalVerb || mentionedBeforeRemovalVerb || explicitCopyChange;
 }
 
 function hexToRgb(value: unknown): [number, number, number] | null {
