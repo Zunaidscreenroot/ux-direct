@@ -3,7 +3,9 @@ import { z } from "zod";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveBrainScopes } from "@/src/memory/chat-context";
 import { captureVerifiedTaskLesson, resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/task-learning";
-import { deferTaskWork, finishTaskRun, startTaskRun } from "@/src/memory/task-run-log";
+import { finishTaskRun } from "@/src/memory/task-run-log";
+import { neonRequest } from "@/src/memory/neon-rest";
+import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 import { normalizeVisualReview } from "@/src/figma-agent/normalize-visual-review";
@@ -90,6 +92,10 @@ export async function POST(request: Request) {
     sourceImage: z.string().max(52000).nullable().optional(),
     outputImage: z.string().max(52000).nullable().optional(),
     taskRunId: z.string().uuid().optional(),
+    finalizeTask: z.boolean().optional(),
+    taskOutcome: z.enum(["verified", "failed"]).optional(),
+    learningCandidate: z.unknown().optional(),
+    outcomeSummary: z.string().trim().max(3900).optional(),
     executionFailure: z.string().trim().min(3).max(2000).optional(),
     durationMs: z.number().int().min(0).max(86_400_000).optional(),
     retrieval: z.object({
@@ -101,17 +107,61 @@ export async function POST(request: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Visual review input is invalid.", details: parsed.error.issues }, { status: 400, headers });
   const retrieval = parsed.data.retrieval || { status: "disabled" as const, memoryIds: [], chunkIds: [], chars: 0 };
   const project = resolveFigmaTaskProject(parsed.data.prompt);
-  if (parsed.data.executionFailure && parsed.data.taskRunId) {
-    deferTaskWork((async () => {
-      await startTaskRun({ id: parsed.data.taskRunId!, projectKey: resolveFigmaTaskScope(project, parsed.data.prompt), title: "Figma task",
-        requestSummary: parsed.data.prompt, retrieval });
-      const learned = await captureVerifiedTaskLesson({ id: parsed.data.taskRunId!, outcome: "failed", project,
-        taskContext: parsed.data.prompt, failureMessage: parsed.data.executionFailure, durationMs: parsed.data.durationMs, retrieval });
-      await finishTaskRun({ id: parsed.data.taskRunId!, outcome: "failed", durationMs: parsed.data.durationMs || 0,
-        retrieval, lesson: learned.lesson ? { ...learned.lesson, status: learned.status } : null,
-        errorSummary: parsed.data.executionFailure });
-    })());
-    return NextResponse.json({ ok: true, logged: true }, { headers });
+
+  // Final outcome logging is an explicit one-shot operation. Intermediate QA
+  // passes must not race each other or persist an unverified success/failure.
+  if (parsed.data.finalizeTask === true) {
+    const taskRunId = parsed.data.taskRunId;
+    const outcome = parsed.data.taskOutcome;
+    if (!taskRunId || !outcome) {
+      return NextResponse.json({ error: "Task finalization requires taskRunId and taskOutcome." }, { status: 400, headers });
+    }
+    const lookupPath = "uxd_task_runs?id=eq." + encodeURIComponent(taskRunId) +
+      "&select=id,status,outcome,lesson&limit=1";
+    const existingResult = await neonRequest(lookupPath).catch(() => null);
+    const existing = Array.isArray(existingResult) ? existingResult[0] as Record<string, unknown> | undefined : undefined;
+    if (!existing?.id) {
+      return NextResponse.json({ error: "The task run could not be confirmed before finalization." }, { status: 503, headers });
+    }
+    if (existing.status === "completed" && existing.outcome === outcome) {
+      return NextResponse.json({ ok: true, logged: true, alreadyFinalized: true }, { headers });
+    }
+
+    const failureMessage = outcome === "failed"
+      ? (parsed.data.executionFailure || "The native Figma task did not pass final quality verification.")
+      : undefined;
+    const candidate = outcome === "verified" ? sanitizeInlineLearningCandidate(parsed.data.learningCandidate) : null;
+    const learned = await captureVerifiedTaskLesson({
+      id: taskRunId,
+      outcome,
+      project,
+      taskContext: parsed.data.prompt,
+      candidate,
+      failureMessage,
+      durationMs: parsed.data.durationMs,
+      retrieval,
+    });
+    await finishTaskRun({
+      id: taskRunId,
+      outcome,
+      durationMs: parsed.data.durationMs || 0,
+      retrieval,
+      lesson: learned.lesson ? { ...learned.lesson, status: learned.status } : null,
+      summary: parsed.data.outcomeSummary,
+      errorSummary: failureMessage,
+    });
+
+    const confirmedResult = await neonRequest(lookupPath).catch(() => null);
+    const confirmed = Array.isArray(confirmedResult) ? confirmedResult[0] as Record<string, unknown> | undefined : undefined;
+    if (!confirmed || confirmed.status !== "completed" || confirmed.outcome !== outcome) {
+      return NextResponse.json({ error: "Task outcome persistence could not be confirmed." }, { status: 503, headers });
+    }
+    return NextResponse.json({
+      ok: true,
+      logged: true,
+      lessonStatus: learned.status,
+      memoryId: learned.memoryId || null,
+    }, { headers });
   }
   if (!parsed.data.sourceCanvas || !parsed.data.outputCanvas) {
     return NextResponse.json({ error: "Source and output canvas evidence are required for visual review." }, { status: 400, headers });
@@ -235,36 +285,27 @@ export async function POST(request: Request) {
         continue;
       }
       const unresolvedHighSeverity = validated.data.issues.some(issue => issue.severity === "high");
-      const qualityGatePassed = validated.data.score >= 82 && !unresolvedHighSeverity && validated.data.issues.length === 0;
-      const taskRunId = parsed.data.taskRunId;
-      if (taskRunId) {
-        const outcome = qualityGatePassed ? "verified" as const : "failed" as const;
-        const failureMessage = validated.data.issues.map(issue => issue.issue + " " + issue.evidence).join(" ").slice(0, 1900);
-        deferTaskWork((async () => {
-          await startTaskRun({ id: taskRunId, projectKey: resolveFigmaTaskScope(project, parsed.data.prompt), title: "Figma task",
-            requestSummary: parsed.data.prompt, retrieval });
-          const learned = await captureVerifiedTaskLesson({ id: taskRunId, outcome, project,
-            taskContext: parsed.data.prompt, candidate: learningCandidate, failureMessage,
-            durationMs: parsed.data.durationMs, retrieval });
-          await finishTaskRun({ id: taskRunId, outcome, durationMs: parsed.data.durationMs || 0,
-            retrieval, lesson: learned.lesson ? { ...learned.lesson, status: learned.status } : null,
-            summary: validated.data.summary, errorSummary: outcome === "failed" ? failureMessage : undefined });
-        })());
-      }
+      const visualInspection = !!sourceImage && !!outputImage;
+      const qualityGatePassed = validated.data.score >= 90 && visualInspection &&
+        !unresolvedHighSeverity && validated.data.issues.length === 0;
+      const safeLearningCandidate = sanitizeInlineLearningCandidate(learningCandidate);
       return NextResponse.json({
         ok: true,
         review: validated.data,
         qualityGate: {
           passed: qualityGatePassed,
-          minimumScore: 82,
+          minimumScore: 90,
           unresolvedHighSeverity,
           issueCount: validated.data.issues.length,
           message: qualityGatePassed
             ? "Visual QA passed."
-            : "Visual QA found issues for manual review. This workflow does not apply automatic design refinements."
+            : !visualInspection
+              ? "Visual QA cannot pass without both source and output screenshots."
+              : "Visual QA found issues. The bounded plugin repair loop may attempt a correction; completion remains blocked until final verification."
         },
-        learning: taskRunId ? (qualityGatePassed ? "queued" : "filtered-unless-categorized") : "no-task-run",
-        visualInspection: !!sourceImage && !!outputImage,
+        learning: safeLearningCandidate ? "candidate-ready-for-final-verification" : "no-candidate",
+        learningCandidate: safeLearningCandidate,
+        visualInspection,
         outputImageInspected: !!outputImage,
         model: typeof record.model === "string" ? record.model : model,
       }, { headers });
