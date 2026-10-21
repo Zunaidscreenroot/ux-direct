@@ -1,15 +1,20 @@
 name: UX Direct CI
 
-# Beta mode: keep deep validation available on demand, but don't run it
-# automatically on every push or pull request. Production has its own build.
+# Validate active fix branches and pull requests before they are considered ready.
 on:
+  push:
+    branches:
+      - "fix/**"
+      - "brain-usage-learning-loop"
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ux-direct-ci-manual
+  group: ux-direct-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -37,3 +42,5 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+      - name: Build for Cloudflare Workers
+        run: npm run cf:build
