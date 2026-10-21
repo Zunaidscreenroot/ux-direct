@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "build:figma-plugin-effects": "esbuild figma-plugin/ui-effects.tsx --bundle --minify --outfile=figma-plugin/ui-effects.js --format=iife --jsx=automatic",
-    "cf:build": "opennextjs-cloudflare build"
+    "cf:build": "opennextjs-cloudflare build --dangerouslyUseUnsupportedNextVersion"
   },
   "dependencies": {
     "next": "^15.5.0",
