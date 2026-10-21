@@ -11,14 +11,14 @@ export async function POST(request: Request) {
     const body = await request.json();
     const redirectUris = Array.isArray(body?.redirect_uris) ? [...new Set(body.redirect_uris)].slice(0, 10) : [];
     if (!redirectUris.length || !redirectUris.every(validRedirect)) return Response.json({ error: "invalid_client_metadata", error_description: "One or more HTTPS redirect_uris are missing or invalid." }, { status: 400 });
-    const clientName = typeof body?.client_name === "string" ? body.client_name.trim().slice(0, 160) : "ChatGPT MCP client";
+    const clientName = typeof body?.client_name === "string" ? body.client_name.trim().slice(0, 160) : "MCP client";
     const clientId = "uxmcp_" + signMcpPayload({
-      typ: "client", sub: randomUUID(), client_name: clientName || "ChatGPT MCP client",
+      typ: "client", sub: randomUUID(), client_name: clientName || "MCP client",
       redirect_uris: redirectUris, token_endpoint_auth_method: "none",
       created_at: new Date().toISOString(), exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 5,
     });
     return Response.json({
-      client_id: clientId, client_name: clientName || "ChatGPT MCP client",
+      client_id: clientId, client_name: clientName || "MCP client",
       redirect_uris: redirectUris, token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], application_type: "web",
     }, { status: 201, headers: { "Cache-Control": "no-store" } });
