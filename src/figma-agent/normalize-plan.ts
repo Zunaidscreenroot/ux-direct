@@ -37,6 +37,158 @@ function normalizeElementType(value: unknown, item: Record<string, unknown>): "R
   return "RECTANGLE";
 }
 
+
+type RepairGeometryRecord = Record<string, unknown>;
+
+function isRepairGeometryRecord(value: unknown): value is RepairGeometryRecord {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function repairGeometryChildren(node: RepairGeometryRecord): RepairGeometryRecord[] {
+  return Array.isArray(node.children) ? node.children.filter(isRepairGeometryRecord) : [];
+}
+
+function repairGeometryNumber(node: RepairGeometryRecord, key: string, fallback = 0): number {
+  const value = node[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function estimateWrappedTextHeight(node: RepairGeometryRecord): number {
+  if (node.type !== "TEXT" || typeof node.text !== "string") return repairGeometryNumber(node, "height", 1);
+  const fontSize = Math.max(8, repairGeometryNumber(node, "fontSize", 14));
+  const width = Math.max(1, repairGeometryNumber(node, "width", 1));
+  const charsPerLine = Math.max(1, Math.floor(width / (fontSize * 0.52)));
+  const lines = node.text.split(/\r?\n/).reduce((count, line) =>
+    count + Math.max(1, Math.ceil(line.length / charsPerLine)), 0);
+  return Math.max(repairGeometryNumber(node, "height", 1), Math.ceil(lines * fontSize * 1.35));
+}
+
+/**
+ * Repairs model-authored geometry deterministically before the strict quality
+ * gate. It keeps every node and exact text, fits over-wide Auto Layout children,
+ * wraps text after narrowing, and lets nested vertical content grow instead of
+ * clipping it inside fixed-height cards.
+ */
+export function repairPlanGeometry(value: unknown): unknown {
+  if (!isRepairGeometryRecord(value)) return value;
+  const plan: RepairGeometryRecord = { ...value };
+  const frame = isRepairGeometryRecord(plan.frame) ? { ...plan.frame } : {};
+  const elements = Array.isArray(plan.elements)
+    ? plan.elements.filter(isRepairGeometryRecord).map(node => ({ ...node }))
+    : [];
+  if (!elements.length) return plan;
+
+  const fitWidth = (child: RepairGeometryRecord, width: number, mode: string) => {
+    const nextWidth = Math.max(1, Math.floor(width));
+    if (repairGeometryNumber(child, "width", 1) <= nextWidth + 1) return;
+    child.width = nextWidth;
+    if (child.type === "TEXT") {
+      // Wrapped Figma text needs a concrete width with HEIGHT auto-resize.
+      child.layoutSizingHorizontal = "FIXED";
+      child.textAutoResize = "HEIGHT";
+      child.height = estimateWrappedTextHeight(child);
+    } else if (mode === "VERTICAL" && child.layoutPositioning !== "ABSOLUTE") {
+      child.layoutSizingHorizontal = "FILL";
+    } else {
+      child.layoutSizingHorizontal = "FIXED";
+    }
+  };
+
+  const repairNode = (node: RepairGeometryRecord, isViewport = false, depth = 0): void => {
+    if (depth > 8) return;
+    const children = repairGeometryChildren(node);
+    if (!children.length) {
+      if (node.type === "TEXT") {
+        node.height = Math.max(1, repairGeometryNumber(node, "height", 1));
+      }
+      return;
+    }
+
+    const mode = String(node.layoutMode || "NONE").toUpperCase();
+    const width = Math.max(1, repairGeometryNumber(node, "width", repairGeometryNumber(frame, "width", 360)));
+    const height = Math.max(1, repairGeometryNumber(node, "height", 1));
+    const padL = Math.max(0, repairGeometryNumber(node, "paddingLeft"));
+    const padR = Math.max(0, repairGeometryNumber(node, "paddingRight"));
+    const padT = Math.max(0, repairGeometryNumber(node, "paddingTop"));
+    const padB = Math.max(0, repairGeometryNumber(node, "paddingBottom"));
+    const gap = Math.max(0, repairGeometryNumber(node, "itemSpacing"));
+    const flow = children.filter(child => child.layoutPositioning !== "ABSOLUTE");
+
+    if (mode === "VERTICAL") {
+      const contentWidth = Math.max(1, width - padL - padR);
+      for (const child of flow) fitWidth(child, contentWidth, mode);
+    } else if (mode === "HORIZONTAL") {
+      const contentBudget = Math.max(1, width - padL - padR - Math.max(0, flow.length - 1) * gap);
+      const currentTotal = flow.reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "width", 1)), 0);
+      if (currentTotal > contentBudget + 1) {
+        // Preserve the horizontal relationship but proportionally allocate the real
+        // content width. Text nodes then wrap rather than collide or get clipped.
+        const scale = contentBudget / currentTotal;
+        const widths = flow.map(child => Math.max(1, Math.floor(repairGeometryNumber(child, "width", 1) * scale)));
+        let excess = widths.reduce((sum, next) => sum + next, 0) - contentBudget;
+        if (excess > 0) {
+          const order = widths.map((next, index) => ({ next, index })).sort((a, b) => b.next - a.next);
+          for (const entry of order) {
+            if (excess <= 0) break;
+            const canReduce = Math.max(0, widths[entry.index] - 1);
+            const reduceBy = Math.min(canReduce, excess);
+            widths[entry.index] -= reduceBy;
+            excess -= reduceBy;
+          }
+        }
+        flow.forEach((child, index) => fitWidth(child, widths[index], mode));
+        // Frames also use fixed allocated widths here; FILL could re-distribute
+        // uneven columns and invalidate the geometry that was just repaired.
+        flow.filter(child => child.type !== "TEXT").forEach(child => {
+          if (child.layoutPositioning !== "ABSOLUTE") child.layoutSizingHorizontal = "FIXED";
+        });
+      }
+    } else if (mode === "NONE") {
+      // Free-positioned siblings retain their intended coordinates, but normal
+      // children cannot extend beyond the actual parent width.
+      for (const child of children) {
+        if (child.layoutPositioning === "ABSOLUTE") continue;
+        const x = repairGeometryNumber(child, "x");
+        if (x + repairGeometryNumber(child, "width", 1) > width + 1) {
+          fitWidth(child, Math.max(1, width - Math.max(0, x)), mode);
+        }
+      }
+    }
+
+    // Descendants must be repaired before parent heights are recomputed.
+    for (const child of children) repairNode(child, false, depth + 1);
+
+    if (mode === "VERTICAL" && !isViewport) {
+      const requiredHeight = padT + padB +
+        flow.reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "height", 1)), 0) +
+        Math.max(0, flow.length - 1) * gap;
+      if (requiredHeight > height + 1) {
+        node.height = Math.min(4096, Math.ceil(requiredHeight));
+        node.primaryAxisSizingMode = "AUTO";
+      }
+    } else if (mode === "HORIZONTAL") {
+      const requiredHeight = padT + padB +
+        flow.reduce((max, child) => Math.max(max, repairGeometryNumber(child, "height", 1)), 0);
+      if (requiredHeight > height + 1) {
+        node.height = Math.min(4096, Math.ceil(requiredHeight));
+        node.counterAxisSizingMode = "AUTO";
+      }
+    }
+  };
+
+  const root = {
+    ...frame,
+    type: "FRAME",
+    name: typeof frame.name === "string" ? frame.name : "Generated frame",
+    width: repairGeometryNumber(frame, "width", 360),
+    height: repairGeometryNumber(frame, "height", 800),
+  };
+  repairNode({ ...root, children: elements }, true);
+  plan.frame = frame;
+  plan.elements = elements;
+  return plan;
+}
+
 export function normalizePlan(value: unknown, canvas: Record<string, unknown>): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const root = value as Record<string, unknown>;
@@ -548,9 +700,9 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
       return (Number(a.y) || 0) - (Number(b.y) || 0);
     });
   }
-  return {
+  return repairPlanGeometry({
     summary: String(root.summary ?? root.description ?? root.rationale ?? "A structured, high-fidelity native Figma design variation.").trim().slice(0, 700),
     frame,
     elements: normalized,
-  };
+  });
 }
