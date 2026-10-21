@@ -439,7 +439,7 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // Auto routes within LOW cost tier first, then price-ordered vision-capable fallbacks.
+  // Use the explicit quality-first route first, pass deterministic quality feedback to retries, and fall back sequentially.
   // The primary gets one compact retry; fallbacks get one attempt each, all sequentially.
   const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
   const errors: string[] = [];
