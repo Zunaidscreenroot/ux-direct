@@ -401,3 +401,19 @@ test("visual QA exits without model calls when rendered evidence is missing", ()
   assert.ok(qualityLoop.includes("if (!capture || !capture.dataUrl)"));
   assert.ok(qualityLoop.includes("Visual QA blocked because the repaired output screenshot could not be captured"));
 });
+
+
+test("native visual edits cannot bypass final QA for leaf nodes or multiple roots", () => {
+  const start = pluginUi.indexOf("async function executeNativeActionPlan");
+  const end = pluginUi.indexOf("async function createFigmaDesign", start);
+  assert.ok(start >= 0 && end > start, "Native action executor must be present.");
+  const actionFlow = pluginUi.slice(start, end);
+  assert.ok(actionFlow.includes("if (hasVisualMutations)"));
+  assert.equal(actionFlow.includes("if (hasVisualMutations && canvas.nodes.length === 1 && Array.isArray(root.children))"), false);
+  assert.ok(actionFlow.includes("if (canvas.nodes.length !== 1)"));
+  assert.ok(actionFlow.includes("if (!qa || qa.passed !== true)"));
+  assert.ok(actionFlow.includes('"apply-style", "bind-variable"'));
+  assert.ok(actionFlow.includes('"opacity", "visible", "rotation"'));
+  assert.ok(actionFlow.includes('"shadowColor", "shadowBlur", "shadowX"'));
+  assert.ok(actionFlow.includes('"textCase", "textDecoration"'));
+});
