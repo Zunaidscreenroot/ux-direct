@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveBrainScopes } from "@/src/memory/chat-context";
-import { captureVerifiedTaskLesson, resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/task-learning";
+import { captureVerifiedTaskLesson, resolveFigmaTaskProject } from "@/src/memory/task-learning";
 import { finishTaskRun } from "@/src/memory/task-run-log";
 import { neonRequest } from "@/src/memory/neon-rest";
 import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
