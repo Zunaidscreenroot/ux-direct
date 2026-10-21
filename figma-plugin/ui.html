@@ -1143,9 +1143,9 @@
           const result = await response.json().catch(function () { return {}; });
           if (!response.ok || result.ok !== true) {
             console.warn("[uxd-task-run] final outcome was not confirmed:", String(result.error || response.status).slice(0, 160));
-            return "\\nTask outcome logging could not be confirmed.";
+            return "\nTask outcome logging could not be confirmed.";
           }
-          return result.lessonStatus ? "\\nBrain learning: " + String(result.lessonStatus) + "." : "";
+          return result.lessonStatus ? "\nBrain learning: " + String(result.lessonStatus) + "." : "";
         } catch (error) {
           console.warn("[uxd-task-run] final outcome logging failed:", String(error && error.message || error).slice(0, 160));
           return "\\nTask outcome logging could not be confirmed.";
@@ -1322,13 +1322,13 @@
           if (result && result.learningCandidate) learningCandidate = result.learningCandidate;
         }
       });
-      visualNote = qa && qa.text ? "\\n\\n" + qa.text : "";
+      visualNote = qa && qa.text ? "\n\n" + qa.text : "";
       if (!qa || qa.passed !== true) {
         stage("error", "Visual quality gate failed · rejecting variation");
         try {
           await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "delete-node", nodeId: createdFrameId }, 90000);
         } catch (_) {
-          visualNote += "\\nThe failed variation could not be removed automatically; inspect or delete it manually.";
+          visualNote += "\nThe failed variation could not be removed automatically; inspect or delete it manually.";
         }
         throw new Error("UX Direct rejected this variation because final rendered visual QA did not pass. " +
           String(qa && qa.text || "Visual quality could not be verified."));
