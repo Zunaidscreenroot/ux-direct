@@ -215,13 +215,13 @@ export async function POST(request: Request) {
         "automatic-figma-visual-review",
       );
       const unresolvedHighSeverity = validated.data.issues.some(issue => issue.severity === "high");
-      const qualityGatePassed = validated.data.score >= 82 && !unresolvedHighSeverity && validated.data.issues.length === 0;
+      const qualityGatePassed = validated.data.score >= 90 && !unresolvedHighSeverity && validated.data.issues.length === 0;
       return NextResponse.json({
         ok: true,
         review: validated.data,
         qualityGate: {
           passed: qualityGatePassed,
-          minimumScore: 82,
+          minimumScore: 90,
           unresolvedHighSeverity,
           issueCount: validated.data.issues.length,
           message: qualityGatePassed
