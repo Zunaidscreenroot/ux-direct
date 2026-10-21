@@ -85,7 +85,7 @@ test("does not reject FILL children using their pre-layout width", () => {
   const card = plan.elements[0];
   const fillChild = card.children[0];
   fillChild.width = card.width;
-  fillChild.layoutSizingHorizontal = "FILL";
+  (fillChild as Record<string, unknown>).layoutSizingHorizontal = "FILL";
   const report = auditDesignPlanQuality(plan, sourceCanvas, "Refine the selected Manage Loans screen");
   assert.equal(report.findings.some((finding) => finding.code === "child-out-of-bounds"), false,
     JSON.stringify(report.findings));
