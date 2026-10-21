@@ -473,8 +473,8 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // GPT-6 Luna is primary; OpenRouter Auto is the low-cost fallback if it fails.
-  // The primary gets one compact retry; fallbacks are attempted sequentially.
+  // GPT-6 Luna is primary; Auto is the low-cost fallback. Both routes get one compact retry.
+  // Provider selection favors throughput, and the shared deadline bounds the complete chain.
   const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
   const errors: string[] = [];
   let validationFeedback = "";
@@ -503,10 +503,10 @@ export async function POST(request: Request) {
   // OpenRouter sends HTTP 200 headers immediately and the body only once the full plan is
   // generated, so each attempt needs room for a complete multi-thousand-token plan. One shared
   // deadline keeps the sequential chain bounded.
-  const generationDeadlineMs = 150000;
+  const generationDeadlineMs = 270000;
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
-    const attemptsForModel = modelIndex === 0 ? 2 : 1;
+    const attemptsForModel = 2;
     for (let recoveryAttempt = 0; recoveryAttempt < attemptsForModel; recoveryAttempt += 1) {
       const isRecovery = recoveryAttempt === 1;
       const remainingMs = generationDeadlineMs - (Date.now() - generationStartedAt);
@@ -514,7 +514,7 @@ export async function POST(request: Request) {
         errors.push("Generation deadline reached before " + model + (isRecovery ? " compact retry" : "") + " could run.");
         break modelLoop;
       }
-      const attemptTimeoutMs = Math.min(isRecovery ? 22000 : (modelIndex === 0 ? 36000 : 26000), remainingMs);
+      const attemptTimeoutMs = Math.min(isRecovery ? 45000 : (modelIndex === 0 ? 80000 : 70000), remainingMs);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
       try {
@@ -548,10 +548,11 @@ export async function POST(request: Request) {
               { role: "user", content: userContent },
             ],
             ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
+            ...(model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}),
             ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
             // Qwen 3.5 thinks by default; unbounded reasoning spends the attempt before any JSON is written.
             ...(model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}),
-            max_tokens: isRecovery ? 6500 : 12000,
+            max_tokens: isRecovery ? 6000 : 9000,
             // JSON mode is enabled for the first attempt. Compact retries use normal text mode
             // because some provider/model routes have returned successful but empty choices.
             ...(!isRecovery ? { response_format: { type: "json_object" } } : {}),
