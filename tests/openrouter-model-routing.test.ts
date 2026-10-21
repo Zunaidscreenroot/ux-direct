@@ -6,31 +6,24 @@ import { OPENROUTER_MODELS, OPENROUTER_MODEL_LABELS, UX_DIRECT_DESIGN_ROLE } fro
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
-test("UX Direct prefers Gemini 3.7 Flash and orders multimodal fallbacks by estimated cost", () => {
-  assert.deepEqual(OPENROUTER_MODELS, [
-    "google/gemini-3.7-flash",
-    "qwen/qwen3.5-35b-a3b",
-    "google/gemini-3.1-flash-lite",
-    "qwen/qwen3.5-397b-a17b",
-  ]);
-  assert.deepEqual(OPENROUTER_MODEL_LABELS, [
-    "Gemini 3.7 Flash · primary",
-    "Qwen 3.5 35B-A3B · cheapest fallback",
-    "Gemini 3.1 Flash Lite · low-cost multimodal fallback",
-    "Qwen 3.5 397B-A17B · final quality fallback",
-  ]);
+test("general assistant chat exposes OpenRouter Auto as its only model option", () => {
+  assert.deepEqual(OPENROUTER_MODELS, ["openrouter/auto"]);
+  assert.deepEqual(OPENROUTER_MODEL_LABELS, ["OpenRouter Auto · low-cost routing"]);
   assert.ok(UX_DIRECT_DESIGN_ROLE.toLowerCase().includes("ui/ux designer"));
-  assert.equal(OPENROUTER_MODELS.includes("openrouter/auto" as never), false);
 });
 
-test("homepage chat is separate; Figma routes use the shared quality-first chain without Auto", () => {
-  for (const path of ["app/api/assistant/chat/route.ts"]) {
-    const source = read(path);
-    assert.ok(source.includes("OPENROUTER_MODELS"), path + " keeps the general chat model order");
-    assert.ok(source.includes("UX_DIRECT_DESIGN_ROLE"), path + " uses the UX design role");
-    assert.equal(source.includes('"openrouter/auto"'), false, path + " remains on the separate chat chain");
-  }
+test("assistant chat forces low-cost Auto routing, requests 25k output tokens, and has no named-model fallback", () => {
+  const source = read("app/api/assistant/chat/route.ts");
+  assert.ok(source.includes("OPENROUTER_MODELS"), "chat uses the single-model configuration");
+  assert.ok(source.includes("const candidates = [ROUTER_MODEL];"), "only one model route is attempted");
+  assert.ok(source.includes("max_tokens: 25000"), "assistant chat requests 25,000 output tokens");
+  assert.ok(source.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Auto Router uses the low-cost tier");
+  assert.ok(source.includes('provider: { sort: "throughput" }'), "compatible endpoints are throughput-prioritized");
+  assert.ok(!source.includes("FALLBACK_MODEL"), "there is no separate named-model fallback");
+  assert.ok(!source.includes("OPENROUTER_MODELS.slice(2)"), "there is no additional candidate chain");
+});
 
+test("Figma routes retain their separate quality-first explicit model chain", () => {
   for (const path of [
     "app/api/assistant/figma-agent/route.ts",
     "app/api/assistant/figma-agent/review/route.ts",

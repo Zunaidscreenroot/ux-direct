@@ -70,8 +70,8 @@ export async function POST(request: Request) {
   if (value.temperature !== undefined && (typeof value.temperature !== "number" || value.temperature < 0 || value.temperature > 2)) {
     return NextResponse.json({ error: "temperature must be between 0 and 2." }, { status: 400 });
   }
-  if (value.max_tokens !== undefined && (!Number.isInteger(value.max_tokens) || Number(value.max_tokens) < 1 || Number(value.max_tokens) > 16384)) {
-    return NextResponse.json({ error: "max_tokens must be an integer between 1 and 16384." }, { status: 400 });
+  if (value.max_tokens !== undefined && (!Number.isInteger(value.max_tokens) || Number(value.max_tokens) < 1 || Number(value.max_tokens) > 25000)) {
+    return NextResponse.json({ error: "max_tokens must be an integer between 1 and 25000." }, { status: 400 });
   }
   const requestId = randomUUID();
   try {

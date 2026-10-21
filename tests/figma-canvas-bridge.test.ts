@@ -125,12 +125,10 @@ test("in-Figma design agent retrieves approved brain context and validates nativ
   assert.ok(agent.includes('resolveBrainScopes('), "Brain retrieval must be scope-filtered.");
   assert.ok(agent.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Figma generation must use Auto LOW followed by explicit cost-ordered fallbacks.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "No provider restrictions should be sent to OpenRouter.");
-  assert.ok(modelPolicy.includes('"google/gemini-3.7-flash"'));
-  assert.ok(modelPolicy.includes('"qwen/qwen3.5-35b-a3b"'));
-  assert.ok(modelPolicy.includes('"google/gemini-3.1-flash-lite"'));
-  assert.ok(modelPolicy.includes('"qwen/qwen3.5-397b-a17b"'));
   const generalModels = modelPolicy.slice(modelPolicy.indexOf("export const OPENROUTER_MODELS"), modelPolicy.indexOf("export const OPENROUTER_MODEL_LABELS"));
-  assert.equal(generalModels.includes('"openrouter/auto"'), false);
+  assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
+  assert.ok(modelPolicy.includes('"qwen/qwen3.5-35b-a3b"'), "Figma's independent model chain retains its lower-cost explicit route.");
+  assert.ok(modelPolicy.includes("UX_DIRECT_DESIGN_ROLE"));
   assert.ok(modelPolicy.includes("UX_DIRECT_DESIGN_ROLE"));
   assert.equal(modelPolicy.includes("only:"), false);
   assert.equal(modelPolicy.includes("allow_fallbacks"), false);
@@ -208,13 +206,14 @@ test("bridge supports saved health reports above the legacy 100-check ceiling", 
   assert.ok(bridge.includes('mode === "health-state"'));
 });
 
-test("normal conversational chat uses Gemini primary and cost-ordered explicit fallbacks", () => {
+test("normal conversational chat uses only low-cost OpenRouter Auto with a 25k output-token request", () => {
   assert.ok(chatRoute.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0];"));
-  assert.ok(chatRoute.includes("const FALLBACK_MODEL = OPENROUTER_MODELS[1];"));
+  assert.equal(chatRoute.includes("FALLBACK_MODEL"), false);
   assert.equal(chatRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
-  assert.ok(chatRoute.includes("for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1)"));
-  assert.ok(chatRoute.includes("openrouter/auto") === false, "Auto model slug is defined in shared model policy, not hard-coded in request routing.");
-  assert.equal(chatRoute.includes("auto-router"), false);
+  assert.ok(chatRoute.includes("const candidates = [ROUTER_MODEL];"));
+  assert.ok(chatRoute.includes("max_tokens: 25000"));
+  assert.ok(chatRoute.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
+  assert.ok(chatRoute.includes('provider: { sort: "throughput" }'));
 });
 
 test("Figma visual analysis uses a compact rendered JPEG and native layer data", () => {

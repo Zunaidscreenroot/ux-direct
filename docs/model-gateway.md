@@ -4,9 +4,9 @@ UX Direct includes a small, self-hosted-in-application gateway inspired by LiteL
 
 ## Accountant controls and module routing
 
-Every module has a switch, routing mode and model-selection policy. No monthly gateway/module budget is assigned by default. Internal IA/UX analysis uses OpenRouter Auto Router with its low-cost tier and a throughput-first provider preference. It does not send a fixed model allowlist, exclusions, or per-token price ceiling; OpenRouter picks the model dynamically. Homepage chat keeps its separate explicit `:free`-only model pool.
+Every module has a switch, routing mode and model-selection policy. No monthly gateway/module budget is assigned by default. UX Direct assistant chat and internal IA/UX analysis use `openrouter/auto` with the low-cost tier and a throughput-first provider preference. Assistant chat exposes only this model option, requests up to 25,000 output tokens, and does not fall back to named models. The generic Model Gateway API may still list other configured providers for explicit, authenticated API use.
 
-OpenRouter chooses the model dynamically for each internal request in the low-cost band, then prioritizes the highest-throughput compatible endpoint for the selected model. No per-token ceiling or model allow/exclude list is sent. The actual model and provider-reported usage cost are recorded from the response. The low-cost tier is a routing preference, not a hard monthly spend limit; total spend can accumulate without an explicitly assigned budget. Internal Auto Router requests use a 120-second timeout for larger IA/UX analysis; other provider calls default to 45 seconds.
+OpenRouter chooses the model dynamically for each internal request in the low-cost band, then prioritizes the highest-throughput compatible endpoint for the selected model. No per-token ceiling or model allow/exclude list is sent. The actual model and provider-reported usage cost are recorded from the response. The low-cost tier is a routing preference, not a hard monthly spend limit; total spend can accumulate without an explicitly assigned budget. Internal Auto Router requests use a 120-second timeout for larger IA/UX analysis; other provider calls default to 45 seconds. The 25,000-token output request is a maximum, not a promise that every model selected by Auto supports that many output tokens.
 
 Settings and usage keys are branch/environment scoped, so preview does not overwrite production settings or usage records. Netlify Blobs is best-effort key/value storage rather than transactional accounting; concurrent paid calls may race a cap. Use transactional reservations before relying on caps as a production financial guarantee.
 
@@ -32,7 +32,7 @@ OpenRouter:
 ```env
 OPENROUTER_API_KEY=...
 OPENROUTER_MODELS=provider/model-name:free
-# Internal UX/IA analysis uses dynamic low-cost routing instead of a fixed model ID.
+# UX Direct assistant chat and internal IA/UX analysis use dynamic low-cost Auto routing.
 OPENROUTER_AUTO_ROUTING=true
 # Optional:
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
@@ -73,4 +73,4 @@ Do not call this module directly from browser/plugin code: route requests throug
 
 ## Current scope and follow-up
 
-This slice implements non-streaming chat completions, a deterministic no-network mock, provider/model catalog, task-based selection, authenticated chat/model endpoints, a Model Gateway dashboard, per-request token ledger, INR cost reporting and explicit guards for fixed routes, plus a zero-cost mock smoke test. Internal UX/IA analysis is routed dynamically through OpenRouter's low-cost router with per-token price ceilings; no monthly gateway budget is assigned unless deliberately configured. Direct-provider task planning remains separately guarded. Streaming live output and concurrency-safe monthly spend controls remain follow-up work. Usage records persist to Netlify Blobs when running in Netlify and use runtime memory as a local fallback.
+This slice implements non-streaming chat completions, a deterministic no-network mock, provider/model catalog, task-based selection, authenticated chat/model endpoints, a Model Gateway dashboard, per-request token ledger, INR cost reporting and explicit guards for fixed routes, plus a zero-cost mock smoke test. Assistant chat and internal UX/IA analysis are routed dynamically through OpenRouter's low-cost router without a named-model fallback; no monthly gateway budget is assigned unless deliberately configured. Direct-provider task planning remains separately guarded. Streaming live output and concurrency-safe monthly spend controls remain follow-up work. Usage records persist to Netlify Blobs when running in Netlify and use runtime memory as a local fallback.

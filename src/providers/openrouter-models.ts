@@ -25,21 +25,16 @@ export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "qwen/qwen3.5-397b-a
 export const FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "qwen/qwen3.5-397b-a17b";
 
 /**
- * General assistant/chat routing stays separate, so design model changes do not
- * silently change homepage chat behavior.
+ * General assistant chat exposes one server-selected route. OpenRouter Auto
+ * chooses the actual model dynamically within the requested low-cost tier.
+ * Figma generation/review remains a separate, explicit quality-first route.
  */
 export const OPENROUTER_MODELS = [
-  "google/gemini-3.7-flash",
-  "qwen/qwen3.5-35b-a3b",
-  "google/gemini-3.1-flash-lite",
-  "qwen/qwen3.5-397b-a17b",
+  "openrouter/auto",
 ] as const;
 
 export const OPENROUTER_MODEL_LABELS = [
-  "Gemini 3.7 Flash · primary",
-  "Qwen 3.5 35B-A3B · cheapest fallback",
-  "Gemini 3.1 Flash Lite · low-cost multimodal fallback",
-  "Qwen 3.5 397B-A17B · final quality fallback",
+  "OpenRouter Auto · low-cost routing",
 ] as const;
 
 export const UX_DIRECT_DESIGN_ROLE =
