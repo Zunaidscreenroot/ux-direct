@@ -216,7 +216,9 @@ export async function retrieveBrainContext(input: {
     const contextText = compactContext(memories, knowledge, maxChars);
     const memoryIds = memories.map(memory => memory.id).filter(safeUuid);
     if (memoryIds.length) {
-      void supabaseRequest("rpc/uxd_brain_mark_used", {
+      // Await the write so Cloudflare can finish it before the request lifecycle ends.
+      // Tracking failure must not make otherwise-valid retrieval fail.
+      await supabaseRequest("rpc/uxd_brain_mark_used", {
         method: "POST",
         body: JSON.stringify({ ids: memoryIds }),
       }).catch(error => console.warn("[uxd-brain] usage tracking failed:", error instanceof Error ? error.message.slice(0, 160) : "unknown"));
