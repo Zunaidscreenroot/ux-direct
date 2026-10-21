@@ -196,7 +196,7 @@
     <div id="selectionChip" class="context-chip" hidden><span aria-hidden="true">▣</span><span id="selectionName" class="context-name"></span></div>
     <form id="chatForm" class="composer">
       <div id="beamRoot" aria-hidden="true"></div>
-      <div class="routing-note" role="note">Design model: OpenRouter Auto · native design + canvas editing</div>
+      <div class="routing-note" role="note">Design model: Qwen 3.5 397B · quality-first native design</div>
       <div id="attachmentChip" class="attachment-chip" hidden>
         <span aria-hidden="true">▧</span><span id="attachmentName" class="attachment-name"></span>
         <button id="removeAttachment" class="attachment-remove" type="button" aria-label="Remove attached image" title="Remove image">×</button>
@@ -802,23 +802,31 @@
       }
       let outputCanvas = options && options.outputCanvas;
       if (!outputCanvas || !Array.isArray(outputCanvas.nodes) || !outputCanvas.nodes.length) {
-        return { text: "Visual QA skipped because the output layer tree was unavailable.", score: null, repaired: false };
+        return { text: "Visual QA skipped because the output layer tree was unavailable. Quality gate remains blocked.", score: null, repaired: false, passed: false, issues: [] };
       }
       let capture = options.outputImage
         ? { dataUrl: options.outputImage, warning: "" }
         : await captureRenderedNodePreview(outputCanvas.nodes[0].id);
       stage("Visual QA · comparing rendered output with the source and native layers…");
       let reviewResult = await reviewCanvas(outputCanvas, capture.dataUrl || null, "initial");
-      if (!reviewResult) return { text: "Visual QA service was unavailable; native Figma read-back still passed.", score: null, repaired: false };
+      if (!reviewResult) return {
+        text: "Visual QA failed or was unavailable. The variation is not accepted because visual verification did not complete.",
+        score: null, repaired: false, passed: false, issues: []
+      };
       let review = reviewResult.review;
       let score = Number.isFinite(review.score) ? review.score : null;
       let issues = Array.isArray(review.issues) ? review.issues : [];
-      const needsRepair = reviewResult.qualityGate && reviewResult.qualityGate.passed === false &&
-        (score === null || score < 82 || issues.some(function (item) { return item && ["high", "medium"].includes(item.severity); }));
+      function reviewPassed(result) {
+        const current = result && result.review;
+        return !!(result && result.qualityGate && result.qualityGate.passed === true &&
+          result.visualInspection === true && result.outputImageInspected === true &&
+          current && Number.isFinite(current.score) && current.score >= 82 &&
+          Array.isArray(current.issues) && current.issues.length === 0);
+      }
+      const needsRepair = !reviewPassed(reviewResult);
       if (!needsRepair) {
-        return { text: "Visual QA " + (score === null ? "completed" : score + "/100") + " · " +
-          (issues.length ? issues.length + " low-priority item(s) remain for review." : "no actionable defects reported."),
-          score: score, repaired: false, issues: issues };
+        return { text: "Visual QA passed · " + score + "/100 · source fidelity, content, layout and rendered output cleared the quality gate.",
+          score: score, repaired: false, issues: [], passed: true };
       }
       stage("Visual QA found " + issues.length + " issue(s) · trying one bounded surgical repair…");
       let refinement = null;
@@ -832,8 +840,8 @@
         if (response.ok && result.ok === true && Array.isArray(result.patch)) refinement = result;
       } catch (_) {}
       if (!refinement || !refinement.patch.length) {
-        return { text: "Visual QA " + (score === null ? "completed" : score + "/100") +
-          " · issues were found, but no safe repair was available; please review manually.", score: score, repaired: false, issues: issues };
+        return { text: "Visual QA " + (score === null ? "unverified" : score + "/100") +
+          " · no safe repair was available. Quality gate remains blocked; this variation must not be accepted.", score: score, repaired: false, issues: issues, passed: false };
       }
       const maps = nodeMaps(outputCanvas);
       const textKeys = new Set(["fontFamily", "fontStyle", "fontSize", "text", "textAlignHorizontal", "textAlignVertical", "textAutoResize", "lineHeight", "letterSpacing"]);
@@ -864,12 +872,12 @@
           applied += 1;
         } catch (_) { /* continue with independent safe patches */ }
       }
-      if (!applied) return { text: "Visual QA " + (score === null ? "completed" : score + "/100") +
-        " · suggested repairs failed native safety checks; no unsafe changes were applied.", score: score, repaired: false, issues: issues };
+      if (!applied) return { text: "Visual QA " + (score === null ? "unverified" : score + "/100") +
+        " · suggested repairs failed native safety checks; no unsafe changes were applied and the quality gate remains blocked.", score: score, repaired: false, issues: issues, passed: false };
       stage("Applied " + applied + " repair(s) · validating the real canvas…");
       outputCanvas = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true }, 90000);
       if (!outputCanvas || !Array.isArray(outputCanvas.nodes) || !outputCanvas.nodes.length) {
-        return { text: "Applied " + applied + " repair(s), but final read-back was unavailable.", score: score, repaired: true, issues: issues };
+        return { text: "Applied " + applied + " repair(s), but final read-back was unavailable. Quality gate remains blocked.", score: score, repaired: true, issues: issues, passed: false };
       }
       capture = await captureRenderedNodePreview(outputCanvas.nodes[0].id);
       stage("Visual QA · checking the repaired output once…");
@@ -877,8 +885,8 @@
       if (finalReview && finalReview.review) {
         review = finalReview.review; score = Number.isFinite(review.score) ? review.score : score;
         issues = Array.isArray(review.issues) ? review.issues : [];
-        const stillNeedsRepair = finalReview.qualityGate && finalReview.qualityGate.passed === false &&
-          (score === null || score < 82 || issues.some(function (item) { return item && ["high", "medium"].includes(item.severity); }));
+        const finalPassed = reviewPassed(finalReview);
+        const stillNeedsRepair = !finalPassed;
         if (stillNeedsRepair && repairIteration === 0) {
           stage("Visual QA still reports " + issues.length + " actionable issue(s) · running the final bounded repair pass…");
           const secondPass = await runVisualQualityLoop({
@@ -889,16 +897,19 @@
           return {
             text: "First surgical pass applied " + applied + " patch(es).\n" + String(secondPass.text || ""),
             score: Number.isFinite(secondPass.score) ? secondPass.score : score,
-            repaired: true, issues: Array.isArray(secondPass.issues) ? secondPass.issues : issues
+            repaired: true, issues: Array.isArray(secondPass.issues) ? secondPass.issues : issues,
+            passed: secondPass.passed === true
           };
         }
-        return { text: "Visual QA " + (score === null ? "completed" : score + "/100") + " after " + applied +
-          " surgical repair(s) · " + (stillNeedsRepair ? "quality gate still reports issues; inspect manually." :
-            issues.length ? "issue(s) remain for manual review." : "no actionable defects reported."),
-          score: score, repaired: true, issues: issues };
+        return { text: "Visual QA " + (score === null ? "unverified" : score + "/100") + " after " + applied +
+          " surgical repair(s) · " + (stillNeedsRepair
+            ? "quality gate still fails; this variation is rejected."
+            : "quality gate passed."),
+          score: score, repaired: true, issues: issues, passed: finalPassed };
       }
-      return { text: "Visual QA first pass " + (score === null ? "completed" : score + "/100") +
-        " · applied " + applied + " repair(s); final visual review was unavailable.", score: score, repaired: true, issues: issues };
+      return { text: "Visual QA first pass " + (score === null ? "unverified" : score + "/100") +
+        " · applied " + applied + " repair(s), but final visual review was unavailable. Quality gate remains blocked.",
+        score: score, repaired: true, issues: issues, passed: false };
     }
 
     function downloadNativeExport(result, action, root) {
@@ -1098,7 +1109,7 @@
     }
 
     async function createFigmaDesign(prompt, reportProgress) {
-      const selectedModel = "openrouter/auto";
+      const selectedModel = "qwen/qwen3.5-397b-a17b";
       let createdFrameId = "";
       let completedElementCount = 0;
       const notify = typeof reportProgress === "function" ? reportProgress : function () {};
@@ -1267,11 +1278,35 @@
           prompt: prompt, sourceCanvas: canvas, outputCanvas: qualityTree, sourceImage: renderedScreen,
           allowRepair: true, reportProgress: stage
         });
-        visualNote = qa && qa.text ? "\n\n" + qa.text : "";
+        if (!qa || qa.passed !== true) {
+          stage("error", "Visual quality gate failed · rejecting variation");
+          let cleanup = "The source frame remains untouched.";
+          try {
+            await runNativeCanvasCommand("write-canvas", {
+              confirm: true, operation: "delete-node", nodeId: createdFrameId
+            }, 90000);
+            cleanup = "The failed generated variation was removed; the source frame remains untouched.";
+          } catch (cleanupError) {
+            cleanup = "The source frame remains untouched, but the failed variation could not be removed automatically and is still on the canvas.";
+          }
+          throw new Error("UX Direct rejected this variation because visual QA did not pass. " +
+            String(qa && qa.text || "Visual quality could not be verified.") + " " + cleanup);
+        }
+        visualNote = "\n\n" + qa.text;
       } else {
-        visualNote = "\n\nVisual QA skipped because the generated variation was not selected for a clean read-back.";
+        stage("error", "Visual quality gate failed · native read-back unavailable");
+        let cleanup = "The source frame remains untouched.";
+        try {
+          await runNativeCanvasCommand("write-canvas", {
+            confirm: true, operation: "delete-node", nodeId: createdFrameId
+          }, 90000);
+          cleanup = "The failed generated variation was removed; the source frame remains untouched.";
+        } catch (_) {
+          cleanup = "The source frame remains untouched, but the failed variation could not be removed automatically and is still on the canvas.";
+        }
+        throw new Error("UX Direct rejected this variation because native read-back/visual QA was unavailable. " + cleanup);
       }
-      stage("done", "Variation created · native structure and visual review completed");
+      stage("done", "Variation created · native structure and visual quality gate passed");
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
       return 'Created "' + plan.frame.name + '" as a separate editable Figma variation with ' +
         completedElementCount + ' native layers. ' + String(plan.summary || "The variation is ready for review.") +
