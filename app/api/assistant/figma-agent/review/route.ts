@@ -2,10 +2,14 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveBrainScopes } from "@/src/memory/chat-context";
-import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
+import { captureVerifiedTaskLesson, resolveFigmaTaskProject } from "@/src/memory/task-learning";
+import { finishTaskRun } from "@/src/memory/task-run-log";
+import { neonRequest } from "@/src/memory/neon-rest";
+import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 import { normalizeVisualReview } from "@/src/figma-agent/normalize-visual-review";
+import { evaluateVisualQualityGate } from "@/src/figma-agent/visual-quality-gate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,18 +85,90 @@ export async function OPTIONS(request: Request) {
 export async function POST(request: Request) {
   const headers = corsHeaders(request);
   if (!isAllowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (!apiKey) return NextResponse.json({ error: "OpenRouter is not configured." }, { status: 503, headers });
   const body: unknown = await request.json().catch(() => null);
   const schema = z.object({
     prompt: z.string().trim().min(2).max(5000),
-    sourceCanvas: z.unknown(),
-    outputCanvas: z.unknown(),
+    sourceCanvas: z.unknown().optional(),
+    outputCanvas: z.unknown().optional(),
     sourceImage: z.string().max(52000).nullable().optional(),
     outputImage: z.string().max(52000).nullable().optional(),
+    taskRunId: z.string().uuid().optional(),
+    finalizeTask: z.boolean().optional(),
+    taskOutcome: z.enum(["verified", "failed"]).optional(),
+    learningCandidate: z.unknown().optional(),
+    outcomeSummary: z.string().trim().max(3900).optional(),
+    executionFailure: z.string().trim().min(3).max(2000).optional(),
+    durationMs: z.number().int().min(0).max(86_400_000).optional(),
+    retrieval: z.object({
+      status: z.enum(["complete", "empty", "degraded", "disabled"]),
+      memoryIds: z.array(z.string().uuid()).max(12), chunkIds: z.array(z.string().max(200)).max(8), chars: z.number().int().min(0).max(5200),
+    }).strict().optional(),
   }).strict();
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Visual review input is invalid.", details: parsed.error.issues }, { status: 400, headers });
+  const retrieval = parsed.data.retrieval || { status: "disabled" as const, memoryIds: [], chunkIds: [], chars: 0 };
+  const project = resolveFigmaTaskProject(parsed.data.prompt);
+
+  // Final outcome logging is an explicit one-shot operation. Intermediate QA
+  // passes must not race each other or persist an unverified success/failure.
+  if (parsed.data.finalizeTask === true) {
+    const taskRunId = parsed.data.taskRunId;
+    const outcome = parsed.data.taskOutcome;
+    if (!taskRunId || !outcome) {
+      return NextResponse.json({ error: "Task finalization requires taskRunId and taskOutcome." }, { status: 400, headers });
+    }
+    const lookupPath = "uxd_task_runs?id=eq." + encodeURIComponent(taskRunId) +
+      "&select=id,status,outcome,lesson&limit=1";
+    const existingResult = await neonRequest(lookupPath).catch(() => null);
+    const existing = Array.isArray(existingResult) ? existingResult[0] as Record<string, unknown> | undefined : undefined;
+    if (!existing?.id) {
+      return NextResponse.json({ error: "The task run could not be confirmed before finalization." }, { status: 503, headers });
+    }
+    if (existing.status === "completed" && existing.outcome === outcome) {
+      return NextResponse.json({ ok: true, logged: true, alreadyFinalized: true }, { headers });
+    }
+
+    const failureMessage = outcome === "failed"
+      ? (parsed.data.executionFailure || "The native Figma task did not pass final quality verification.")
+      : undefined;
+    const candidate = outcome === "verified" ? sanitizeInlineLearningCandidate(parsed.data.learningCandidate) : null;
+    const learned = await captureVerifiedTaskLesson({
+      id: taskRunId,
+      outcome,
+      project,
+      taskContext: parsed.data.prompt,
+      candidate,
+      failureMessage,
+      durationMs: parsed.data.durationMs,
+      retrieval,
+    });
+    await finishTaskRun({
+      id: taskRunId,
+      outcome,
+      durationMs: parsed.data.durationMs || 0,
+      retrieval,
+      lesson: learned.lesson ? { ...learned.lesson, status: learned.status } : null,
+      summary: parsed.data.outcomeSummary,
+      errorSummary: failureMessage,
+    });
+
+    const confirmedResult = await neonRequest(lookupPath).catch(() => null);
+    const confirmed = Array.isArray(confirmedResult) ? confirmedResult[0] as Record<string, unknown> | undefined : undefined;
+    if (!confirmed || confirmed.status !== "completed" || confirmed.outcome !== outcome) {
+      return NextResponse.json({ error: "Task outcome persistence could not be confirmed." }, { status: 503, headers });
+    }
+    return NextResponse.json({
+      ok: true,
+      logged: true,
+      lessonStatus: learned.status,
+      memoryId: learned.memoryId || null,
+    }, { headers });
+  }
+  if (!parsed.data.sourceCanvas || !parsed.data.outputCanvas) {
+    return NextResponse.json({ error: "Source and output canvas evidence are required for visual review." }, { status: 400, headers });
+  }
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) return NextResponse.json({ error: "OpenRouter is not configured." }, { status: 503, headers });
   const sourceImage = safeImage(parsed.data.sourceImage);
   const outputImage = safeImage(parsed.data.outputImage);
   const sourceCanvas = compactCanvas(parsed.data.sourceCanvas);
@@ -157,7 +233,7 @@ export async function POST(request: Request) {
               content: [
                 UX_DIRECT_DESIGN_ROLE,
                 "You are the visual QA reviewer inside a native Figma design agent. Compare source and output honestly and return evidence-based actionable defects.",
-                "Return JSON only with required keys: issues (array of {severity:'high'|'medium'|'low', issue:string, evidence:string, fix:string}), score (number 0–100), summary (string); optional learningCandidate (null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}) only if this review revealed a durable reusable design or execution lesson. Do not turn one-off screen defects, client-specific details, screenshots, node IDs, or private text into a general lesson. Use the narrowest safe scope; the backend validates the candidate and applies the existing 50% relevance gate.",
+                "Return JSON only with required keys: issues (array of {severity:'high'|'medium'|'low', issue:string, evidence:string, fix:string}), score (number 0–100), summary (string); learningCandidate (null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}). When quality gate passes, provide one reusable, generalized native Figma workflow/design pattern. Do not turn one-off screen defects, client-specific details, screenshots, node IDs, or private text into a lesson. Use the narrowest safe scope; the backend validates scope, privacy and the existing 50% relevance gate.",
                 "Compare the source screenshot with the generated screenshot when both exist. Evaluate whether the result meaningfully preserves the selected screen's specific purpose/components and improves craft. Look for generic redesign patterns, clipped text, poor spacing, hierarchy, alignment, contrast, content density and weak CTA priority.",
                 "If screenshots are missing, treat the review as structural-only. Do not claim to see visual details. If no actionable issues remain, return an empty issues array.",
                 "Be conservative about passing: score the result against professional production-ready quality, not merely basic validity. Penalize empty/placeholder groups, content loss, repeated generic cards, missing important source values, weak hierarchy, insufficient contrast, overflow, and incomplete layer trees. A high score requires evidence that the actual output is materially complete and specific to the user's task.",
@@ -208,27 +284,20 @@ export async function POST(request: Request) {
           ", issue-array=" + String(Boolean(decodedRecord.issues || decodedRecord.findings || decodedRecord.defects || decodedRecord.problems)) + ").");
         continue;
       }
-      const learningStatus = await captureFigmaTaskLearning(
-        learningCandidate,
-        parsed.data.prompt,
-        "automatic-figma-visual-review",
-      );
-      const unresolvedHighSeverity = validated.data.issues.some(issue => issue.severity === "high");
-      const qualityGatePassed = validated.data.score >= 90 && !unresolvedHighSeverity && validated.data.issues.length === 0;
+      const qualityGate = evaluateVisualQualityGate({
+        score: validated.data.score,
+        issues: validated.data.issues,
+        hasSourceImage: !!sourceImage,
+        hasOutputImage: !!outputImage,
+      });
+      const safeLearningCandidate = sanitizeInlineLearningCandidate(learningCandidate);
       return NextResponse.json({
         ok: true,
         review: validated.data,
-        qualityGate: {
-          passed: qualityGatePassed,
-          minimumScore: 90,
-          unresolvedHighSeverity,
-          issueCount: validated.data.issues.length,
-          message: qualityGatePassed
-            ? "Visual QA passed."
-            : "Visual QA found issues for manual review. This workflow does not apply automatic design refinements."
-        },
-        learning: learningStatus,
-        visualInspection: !!sourceImage && !!outputImage,
+        qualityGate,
+        learning: safeLearningCandidate ? "candidate-ready-for-final-verification" : "no-candidate",
+        learningCandidate: safeLearningCandidate,
+        visualInspection: qualityGate.visualInspection,
         outputImageInspected: !!outputImage,
         model: typeof record.model === "string" ? record.model : model,
       }, { headers });

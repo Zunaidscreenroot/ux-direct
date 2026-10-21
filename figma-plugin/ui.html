@@ -785,7 +785,11 @@
               outputCanvas: outputCanvas, sourceImage: sourceImage, outputImage: outputImage || null })
           });
           const result = await response.json().catch(function () { return {}; });
-          return response.ok && result.ok === true && result.review ? result : null;
+          if (response.ok && result.ok === true && result.review) {
+            if (typeof (options && options.onReviewResult) === "function") options.onReviewResult(result);
+            return result;
+          }
+          return null;
         } catch (_) { return null; }
       }
       function nodeMaps(canvasValue) {
@@ -901,7 +905,7 @@
           const secondPass = await runVisualQualityLoop({
             prompt: prompt, sourceCanvas: sourceCanvas, sourceImage: sourceImage,
             outputCanvas: outputCanvas, outputImage: capture.dataUrl || null,
-            repairIteration: 1, reportProgress: notify
+            repairIteration: 1, reportProgress: notify, onReviewResult: options && options.onReviewResult
           });
           return {
             text: "First surgical pass applied " + applied + " patch(es).\n" + String(secondPass.text || ""),
@@ -1111,18 +1115,17 @@
             "text", "fontSize", "fontFamily", "fontStyle", "textAlignHorizontal", "textAlignVertical",
             "textAutoResize", "lineHeight", "letterSpacing", "textCase", "textDecoration",
             "fillColor", "fill", "fills", "color", "strokeColor", "strokeWeight", "opacity", "visible",
-            "rotation", "width", "height", "x", "y", "clipsContent", "arcData",
-            "layoutMode", "layoutWrap", "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning",
-            "layoutGrow", "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode",
-            "counterAxisSizingMode", "horizontalConstraint", "verticalConstraint", "itemSpacing",
-            "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "cornerRadius", "effects",
-            "shadowColor", "shadowBlur", "shadowX", "shadowY", "shadowSpread"
+            "rotation", "width", "height", "x", "y", "clipsContent", "arcData", "layoutMode", "layoutWrap",
+            "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "layoutGrow",
+            "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode",
+            "horizontalConstraint", "verticalConstraint", "itemSpacing", "paddingLeft", "paddingRight",
+            "paddingTop", "paddingBottom", "cornerRadius", "effects", "shadowColor", "shadowBlur", "shadowX",
+            "shadowY", "shadowSpread"
           ].includes(key);
         });
       });
       if (hasVisualMutations) {
-        // A preview of only the first node cannot verify a multi-selection. Do not
-        // skip QA merely because a selected leaf (such as a text node) has no children.
+        // One rendered preview cannot prove the result of a multi-root edit.
         if (canvas.nodes.length !== 1) {
           stage("error", "Visual quality gate blocked · select one root");
           return String(payload.summary || "Native Figma actions ran.") +
@@ -1153,12 +1156,42 @@
 
     async function createFigmaDesign(prompt, reportProgress) {
       const selectedModel = "qwen/qwen3.5-397b-a17b";
+      const taskStartedAt = Date.now();
+      let taskRunId = "";
+      let taskRetrieval = null;
+      let learningCandidate = null;
       let createdFrameId = "";
       let completedElementCount = 0;
       const notify = typeof reportProgress === "function" ? reportProgress : function () {};
       function stage(state, message) {
         setProcessState(state, message);
         notify(message || processLabels[state] || state);
+      }
+      async function finalizeTaskOutcome(outcome, summary, failure) {
+        if (!taskRunId) return "";
+        try {
+          const response = await fetch(API + "/api/assistant/figma-agent/review", {
+            method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
+            cache: "no-store",
+            body: JSON.stringify({
+              prompt: prompt, taskRunId: taskRunId, finalizeTask: true, taskOutcome: outcome,
+              learningCandidate: outcome === "verified" ? learningCandidate : null,
+              outcomeSummary: String(summary || "").slice(0, 3800),
+              executionFailure: outcome === "failed" ? String(failure || summary || "Final Figma verification failed.").slice(0, 1900) : undefined,
+              durationMs: Math.max(0, Date.now() - taskStartedAt),
+              retrieval: taskRetrieval || undefined
+            })
+          });
+          const result = await response.json().catch(function () { return {}; });
+          if (!response.ok || result.ok !== true) {
+            console.warn("[uxd-task-run] final outcome was not confirmed:", String(result.error || response.status).slice(0, 160));
+            return "\nTask outcome logging could not be confirmed.";
+          }
+          return result.lessonStatus ? "\nBrain learning: " + String(result.lessonStatus) + "." : "";
+        } catch (error) {
+          console.warn("[uxd-task-run] final outcome logging failed:", String(error && error.message || error).slice(0, 160));
+          return "\\nTask outcome logging could not be confirmed.";
+        }
       }
 
       stage("scanning", "Scanning selected screen, nested layers, text and styles…");
@@ -1187,17 +1220,15 @@
       const renderedScreen = renderedCapture.dataUrl;
       const visualCaptureWarning = renderedCapture.warning || "";
       if (!renderedScreen) {
-        stage("error", "Rendered source preview unavailable · design generation blocked");
-        throw new Error("UX Direct did not write to the canvas because the selected frame could not be captured for visual comparison. " +
-          String(visualCaptureWarning || "Figma preview export failed") + " Fix preview capture and retry; a layer-only variation cannot meet the 90/100 visual quality gate.");
+        stage("error", "Source screenshot unavailable · design generation blocked");
+        throw new Error("UX Direct will not create a variation without a rendered source screenshot. " +
+          String(visualCaptureWarning || "Figma preview export failed").slice(0, 300));
       }
       stage("capturing", "Rendered screenshot captured at " + Math.round(renderedCapture.scale * 100) + "% scale");
 
       stage("brain", "Connecting to UX Direct Brain and resolving project context…");
       stage("memory", "Searching shared memories and Knowledge Base patterns…");
-      stage("planning", renderedScreen
-        ? "Analysing rendered appearance and native layers together…"
-        : "Analysing native layers only · " + (visualCaptureWarning || "rendered screenshot unavailable").slice(0, 180));
+      stage("planning", "Analysing rendered appearance and native layers together…");
 
       const response = await fetch(API + "/api/assistant/figma-agent", {
         method: "POST",
@@ -1211,6 +1242,9 @@
         throw new Error((payload.error || "UX Direct could not plan the design.") + extra);
       }
       const plan = payload.plan;
+      taskRunId = typeof payload.taskRunId === "string" ? payload.taskRunId : "";
+      taskRetrieval = payload.retrieval && typeof payload.retrieval === "object" ? payload.retrieval : null;
+      learningCandidate = payload.learningCandidate || null;
       const planNodeCount = countPlanNodes(plan.elements);
       if (plan.elements.length < 3 || plan.elements.length > 8 || planNodeCount < 18 || planNodeCount > 80) {
         throw new Error("The proposed design plan must contain 3–8 meaningful top-level sections and 18–80 native layers. No canvas changes were made.");
@@ -1228,6 +1262,7 @@
         ? Math.max(-10000, Math.min(9000, sourceNode.y))
         : Math.max(40, Math.min(9000, Number(viewport.y) + 80 || 80));
       stage("creating", "Creating a separate editable variation; the original stays untouched…");
+      try {
       const rootResult = await runNativeCanvasCommand("write-canvas", {
         confirm: true, operation: "create-elements", target: "current-page",
         elements: [{
@@ -1317,39 +1352,30 @@
       }
       let visualNote = "";
       const qualityTree = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true }, 90000);
-      if (qualityTree && Array.isArray(qualityTree.nodes) && qualityTree.nodes.some(function (node) { return node.id === createdFrameId; })) {
-        const qa = await runVisualQualityLoop({
-          prompt: prompt, sourceCanvas: canvas, outputCanvas: qualityTree, sourceImage: renderedScreen,
-          allowRepair: true, reportProgress: stage
-        });
-        if (!qa || qa.passed !== true) {
-          stage("error", "Visual quality gate failed · rejecting variation");
-          let cleanup = "The source frame remains untouched.";
-          try {
-            await runNativeCanvasCommand("write-canvas", {
-              confirm: true, operation: "delete-node", nodeId: createdFrameId
-            }, 90000);
-            cleanup = "The failed generated variation was removed; the source frame remains untouched.";
-          } catch (_) {
-            cleanup = "The source frame remains untouched, but the failed variation could not be removed automatically and is still on the canvas.";
-          }
-          throw new Error("UX Direct rejected this variation because visual QA did not pass. " +
-            String(qa && qa.text || "Visual quality could not be verified.") + " " + cleanup);
-        }
-        visualNote = "\n\n" + qa.text;
-      } else {
-        stage("error", "Visual quality gate failed · native read-back unavailable");
-        let cleanup = "The source frame remains untouched.";
-        try {
-          await runNativeCanvasCommand("write-canvas", {
-            confirm: true, operation: "delete-node", nodeId: createdFrameId
-          }, 90000);
-          cleanup = "The failed generated variation was removed; the source frame remains untouched.";
-        } catch (_) {
-          cleanup = "The source frame remains untouched, but the failed variation could not be removed automatically and is still on the canvas.";
-        }
-        throw new Error("UX Direct rejected this variation because native read-back/visual QA was unavailable. " + cleanup);
+      if (!qualityTree || !Array.isArray(qualityTree.nodes) || !qualityTree.nodes.some(function (node) { return node.id === createdFrameId; })) {
+        throw new Error("The generated variation could not be read back for final visual verification. It will not be accepted.");
       }
+      const qa = await runVisualQualityLoop({
+        prompt: prompt, sourceCanvas: canvas, outputCanvas: qualityTree, sourceImage: renderedScreen,
+        allowRepair: true, reportProgress: stage,
+        onReviewResult: function (result) {
+          if (result && result.qualityGate && result.qualityGate.passed === true && result.learningCandidate) {
+            learningCandidate = result.learningCandidate;
+          }
+        }
+      });
+      visualNote = qa && qa.text ? "\n\n" + qa.text : "";
+      if (!qa || qa.passed !== true) {
+        stage("error", "Visual quality gate failed · rejecting variation");
+        try {
+          await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "delete-node", nodeId: createdFrameId }, 90000);
+        } catch (_) {
+          visualNote += "\nThe failed variation could not be removed automatically; inspect or delete it manually.";
+        }
+        throw new Error("UX Direct rejected this variation because final rendered visual QA did not pass. " +
+          String(qa && qa.text || "Visual quality could not be verified."));
+      }
+      visualNote += await finalizeTaskOutcome("verified", qa.text || "Final visual quality gate passed.", "");
       stage("done", "Variation created · native structure and visual quality gate passed");
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
       return 'Created "' + plan.frame.name + '" as a separate editable Figma variation with ' +
@@ -1359,6 +1385,13 @@
         (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') +
         '\nThe source frame was preserved. The new variation is selected on the canvas.' +
         '\nThe generated variation is ready for manual review.';
+      } catch (error) {
+        if (taskRunId) {
+          await finalizeTaskOutcome("failed", String(error && error.message || error || "Native Figma task failed"),
+            String(error && error.message || error || "Native Figma task failed"));
+        }
+        throw error;
+      }
     }
 
     async function captureRenderedNodePreview(nodeId) {
