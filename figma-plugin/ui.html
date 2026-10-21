@@ -1151,10 +1151,11 @@
       const renderedScreen = renderedCapture.dataUrl;
       const visualCaptureWarning = renderedCapture.warning || "";
       if (!renderedScreen) {
-        stage("capturing", "Screenshot unavailable · " + visualCaptureWarning.slice(0, 180) + " · continuing with native layers");
-      } else {
-        stage("capturing", "Rendered screenshot captured at " + Math.round(renderedCapture.scale * 100) + "% scale");
+        stage("error", "Rendered source preview unavailable · design generation blocked");
+        throw new Error("UX Direct did not write to the canvas because the selected frame could not be captured for visual comparison. " +
+          String(visualCaptureWarning || "Figma preview export failed") + " Fix preview capture and retry; a layer-only variation cannot meet the 90/100 visual quality gate.");
       }
+      stage("capturing", "Rendered screenshot captured at " + Math.round(renderedCapture.scale * 100) + "% scale");
 
       stage("brain", "Connecting to UX Direct Brain and resolving project context…");
       stage("memory", "Searching shared memories and Knowledge Base patterns…");
