@@ -840,18 +840,40 @@
       }
       stage("Visual QA found " + issues.length + " issue(s) · trying one bounded surgical repair…");
       let refinement = null;
+      let refinementFailure = "";
       try {
         const response = await fetch(API + "/api/assistant/figma-agent/refine", {
           method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
           cache: "no-store",
-          body: JSON.stringify({ prompt: prompt, review: review, outputCanvas: outputCanvas, iteration: repairIteration + 1 })
+          body: JSON.stringify({
+            prompt: prompt, review: review, outputCanvas: outputCanvas, iteration: repairIteration + 1,
+            sourceImage: sourceImage, outputImage: capture.dataUrl || null
+          })
         });
         const result = await response.json().catch(function () { return {}; });
         if (response.ok && result.ok === true && Array.isArray(result.patch)) refinement = result;
-      } catch (_) {}
+        else {
+          const details = Array.isArray(result && result.details)
+            ? result.details.filter(function (detail) { return typeof detail === "string"; }).slice(0, 2).join(" · ")
+            : "";
+          refinementFailure = String(result && result.error || "The repair service did not return a valid patch.") +
+            (details ? " (" + details + ")" : "");
+        }
+      } catch (error) {
+        refinementFailure = error && error.message ? String(error.message).slice(0, 220) : "The repair request could not reach UX Direct.";
+      }
       if (!refinement || !refinement.patch.length) {
-        return { text: "Visual QA " + (score === null ? "unverified" : score + "/100") +
-          " · no safe repair was available. Quality gate remains blocked; this variation must not be accepted.", score: score, repaired: false, issues: issues, passed: false };
+        const remainingIssues = issues.slice(0, 3).map(function (item) {
+          return String(item.issue || "Visual issue") + (item.fix ? " — " + String(item.fix) : "");
+        }).join(" | ");
+        const reason = refinementFailure || "The repair model returned no safe native patches.";
+        return {
+          text: "Visual QA " + (score === null ? "unverified" : score + "/100") +
+            " · no safe repair was available. Quality gate remains blocked; this variation must not be accepted." +
+            (remainingIssues ? "\nRemaining issues: " + remainingIssues : "") +
+            "\nRepair diagnostics: " + reason,
+          score: score, repaired: false, issues: issues, passed: false
+        };
       }
       const maps = nodeMaps(outputCanvas);
       const textKeys = new Set(["fontFamily", "fontStyle", "fontSize", "text", "textAlignHorizontal", "textAlignVertical", "textAutoResize", "lineHeight", "letterSpacing"]);
