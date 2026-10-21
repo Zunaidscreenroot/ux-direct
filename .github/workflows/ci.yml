@@ -37,7 +37,7 @@ jobs:
       - name: Build Figma cockpit effects
         run: npm run build:figma-plugin-effects
       - name: Native Figma plugin syntax
-        run: node --check figma-plugin/code.js && node --check figma-plugin/ui-effects.js
+        run: node --check figma-plugin/code.js && node --check figma-plugin/ui-effects.js && node scripts/check-figma-ui.mjs
       - name: Unit tests
         run: npm test
       - name: Build
