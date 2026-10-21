@@ -80,6 +80,17 @@ test("passes a complete source-faithful design with readable contrast and valid 
   assert.equal(report.findings.length, 0);
 });
 
+test("does not reject FILL children using their pre-layout width", () => {
+  const plan = goodPlan();
+  const card = plan.elements[0];
+  const fillChild = card.children[0];
+  fillChild.width = card.width;
+  fillChild.layoutSizingHorizontal = "FILL";
+  const report = auditDesignPlanQuality(plan, sourceCanvas, "Refine the selected Manage Loans screen");
+  assert.equal(report.findings.some((finding) => finding.code === "child-out-of-bounds"), false,
+    JSON.stringify(report.findings));
+});
+
 test("blocks missing source values, overflowing Auto Layout and unreadable text before canvas writes", () => {
   const plan = goodPlan();
   const card = plan.elements[0];
