@@ -34,7 +34,8 @@ test("UX Direct uses low-cost OpenRouter Auto for chat and keeps Figma routes se
   assert.equal(route.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.ok(route.includes("FIRST_TEXT_TIMEOUT_MS = 30_000"));
   assert.ok(route.includes("OPENROUTER_API_KEY"));
-  assert.ok(policy.includes('"qwen/qwen3.5-35b-a3b"'));
+  const figmaModels = policy.slice(policy.indexOf("export const FIGMA_AGENT_MODELS"), policy.indexOf("export type FigmaAgentModelId"));
+  assert.deepEqual([...figmaModels.matchAll(/id: "([^"]+)"/g)].map((match) => match[1]), ["openai/gpt-6-luna", "openrouter/auto"]);
   assert.ok(policy.includes("UX_DIRECT_DESIGN_ROLE"));
   const generalModels = policy.slice(policy.indexOf("export const OPENROUTER_MODELS"), policy.indexOf("export const OPENROUTER_MODEL_LABELS"));
   assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
