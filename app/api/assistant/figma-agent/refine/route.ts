@@ -135,7 +135,6 @@ export async function POST(request: Request) {
           "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Design Refiner" },
         body: JSON.stringify({
           model,
-          ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
           messages: [
             { role: "system", content: [
               UX_DIRECT_DESIGN_ROLE + " You are UX Direct's surgical native-Figma refinement agent. Return JSON only: {patch:[{nodeId:string,patch:object}]}.",

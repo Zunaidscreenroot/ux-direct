@@ -226,7 +226,7 @@ test("Figma visual analysis uses a compact rendered JPEG and native layer data",
   assert.ok(pluginUi.includes('operation: "export-node"'));
   assert.ok(pluginUi.includes('format: "JPG"'));
   assert.ok(pluginUi.includes('data:image/jpeg;base64,'));
-  assert.ok(pluginUi.includes('stage("capturing", "Screenshot unavailable · "'));
+  assert.ok(pluginUi.includes('stage("error", "Rendered source preview unavailable · design generation blocked")'));
   assert.ok(pluginUi.includes('"Analysing native layers only · " + (visualCaptureWarning'));
   assert.ok(plugin.includes('exportOptions.constraint = { type: "SCALE"'));
   const writeSchema = bridge.slice(bridge.indexOf("const CANVAS_WRITE_PAYLOAD"), bridge.indexOf("type HealthReport"));
@@ -247,7 +247,7 @@ test("native visual QA can trigger one bounded repair and a final re-check witho
   assert.equal(pluginUi.includes("/api/assistant/figma-agent/live-qa"), false);
   assert.equal(pluginUi.includes("TinyFish"), false);
   assert.ok(refine.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
-  assert.ok(refine.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
+  assert.equal(refine.includes("openrouter/auto"), false);
   assert.ok(review.includes('type: "image_url"'));
   assert.ok(review.includes('sourceImage: z.string().max(52000).nullable().optional()'));
   assert.ok(review.includes('outputImage: z.string().max(52000).nullable().optional()'));
@@ -273,7 +273,7 @@ test("Figma visual capture failures do not invalidate the full design request", 
   assert.ok(reviewRoute.includes("normalizeVisualReview(decodedRecord)"), "Provider response fields must be normalized before strict QA validation.");
   assert.ok(refinementRoute.includes("extractJsonObject(message.content)"), "Refinement must parse structured content variants.");
   assert.ok(reviewRoute.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
-  assert.ok(reviewRoute.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
+  assert.equal(reviewRoute.includes("openrouter/auto"), false);
   assert.ok(refinementRoute.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
   assert.equal(reviewRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.equal(refinementRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);

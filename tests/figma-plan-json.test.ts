@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describeModelContent, extractPlanJson } from "../src/figma-agent/extract-plan-json";
+import { FIGMA_AGENT_MODELS } from "../src/providers/openrouter-models";
 
 const plan = {
   summary: "Improve loan balance hierarchy and make active status easier to scan.",
@@ -94,25 +95,22 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("compactRecoveryCanvas(canvas)"), "The retry should send a bounded source layer tree.");
   assert.ok(route.includes("28–42 native nodes total INCLUDING nested children"), "The retry must explicitly cap output complexity.");
   assert.ok(route.includes("max_tokens: isRecovery ? 6500 : 12000"), "Use OpenRouter's current completion token parameter.");
-  assert.ok(route.includes('reasoning: { effort: isRecovery ? "minimal" : "low" }'), "Gemini reasoning must leave room for visible JSON output.");
-  assert.ok(route.includes('model === "google/gemini-3.1-flash-lite" ? {'), "The explicit Gemini fallback uses the configured low-latency reasoning setting.");
   assert.ok(route.includes('...(!isRecovery ? { response_format: { type: "json_object" } } : {})'), "Compact retries should avoid repeating JSON-mode failures.");
   assert.ok(route.includes("payload_keys="), "Empty provider responses should report envelope shape for diagnosis.");
 });
 
-test("Figma agent uses Auto LOW first, cost-ordered fallbacks, and no plugin live QA", () => {
+test("Figma agent uses quality-first Qwen, a cheaper sequential fallback, and no plugin live QA", () => {
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   const catalog = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
   assert.ok(route.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Generation uses the shared Figma-specific chain.");
-  assert.ok(route.includes('model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}'), "Auto is explicitly constrained to LOW cost tier.");
-  assert.ok(route.includes("const attemptsForModel = modelIndex === 0 ? 2 : 1"), "Auto gets one compact retry before fallbacks are tried.");
+  assert.equal(route.includes("openrouter/auto"), false, "Figma generation never routes through OpenRouter Auto.");
+  assert.ok(route.includes("const attemptsForModel = modelIndex === 0 ? 2 : 1"), "The primary model gets one compact retry before the fallback is tried.");
   assert.ok(route.includes("provider returned an empty response body"), "Empty provider bodies are diagnosed clearly.");
   assert.ok(route.includes("provider returned a non-JSON response body"), "Invalid response bodies are diagnosed clearly.");
   assert.equal(route.includes("Promise.all(models"), false, "Model requests stay sequential.");
-  assert.ok(catalog.includes('id: "openrouter/auto"'), "OpenRouter Auto is the primary model.");
-  assert.ok(catalog.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto"'));
-  assert.ok(catalog.indexOf('"qwen/qwen3.5-35b-a3b"') < catalog.indexOf('"google/gemini-3.1-flash-lite"'));
-  assert.ok(catalog.indexOf('"google/gemini-3.1-flash-lite"') < catalog.indexOf('"qwen/qwen3.5-397b-a17b"'));
+  assert.deepEqual(FIGMA_AGENT_MODELS.map((entry) => entry.id), ["qwen/qwen3.5-397b-a17b", "qwen/qwen3.5-35b-a3b"], "Quality-first Qwen leads; the cheaper Qwen is the only fallback.");
+  assert.ok(catalog.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "qwen/qwen3.5-397b-a17b"'));
+  assert.ok(catalog.includes('FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "qwen/qwen3.5-397b-a17b"'));
   const review = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/review/route.ts"), "utf8");
   const refine = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/refine/route.ts"), "utf8");
   assert.ok(review.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));

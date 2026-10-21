@@ -23,7 +23,7 @@ test("UX Direct prefers Gemini 3.7 Flash and orders multimodal fallbacks by esti
   assert.equal(OPENROUTER_MODELS.includes("openrouter/auto" as never), false);
 });
 
-test("homepage chat is separate; Figma routes use Auto LOW and price-ordered fallbacks", () => {
+test("homepage chat is separate; Figma routes use the shared quality-first chain without Auto", () => {
   for (const path of ["app/api/assistant/chat/route.ts"]) {
     const source = read(path);
     assert.ok(source.includes("OPENROUTER_MODELS"), path + " keeps the general chat model order");
@@ -37,9 +37,8 @@ test("homepage chat is separate; Figma routes use Auto LOW and price-ordered fal
     "app/api/assistant/figma-agent/refine/route.ts",
   ]) {
     const source = read(path);
-    assert.ok(source.includes("FIGMA_AGENT_MODELS"), path + " uses the shared Auto-first Figma chain");
-    assert.ok(source.includes('model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}'),
-      path + " constrains Auto to the LOW cost tier");
+    assert.ok(source.includes("FIGMA_AGENT_MODELS"), path + " uses the shared Figma chain");
+    assert.equal(source.includes("openrouter/auto"), false, path + " never routes Figma work through Auto");
     assert.equal(source.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false, path + " has no stale provider allowlist");
   }
 });

@@ -502,9 +502,6 @@ export async function POST(request: Request) {
               { role: "user", content: userContent },
             ],
             ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
-            // Auto remains constrained to OpenRouter's LOW cost tier; fallbacks stay sequential.
-            ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
-            ...(model === "google/gemini-3.1-flash-lite" ? { reasoning: { effort: isRecovery ? "minimal" : "low" } } : {}),
             max_tokens: isRecovery ? 6500 : 12000,
             // JSON mode is enabled for the first attempt. Compact retries use normal text mode
             // because some provider/model routes have returned successful but empty choices.
