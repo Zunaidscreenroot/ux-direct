@@ -1293,7 +1293,7 @@
               confirm: true, operation: "delete-node", nodeId: createdFrameId
             }, 90000);
             cleanup = "The failed generated variation was removed; the source frame remains untouched.";
-          } catch (cleanupError) {
+          } catch (_) {
             cleanup = "The source frame remains untouched, but the failed variation could not be removed automatically and is still on the canvas.";
           }
           throw new Error("UX Direct rejected this variation because visual QA did not pass. " +
