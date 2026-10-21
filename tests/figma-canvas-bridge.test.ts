@@ -410,6 +410,8 @@ test("native visual edits cannot bypass final QA for leaf nodes or multiple root
   assert.ok(actionFlow.includes("if (!qa || qa.passed !== true)"));
   assert.ok(actionFlow.includes('"apply-style", "bind-variable"'));
   assert.ok(actionFlow.includes('"opacity", "visible", "rotation"'));
+  assert.ok(actionFlow.includes('"shadowColor", "shadowBlur", "shadowX"'));
+  assert.ok(actionFlow.includes('"textCase", "textDecoration"'));
 });
 
 
