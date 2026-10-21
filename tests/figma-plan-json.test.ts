@@ -126,3 +126,16 @@ test("Figma agent uses quality-first Qwen, a cheaper sequential fallback, and no
   assert.equal(ui.includes("/api/assistant/figma-agent/live-qa"), false, "The plugin must not run browser QA.");
   assert.equal(ui.includes("TinyFish"), false, "TinyFish should be removed from the plugin flow.");
 });
+
+test("Figma agent routes report body-read timeouts instead of empty bodies and bound Qwen reasoning", () => {
+  const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
+  assert.equal(route.includes('response.text().catch(() => "")'), false, "An aborted body read must not be reported as an empty body.");
+  assert.ok(route.includes("if (controller.signal.aborted) throw readError;"));
+  assert.ok(route.includes("const generationDeadlineMs = 240000;"), "The sequential chain has one shared deadline.");
+  assert.ok(route.includes('model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}'));
+  for (const name of ["refine", "review", "actions"]) {
+    const sub = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/" + name + "/route.ts"), "utf8");
+    assert.equal(sub.includes("await response.json().catch(() => null)"), false, name + " must not hide body-read timeouts.");
+    assert.ok(sub.includes('model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}'), name + " bounds Qwen reasoning.");
+  }
+});
