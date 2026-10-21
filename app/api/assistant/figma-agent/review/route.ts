@@ -9,6 +9,7 @@ import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 import { normalizeVisualReview } from "@/src/figma-agent/normalize-visual-review";
+import { evaluateVisualQualityGate } from "@/src/figma-agent/visual-quality-gate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -284,28 +285,20 @@ export async function POST(request: Request) {
           ", issue-array=" + String(Boolean(decodedRecord.issues || decodedRecord.findings || decodedRecord.defects || decodedRecord.problems)) + ").");
         continue;
       }
-      const unresolvedHighSeverity = validated.data.issues.some(issue => issue.severity === "high");
-      const visualInspection = !!sourceImage && !!outputImage;
-      const qualityGatePassed = validated.data.score >= 90 && visualInspection &&
-        !unresolvedHighSeverity && validated.data.issues.length === 0;
+      const qualityGate = evaluateVisualQualityGate({
+        score: validated.data.score,
+        issues: validated.data.issues,
+        hasSourceImage: !!sourceImage,
+        hasOutputImage: !!outputImage,
+      });
       const safeLearningCandidate = sanitizeInlineLearningCandidate(learningCandidate);
       return NextResponse.json({
         ok: true,
         review: validated.data,
-        qualityGate: {
-          passed: qualityGatePassed,
-          minimumScore: 90,
-          unresolvedHighSeverity,
-          issueCount: validated.data.issues.length,
-          message: qualityGatePassed
-            ? "Visual QA passed."
-            : !visualInspection
-              ? "Visual QA cannot pass without both source and output screenshots."
-              : "Visual QA found issues. The bounded plugin repair loop may attempt a correction; completion remains blocked until final verification."
-        },
+        qualityGate,
         learning: safeLearningCandidate ? "candidate-ready-for-final-verification" : "no-candidate",
         learningCandidate: safeLearningCandidate,
-        visualInspection,
+        visualInspection: qualityGate.visualInspection,
         outputImageInspected: !!outputImage,
         model: typeof record.model === "string" ? record.model : model,
       }, { headers });
