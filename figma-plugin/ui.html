@@ -1113,11 +1113,14 @@
         return Object.keys(action.patch).some(function (key) {
           return [
             "text", "fontSize", "fontFamily", "fontStyle", "textAlignHorizontal", "textAlignVertical",
-            "textAutoResize", "lineHeight", "letterSpacing", "fillColor", "fill", "fills", "color",
-            "strokeColor", "strokeWeight", "opacity", "visible", "rotation", "width", "height", "x", "y",
-            "arcData", "layoutMode", "layoutWrap", "layoutSizingHorizontal", "layoutSizingVertical",
-            "layoutPositioning", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
-            "cornerRadius", "effects"
+            "textAutoResize", "lineHeight", "letterSpacing", "textCase", "textDecoration",
+            "fillColor", "fill", "fills", "color", "strokeColor", "strokeWeight", "opacity", "visible",
+            "rotation", "width", "height", "x", "y", "clipsContent", "arcData", "layoutMode", "layoutWrap",
+            "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "layoutGrow",
+            "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode",
+            "horizontalConstraint", "verticalConstraint", "itemSpacing", "paddingLeft", "paddingRight",
+            "paddingTop", "paddingBottom", "cornerRadius", "effects", "shadowColor", "shadowBlur", "shadowX",
+            "shadowY", "shadowSpread"
           ].includes(key);
         });
       });
