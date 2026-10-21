@@ -44,8 +44,8 @@ const HISTORY_KEY = "ux-direct-chat-v1";
 const AUDIT_URL = "https://uxaudit.zunaid-cb7.workers.dev";
 const auditTools: Array<{ id: AuditTool; title: string; description: string; icon: string; path: string }> = [
   { id: "ia", title: "Information architecture", description: "Discover a website, inspect nested page structure, and select the journeys worth auditing.", icon: "⌘", path: "/ia-demo" },
-  { id: "audit", title: "Website UX audit", description: "Audit a live page or upload screenshots, then review evidence-marked findings and recommendations.", icon: "◉", path: "/" },
-  { id: "benchmark", title: "Competitive benchmarking", description: "Compare a client and competitors at the same desktop or mobile viewport.", icon: "⇄", path: "/benchmark" },
+  { id: "audit", title: "Website UX audit", description: "Discover pages, run desktop or mobile screenshot audits, and review evidence-linked findings, severity, UX rationale and recommendations.", icon: "◉", path: "/site-map" },
+  { id: "benchmark", title: "Competitive benchmarking", description: "Compare client and competitor experiences at matched viewports, with evidence validation and explicit capture-blocker reporting.", icon: "⇄", path: "/benchmark" },
 ];
 
 export default function ChatWorkspace() {
