@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ux-direct": {
+      "type": "http",
+      "url": "https://ux-direct.zunaid-cb7.workers.dev/api/mcp"
+    }
+  }
+}
