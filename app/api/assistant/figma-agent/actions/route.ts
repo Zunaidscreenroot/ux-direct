@@ -312,7 +312,7 @@ export async function POST(request: Request) {
   for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
     const model = models[modelIndex];
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), modelIndex === 0 ? 25000 : 18000);
+    const timeout = setTimeout(() => controller.abort(), modelIndex === 0 ? 60000 : 45000);
     try {
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
@@ -320,10 +320,16 @@ export async function POST(request: Request) {
           "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Native Figma Actions" },
         body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content }],
           ...(model.startsWith("google/gemini-") ? { temperature: 0.1 } : {}),
+          // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
+          ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
           max_tokens: 3500, response_format: { type: "json_object" } }),
         cache: "no-store", signal: controller.signal,
       });
-      const payload: unknown = await response.json().catch(() => null);
+      const payload: unknown = await response.json().catch((readError: unknown) => {
+        // An abort while the body is still arriving is a timeout, not an invalid payload.
+        if (controller.signal.aborted) throw readError;
+        return null;
+      });
       const envelope = isRecord(payload) ? payload : {};
       if (!response.ok) {
         const err = isRecord(envelope.error) ? envelope.error : {};

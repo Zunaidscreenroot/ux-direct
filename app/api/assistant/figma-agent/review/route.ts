@@ -214,7 +214,7 @@ export async function POST(request: Request) {
   const errors: string[] = [];
   for (const [modelIndex, model] of models.entries()) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), modelIndex === 0 ? 24000 : 20000);
+    const timer = setTimeout(() => controller.abort(), modelIndex === 0 ? 60000 : 45000);
     try {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -243,13 +243,19 @@ export async function POST(request: Request) {
             { role: "user", content: userContent },
           ],
           temperature: 0.1,
+          // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
+          ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
           max_tokens: 1800,
           response_format: { type: "json_object" },
         }),
         cache: "no-store",
         signal: controller.signal,
       });
-      const payload: unknown = await response.json().catch(() => null);
+      const payload: unknown = await response.json().catch((readError: unknown) => {
+        // An abort while the body is still arriving is a timeout, not an invalid payload.
+        if (controller.signal.aborted) throw readError;
+        return null;
+      });
       const record = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
       if (!response.ok) {
         const providerError = record.error && typeof record.error === "object" ? record.error as Record<string, unknown> : {};

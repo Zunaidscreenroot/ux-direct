@@ -475,12 +475,21 @@ export async function POST(request: Request) {
     "Do not include a learningCandidate unless there is a durable reusable lesson. If none, set learningCandidate:null.",
   ].join("\n");
   const generationStartedAt = Date.now();
-  for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
+  // OpenRouter sends HTTP 200 headers immediately and the body only once the full plan is
+  // generated, so each attempt needs room for a complete multi-thousand-token plan. One shared
+  // deadline keeps the sequential chain bounded.
+  const generationDeadlineMs = 240000;
+  modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
     const attemptsForModel = modelIndex === 0 ? 2 : 1;
     for (let recoveryAttempt = 0; recoveryAttempt < attemptsForModel; recoveryAttempt += 1) {
       const isRecovery = recoveryAttempt === 1;
-      const attemptTimeoutMs = isRecovery ? 16000 : (modelIndex === 0 ? 28000 : 22000);
+      const remainingMs = generationDeadlineMs - (Date.now() - generationStartedAt);
+      if (remainingMs < 20000) {
+        errors.push("Generation deadline reached before " + model + (isRecovery ? " compact retry" : "") + " could run.");
+        break modelLoop;
+      }
+      const attemptTimeoutMs = Math.min(isRecovery ? 60000 : (modelIndex === 0 ? 120000 : 90000), remainingMs);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
       try {
@@ -514,6 +523,8 @@ export async function POST(request: Request) {
               { role: "user", content: userContent },
             ],
             ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
+            // Qwen 3.5 thinks by default; unbounded reasoning spends the attempt before any JSON is written.
+            ...(model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}),
             max_tokens: isRecovery ? 6500 : 12000,
             // JSON mode is enabled for the first attempt. Compact retries use normal text mode
             // because some provider/model routes have returned successful but empty choices.
@@ -523,7 +534,13 @@ export async function POST(request: Request) {
           signal: controller.signal,
         });
         const responseContentType = response.headers.get("content-type") || "unknown";
-        const responseText = await response.text().catch(() => "");
+        let responseText = "";
+        try {
+          responseText = await response.text();
+        } catch (readError) {
+          // An abort while the body is still arriving is a timeout, not an empty body.
+          if (controller.signal.aborted) throw readError;
+        }
         let rawPayload: unknown = null;
         let responseJsonInvalid = false;
         if (responseText.trim()) {
@@ -678,7 +695,7 @@ export async function POST(request: Request) {
         }, { headers });
       } catch (error) {
         errors.push(model + (isRecovery ? " compact retry" : "") + ": " +
-          (controller.signal.aborted ? "timed out after " + attemptTimeoutMs + "ms" : error instanceof Error ? error.message.slice(0, 200) : "request failed"));
+          (controller.signal.aborted ? "timed out after " + attemptTimeoutMs + "ms before the provider finished the response" : error instanceof Error ? error.message.slice(0, 200) : "request failed"));
         if (!isRecovery) continue;
         break;
       } finally {
