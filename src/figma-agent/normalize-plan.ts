@@ -80,6 +80,8 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
     primaryAxisSizingMode: rawFrame.primaryAxisSizingMode === "AUTO" ? "AUTO" : "FIXED",
     counterAxisSizingMode: rawFrame.counterAxisSizingMode === "AUTO" ? "AUTO" : "FIXED",
   };
+  const rootBackgroundChannels = frame.backgroundColor.slice(1).match(/.{2}/g)?.map((channel) => Number.parseInt(channel, 16)) || [247, 248, 250];
+  const darkCanvas = (0.2126 * rootBackgroundChannels[0] + 0.7152 * rootBackgroundChannels[1] + 0.0722 * rootBackgroundChannels[2]) < 128;
   const inputElements = root.elements ?? root.layers ?? root.nodes ?? root.children;
   if (!Array.isArray(inputElements)) {
     return { summary: root.summary ?? root.description ?? "A UX Direct native design variation.", frame, elements: inputElements };
@@ -121,6 +123,15 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
     if (typeof item.fontFamily === "string" || typeof fontRaw.family === "string") normalized.fontFamily = String(item.fontFamily ?? fontRaw.family).trim().slice(0, 100) || "Inter";
     if (typeof item.fontStyle === "string" || typeof fontRaw.style === "string" || typeof fontRaw.weight === "string") normalized.fontStyle = String(item.fontStyle ?? fontRaw.style ?? fontRaw.weight).trim().slice(0, 100) || "Regular";
     if (color) normalized.color = color;
+    else if (type === "FRAME" && typeof item.noFill !== "boolean") {
+      const semanticSurface = /\b(card|panel|surface|container|summary|breakdown)\b/i.test(name) &&
+        !/\b(wrapper|layout|group|stack)\b/i.test(name);
+      const activeControl = /\b(active|selected|current)\b/i.test(name) &&
+        /\b(tab|chip|pill|badge)\b/i.test(name);
+      if (activeControl) normalized.color = darkCanvas ? "#24483F" : "#DDF4EC";
+      else if (semanticSurface) normalized.color = darkCanvas ? "#202124" : "#FFFFFF";
+      else normalized.noFill = true;
+    }
     if (strokeColor) normalized.strokeColor = strokeColor;
     if (typeof item.noFill === "boolean") normalized.noFill = item.noFill;
     const rawArcData = item.arcData && typeof item.arcData === "object" && !Array.isArray(item.arcData)
