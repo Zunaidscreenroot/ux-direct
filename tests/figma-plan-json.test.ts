@@ -95,7 +95,7 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("compactRecoveryCanvas(canvas)"), "The retry should send a bounded source layer tree.");
   assert.ok(route.includes("28–42 native nodes total INCLUDING nested children"), "The retry must explicitly cap output complexity.");
   assert.ok(route.includes("max_tokens: isRecovery ? 6500 : 12000"), "Use OpenRouter's current completion token parameter.");
-  assert.ok(route.includes("modelIndex === 0 ? 36000 : 26000"), "Auto LOW and fallbacks have bounded completion time for full plans.");
+  assert.ok(route.includes("modelIndex === 0 ? 36000 : 26000"), "The primary model and fallback have bounded completion time for full plans.");
   assert.ok(route.includes("isRecovery ? 22000"), "Compact retries have a bounded but useful completion window.");
   assert.ok(route.includes("sourceTextInventory: collectSourceTextInventory"), "Compact retries retain a full bounded source-text checklist.");
   assert.ok(route.includes("depth > 4 || state.count >= 60"), "Recovery preserves short text layers nested inside instances/cards.");
@@ -104,18 +104,18 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("payload_keys="), "Empty provider responses should report envelope shape for diagnosis.");
 });
 
-test("Figma agent uses Auto LOW first, cost-ordered fallbacks, and no plugin live QA", () => {
+test("Figma agent uses GPT-6 Luna primary, Auto fallback, and no plugin live QA", () => {
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   const catalog = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
   assert.ok(route.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Generation uses the shared Figma-specific chain.");
-  assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Figma generation explicitly uses Auto LOW.");
+  assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Figma generation includes the explicit low-cost Auto fallback.");
   assert.ok(route.includes("const attemptsForModel = modelIndex === 0 ? 2 : 1"), "The primary model gets one compact retry before the fallback is tried.");
   assert.ok(route.includes("provider returned an empty response body"), "Empty provider bodies are diagnosed clearly.");
   assert.ok(route.includes("provider returned a non-JSON response body"), "Invalid response bodies are diagnosed clearly.");
   assert.equal(route.includes("Promise.all(models"), false, "Model requests stay sequential.");
-  assert.deepEqual(FIGMA_AGENT_MODELS.map((entry) => entry.id), ["openrouter/auto", "qwen/qwen3.5-35b-a3b", "deepseek/deepseek-v4.1-flash", "qwen/qwen3.5-397b-a17b"], "Auto LOW leads; named models are sequential fallbacks.");
-  assert.ok(catalog.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto"'));
-  assert.ok(catalog.includes('FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openrouter/auto"'));
+  assert.deepEqual(FIGMA_AGENT_MODELS.map((entry) => entry.id), ["openai/gpt-6-luna", "openrouter/auto"], "GPT-6 Luna is primary and OpenRouter Auto is the fallback.");
+  assert.ok(catalog.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openai/gpt-6-luna"'));
+  assert.ok(catalog.includes('FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openai/gpt-6-luna"'));
   const review = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/review/route.ts"), "utf8");
   const refine = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/refine/route.ts"), "utf8");
   assert.ok(review.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
