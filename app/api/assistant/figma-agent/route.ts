@@ -5,6 +5,7 @@ import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { captureFigmaTaskLearning } from "@/src/memory/task-learning";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
+import { auditDesignPlanQuality } from "@/src/figma-agent/design-plan-quality";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 
 export const runtime = "nodejs";
@@ -442,6 +443,7 @@ export async function POST(request: Request) {
   // The primary gets one compact retry; fallbacks get one attempt each, all sequentially.
   const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
   const errors: string[] = [];
+  let validationFeedback = "";
   const recoveryContext = JSON.stringify({
     prompt: parsedInput.data.prompt,
     designScope,
@@ -470,11 +472,14 @@ export async function POST(request: Request) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
       try {
+        const validationBlock = validationFeedback
+          ? "\n\nAUTOMATED VALIDATION FEEDBACK — fix every listed defect in this new plan before returning JSON:\n" + validationFeedback
+          : "";
         const modelUserText = isRecovery
-          ? "RECOVERY RETRY: The prior response was absent, incomplete, or invalid. Return a smaller complete JSON object following the exact compact output budget in the system message. Do not continue the old text or explain the failure.\nSOURCE CONTEXT:\n" + recoveryContext
+          ? "RECOVERY RETRY: The prior response was absent, incomplete, or invalid. Return a smaller complete JSON object following the exact compact output budget in the system message. Do not continue the old text or explain the failure.\nSOURCE CONTEXT:\n" + recoveryContext + validationBlock
           : (renderedScreen
-            ? "Design a high-fidelity, source-faithful improvement. Combine the rendered screen image with its native layer tree. Avoid generic redesigns. Context:\n" + userContext
-            : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext);
+            ? "Design a high-fidelity, source-faithful improvement. Combine the rendered screen image with its native layer tree. Avoid generic redesigns. Context:\n" + userContext + validationBlock
+            : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext + validationBlock);
         const modelImages: Array<Record<string, unknown>> = [];
         if (renderedScreen) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
         if (referenceImage) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
@@ -608,7 +613,18 @@ export async function POST(request: Request) {
         if (!parsedPlan.success) {
           const issues = parsedPlan.error.issues.slice(0, 4)
             .map((issue) => issue.path.join(".") + " " + issue.message).join("; ");
+          validationFeedback = "The previous plan failed native Figma schema validation: " + issues + ". Return a corrected complete plan; do not repeat these errors.";
           errors.push(model + (isRecovery ? " compact retry" : "") + ": invalid design plan schema (" + issues + ")");
+          if (!isRecovery) continue;
+          break;
+        }
+        const qualityReport = auditDesignPlanQuality(parsedPlan.data, canvas, parsedInput.data.prompt);
+        if (!qualityReport.passed) {
+          const issues = qualityReport.findings.slice(0, 8)
+            .map((finding) => finding.code + ": " + finding.message).join("; ");
+          validationFeedback = "The plan failed deterministic pre-write quality checks (score " + qualityReport.score +
+            "/100): " + issues + ". Fix the actual content/layout/surface defects. Never omit source labels, values, statuses or actions to simplify layout.";
+          errors.push(model + (isRecovery ? " compact retry" : "") + ": quality preflight rejected plan (" + issues + ")");
           if (!isRecovery) continue;
           break;
         }
@@ -630,6 +646,8 @@ export async function POST(request: Request) {
           return !catalogue.some((style) => style.id === node[key]);
         });
         if (invalidStyle) {
+          validationFeedback = "The previous plan referenced an unknown local " + invalidStyle.group + " style ID for " +
+            invalidStyle.key + ". Remove that invalid reference or use an exact style ID from the supplied catalogue.";
           errors.push(model + (isRecovery ? " compact retry" : "") + ": " + invalidStyle.key + " references an unknown local " + invalidStyle.group + " style ID.");
           if (!isRecovery) continue;
           break;
