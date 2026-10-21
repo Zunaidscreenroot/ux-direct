@@ -1186,9 +1186,7 @@
 
       stage("brain", "Connecting to UX Direct Brain and resolving project context…");
       stage("memory", "Searching shared memories and Knowledge Base patterns…");
-      stage("planning", renderedScreen
-        ? "Analysing rendered appearance and native layers together…"
-        : "Analysing native layers only · " + (visualCaptureWarning || "rendered screenshot unavailable").slice(0, 180));
+      stage("planning", "Analysing rendered appearance and native layers together…");
 
       const response = await fetch(API + "/api/assistant/figma-agent", {
         method: "POST",
