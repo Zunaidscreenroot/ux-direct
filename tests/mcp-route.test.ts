@@ -112,7 +112,7 @@ test("authenticated client can initialize", async () => {
   }
 });
 
-test("tool list exposes supervisory status/report and shared brain operations but no Figma executor", async () => {
+test("tool list exposes status, Figma executor, task planning and shared brain operations", async () => {
   const original = process.env.UX_DIRECT_MCP_API_KEY;
   process.env.UX_DIRECT_MCP_API_KEY = validKey;
   try {
@@ -121,8 +121,12 @@ test("tool list exposes supervisory status/report and shared brain operations bu
     assert.deepEqual(body.result.tools.map((tool: { name: string }) => tool.name), [
       "ux_direct_status",
       "ux_direct_connection_status",
+      "ux_direct_figma_plugin_queue_health_check",
       "ux_direct_figma_plugin_health_check_status",
+      "ux_direct_figma_canvas_read",
+      "ux_direct_figma_canvas_write",
       "ux_direct_figma_canvas_command_status",
+      "ux_direct_plan_task",
       "ux_direct_brain_search",
       "ux_direct_brain_save_feedback",
       "ux_direct_brain_list_feedback",
@@ -144,10 +148,6 @@ test("tool list exposes supervisory status/report and shared brain operations bu
     assert.ok(brainSave.inputSchema.properties.rawFeedback);
     assert.ok(brainSave.inputSchema.properties.normalizedRule);
     assert.equal(brainSave.inputSchema.properties.sourceProduct.enum.includes("figma-plugin"), true);
-    assert.equal(body.result.tools.some((tool: { name: string }) => tool.name === "ux_direct_figma_plugin_queue_health_check"), false);
-    assert.equal(body.result.tools.some((tool: { name: string }) => tool.name === "ux_direct_figma_canvas_read"), false);
-    assert.equal(body.result.tools.some((tool: { name: string }) => tool.name === "ux_direct_figma_canvas_write"), false);
-    assert.equal(body.result.tools.some((tool: { name: string }) => tool.name === "ux_direct_plan_task"), false);
   } finally {
     if (original === undefined) delete process.env.UX_DIRECT_MCP_API_KEY;
     else process.env.UX_DIRECT_MCP_API_KEY = original;

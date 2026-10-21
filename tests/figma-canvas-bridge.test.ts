@@ -22,15 +22,12 @@ test("conversational cockpit inline JavaScript parses successfully", () => {
   assert.doesNotThrow(() => new Script(match[1], { filename: "figma-plugin/ui.html" }));
 });
 
-test("Figma execution remains implemented but is hidden from ChatGPT's tool list", () => {
+test("Figma execution tools are exposed to authorized MCP clients", () => {
   assert.ok(mcp.includes('name: "ux_direct_figma_canvas_read"'));
   assert.ok(mcp.includes('name: "ux_direct_figma_canvas_write"'));
   assert.ok(mcp.includes('name: "ux_direct_figma_canvas_command_status"'));
-  assert.ok(mcp.includes("const CHATGPT_SUPERVISOR_HIDDEN_TOOLS = new Set(["));
-  assert.ok(mcp.includes('"ux_direct_figma_canvas_read"'));
-  assert.ok(mcp.includes('"ux_direct_figma_canvas_write"'));
-  assert.ok(mcp.includes('"ux_direct_plan_task"'));
-  assert.ok(mcp.includes('].filter((tool) => !CHATGPT_SUPERVISOR_HIDDEN_TOOLS.has(tool.name));'));
+  assert.ok(mcp.includes('name: "ux_direct_plan_task"'));
+  assert.equal(mcp.includes("CHATGPT_SUPERVISOR_HIDDEN_TOOLS"), false);
   assert.ok(mcp.includes('maxNodes: { type: "integer", minimum: 1, maximum: 100'));
 });
 

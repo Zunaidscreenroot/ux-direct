@@ -421,15 +421,6 @@ async function runUxAuditPage(input: Record<string, unknown>) {
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-// ChatGPT is a supervisor/monitor for Figma output, not the plugin's design-task executor.
-// Keep direct Figma reads/writes and task planning inside the in-Figma UX Direct cockpit.
-const CHATGPT_SUPERVISOR_HIDDEN_TOOLS = new Set([
-  "ux_direct_figma_plugin_queue_health_check",
-  "ux_direct_figma_canvas_read",
-  "ux_direct_figma_canvas_write",
-  "ux_direct_plan_task",
-]);
-
 const TOOLS = [
   {
     name: "ux_direct_status",
@@ -881,7 +872,7 @@ const TOOLS = [
     }, required: ["clientName", "clientUrl", "competitors"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-].filter((tool) => !CHATGPT_SUPERVISOR_HIDDEN_TOOLS.has(tool.name));
+];
 
 async function callTool(name: string, args: unknown, request: Request) {
   if (name === "ux_direct_status") {
@@ -924,8 +915,8 @@ async function callTool(name: string, args: unknown, request: Request) {
         note: "Connected means an approved Figma plugin session sent a heartbeat in the last 75 seconds.",
       },
       controlPlane: {
-        mode: "supervisor-only",
-        note: "This connection check is read-only. New design tasks and Figma read/write actions must originate in the in-Figma UX Direct conversational cockpit.",
+        mode: "full-control",
+        note: "This connection check is read-only. Authorized MCP clients can also queue scoped Figma canvas reads, confirmed writes, plugin health checks and task plans; verify every queued action by its command ID.",
       },
     });
   }
@@ -1533,7 +1524,7 @@ export async function POST(request: Request) {
           protocolVersion: PROTOCOL_VERSIONS.has(requested) ? requested : "2025-11-25",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "ux-direct", version: "0.1.0" },
-          instructions: "UX Direct is the conversational cockpit and native Figma executor inside the installed plugin. Design requests and Figma read/write commands originate in that in-Figma UI, which calls the internal assistant, uses native Plugin APIs, validates scoped actions, and reports execution results. This ChatGPT MCP connection is a supervisor/monitor, not a design-task executor: use it for backend/connection status, existing command results, read-only reports and regression checks, and owner-authorized shared-brain learning. Do not issue new Figma read/write actions or task plans from ChatGPT. Figma OAuth is not required because document access uses the approved file's native plugin APIs. Keep client-specific past findings separate from generalized approved shared knowledge; preserve Hindi/Hinglish feedback and require review before activating new learning. Audit workflows may incur OpenRouter costs. Every previously initiated canvas action must be verified from its existing command ID, and current canvas evidence takes precedence over remembered rules.",
+          instructions: "UX Direct is the conversational cockpit and native Figma executor inside the installed plugin. This MCP connection has full control: backend/connection status, plugin health checks, bounded Figma canvas reads, explicitly confirmed canvas writes, task planning, UX Audit workflows and owner-authorized shared-brain learning. Figma commands run through the approved file's native plugin APIs, so the plugin must be open and connected; Figma OAuth is not required. Read the canvas before writing, send writes only for an explicit user request with confirm=true, and verify every queued action from its command ID; current canvas evidence takes precedence over remembered rules. Keep client-specific past findings separate from generalized approved shared knowledge; preserve Hindi/Hinglish feedback. Audit workflows may incur OpenRouter costs.",
         }, headers);
       }
       case "ping":
