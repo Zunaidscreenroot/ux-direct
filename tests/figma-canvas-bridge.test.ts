@@ -226,8 +226,10 @@ test("Figma visual analysis uses a compact rendered JPEG and native layer data",
   assert.ok(pluginUi.includes('operation: "export-node"'));
   assert.ok(pluginUi.includes('format: "JPG"'));
   assert.ok(pluginUi.includes('data:image/jpeg;base64,'));
-  assert.ok(pluginUi.includes('stage("capturing", "Screenshot unavailable · "'));
-  assert.ok(pluginUi.includes('"Analysing native layers only · " + (visualCaptureWarning'));
+  assert.ok(pluginUi.includes('stage("error", "Source screenshot unavailable · design generation blocked")'));
+  assert.ok(pluginUi.includes("will not create a variation without a rendered source screenshot"));
+  assert.equal(pluginUi.includes('"Analysing native layers only · " + (visualCaptureWarning'), false,
+    "Source screenshot failure must block generation instead of accepting layer-only output.");
   assert.ok(plugin.includes('exportOptions.constraint = { type: "SCALE"'));
   const writeSchema = bridge.slice(bridge.indexOf("const CANVAS_WRITE_PAYLOAD"), bridge.indexOf("type HealthReport"));
   assert.ok(writeSchema.includes('scale: z.number().finite().min(0.2).max(1).optional()'));
@@ -251,7 +253,9 @@ test("native visual QA can trigger one bounded repair and a final re-check witho
   assert.ok(review.includes('type: "image_url"'));
   assert.ok(review.includes('sourceImage: z.string().max(52000).nullable().optional()'));
   assert.ok(review.includes('outputImage: z.string().max(52000).nullable().optional()'));
-  assert.ok(review.includes("visualInspection: !!sourceImage && !!outputImage"));
+  assert.ok(review.includes("evaluateVisualQualityGate"));
+  assert.ok(review.includes("hasSourceImage: !!sourceImage"));
+  assert.ok(review.includes("hasOutputImage: !!outputImage"));
   assert.ok(refine.includes("PatchSchema"));
   assert.ok(refine.includes("found.get(entry.nodeId)"));
 });
@@ -266,7 +270,7 @@ test("Figma plugin cockpit has a morphing orb and visible process stages", () =>
   assert.ok(manifest.includes("scaled PNG previews"));
 });
 
-test("Figma visual capture failures do not invalidate the full design request", () => {
+test("Figma source visual capture failures block unverified design generation", () => {
   const reviewRoute = read("app/api/assistant/figma-agent/review/route.ts");
   const refinementRoute = read("app/api/assistant/figma-agent/refine/route.ts");
   assert.ok(reviewRoute.includes("extractJsonObject(message.content)"), "Visual QA must accept structured content variants.");
@@ -283,6 +287,9 @@ test("Figma visual capture failures do not invalidate the full design request", 
   assert.ok(reviewRoute.includes('sourceImage: z.string().max(52000).nullable().optional()'));
   assert.ok(reviewRoute.includes('outputImage: z.string().max(52000).nullable().optional()'));
   assert.ok(pluginUi.includes('detail.message || "Invalid input"'));
+  assert.ok(pluginUi.includes('stage("error", "Source screenshot unavailable · design generation blocked")'));
+  assert.ok(pluginUi.includes("will not create a variation without a rendered source screenshot"));
+  assert.ok(reviewRoute.includes("evaluateVisualQualityGate"));
 });
 
 test("selected and generated frame screenshot export falls back to progressively smaller scales", () => {
