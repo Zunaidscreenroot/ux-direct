@@ -245,7 +245,7 @@ test("native visual QA can trigger one bounded repair and a final re-check witho
   assert.equal(pluginUi.includes("/api/assistant/figma-agent/live-qa"), false);
   assert.equal(pluginUi.includes("TinyFish"), false);
   assert.ok(refine.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
-  assert.equal(refine.includes("openrouter/auto"), false);
+  assert.ok(refine.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
   assert.ok(review.includes('type: "image_url"'));
   assert.ok(review.includes('sourceImage: z.string().max(52000).nullable().optional()'));
   assert.ok(review.includes('outputImage: z.string().max(52000).nullable().optional()'));
@@ -273,7 +273,7 @@ test("Figma source visual capture failures block unverified design generation", 
   assert.ok(reviewRoute.includes("normalizeVisualReview(decodedRecord)"), "Provider response fields must be normalized before strict QA validation.");
   assert.ok(refinementRoute.includes("extractJsonObject(message.content)"), "Refinement must parse structured content variants.");
   assert.ok(reviewRoute.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
-  assert.equal(reviewRoute.includes("openrouter/auto"), false);
+  assert.ok(reviewRoute.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
   assert.ok(refinementRoute.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
   assert.equal(reviewRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.equal(refinementRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);

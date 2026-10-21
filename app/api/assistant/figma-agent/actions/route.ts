@@ -319,6 +319,7 @@ export async function POST(request: Request) {
         headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json", Accept: "application/json",
           "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Native Figma Actions" },
         body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content }],
+          ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
           ...(model.startsWith("google/gemini-") ? { temperature: 0.1 } : {}),
           // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
           ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),

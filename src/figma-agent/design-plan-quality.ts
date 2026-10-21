@@ -241,7 +241,9 @@ export function auditDesignPlanQuality(
         }
       }
       if (["VERTICAL", "HORIZONTAL", "GRID"].includes(layoutMode) &&
-          child.layoutPositioning !== "ABSOLUTE" && dimension(child, "width") > childWidthLimit + 2) {
+          child.layoutPositioning !== "ABSOLUTE" &&
+          String(child.layoutSizingHorizontal || "").toUpperCase() !== "FILL" &&
+          dimension(child, "width") > childWidthLimit + 2) {
         add(
           "child-out-of-bounds",
           "high",

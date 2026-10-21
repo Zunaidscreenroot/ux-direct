@@ -1,28 +1,37 @@
 /**
- * Figma generation, visual QA, and surgical refinement use explicit OpenRouter
- * routes. Prefer the stronger vision-language model for first-pass accuracy;
- * try the cheaper Qwen route only when the primary route fails validation.
- * Avoid Auto routing here because it can select a weak model for complex visual
- * preservation tasks without telling the user why quality fell.
+ * Figma design generation uses OpenRouter Auto first, capped at LOW cost tier.
+ * If Auto returns no valid plan, try vision-capable low-cost models in ascending price order.
  */
 export const FIGMA_AGENT_MODELS = [
   {
-    id: "qwen/qwen3.5-397b-a17b",
-    label: "Qwen 3.5 397B-A17B · quality-first",
-    description: "Primary vision-language route for source-faithful editable Figma generation and visual QA.",
-    price: "$0.39/M input · $2.34/M output",
+    id: "openrouter/auto",
+    label: "OpenRouter Auto · LOW cost tier",
+    description: "Primary route; OpenRouter selects a capable model within the LOW cost tier.",
+    price: "LOW cost tier only",
   },
   {
     id: "qwen/qwen3.5-35b-a3b",
-    label: "Qwen 3.5 35B-A3B · lower-cost fallback",
-    description: "Sequential fallback when the primary route fails or returns an invalid plan.",
+    label: "Qwen 3.5 35B-A3B · cheapest fallback",
+    description: "Vision-language fallback with low input and output cost.",
     price: "$0.08/M input · $0.75/M output",
+  },
+  {
+    id: "google/gemini-3.1-flash-lite",
+    label: "Gemini 3.1 Flash Lite · low-cost fallback",
+    description: "Multimodal fallback for structured native Figma plan generation.",
+    price: "$0.25/M input · $1.50/M output",
+  },
+  {
+    id: "qwen/qwen3.5-397b-a17b",
+    label: "Qwen 3.5 397B-A17B · quality fallback",
+    description: "Higher-capability vision-language fallback, tried only after cheaper routes fail.",
+    price: "$0.39/M input · $2.34/M output",
   },
 ] as const;
 
 export type FigmaAgentModelId = typeof FIGMA_AGENT_MODELS[number]["id"];
-export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "qwen/qwen3.5-397b-a17b";
-export const FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "qwen/qwen3.5-397b-a17b";
+export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto";
+export const FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openrouter/auto";
 
 /**
  * General assistant chat exposes one server-selected route. OpenRouter Auto

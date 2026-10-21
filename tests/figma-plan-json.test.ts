@@ -95,22 +95,24 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("compactRecoveryCanvas(canvas)"), "The retry should send a bounded source layer tree.");
   assert.ok(route.includes("28–42 native nodes total INCLUDING nested children"), "The retry must explicitly cap output complexity.");
   assert.ok(route.includes("max_tokens: isRecovery ? 6500 : 12000"), "Use OpenRouter's current completion token parameter.");
+  assert.ok(route.includes("modelIndex === 0 ? 28000 : 22000"), "Auto LOW and fallbacks use the previous short attempt deadlines.");
+  assert.ok(route.includes("at least 30% of all native nodes must be TEXT"), "Prompts require content-rich native layers.");
   assert.ok(route.includes('...(!isRecovery ? { response_format: { type: "json_object" } } : {})'), "Compact retries should avoid repeating JSON-mode failures.");
   assert.ok(route.includes("payload_keys="), "Empty provider responses should report envelope shape for diagnosis.");
 });
 
-test("Figma agent uses quality-first Qwen, a cheaper sequential fallback, and no plugin live QA", () => {
+test("Figma agent uses Auto LOW first, cost-ordered fallbacks, and no plugin live QA", () => {
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   const catalog = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
   assert.ok(route.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Generation uses the shared Figma-specific chain.");
-  assert.equal(route.includes("openrouter/auto"), false, "Figma generation never routes through OpenRouter Auto.");
+  assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Figma generation explicitly uses Auto LOW.");
   assert.ok(route.includes("const attemptsForModel = modelIndex === 0 ? 2 : 1"), "The primary model gets one compact retry before the fallback is tried.");
   assert.ok(route.includes("provider returned an empty response body"), "Empty provider bodies are diagnosed clearly.");
   assert.ok(route.includes("provider returned a non-JSON response body"), "Invalid response bodies are diagnosed clearly.");
   assert.equal(route.includes("Promise.all(models"), false, "Model requests stay sequential.");
-  assert.deepEqual(FIGMA_AGENT_MODELS.map((entry) => entry.id), ["qwen/qwen3.5-397b-a17b", "qwen/qwen3.5-35b-a3b"], "Quality-first Qwen leads; the cheaper Qwen is the only fallback.");
-  assert.ok(catalog.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "qwen/qwen3.5-397b-a17b"'));
-  assert.ok(catalog.includes('FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "qwen/qwen3.5-397b-a17b"'));
+  assert.deepEqual(FIGMA_AGENT_MODELS.map((entry) => entry.id), ["openrouter/auto", "qwen/qwen3.5-35b-a3b", "google/gemini-3.1-flash-lite", "qwen/qwen3.5-397b-a17b"], "Auto LOW leads; named models are sequential fallbacks.");
+  assert.ok(catalog.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto"'));
+  assert.ok(catalog.includes('FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openrouter/auto"'));
   const review = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/review/route.ts"), "utf8");
   const refine = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/refine/route.ts"), "utf8");
   assert.ok(review.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
@@ -131,7 +133,7 @@ test("Figma agent routes report body-read timeouts instead of empty bodies and b
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   assert.equal(route.includes('response.text().catch(() => "")'), false, "An aborted body read must not be reported as an empty body.");
   assert.ok(route.includes("if (controller.signal.aborted) throw readError;"));
-  assert.ok(route.includes("const generationDeadlineMs = 240000;"), "The sequential chain has one shared deadline.");
+  assert.ok(route.includes("const generationDeadlineMs = 135000;"), "The sequential chain has a bounded 135-second deadline.");
   assert.ok(route.includes('model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}'));
   for (const name of ["refine", "review", "actions"]) {
     const sub = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/" + name + "/route.ts"), "utf8");

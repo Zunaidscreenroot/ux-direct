@@ -145,6 +145,7 @@ export async function POST(request: Request) {
             { role: "user", content: JSON.stringify({ prompt: parsed.data.prompt, iteration: parsed.data.iteration, score: parsed.data.review.score,
               issues: parsed.data.review.issues, generatedFrameTree: modelTree }) },
           ],
+          ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
           temperature: 0.1,
           // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
           ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
