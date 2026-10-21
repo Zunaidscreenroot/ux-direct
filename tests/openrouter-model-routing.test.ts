@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { FIGMA_AGENT_MODELS, OPENROUTER_MODELS, OPENROUTER_MODEL_LABELS, UX_DIRECT_DESIGN_ROLE } from "../src/providers/openrouter-models";
+import { FIGMA_AGENT_DEFAULT_MODEL, FIGMA_AGENT_MODELS, FIGMA_AGENT_QA_MODEL, OPENROUTER_MODELS, OPENROUTER_MODEL_LABELS, UX_DIRECT_DESIGN_ROLE } from "../src/providers/openrouter-models";
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
@@ -23,13 +23,13 @@ test("assistant chat forces low-cost Auto routing, requests 25k output tokens, a
   assert.ok(!source.includes("OPENROUTER_MODELS.slice(2)"), "there is no additional candidate chain");
 });
 
-test("Figma routes use Auto LOW first and keep cost-ordered fallbacks", () => {
+test("Figma routes use GPT-6 Luna as primary and OpenRouter Auto as low-cost fallback", () => {
   assert.deepEqual(FIGMA_AGENT_MODELS.map((entry) => entry.id), [
+    "openai/gpt-6-luna",
     "openrouter/auto",
-    "qwen/qwen3.5-35b-a3b",
-    "deepseek/deepseek-v4.1-flash",
-    "qwen/qwen3.5-397b-a17b",
   ]);
+  assert.equal(FIGMA_AGENT_DEFAULT_MODEL, "openai/gpt-6-luna");
+  assert.equal(FIGMA_AGENT_QA_MODEL, "openai/gpt-6-luna");
   for (const path of [
     "app/api/assistant/figma-agent/route.ts",
     "app/api/assistant/figma-agent/review/route.ts",

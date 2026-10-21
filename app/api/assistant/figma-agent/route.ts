@@ -473,7 +473,7 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // Auto LOW is the fast primary route; deterministic validation and cheaper fallbacks run only when needed.
+  // GPT-6 Luna is primary; OpenRouter Auto is the low-cost fallback if it fails.
   // The primary gets one compact retry; fallbacks are attempted sequentially.
   const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
   const errors: string[] = [];
