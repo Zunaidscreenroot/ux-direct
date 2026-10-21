@@ -1091,25 +1091,55 @@
       }
       let visualNote = "";
       const hasVisualMutations = actions.some(function (action) {
-        if (["create-elements", "insert-image", "create-image-fill", "create-component", "create-component-set", "swap-component", "boolean-operation", "flatten-nodes"].includes(action.operation)) return true;
+        if ([
+          "create-elements", "insert-image", "create-image-fill", "clone-node", "reorder-node",
+          "reparent-node", "group-nodes", "ungroup-node", "flatten-nodes", "boolean-operation",
+          "create-component", "create-component-set", "create-instance", "swap-component",
+          "detach-instance", "set-text-range", "apply-style", "bind-variable"
+        ].includes(action.operation)) return true;
+        // Deleting a child changes the rendered result. Deleting the selected
+        // root is handled by the native read-back failure path instead.
+        if (action.operation === "delete-node" && action.nodeId !== root.id) return true;
         if (action.operation !== "update-node" || !action.patch) return false;
         return Object.keys(action.patch).some(function (key) {
-          return ["text", "fontSize", "fontFamily", "fillColor", "strokeColor", "width", "height", "x", "y",
-            "layoutMode", "layoutSizingHorizontal", "layoutSizingVertical", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "cornerRadius"].includes(key);
+          return [
+            "text", "fontSize", "fontFamily", "fontStyle", "textAlignHorizontal", "textAlignVertical",
+            "textAutoResize", "lineHeight", "letterSpacing", "fillColor", "fill", "fills", "color",
+            "strokeColor", "strokeWeight", "opacity", "visible", "rotation", "width", "height", "x", "y",
+            "arcData", "layoutMode", "layoutWrap", "layoutSizingHorizontal", "layoutSizingVertical",
+            "layoutPositioning", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
+            "cornerRadius", "effects"
+          ].includes(key);
         });
       });
-      if (hasVisualMutations && canvas.nodes.length === 1 && Array.isArray(root.children)) {
+      if (hasVisualMutations) {
+        // One rendered preview cannot prove the result of a multi-root edit.
+        if (canvas.nodes.length !== 1) {
+          stage("error", "Visual quality gate blocked · select one root");
+          return String(payload.summary || "Native Figma actions ran.") +
+            "\\n\\nNOT ACCEPTED: visual changes were applied to multiple selected roots, so UX Direct could not verify the complete result in one rendered preview. Inspect or revert the changes before using them.";
+        }
         const qa = await runVisualQualityLoop({
           prompt: prompt, sourceCanvas: canvas, outputCanvas: verified, sourceImage: captured.dataUrl,
           allowRepair: true, reportProgress: function (message) { stage("verifying", message); }
         });
-        visualNote = qa && qa.text ? "\n" + qa.text : "";
+        if (!qa || qa.passed !== true) {
+          stage("error", "Visual quality gate failed · edits are not accepted");
+          return String(payload.summary || "Native Figma actions ran.") +
+            "\\n\\nNOT ACCEPTED: rendered visual QA did not pass. " +
+            String(qa && qa.text || "Visual quality could not be verified.") +
+            "\\nThe edit exists on the canvas, but UX Direct is not claiming it is complete. Inspect or revert it before using it.";
+        }
+        visualNote = "\\n" + qa.text;
       }
-      stage("done", "Native edits applied · Figma read-back verified");
+      stage("done", hasVisualMutations
+        ? "Native edits applied · read-back and visual quality gate passed"
+        : "Native action applied · native read-back passed");
       return String(payload.summary || "Native Figma actions applied.") +
-        "\n\nApplied " + actions.length + " native action(s)" + (changed ? " across approximately " + changed + " node/action changes." : ".") +
-        "\nVerified against the selected layer tree and actual Figma properties." + visualNote +
-        (captured.warning ? "\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
+        "\\n\\nApplied " + actions.length + " native action(s)" + (changed ? " across approximately " + changed + " node/action changes." : ".") +
+        "\\nVerified against the selected layer tree and actual Figma properties." + visualNote +
+        (hasVisualMutations ? "" : "\\nRendered visual QA was not required for this non-visual action.") +
+        (captured.warning ? "\\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
     }
 
     async function createFigmaDesign(prompt, reportProgress) {
