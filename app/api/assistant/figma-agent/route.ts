@@ -332,6 +332,7 @@ const SYSTEM = [
   "Use actual native Figma Auto Layout, not merely an arrangement that resembles it. Set FRAME.layoutMode to VERTICAL for content stacks/cards, HORIZONTAL for tabs, inline metric rows and action bars. Set itemSpacing, four padding values, primary/counter alignment, and axis sizing. For direct children of Auto Layout parents use layoutSizingHorizontal/layoutSizingVertical = HUG, FILL or FIXED intentionally; ordinary text in vertical stacks normally FILLs width and uses textAutoResize=HEIGHT. Use layoutPositioning=ABSOLUTE only for real overlays (status badges, progress-labels over rings, backplates, decorative art); preserve their coordinates. In an Auto Layout parent, child order is the flow order and x/y is ignored for AUTO-positioned children. Do not claim a feature unless the read-back shows its native properties.",
   "A short prompt must be mapped to a concrete design objective. Keep everything else stable: product context, information architecture, content, interaction meaning and source visual language. Make deliberate, restrained improvements; do not simplify away meaningful content merely to make the canvas look cleaner.",
   "You are UX Direct's native Figma design agent. The user explicitly requested a design action.",
+  "CONTENT DENSITY AND PAINT CONTRACT: at least 30% of all native nodes must be TEXT, with at least 6 meaningful task-specific text layers (or every meaningful source text item if the selection has fewer). Put actual labels, values, dates, statuses and action copy in TEXT nodes; never use rectangles as substitutes for readable copy. Every FRAME must declare color for an intentional visible surface or noFill:true for a transparent structural wrapper. Keep normal Auto Layout child widths compatible with parent content padding; use FILL when the parent should determine the effective width.",
   "Return ONLY one JSON object. Required root keys: summary (string), frame ({name,width,height,backgroundColor}), elements (3–8 meaningful top-level FRAME section containers and 18–80 native nodes total). Optional root key learningCandidate: null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}; include it only if this task produced one durable reusable design or execution lesson, never as a task summary. Do not include client-specific names in cross-user or domain-wide rules, raw requirements, screen text, node IDs, screenshots or private facts. Use the narrowest safe scope; the backend validates, scopes, deduplicates and applies the existing 50% relevance threshold. Each node MUST include type, name, x, y, width, height. Allowed type values: RECTANGLE, ELLIPSE, TEXT, LINE, FRAME, POLYGON, STAR. ELLIPSE may use arcData:{startingAngle,endingAngle,innerRadius} with radian angles and endingAngle > startingAngle for native progress arcs/rings. Use color: \"#RRGGBB\" for fill, NOT a fill key. TEXT layers must include text. FRAME nodes may include a children array recursively; only FRAME can contain children. Use noFill:true for transparent structural wrappers, but use visibly styled FRAMEs for cards/surfaces. Do not flatten everything into direct layers. Do not use markdown fences.",
   "Analyse BOTH the attached rendered screen image and native layer tree before planning. Use the image to understand visual hierarchy, alignment, density, spacing, contrast, components, states and design language; use the layer tree for exact text, names, geometry, typography and paint values.",
   "Do not replace an existing task-specific screen with a generic dashboard, generic landing page, or repeated stack of similar cards. Preserve the selected screen's purpose, key content, taxonomy and useful visual patterns. Reuse its components when possible, then improve professional craft, consistency, readability, alignment, action priority and visual rhythm.",
@@ -451,8 +452,8 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // Use the explicit quality-first route first, pass deterministic quality feedback to retries, and fall back sequentially.
-  // The primary gets one compact retry; fallbacks get one attempt each, all sequentially.
+  // Auto LOW is the fast primary route; deterministic validation and cheaper fallbacks run only when needed.
+  // The primary gets one compact retry; fallbacks are attempted sequentially.
   const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
   const errors: string[] = [];
   let validationFeedback = "";
@@ -469,6 +470,7 @@ export async function POST(request: Request) {
     scopeInstructions,
     "Preserve the screen/component scope, all meaningful source text and financial values, status, date, labels, rows, actions and relationships. Do not redesign it as a generic dashboard or generic stack of cards.",
     "Use the attached screenshot and source layers when available. Use semantic nested FRAMEs, Auto Layout for suitable cards and rows, clear hierarchy, strong contrast, consistent spacing and editable native shapes/text. Do not invent contractual financial details.",
+    "CONTENT DENSITY AND PAINT CONTRACT: at least 30% of all native nodes must be TEXT, with at least 6 meaningful task-specific text layers (or every meaningful source text item if the selection has fewer). Put actual labels, values, dates, statuses and action copy in TEXT nodes. Every FRAME must declare color for a visible surface or noFill:true when transparent. Make Auto Layout widths and paddings compatible; use FILL only when parent content width should determine the effective width.",
     "Return one complete JSON object only with root keys summary (string), frame ({name,width,height,backgroundColor}), elements (an array of 3–6 meaningful populated FRAME section containers), and learningCandidate:null. Every element must use supported native Figma fields. This is a schema contract, not text to copy. No markdown, explanation or reasoning.",
     "OUTPUT BUDGET: use 3–6 meaningful top-level FRAME groups based on the actual screen; target 28–42 native nodes total INCLUDING nested children. Do not create a separate top-level group for a badge that belongs inside a card. Preserve every source label, amount, value, status, date and action. Keep every layer purposeful; do not add decorative placeholders to hit a count. Finish every string, array, object and the final closing brace.",
     "Every node must have type, name, x, y, width and height. Types: FRAME, RECTANGLE, ELLIPSE, TEXT, LINE, POLYGON, STAR. ELLIPSE may include arcData:{startingAngle,endingAngle,innerRadius} with radian angles and endingAngle greater than startingAngle. TEXT must have text. Only FRAME can contain children. Coordinates must be relative to the immediate parent. Use color:'#RRGGBB' and noFill:true only for transparent structural frames.",
@@ -478,7 +480,7 @@ export async function POST(request: Request) {
   // OpenRouter sends HTTP 200 headers immediately and the body only once the full plan is
   // generated, so each attempt needs room for a complete multi-thousand-token plan. One shared
   // deadline keeps the sequential chain bounded.
-  const generationDeadlineMs = 240000;
+  const generationDeadlineMs = 135000;
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
     const attemptsForModel = modelIndex === 0 ? 2 : 1;
@@ -489,7 +491,7 @@ export async function POST(request: Request) {
         errors.push("Generation deadline reached before " + model + (isRecovery ? " compact retry" : "") + " could run.");
         break modelLoop;
       }
-      const attemptTimeoutMs = Math.min(isRecovery ? 60000 : (modelIndex === 0 ? 120000 : 90000), remainingMs);
+      const attemptTimeoutMs = Math.min(isRecovery ? 16000 : (modelIndex === 0 ? 28000 : 22000), remainingMs);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
       try {
@@ -522,6 +524,7 @@ export async function POST(request: Request) {
               { role: "system", content: isRecovery ? recoverySystem : system },
               { role: "user", content: userContent },
             ],
+            ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
             ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
             // Qwen 3.5 thinks by default; unbounded reasoning spends the attempt before any JSON is written.
             ...(model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}),
