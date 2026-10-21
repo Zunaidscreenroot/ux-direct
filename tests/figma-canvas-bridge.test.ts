@@ -411,3 +411,14 @@ test("native visual edits cannot bypass final QA for leaf nodes or multiple root
   assert.ok(actionFlow.includes('"apply-style", "bind-variable"'));
   assert.ok(actionFlow.includes('"opacity", "visible", "rotation"'));
 });
+
+
+test("visual QA exits without model calls when rendered evidence is missing", () => {
+  const start = pluginUi.indexOf("async function runVisualQualityLoop");
+  const end = pluginUi.indexOf("function downloadNativeExport", start);
+  assert.ok(start >= 0 && end > start, "Visual quality loop must be present.");
+  const qualityLoop = pluginUi.slice(start, end);
+  assert.ok(qualityLoop.includes("if (!sourceImage)"));
+  assert.ok(qualityLoop.includes("if (!capture || !capture.dataUrl)"));
+  assert.ok(qualityLoop.includes("Visual QA blocked because the repaired output screenshot could not be captured"));
+});
