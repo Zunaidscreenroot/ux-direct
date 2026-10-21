@@ -1317,7 +1317,9 @@
         prompt: prompt, sourceCanvas: canvas, outputCanvas: qualityTree, sourceImage: renderedScreen,
         allowRepair: true, reportProgress: stage,
         onReviewResult: function (result) {
-          if (result && result.learningCandidate) learningCandidate = result.learningCandidate;
+          if (result && result.qualityGate && result.qualityGate.passed === true && result.learningCandidate) {
+            learningCandidate = result.learningCandidate;
+          }
         }
       });
       visualNote = qa && qa.text ? "\n\n" + qa.text : "";
