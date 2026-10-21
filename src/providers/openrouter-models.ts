@@ -1,37 +1,25 @@
 /**
- * Figma design generation uses OpenRouter Auto first, capped at LOW cost tier.
- * If Auto returns no valid plan, try vision-capable low-cost models in ascending price order.
+ * Figma generation, review, and refinement use GPT-6 Luna as the primary route.
+ * OpenRouter Auto is the low-cost fallback if the primary route fails.
  */
 export const FIGMA_AGENT_MODELS = [
   {
+    id: "openai/gpt-6-luna",
+    label: "OpenAI GPT-6 Luna · primary",
+    description: "Primary multimodal route for source-faithful Figma generation, visual QA, and refinement through OpenRouter.",
+    price: "$0.10/M input · $0.50/M output",
+  },
+  {
     id: "openrouter/auto",
-    label: "OpenRouter Auto · LOW cost tier",
-    description: "Primary route; OpenRouter selects a capable model within the LOW cost tier.",
+    label: "OpenRouter Auto · low-cost fallback",
+    description: "Low-cost fallback when GPT-6 Luna times out, returns an error, or produces an invalid response.",
     price: "LOW cost tier only",
-  },
-  {
-    id: "qwen/qwen3.5-35b-a3b",
-    label: "Qwen 3.5 35B-A3B · cheapest fallback",
-    description: "Vision-language fallback with low input and output cost.",
-    price: "$0.08/M input · $0.75/M output",
-  },
-  {
-    id: "deepseek/deepseek-v4.1-flash",
-    label: "DeepSeek V4.1 Flash · vision fallback",
-    description: "OpenRouter-hosted multimodal fallback for source-faithful Figma plans.",
-    price: "OpenRouter listed pricing varies by provider",
-  },
-  {
-    id: "qwen/qwen3.5-397b-a17b",
-    label: "Qwen 3.5 397B-A17B · quality fallback",
-    description: "Higher-capability vision-language fallback, tried only after cheaper routes fail.",
-    price: "$0.39/M input · $2.34/M output",
   },
 ] as const;
 
 export type FigmaAgentModelId = typeof FIGMA_AGENT_MODELS[number]["id"];
-export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openrouter/auto";
-export const FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openrouter/auto";
+export const FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openai/gpt-6-luna";
+export const FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openai/gpt-6-luna";
 
 /**
  * General assistant chat exposes one server-selected route. OpenRouter Auto
