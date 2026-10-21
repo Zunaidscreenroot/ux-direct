@@ -1372,7 +1372,7 @@
             : "Expected " + completedElementCount + " generated child layers, but read-back confirmed " + verifiedChildCount + ".";
         throw new Error(problem + " The variation may be partial; the source frame remains untouched. Inspect the new frame before retrying.");
       }
-      let visualNote = "\\n\\nPost-variation visual QA disabled as requested; native layer read-back passed.";
+      let visualNote = "\n\nPost-variation visual QA disabled as requested; native layer read-back passed.";
       visualNote += await finalizeTaskOutcome("verified",
         "Native structure/read-back passed; post-variation visual QA disabled as requested.", "");
       stage("done", "Variation created · native structure read-back passed");
