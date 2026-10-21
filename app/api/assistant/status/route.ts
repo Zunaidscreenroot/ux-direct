@@ -71,7 +71,7 @@ export async function GET(request: Request) {
     connected,
     provider: "OpenRouter",
     defaultModel: OPENROUTER_MODELS[0],
-    fallbackModel: OPENROUTER_MODELS[1],
+    fallbackModel: null,
     models: OPENROUTER_MODELS.map((id, index) => ({ id, name: OPENROUTER_MODEL_LABELS[index] })),
     checkedAt: new Date().toISOString(),
     ...(connected ? {} : { error: keyError || "The configured OpenRouter model chain is not ready." }),
