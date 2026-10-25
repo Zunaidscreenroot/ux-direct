@@ -321,9 +321,6 @@ export async function POST(request: Request) {
            },
         body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content }],
 
-          ...(model.startsWith("google/gemini-") ? { temperature: 0.1 } : {}),
-          // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
-          ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
           max_tokens: 3500, response_format: { type: "json_object" } }),
         cache: "no-store", signal: controller.signal,
       });
