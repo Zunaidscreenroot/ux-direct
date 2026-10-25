@@ -397,7 +397,6 @@ export async function POST(request: Request) {
   const candidates = [ROUTER_MODEL];
   const failures: string[] = [];
   let lastStatus = 502;
-  const origin = new URL(request.url).origin;
 
   const startAttempt = (currentModel: string, startupTimeoutMs = FIRST_TEXT_TIMEOUT_MS) => {
     const controller = new AbortController();
