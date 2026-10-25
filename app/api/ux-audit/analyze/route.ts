@@ -179,7 +179,7 @@ export async function POST(request: Request) {
     if (start >= 0 && end > start) jsonText = jsonText.slice(start, end + 1);
     let parsed: unknown;
     try { parsed = JSON.parse(jsonText); }
-    catch { return NextResponse.json({ error: "The selected model did not return valid structured audit JSON. Try a vision-capable OpenRouter model.", provider: response.provider, model: response.model }, { status: 502, headers: { "Cache-Control": "no-store" } }); }
+    catch { return NextResponse.json({ error: "The selected model did not return valid structured audit JSON. Try a vision-capable FreeLLMAPI model.", provider: response.provider, model: response.model }, { status: 502, headers: { "Cache-Control": "no-store" } }); }
     const report = normalizeReport(parsed, normalizedInput);
     if (!report) return NextResponse.json({ error: "The model response did not match the UX audit report schema.", provider: response.provider, model: response.model }, { status: 502, headers: { "Cache-Control": "no-store" } });
     return NextResponse.json({
