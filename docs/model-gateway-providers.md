@@ -4,7 +4,7 @@ The gateway itself is application code and costs **$0 in gateway fees**. It call
 
 ## Four-hour MVP recommendation
 
-Use **OpenRouter as the first upstream provider behind this gateway**, so the app keeps one internal API and can switch between exact model IDs later. The current preview code supports OpenRouter already; do not replace the internal gateway with OpenRouter-specific calls from the browser.
+Use **OpenRouter as the first upstream provider behind this gateway**, so the app keeps one internal API and can switch between exact model IDs later. The current gateway supports multiple OpenAI-compatible providers. FreeLLMAPI is the selected upstream; keep the internal gateway between the app and provider.
 
 For a wiring/demo smoke test, start with one explicit model, `google/gemma-4-31b-it:free`, which supports text and image input. Keep the OpenRouter model allowlist fixed and paid routing disabled. OpenRouter's Free plan currently advertises 50 requests/day; its Standard plan has a 5.5% platform fee, separate from model inference costs. Verify the latest limits and charges in your account before adding credits: https://openrouter.ai/pricing/.
 
@@ -67,8 +67,12 @@ CEREBRAS_MODELS=gpt-oss-120b
 
 OpenRouter:
 ```env
+FREELLMAPI_API_KEY=
+FREELLMAPI_BASE_URL=https://your-freellmapi-host/v1
+
+# Legacy OpenRouter only if explicitly enabled
 OPENROUTER_API_KEY=
-OPENROUTER_MODELS=provider/model-name:free
+FREELLMAPI_MODELS=auto
 ```
 
 Set only providers that are available to your account. The gateway rejects models outside the configured allowlist.
