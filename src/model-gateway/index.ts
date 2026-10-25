@@ -230,7 +230,7 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
   const extras: ModelCatalogEntry[] = providers.flatMap(p => p.models.filter(id => id !== "default" && !known.some(m => m.provider === p.name && m.id === id)).map(id => ({
     id, provider: p.name, label: p.name + ": " + id,
     tier: (id.endsWith(":free") ? "free-tier" : p.kind ?? "paid"),
-    tasks: p.kind === "local" ? ["classification","extraction","summaries"] : p.kind === "free-tier" ? ["general","reasoning","critique"] : ["general"],
+    tasks: p.name === "freellmapi" ? ["classification","extraction","summaries","reasoning","critique","vision","screen analysis","information architecture","structured output","tool calling"] : p.kind === "local" ? ["classification","extraction","summaries"] : p.kind === "free-tier" ? ["general","reasoning","critique"] : ["general"],
     configured: true, notes: id.endsWith(":free") ? "Explicit free model. Account quota still applies." : "Verify provider quota and published rates before billing."
   } as ModelCatalogEntry)));
   return [...known, ...extras].filter((m, i, a) => a.findIndex(o => o.id === m.id && o.provider === m.provider) === i);
@@ -268,8 +268,9 @@ function chooseModuleModel(moduleId: string, policy: { mode: string; selectedMod
   }
   if (policy.selectedModelKey !== "auto") {
     const selected = catalog.find(m => modelKey(m.provider, m.id) === policy.selectedModelKey);
-    if (!selected) throw new GatewayError("Selected model is no longer in the catalog; no fallback attempted.", 400);
-    return selected;
+    if (selected?.configured) return selected;
+    if (policy.mode !== "free") throw new GatewayError("Selected model is not currently configured; no paid or unapproved fallback attempted.", 400);
+    // A disabled legacy provider selection is ignored in free mode; choose only from currently configured free providers below.
   }
   const def = GATEWAY_MODULES.find(m => m.id === moduleId) ?? GATEWAY_MODULES[GATEWAY_MODULES.length - 1];
   const eligible = catalog.filter(m => {
