@@ -328,8 +328,8 @@ export async function chatCompletion(
   const billable=policy.mode==="paid";
   if(billable){
     if(!settings.paidRoutingEnabled||(!isGatewayAutoRouter&&process.env.ALLOW_PAID_MODELS!=="true"))throw new GatewayError("Model routing is disabled in the server configuration.",403,provider.name);
-    // FreeLLMAPI Auto applies a low-cost routing tier and per-token price ceilings.
-    // It doesn't require a fixed model-price table or an invented monthly budget.
+    // FreeLLMAPI Auto delegates model choice to the configured gateway profile.
+    // Upstream billing is provider-dependent; use returned usage/cost only when available.
     if(!isGatewayAutoRouter){
       if(model.endsWith(":free")||modelPolicy.inputPriceInrPerMillion<=0||modelPolicy.outputPriceInrPerMillion<=0)throw new GatewayError("Configure exact-model input/output pricing before enabling this route.",400,provider.name);
       if(policy.monthlyBudgetInr<=0||modelPolicy.monthlyBudgetInr<=0||policy.maxRequestCostInr<=0||modelPolicy.maxRequestCostInr<=0)throw new GatewayError("Assign a module/model budget and per-request cap before enabling this route.",402,provider.name);
@@ -378,13 +378,6 @@ export async function chatCompletion(
       ...(request.temperature!==undefined?{temperature:request.temperature}:{}),
       ...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{}),
       ...(request.response_format?{response_format:request.response_format}:{}),
-      ...(isGatewayAutoRouter?{
-        // No fixed model list, exclusions, or token-price ceiling: ask FreeLLMAPI
-        // to choose a capable low-cost model, then prefer a high-throughput endpoint.
-        plugins:[{id:"auto-router",cost_tier:"low"}],
-        provider:{sort:"throughput"},
-        usage:{include:true}
-      }:{})
     });
     let response: Response | undefined;
     let payload: ProviderChatPayload | undefined;
