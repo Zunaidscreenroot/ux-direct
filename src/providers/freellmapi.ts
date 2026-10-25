@@ -16,7 +16,7 @@ export function inferFreeLlmCapabilities(id: string, raw: Record<string, unknown
     name: typeof raw.name === "string" ? raw.name : id,
     vision: /vision|visual|multimodal|image|vl-|4v|llava|pixtral|gemini|gpt-4o|glm.*v|4\.6v|4\.5v/.test(text) || /vision|image input|multimodal/.test(metadata),
     reasoning: /reason|thinking|deepseek-r1|glm|kimi|qwen3|qwq|o1|o3|o4|nemotron|deepseek-v/.test(text) || /reasoning|thinking/.test(metadata),
-    tools: /tool|function|agent|coder|qwen|glm|gpt|claude|gemini|deepseek/.test(text) || /tool.call|function.call/.test(metadata),
+    tools: /tool.call|function.call|tool_calling|supports_tools|tools.*true/.test(metadata),
     contextWindow: Number.isFinite(context) && context > 0 ? context : null,
   };
 }
