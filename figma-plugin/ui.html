@@ -852,7 +852,7 @@
             method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
             cache: "no-store",
             body: JSON.stringify({ prompt: prompt + "\nVisual QA pass: " + pass, sourceCanvas: sourceCanvas,
-              outputCanvas: outputCanvas, sourceImage: sourceImage, outputImage: outputImage || null })
+              outputCanvas: outputCanvas, sourceImage: sourceImage, outputImage: outputImage || null, visionModel: selectedModelRoles().visionModel })
           });
           const result = await response.json().catch(function () { return {}; });
           if (response.ok && result.ok === true && result.review) {
@@ -917,7 +917,7 @@
           cache: "no-store",
           body: JSON.stringify({
             prompt: prompt, review: review, outputCanvas: outputCanvas, iteration: repairIteration + 1,
-            sourceImage: sourceImage, outputImage: capture.dataUrl || null
+            sourceImage: sourceImage, outputImage: capture.dataUrl || null, executionModel: selectedModelRoles().executionModel
           })
         });
         const result = await response.json().catch(function () { return {}; });
