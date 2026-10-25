@@ -6,7 +6,8 @@ import { detectCoachingSignal, detectExplicitTrainingIntent, resolveChatLearning
 import { containsSensitiveMaterial, createLearningMarkerTransform, referencesUnstatedClient, type InlineLearningCandidate } from "@/src/memory/inline-learning";
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
-import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { freeLlmApiKey, freeLlmBaseUrl, resolveFreeLlmModel } from "@/src/providers/freellmapi";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,7 +45,7 @@ type BrainContextInfo = {
 
 const MAX_MESSAGES = 100;
 const MAX_TOTAL_CHARS = 80000;
-const ROUTER_MODEL = OPENROUTER_MODELS[0];
+const DEFAULT_CHAT_MODEL = "auto";
 const FIRST_TEXT_TIMEOUT_MS = 30_000;
 const SYSTEM_PROMPT = [
   UX_DIRECT_DESIGN_ROLE + " You are UX Direct, a thoughtful UI/UX design partner.",
@@ -338,9 +339,9 @@ export async function POST(request: Request) {
   if (!originIsAllowed(request)) {
     return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: responseHeaders });
   }
-  const key = process.env.OPENROUTER_API_KEY?.trim();
+  const key = freeLlmApiKey();
   if (!key) {
-    return NextResponse.json({ error: "OpenRouter is not configured. Add OPENROUTER_API_KEY to the UX Direct Worker secrets." }, { status: 503, headers: responseHeaders });
+    return NextResponse.json({ error: "FreeLLMAPI is not configured. Add FREELLMAPI_API_KEY to the UX Direct Worker secrets." }, { status: 503, headers: responseHeaders });
   }
 
   let body: unknown;
@@ -351,8 +352,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400, headers: responseHeaders });
   }
   const value = body as Record<string, unknown>;
-  // Let OpenRouter choose the model dynamically; never pin a stale provider/model ID from the browser.
-  const model = ROUTER_MODEL;
+  // The plugin selects a specialist reasoning model from the live catalog; validate it server-side.
+  const requestedModel = typeof value.reasoningModel === "string" && value.reasoningModel.trim() ? value.reasoningModel.trim() : DEFAULT_CHAT_MODEL;
+  const model = requestedModel;
+  try { if (requestedModel !== "auto") await resolveFreeLlmModel(requestedModel, "reasoning"); }
+  catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid reasoning model." }, { status: 400, headers: responseHeaders }); }
   if (!Array.isArray(value.messages) || value.messages.length < 1 || value.messages.length > MAX_MESSAGES) {
     return NextResponse.json({ error: "messages must contain between 1 and " + MAX_MESSAGES + " entries." }, { status: 400, headers: responseHeaders });
   }
@@ -392,8 +396,8 @@ export async function POST(request: Request) {
     ...(learning.recordId ? { learningRecordId: learning.recordId, learningDraftId: learning.recordId } : {}),
   };
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
-  const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const candidates = [ROUTER_MODEL];
+  const endpoint = freeLlmBaseUrl() + "/chat/completions";
+  const candidates = [model];
   const failures: string[] = [];
   let lastStatus = 502;
   const origin = new URL(request.url).origin;
@@ -409,8 +413,6 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            "HTTP-Referer": origin,
-            "X-OpenRouter-Title": "UX Direct",
           },
           body: JSON.stringify({
             model: currentModel,
@@ -418,9 +420,7 @@ export async function POST(request: Request) {
             stream: true,
             temperature: 0.4,
             max_tokens: 25000,
-            plugins: [{ id: "auto-router", cost_tier: "low" }],
-            provider: { sort: "throughput" },
-            usage: { include: true },
+            stream_options: { include_usage: true },
           }),
           cache: "no-store",
           signal: controller.signal,
@@ -429,8 +429,8 @@ export async function POST(request: Request) {
           const details = (await providerResponse.text().catch(() => "")).replace(/[\r\n]+/g, " ").trim().slice(0, 260);
           const status = providerResponse.status;
           const message = [401, 403].includes(status)
-            ? "OpenRouter rejected the configured API key or account access (HTTP " + status + ")."
-            : "Model " + currentModel + " via OpenRouter returned HTTP " + status + (details ? ": " + details : ".");
+            ? "FreeLLMAPI rejected the configured API key or account access (HTTP " + status + ")."
+            : "Model " + currentModel + " via FreeLLMAPI returned HTTP " + status + (details ? ": " + details : ".");
           throw Object.assign(new Error(message), { status });
         }
         const probe = await probeForFirstText(providerResponse);
