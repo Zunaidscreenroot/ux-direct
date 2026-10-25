@@ -228,7 +228,7 @@
     const API = "https://ux-direct.zunaid-cb7.workers.dev";
     const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
     const MODEL_ROLE_KEY = "uxd-model-roles-v1";
-    const modelRoleSelects = { vision: $("visionModel"), reasoning: $("reasoningModel"), execution: $("executionModel") };
+    const modelRoleSelects = { vision: document.getElementById("visionModel"), reasoning: document.getElementById("reasoningModel"), execution: document.getElementById("executionModel") };
     let availableModels = [];
     function selectedModelRoles() {
       return {
@@ -592,8 +592,8 @@
     function renderStatuses() {
       renderService("backend", "UX Direct backend", backendHealthy ? "Connected" : "Not connected",
         connectionError || (backendHealthy ? "Cloudflare Workers health endpoint verified." : "Backend health check failed."), backendHealthy);
-      renderService("provider", "OpenRouter · model routing", providerHealthy ? "Connected" : "Not connected",
-        providerHealthy ? "API key verified; internal chat uses the configured model router." : "Model provider could not be verified.", providerHealthy);
+      renderService("provider", "FreeLLMAPI · specialist model routing", providerHealthy ? "Connected" : "Not connected",
+        providerHealthy ? "FreeLLMAPI model catalog verified; specialist roles are selected above." : "Model provider could not be verified.", providerHealthy);
       renderService("figma", "Figma native plugin bridge", figmaBridgeHealthy ? "Connected" : "Not connected",
         figmaBridgeHealthy ? "This plugin session is sending fresh heartbeats." : "The plugin bridge is unavailable or the session is stale.", figmaBridgeHealthy);
       renderService("brain", "Shared Knowledge Base", brainHealthy === true ? "Connected" : brainHealthy === false ? "Unavailable" : "Not checked",
