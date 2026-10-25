@@ -132,17 +132,25 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
   const paidRoutingReady = env.ALLOW_PAID_MODELS === "true" && Number(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "3000") > 0;
   // Keep homepage chat's explicit free provider pool separate from paid internal jobs.
+  const openRouterLegacyEnabled = env.MODEL_GATEWAY_ENABLE_OPENROUTER_LEGACY === "true";
   const openRouterBaseUrl = trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1");
   const openRouterModels = csv(env.OPENROUTER_MODELS).filter(model => model.endsWith(":free"));
-  if (env.OPENROUTER_API_KEY && openRouterModels.length) providers.push({
+  if (openRouterLegacyEnabled && env.OPENROUTER_API_KEY && openRouterModels.length) providers.push({
     name: "openrouter", baseUrl: openRouterBaseUrl,
     apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: "free-tier"
   });
   // Internal jobs use OpenRouter Auto Router, which chooses a low-cost available model per request.
   // This is opt-in and separate from the homepage's explicit :free-only model pool.
-  if (env.OPENROUTER_API_KEY && env.OPENROUTER_AUTO_ROUTING === "true") providers.push({
+  if (openRouterLegacyEnabled && env.OPENROUTER_API_KEY && env.OPENROUTER_AUTO_ROUTING === "true") providers.push({
     name: "openrouter-auto", baseUrl: openRouterBaseUrl,
     apiKey: env.OPENROUTER_API_KEY, models: ["openrouter/auto"], kind: "paid"
+  });
+  // FreeLLMAPI is the preferred upstream. Its /v1/models catalog is used for explicit role selection.
+  const freeLlmBase = trimSlash(env.FREELLMAPI_BASE_URL || "http://127.0.0.1:3001/v1");
+  const freeLlmModels = csv(env.FREELLMAPI_MODELS, "auto");
+  if (env.FREELLMAPI_API_KEY && freeLlmModels.length) providers.push({
+    name: "freellmapi", baseUrl: freeLlmBase,
+    apiKey: env.FREELLMAPI_API_KEY, models: freeLlmModels, kind: "free-tier"
   });
   const geminiBillingKind = env.GEMINI_BILLING_MODE === "paid" ? "paid" : "free-tier";
   if ((env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) && (geminiBillingKind !== "paid" || paidRoutingReady)) providers.push({
@@ -222,7 +230,7 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
   const extras: ModelCatalogEntry[] = providers.flatMap(p => p.models.filter(id => id !== "default" && !known.some(m => m.provider === p.name && m.id === id)).map(id => ({
     id, provider: p.name, label: p.name + ": " + id,
     tier: (id.endsWith(":free") ? "free-tier" : p.kind ?? "paid"),
-    tasks: p.kind === "local" ? ["classification","extraction","summaries"] : p.kind === "free-tier" ? ["general","reasoning","critique"] : ["general"],
+    tasks: p.name === "freellmapi" ? ["classification","extraction","summaries","reasoning","critique","vision","screen analysis","information architecture","structured output","tool calling"] : p.kind === "local" ? ["classification","extraction","summaries"] : p.kind === "free-tier" ? ["general","reasoning","critique"] : ["general"],
     configured: true, notes: id.endsWith(":free") ? "Explicit free model. Account quota still applies." : "Verify provider quota and published rates before billing."
   } as ModelCatalogEntry)));
   return [...known, ...extras].filter((m, i, a) => a.findIndex(o => o.id === m.id && o.provider === m.provider) === i);
@@ -260,8 +268,9 @@ function chooseModuleModel(moduleId: string, policy: { mode: string; selectedMod
   }
   if (policy.selectedModelKey !== "auto") {
     const selected = catalog.find(m => modelKey(m.provider, m.id) === policy.selectedModelKey);
-    if (!selected) throw new GatewayError("Selected model is no longer in the catalog; no fallback attempted.", 400);
-    return selected;
+    if (selected?.configured) return selected;
+    if (policy.mode !== "free") throw new GatewayError("Selected model is not currently configured; no paid or unapproved fallback attempted.", 400);
+    // A disabled legacy provider selection is ignored in free mode; choose only from currently configured free providers below.
   }
   const def = GATEWAY_MODULES.find(m => m.id === moduleId) ?? GATEWAY_MODULES[GATEWAY_MODULES.length - 1];
   const eligible = catalog.filter(m => {

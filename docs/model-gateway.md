@@ -30,10 +30,11 @@ Set secrets only in the server environment; never expose them through `NEXT_PUBL
 
 OpenRouter:
 ```env
-OPENROUTER_API_KEY=...
-OPENROUTER_MODELS=provider/model-name:free
+FREELLMAPI_API_KEY=...
+FREELLMAPI_BASE_URL=https://your-freellmapi-host/v1
+FREELLMAPI_MODELS=auto
 # UX Direct assistant chat and internal IA/UX analysis use dynamic low-cost Auto routing.
-OPENROUTER_AUTO_ROUTING=true
+MODEL_GATEWAY_ENABLE_OPENROUTER_LEGACY=false
 # Optional:
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 ```

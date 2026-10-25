@@ -6,7 +6,8 @@ import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/task-learning";
 import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { deferTaskWork, finishTaskRun, startTaskRun, type RetrievalRecord } from "@/src/memory/task-run-log";
-import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { freeLlmApiKey, freeLlmBaseUrl, resolveFreeLlmModel } from "@/src/providers/freellmapi";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality } from "@/src/figma-agent/design-plan-quality";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
@@ -381,14 +382,17 @@ export async function POST(request: Request) {
   const requestStartedAt = Date.now();
   const headers = cors(request);
   if (!allowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
-  const key = process.env.OPENROUTER_API_KEY?.trim();
-  if (!key) return NextResponse.json({ error: "OpenRouter is not configured on the UX Direct Worker." }, { status: 503, headers });
+  const key = freeLlmApiKey();
+  if (!key) return NextResponse.json({ error: "FreeLLMAPI is not configured on the UX Direct Worker. Add FREELLMAPI_API_KEY to Cloudflare Worker secrets." }, { status: 503, headers });
 
   let input: unknown;
   try { input = await request.json(); } catch { return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400, headers }); }
   const requestSchema = z.object({
     prompt: z.string().trim().min(2).max(5000),
     model: z.string().trim().min(1).max(100).optional(),
+    visionModel: z.string().trim().min(1).max(200).optional(),
+    reasoningModel: z.string().trim().min(1).max(200).optional(),
+    executionModel: z.string().trim().min(1).max(200).optional(),
     canvas: z.unknown(),
     renderedScreen: z.string().max(52000).nullable().optional(),
     referenceImage: z.string().max(250000).nullable().optional(),
@@ -396,8 +400,7 @@ export async function POST(request: Request) {
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
   if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
-  // Ignore a model override from older plugin UI builds. Figma generation is intentionally
-  // locked to OpenRouter Auto's LOW cost tier to prevent app-level model fan-out.
+  // Model choices come from the live FreeLLMAPI catalog and are validated against each specialist role.
   const renderedScreen = typeof parsedInput.data.renderedScreen === "string" &&
     parsedInput.data.renderedScreen.length <= 52000 &&
     new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.renderedScreen)
@@ -405,6 +408,14 @@ export async function POST(request: Request) {
   const referenceImage = typeof parsedInput.data.referenceImage === "string" &&
     new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.referenceImage)
     ? parsedInput.data.referenceImage : null;
+  const visionModel = parsedInput.data.visionModel || "";
+  const executionModel = parsedInput.data.executionModel || parsedInput.data.model || "";
+  try {
+    if (visionModel && renderedScreen) await resolveFreeLlmModel(visionModel, "vision");
+    if (executionModel) await resolveFreeLlmModel(executionModel);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid specialist model selection." }, { status: 400, headers });
+  }
   const canvas = compactCanvas(parsedInput.data.canvas);
   const selectedRoot = Array.isArray(canvas.nodes) && canvas.nodes[0] && typeof canvas.nodes[0] === "object"
     ? canvas.nodes[0] as Record<string, unknown> : {};
@@ -472,10 +483,9 @@ export async function POST(request: Request) {
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
-  const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // GPT-6 Luna is primary; Auto is the low-cost fallback. Both routes get one compact retry.
-  // Provider selection favors throughput, and the shared deadline bounds the complete chain.
-  const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
+  const endpoint = freeLlmBaseUrl() + "/chat/completions";
+  // One explicitly selected execution model per run; only the bounded compact retry may repeat it.
+  const models = [executionModel || "auto"];
   const errors: string[] = [];
   let validationFeedback = "";
   const recoveryContext = JSON.stringify({
@@ -499,8 +509,39 @@ export async function POST(request: Request) {
     "Every node must have type, name, x, y, width and height. Types: FRAME, RECTANGLE, ELLIPSE, TEXT, LINE, POLYGON, STAR. ELLIPSE may include arcData:{startingAngle,endingAngle,innerRadius} with radian angles and endingAngle greater than startingAngle. TEXT must have text. Only FRAME can contain children. Coordinates must be relative to the immediate parent. Use color:'#RRGGBB' and noFill:true only for transparent structural frames.",
     "Do not include a learningCandidate unless there is a durable reusable lesson. If none, set learningCandidate:null.",
   ].join("\n");
+  let visualAnalysis = "";
+  if (renderedScreen && visionModel) {
+    try {
+      const visionResponse = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          model: visionModel,
+          messages: [
+            { role: "system", content: "You are UX Direct's specialist visual-analysis sub-agent. Inspect the supplied screenshot only. Return a concise evidence-based visual inventory: hierarchy, layout, spacing, typography, contrast, component patterns, visible states, alignment issues, and source details that must be preserved. Do not redesign or output JSON schema. Do not infer hidden interactions or claim facts not visible." },
+            { role: "user", content: [
+              { type: "text", text: "Analyse this selected Figma source screenshot for the downstream native design-planning agent. Keep the report concise and grounded in visible evidence." },
+              { type: "image_url", image_url: { url: renderedScreen } }
+            ] }
+          ],
+          temperature: 0.1,
+          max_tokens: 1400
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(45000)
+      });
+      if (visionResponse.ok) {
+        const visionPayload = await visionResponse.json() as { choices?: Array<{ message?: { content?: unknown } }> };
+        const content = visionPayload.choices?.[0]?.message?.content;
+        if (typeof content === "string") visualAnalysis = content.slice(0, 7000);
+        else if (Array.isArray(content)) visualAnalysis = content.map((part) => part && typeof part === "object" && typeof (part as Record<string, unknown>).text === "string" ? String((part as Record<string, unknown>).text) : "").join("\\n").slice(0, 7000);
+      }
+    } catch {
+      // Vision sub-agent is best-effort. The execution model still receives the source screenshot.
+    }
+  }
   const generationStartedAt = Date.now();
-  // OpenRouter sends HTTP 200 headers immediately and the body only once the full plan is
+  // FreeLLMAPI may send HTTP 200 headers before the full plan body is
   // generated, so each attempt needs room for a complete multi-thousand-token plan. One shared
   // deadline keeps the sequential chain bounded.
   const generationDeadlineMs = 270000;
@@ -525,7 +566,7 @@ export async function POST(request: Request) {
           ? "RECOVERY RETRY: The prior response was absent, incomplete, or invalid. Return a smaller complete JSON object following the exact compact output budget in the system message. Do not continue the old text or explain the failure.\nSOURCE CONTEXT:\n" + recoveryContext + validationBlock
           : (renderedScreen
             ? "Design a high-fidelity, source-faithful improvement. Combine the rendered screen image with its native layer tree. Avoid generic redesigns. Context:\n" + userContext + validationBlock
-            : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext + validationBlock);
+            : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext + validationBlock) + (visualAnalysis ? "\n\nSPECIALIST VISION ANALYSIS (evidence from the source screenshot; preserve source details):\n" + visualAnalysis : "");
         const modelImages: Array<Record<string, unknown>> = [];
         if (renderedScreen) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
         if (referenceImage) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
@@ -539,16 +580,13 @@ export async function POST(request: Request) {
             "Content-Type": "application/json",
             Accept: "application/json",
             "HTTP-Referer": new URL(request.url).origin,
-            "X-OpenRouter-Title": "UX Direct Figma Agent",
-          },
+            },
           body: JSON.stringify({
             model,
             messages: [
               { role: "system", content: isRecovery ? recoverySystem : system },
               { role: "user", content: userContent },
             ],
-            ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
-            ...(model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}),
             ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
             // Qwen 3.5 thinks by default; unbounded reasoning spends the attempt before any JSON is written.
             ...(model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}),

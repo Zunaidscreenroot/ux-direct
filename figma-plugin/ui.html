@@ -74,6 +74,10 @@
     .prompt:focus-visible { outline:none; }
     .prompt::placeholder { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); }
     .routing-note { margin:0 2px 7px; color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; line-height:1.4; }
+    .model-role-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; margin:0 0 8px; }
+    .model-role { display:flex; flex-direction:column; gap:4px; min-width:0; color:var(--figma-color-text-secondary,#777); font-size:9px; line-height:1.2; }
+    .model-role select { width:100%; min-width:0; padding:5px 4px; border:1px solid var(--figma-color-border,#ddd); border-radius:7px; background:var(--figma-color-bg,#fff); color:var(--figma-color-text,#222); font-size:10px; text-overflow:ellipsis; }
+    .model-role select:disabled { opacity:.6; }
     .composer-bottom { display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .composer-tools { display:flex; align-items:center; min-width:0; gap:7px; }
     .composer-attach { flex:0 0 auto; padding:5px 8px; border:1px solid var(--figma-color-border,#ddd); border-radius:8px; background:var(--figma-color-bg-secondary,#f8f8f8); color:var(--figma-color-text,#333); font-size:10px; }
@@ -196,7 +200,13 @@
     <div id="selectionChip" class="context-chip" hidden><span aria-hidden="true">▣</span><span id="selectionName" class="context-name"></span></div>
     <form id="chatForm" class="composer">
       <div id="beamRoot" aria-hidden="true"></div>
-      <div class="routing-note" role="note">Design model: OpenRouter · Qwen 397B primary / Qwen 35B fallback</div>
+      <div class="routing-note" role="note">FreeLLMAPI · choose a specialist model for each role</div>
+      <div class="model-role-grid" aria-label="Specialist model selection">
+        <label class="model-role"><span>Vision analysis</span><select id="visionModel" aria-label="Vision analysis model"><option value="">Loading models…</option></select></label>
+        <label class="model-role"><span>Reasoning</span><select id="reasoningModel" aria-label="Reasoning model"><option value="">Loading models…</option></select></label>
+        <label class="model-role"><span>Execution / plan</span><select id="executionModel" aria-label="Execution and planning model"><option value="">Loading models…</option></select></label>
+      </div>
+      <div id="modelCatalogNote" class="routing-note" role="status">Loading FreeLLMAPI model capabilities…</div>
       <div id="attachmentChip" class="attachment-chip" hidden>
         <span aria-hidden="true">▧</span><span id="attachmentName" class="attachment-name"></span>
         <button id="removeAttachment" class="attachment-remove" type="button" aria-label="Remove attached image" title="Remove image">×</button>
@@ -217,6 +227,67 @@
   <script>
     const API = "https://ux-direct.zunaid-cb7.workers.dev";
     const ALLOWED_FILE_KEY = "QJhcsebwscpdMJDNh9UsYS";
+    const MODEL_ROLE_KEY = "uxd-model-roles-v1";
+    const modelRoleSelects = { vision: document.getElementById("visionModel"), reasoning: document.getElementById("reasoningModel"), execution: document.getElementById("executionModel") };
+    let availableModels = [];
+    function selectedModelRoles() {
+      return {
+        visionModel: modelRoleSelects.vision.value,
+        reasoningModel: modelRoleSelects.reasoning.value,
+        executionModel: modelRoleSelects.execution.value
+      };
+    }
+    async function loadFreeLlmModels() {
+      const note = $("modelCatalogNote");
+      try {
+        const response = await fetch(API + "/api/assistant/models", { cache: "no-store", headers: { Accept: "application/json" } });
+        const payload = await response.json().catch(function () { return {}; });
+        if (!response.ok || payload.connected !== true || !Array.isArray(payload.models) || !payload.models.length) {
+          throw new Error(payload.error || "FreeLLMAPI model catalog is unavailable.");
+        }
+        availableModels = payload.models;
+        const saved = {};
+        try { Object.assign(saved, JSON.parse(localStorage.getItem(MODEL_ROLE_KEY) || "{}")); } catch (_) {}
+        const roles = [
+          ["vision", function (m) { return m.vision; }],
+          ["reasoning", function (m) { return m.reasoning; }],
+          ["execution", function (m) { return m.tools || m.reasoning; }]
+        ];
+        roles.forEach(function (role) {
+          const select = modelRoleSelects[role[0]];
+          const eligible = availableModels.filter(role[1]);
+          const list = eligible;
+          select.replaceChildren();
+          if (!list.length) select.appendChild(new Option("No compatible model", ""));
+          list.forEach(function (model) {
+            const option = document.createElement("option");
+            option.value = model.id;
+            option.textContent = (model.name || model.id) + " · " + [model.vision ? "vision" : "", model.reasoning ? "reasoning" : "", model.tools ? "tools" : ""].filter(Boolean).join(" · ");
+            select.appendChild(option);
+          });
+          const preferred = saved[role[0] + "Model"];
+          if (preferred && list.some(function (model) { return model.id === preferred; })) select.value = preferred;
+          else if (list.length) select.value = (list.find(function (model) { return /glm/i.test(model.id); }) || list[0]).id;
+          select.disabled = list.length === 0;
+          select.addEventListener("change", saveModelRoles);
+        });
+        saveModelRoles();
+        note.textContent = "FreeLLMAPI connected · " + availableModels.length + " models · capability tags are inferred where provider metadata is missing.";
+      } catch (error) {
+        Object.values(modelRoleSelects).forEach(function (select) { select.replaceChildren(new Option("Catalog unavailable", "")); select.disabled = true; });
+        note.textContent = "FreeLLMAPI unavailable · " + (error && error.message ? error.message : "Check Worker configuration.");
+      }
+    }
+    function saveModelRoles() {
+      try {
+        localStorage.setItem(MODEL_ROLE_KEY, JSON.stringify({
+          visionModel: modelRoleSelects.vision.value,
+          reasoningModel: modelRoleSelects.reasoning.value,
+          executionModel: modelRoleSelects.execution.value
+        }));
+      } catch (_) {}
+    }
+    loadFreeLlmModels();
     const $ = (id) => document.getElementById(id);
     let verifiedFileKey = null;
     let pluginSessionStarted = false;
@@ -522,8 +593,8 @@
     function renderStatuses() {
       renderService("backend", "UX Direct backend", backendHealthy ? "Connected" : "Not connected",
         connectionError || (backendHealthy ? "Cloudflare Workers health endpoint verified." : "Backend health check failed."), backendHealthy);
-      renderService("provider", "OpenRouter · model routing", providerHealthy ? "Connected" : "Not connected",
-        providerHealthy ? "API key verified; internal chat uses the configured model router." : "Model provider could not be verified.", providerHealthy);
+      renderService("provider", "FreeLLMAPI · specialist model routing", providerHealthy ? "Connected" : "Not connected",
+        providerHealthy ? "FreeLLMAPI model catalog verified; specialist roles are selected above." : "Model provider could not be verified.", providerHealthy);
       renderService("figma", "Figma native plugin bridge", figmaBridgeHealthy ? "Connected" : "Not connected",
         figmaBridgeHealthy ? "This plugin session is sending fresh heartbeats." : "The plugin bridge is unavailable or the session is stale.", figmaBridgeHealthy);
       renderService("brain", "Shared Knowledge Base", brainHealthy === true ? "Connected" : brainHealthy === false ? "Unavailable" : "Not checked",
@@ -782,7 +853,7 @@
             method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
             cache: "no-store",
             body: JSON.stringify({ prompt: prompt + "\nVisual QA pass: " + pass, sourceCanvas: sourceCanvas,
-              outputCanvas: outputCanvas, sourceImage: sourceImage, outputImage: outputImage || null })
+              outputCanvas: outputCanvas, sourceImage: sourceImage, outputImage: outputImage || null, visionModel: selectedModelRoles().visionModel })
           });
           const result = await response.json().catch(function () { return {}; });
           if (response.ok && result.ok === true && result.review) {
@@ -847,7 +918,7 @@
           cache: "no-store",
           body: JSON.stringify({
             prompt: prompt, review: review, outputCanvas: outputCanvas, iteration: repairIteration + 1,
-            sourceImage: sourceImage, outputImage: capture.dataUrl || null
+            sourceImage: sourceImage, outputImage: capture.dataUrl || null, executionModel: selectedModelRoles().executionModel
           })
         });
         const result = await response.json().catch(function () { return {}; });
@@ -1256,7 +1327,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning })
+        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning, ...selectedModelRoles() })
       });
       const payload = await response.json().catch(function () { return {}; });
       if (!response.ok || payload.ok !== true || !payload.plan || !Array.isArray(payload.plan.elements)) {
@@ -1502,7 +1573,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
           cache: "no-store",
-          body: JSON.stringify({ messages: messages })
+          body: JSON.stringify({ messages: messages, ...selectedModelRoles() })
         });
         if (!response.ok) {
           const payload = await response.json().catch(function () { return {}; });

@@ -18,39 +18,32 @@ test("home opens the unified chat-first workspace instead of the operations dash
   assert.equal(page.includes("ModelGatewayPanel"), false);
 });
 
-test("UX Direct uses low-cost OpenRouter Auto for chat and keeps Figma routes separately configured", () => {
-  const route = read("app/api/assistant/chat/route.ts");
+test("UX Direct routes chat and Figma specialist roles through FreeLLMAPI", () => {
+  const chat = read("app/api/assistant/chat/route.ts");
   const figmaAgent = read("app/api/assistant/figma-agent/route.ts");
   const review = read("app/api/assistant/figma-agent/review/route.ts");
   const refine = read("app/api/assistant/figma-agent/refine/route.ts");
   const status = read("app/api/assistant/status/route.ts");
-  const policy = read("src/providers/openrouter-models.ts");
-  assert.ok(route.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0]"));
-  assert.equal(route.includes("FALLBACK_MODEL"), false);
-  assert.ok(route.includes("const candidates = [ROUTER_MODEL];"));
-  assert.ok(route.includes("max_tokens: 25000"));
-  assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
-  assert.ok(route.includes('provider: { sort: "throughput" }'));
-  assert.equal(route.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
-  assert.ok(route.includes("FIRST_TEXT_TIMEOUT_MS = 30_000"));
-  assert.ok(route.includes("OPENROUTER_API_KEY"));
-  const figmaModels = policy.slice(policy.indexOf("export const FIGMA_AGENT_MODELS"), policy.indexOf("export type FigmaAgentModelId"));
-  assert.deepEqual([...figmaModels.matchAll(/id: "([^"]+)"/g)].map((match) => match[1]), ["openai/gpt-6-luna", "openrouter/auto"]);
-  assert.ok(policy.includes("UX_DIRECT_DESIGN_ROLE"));
-  const generalModels = policy.slice(policy.indexOf("export const OPENROUTER_MODELS"), policy.indexOf("export const OPENROUTER_MODEL_LABELS"));
-  assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
-  for (const routeText of [figmaAgent, review, refine]) {
-    assert.ok(routeText.includes("FIGMA_AGENT_MODELS"));
-    assert.equal(routeText.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
-    assert.ok(routeText.includes("UX_DIRECT_DESIGN_ROLE"));
+  const catalog = read("app/api/assistant/models/route.ts");
+  const plugin = read("figma-plugin/ui.html");
+  assert.ok(chat.includes("freeLlmApiKey()"));
+  assert.ok(chat.includes("freeLlmBaseUrl() + \"/chat/completions\""));
+  assert.ok(chat.includes("value.reasoningModel"));
+  assert.ok(figmaAgent.includes("parsedInput.data.executionModel"));
+  assert.ok(figmaAgent.includes("SPECIALIST VISION ANALYSIS"));
+  assert.ok(figmaAgent.includes("visionModel"));
+  assert.ok(review.includes("parsed.data.visionModel"));
+  assert.ok(refine.includes("parsed.data.executionModel"));
+  assert.ok(status.includes('provider: "FreeLLMAPI"'));
+  assert.ok(catalog.includes('provider: "FreeLLMAPI"'));
+  assert.ok(plugin.includes('id="visionModel"'));
+  assert.ok(plugin.includes('id="reasoningModel"'));
+  assert.ok(plugin.includes('id="executionModel"'));
+  assert.ok(plugin.includes("/api/assistant/models"));
+  for (const route of [chat, figmaAgent, review, refine]) {
+    assert.equal(route.includes("OPENROUTER_API_KEY"), false);
+    assert.equal(route.includes("OPENROUTER_BASE_URL"), false);
   }
-  assert.equal(route.includes("openai/gpt-6-luna"), false);
-  assert.ok(status.includes("defaultModel: OPENROUTER_MODELS[0]"));
-  assert.ok(status.includes("fallbackModel: null"));
-  assert.ok(status.includes("OPENROUTER_MODEL_LABELS[index]"));
-  assert.equal(status.includes("anthropic/claude-sonnet"), false);
-  assert.equal(status.includes("openai/gpt-6-luna"), false);
-  assert.equal(status.includes("openrouter.ai/api/v1/models"), false);
 });
 
 test("production gateway settings writes require the server-side admin key", () => {
@@ -82,7 +75,7 @@ test("legacy gateway credentials remain server-only and are not saved in browser
 test("The configured free-model catalog stays available separately from dynamic low-cost routing", () => {
   const env = read(".env.example");
   assert.ok(env.includes("OPENROUTER_MODELS=google/gemma-4-31b-it:free"));
-  assert.ok(env.includes("OPENROUTER_AUTO_ROUTING=true"));
+  assert.ok(env.includes("OPENROUTER_AUTO_ROUTING=false"));
   assert.ok(env.includes("OPENROUTER_AUTO_ROUTING=true"));
   assert.ok(!env.includes("OPENROUTER_AUTO_MAX_INPUT_USD_PER_1M"));
   assert.ok(!env.includes("OPENROUTER_AUTO_MAX_OUTPUT_USD_PER_1M"));
