@@ -1313,8 +1313,8 @@ async function callTool(name: string, args: unknown, request: Request) {
 
   /* eslint-disable @typescript-eslint/no-explicit-any -- Normalize the UX Audit API payload contract at the MCP boundary. */
   if (name === "ux_direct_uxaudit_status") {
-    const result = await requestUxAudit("/api/openrouter-status", { method: "GET", timeoutMs: 12_000 });
-    return toolText({ service: "UX Audit", checkedAt: new Date().toISOString(), openRouter: result, baseUrl: uxauditOrigin() });
+    const result = await requestUxAudit("/api/freellmapi-status", { method: "GET", timeoutMs: 12_000 });
+    return toolText({ service: "UX Audit", provider: "FreeLLMAPI", checkedAt: new Date().toISOString(), freeLlmApi: result, baseUrl: uxauditOrigin() });
   }
 
   if (name === "ux_direct_uxaudit_discover_site") {
