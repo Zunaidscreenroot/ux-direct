@@ -4,7 +4,7 @@
 
 Source: https://github.com/EliaAlberti/ux-audit-skill
 
-License: MIT. Copyright (c) 2026 Elia Alberti. The selected reusable ideas in UX Direct are stable recurring-check categories, severity calibration against the user's goal, duplicate reduction, and normalized screenshot-region annotations. UX Direct's own implementation lives in src/ux-audit/ and uses the existing OpenRouter Model Gateway; it does not vendor the complete skill workflow or its mandatory framework sweep.
+License: MIT. Copyright (c) 2026 Elia Alberti. The selected reusable ideas in UX Direct are stable recurring-check categories, severity calibration against the user's goal, duplicate reduction, and normalized screenshot-region annotations. UX Direct's own implementation lives in src/ux-audit/ and uses the configured FreeLLMAPI gateway; it does not vendor the complete skill workflow or its mandatory framework sweep.
 
 ## axe-core — training only
 
