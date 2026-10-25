@@ -436,14 +436,14 @@ export async function POST(request: Request) {
         const probe = await probeForFirstText(providerResponse);
         if (!probe.hasText) {
           if (probe.reader) await probe.reader.cancel().catch(() => {});
-          throw Object.assign(new Error("Model " + currentModel + " via OpenRouter returned an empty text stream before its first token."), { status: 502 });
+          throw Object.assign(new Error("Model " + currentModel + " via FreeLLMAPI returned an empty text stream before its first token."), { status: 502 });
         }
         // Stop the startup timer once the first visible text arrives; let the full answer stream without an app-imposed timeout.
         clearTimeout(timer);
         return { model: currentModel, probe, controller };
       } catch (error) {
         if (controller.signal.aborted) {
-          throw Object.assign(new Error("Model " + currentModel + " via OpenRouter did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
+          throw Object.assign(new Error("Model " + currentModel + " via FreeLLMAPI did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
         }
         throw error;
       } finally {
