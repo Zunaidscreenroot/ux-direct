@@ -139,7 +139,7 @@ export async function POST(request: Request) {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", Accept: "application/json",
-          "HTTP-Referer": new URL(request.url).origin, "X-FreeLLMAPI-Title": "UX Direct Design Refiner" },
+           },
         body: JSON.stringify({
           model,
           messages: [
