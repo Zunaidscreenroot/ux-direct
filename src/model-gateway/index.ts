@@ -144,6 +144,13 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
     name: "openrouter-auto", baseUrl: openRouterBaseUrl,
     apiKey: env.OPENROUTER_API_KEY, models: ["openrouter/auto"], kind: "paid"
   });
+  // FreeLLMAPI is the preferred upstream. Its /v1/models catalog is used for explicit role selection.
+  const freeLlmBase = trimSlash(env.FREELLMAPI_BASE_URL || "http://127.0.0.1:3001/v1");
+  const freeLlmModels = csv(env.FREELLMAPI_MODELS, "auto");
+  if (env.FREELLMAPI_API_KEY && freeLlmModels.length) providers.push({
+    name: "freellmapi", baseUrl: freeLlmBase,
+    apiKey: env.FREELLMAPI_API_KEY, models: freeLlmModels, kind: "free-tier"
+  });
   const geminiBillingKind = env.GEMINI_BILLING_MODE === "paid" ? "paid" : "free-tier";
   if ((env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) && (geminiBillingKind !== "paid" || paidRoutingReady)) providers.push({
     name: "gemini", baseUrl: trimSlash(env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai"),
