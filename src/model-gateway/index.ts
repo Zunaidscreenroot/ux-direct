@@ -131,18 +131,13 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   // Task routing prefers configured real providers and uses mock only as the last resort.
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
   const paidRoutingReady = env.ALLOW_PAID_MODELS === "true" && Number(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "3000") > 0;
-  // Keep homepage chat's explicit free provider pool separate from paid internal jobs.
-  const openRouterBaseUrl = trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1");
-  const openRouterModels = csv(env.OPENROUTER_MODELS).filter(model => model.endsWith(":free"));
-  if (env.OPENROUTER_API_KEY && openRouterModels.length) providers.push({
-    name: "openrouter", baseUrl: openRouterBaseUrl,
-    apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: "free-tier"
-  });
-  // Internal jobs use OpenRouter Auto Router, which chooses a low-cost available model per request.
-  // This is opt-in and separate from the homepage's explicit :free-only model pool.
-  if (env.OPENROUTER_API_KEY && env.OPENROUTER_AUTO_ROUTING === "true") providers.push({
-    name: "openrouter-auto", baseUrl: openRouterBaseUrl,
-    apiKey: env.OPENROUTER_API_KEY, models: ["openrouter/auto"], kind: "paid"
+  // UX Direct routes all hosted-model inference through the configured FreeLLMAPI gateway.
+  // The gateway is self-hosted; upstream quotas and availability depend on its configured pool.
+  const freeLlmApiBaseUrl = trimSlash(env.FREELLMAPI_BASE_URL || "");
+  const freeLlmApiModels = csv(env.FREELLMAPI_MODELS, "auto");
+  if (freeLlmApiBaseUrl && env.FREELLMAPI_API_KEY && freeLlmApiModels.length) providers.push({
+    name: "freellmapi", baseUrl: freeLlmApiBaseUrl,
+    apiKey: env.FREELLMAPI_API_KEY, models: freeLlmApiModels, kind: "free-tier"
   });
   const geminiBillingKind = env.GEMINI_BILLING_MODE === "paid" ? "paid" : "free-tier";
   if ((env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) && (geminiBillingKind !== "paid" || paidRoutingReady)) providers.push({
@@ -190,6 +185,7 @@ const GROQ_PRICE_SOURCE = "https://console.groq.com/docs/models";
 export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEntry[] {
   const base: Omit<ModelCatalogEntry, "configured">[] = [
     { id: "mock/ux-direct", provider: "mock", label: "UX Direct deterministic mock", tier: "mock", tasks: ["tests","scaffolding"], notes: "No credentials, network, model inference, or billing." },
+    { id: "auto", provider: "freellmapi", label: "FreeLLMAPI Auto · free-first routing", tier: "free-tier", tasks: ["reasoning","critique","information architecture","structured output","vision","summaries"], notes: "FreeLLMAPI selects an available model from its configured upstream pool; quotas and capabilities depend on the local gateway configuration." },
     { id: "qwen2.5:7b", provider: "ollama", label: "Qwen 2.5 7B · local", tier: "local", tasks: ["classification","extraction","summaries"], notes: "Local compute; install/download with Ollama." },
     { id: "gemma4:31b", provider: "ollama", label: "Gemma 4 31B · local", tier: "local", tasks: ["ux critique","reasoning","vision"], notes: "Large local model; hardware requirements can be substantial." },
     { id: "gemini-3.5-flash", provider: "gemini", label: "Gemini 3.5 Flash", tier: "free-tier", tasks: ["reasoning","summaries","vision"], notes: "Free tier where available; standard paid reference $1.50 input / $9.00 output per 1M tokens.", usdInputPerMillion: 1.5, usdOutputPerMillion: 9, pricingSource: GOOGLE_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
@@ -200,17 +196,6 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
     { id: "openai/gpt-oss-120b", provider: "groq", label: "GPT OSS 120B · Groq", tier: "free-tier", tasks: ["reasoning","critique","structured output"], notes: "Free quotas may apply. Published paid price $0.15 input / $0.60 output per 1M tokens.", usdInputPerMillion: .15, usdOutputPerMillion: .6, pricingSource: GROQ_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
     { id: "openai/gpt-oss-20b", provider: "groq", label: "GPT OSS 20B · Groq", tier: "free-tier", tasks: ["classification","extraction","fast drafts"], notes: "Free quotas may apply. Published paid price $0.075 input / $0.30 output per 1M tokens.", usdInputPerMillion: .075, usdOutputPerMillion: .3, pricingSource: GROQ_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
     { id: "gpt-oss-120b", provider: "cerebras", label: "GPT OSS 120B · Cerebras", tier: "free-tier", tasks: ["reasoning","critique"], notes: "Check model ID and available quota in your account." },
-    { id: "apodex/apodex-1.1-mini:free", provider: "openrouter", label: "Apodex 1.1 Mini · OpenRouter free", tier: "free-tier", tasks: ["reasoning","research","summaries"], notes: "Explicit :free model; free availability and rate limits may change." },
-    { id: "openrouter/auto", provider: "openrouter-auto", label: "OpenRouter Auto · low-cost routing", tier: "paid", tasks: ["reasoning","critique","information architecture","structured output"], notes: "OpenRouter selects a currently available low-cost model for each request; the selected model can change." },
-    { id: "nvidia/nemotron-3-ultra-550b-a55b:free", provider: "openrouter", label: "NVIDIA Nemotron 3 Ultra · free", tier: "free-tier", tasks: ["reasoning","planning","research"], notes: "Current OpenRouter free model; very large reasoning model. Free provider endpoints have rate limits and may log inputs." , pricingSource: "https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b:free", pricingReviewedAt: "2026-10-11" },
-    { id: "poolside/laguna-s-2.1:free", provider: "openrouter", label: "Poolside Laguna S 2.1 · free", tier: "free-tier", tasks: ["coding","agentic coding","reasoning"], notes: "Free hosted endpoint; provider terms may allow use of prompts/outputs for model improvement. Do not send confidential client data without approval.", pricingSource: "https://openrouter.ai/poolside/laguna-s-2.1:free", pricingReviewedAt: "2026-10-11" },
-    { id: "nvidia/nemotron-3.5-lightning:free", provider: "openrouter", label: "NVIDIA Nemotron 3.5 Lightning · free", tier: "free-tier", tasks: ["classification","extraction","high-volume agents"], notes: "Low-cost/high-throughput workload candidate; verify current free endpoint availability.", pricingSource: "https://openrouter.ai/nvidia/nemotron-3.5-lightning:free", pricingReviewedAt: "2026-10-11" },
-    { id: "nvidia/nemotron-3-super-120b-a12b:free", provider: "openrouter", label: "NVIDIA Nemotron 3 Super · free", tier: "free-tier", tasks: ["reasoning","legal","translation","multi-agent"], notes: "Free hosted endpoint; rate limits and uptime are provider-dependent.", pricingSource: "https://openrouter.ai/nvidia/nemotron-3-super-120b-a12b:free", pricingReviewedAt: "2026-10-11" },
-    { id: "thinkingmachines/inkling:free", provider: "openrouter", label: "Thinking Machines Inkling · free", tier: "free-tier", tasks: ["reasoning","coding","multimodal","vision"], notes: "Free multimodal option; check current endpoint input modalities and account terms.", pricingSource: "https://openrouter.ai/thinkingmachines/inkling:free", pricingReviewedAt: "2026-10-11" },
-    { id: "cohere/north-mini-code:free", provider: "openrouter", label: "Cohere North Mini Code · free", tier: "free-tier", tasks: ["coding","agentic coding","structured output"], notes: "Free code-agent endpoint; availability and rate limits can change.", pricingSource: "https://openrouter.ai/cohere/north-mini-code:free", pricingReviewedAt: "2026-10-11" },
-    { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", provider: "openrouter", label: "NVIDIA Nemotron Nano Omni · free", tier: "free-tier", tasks: ["vision","screen analysis","multimodal","summaries"], notes: "Free multimodal endpoint for text/image/video/audio understanding; verify endpoint modalities.", pricingSource: "https://openrouter.ai/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", pricingReviewedAt: "2026-10-11" },
-    { id: "google/gemma-4-31b-it:free", provider: "openrouter", label: "Gemma 4 31B · OpenRouter free", tier: "free-tier", tasks: ["reasoning","critique","vision","document understanding"], notes: "Verify exact free endpoint availability before activation." },
-    { id: "google/gemma-4-26b-a4b-it:free", provider: "openrouter", label: "Gemma 4 26B A4B · OpenRouter free", tier: "free-tier", tasks: ["classification","extraction","summaries","vision"], notes: "Verify exact free endpoint availability before activation." },
     { id: "deepseek-flash", provider: "deepseek", label: "DeepSeek V4.1 Flash", tier: "paid", tasks: ["classification","extraction","reasoning","vision","summaries"], notes: "Peak-hour conservative rate reference: $0.30 input / $1.20 output per 1M tokens. Off-peak/cached input may be cheaper; API price varies by UTC time.", usdInputPerMillion: .30, usdOutputPerMillion: 1.20, pricingSource: "https://api-docs.deepseek.com/quick_start/pricing/", pricingReviewedAt: "2026-10-11" },
     { id: "deepseek-v4-pro", provider: "deepseek", label: "DeepSeek V4 Pro", tier: "paid", tasks: ["reasoning","critique","complex planning","summaries"], notes: "Peak-hour conservative rate reference: $1.32 input / $3.96 output per 1M tokens. Off-peak/cached input may be cheaper; API price varies by UTC time.", usdInputPerMillion: 1.32, usdOutputPerMillion: 3.96, pricingSource: "https://api-docs.deepseek.com/quick_start/pricing/", pricingReviewedAt: "2026-10-11" },
     { id: "gpt-4o-mini", provider: "openai", label: "OpenAI GPT-4o mini", tier: "paid", tasks: ["classification","extraction","reasoning","vision"], notes: "Published text-token price $0.15 input / $0.60 output per 1M tokens; tool-specific charges may apply.", usdInputPerMillion: .15, usdOutputPerMillion: .6, pricingSource: "https://developers.openai.com/api/docs/models/gpt-4o-mini", pricingReviewedAt: "2026-10-11" }
@@ -235,7 +220,7 @@ export function resolveProvider(model: string, providers: ProviderConfig[]): Pro
   if (defaults.length === 1) return defaults[0];
   const prefix = model.includes("/") ? model.split("/", 1)[0].toLowerCase() : "";
   const byName = providers.find(provider => provider.name.toLowerCase() === prefix);
-  if (byName && byName.models.includes("openrouter/auto")) return byName;
+  if (byName && byName.models.includes("auto")) return byName;
   throw new GatewayError(`Model "${model}" is not configured in the gateway allowlist.`, 400);
 }
 
@@ -339,13 +324,13 @@ export async function chatCompletion(
 
   const exactKey=modelKey(provider.name,model);
   const modelPolicy=settings.models[exactKey]??getDefaultModelPolicy(provider.name,model,effective.usdInputPerMillion??0,effective.usdOutputPerMillion??0,settings.usdToInrRate);
-  const isOpenRouterAuto=provider.name==="openrouter-auto"&&model==="openrouter/auto";
+  const isGatewayAutoRouter=provider.name==="freellmapi"&&model==="auto";
   const billable=policy.mode==="paid";
   if(billable){
-    if(!settings.paidRoutingEnabled||(!isOpenRouterAuto&&process.env.ALLOW_PAID_MODELS!=="true"))throw new GatewayError("Model routing is disabled in the server configuration.",403,provider.name);
-    // OpenRouter Auto applies a low-cost routing tier and per-token price ceilings.
+    if(!settings.paidRoutingEnabled||(!isGatewayAutoRouter&&process.env.ALLOW_PAID_MODELS!=="true"))throw new GatewayError("Model routing is disabled in the server configuration.",403,provider.name);
+    // FreeLLMAPI Auto applies a low-cost routing tier and per-token price ceilings.
     // It doesn't require a fixed model-price table or an invented monthly budget.
-    if(!isOpenRouterAuto){
+    if(!isGatewayAutoRouter){
       if(model.endsWith(":free")||modelPolicy.inputPriceInrPerMillion<=0||modelPolicy.outputPriceInrPerMillion<=0)throw new GatewayError("Configure exact-model input/output pricing before enabling this route.",400,provider.name);
       if(policy.monthlyBudgetInr<=0||modelPolicy.monthlyBudgetInr<=0||policy.maxRequestCostInr<=0||modelPolicy.maxRequestCostInr<=0)throw new GatewayError("Assign a module/model budget and per-request cap before enabling this route.",402,provider.name);
     }
@@ -353,7 +338,7 @@ export async function chatCompletion(
   const started=Date.now();
   const requestId=request.requestId??crypto.randomUUID();
   const usageStore=await import("./usage-store");
-  if(billable&&!isOpenRouterAuto){
+  if(billable&&!isGatewayAutoRouter){
     try{
       await usageStore.assertBudgetAllows(promptChars,request.max_tokens??1024,process.env,model,{
         moduleId,modelKey:exactKey,inputPriceInrPerMillion:modelPolicy.inputPriceInrPerMillion,
@@ -373,7 +358,7 @@ export async function chatCompletion(
   const fetchImpl=options.fetchImpl??fetch;
   const controller=new AbortController();
   // Complex IA/UX analysis needs more headroom than a short chat completion.
-  const timeoutMs=options.timeoutMs??(isOpenRouterAuto?120_000:45_000);
+  const timeoutMs=options.timeoutMs??(isGatewayAutoRouter?120_000:45_000);
   let timedOut=false;
   let requestCancelled=false;
   const timeout=setTimeout(()=>{timedOut=true;controller.abort();},timeoutMs);
@@ -393,8 +378,8 @@ export async function chatCompletion(
       ...(request.temperature!==undefined?{temperature:request.temperature}:{}),
       ...(request.max_tokens!==undefined?{max_tokens:request.max_tokens}:{}),
       ...(request.response_format?{response_format:request.response_format}:{}),
-      ...(isOpenRouterAuto?{
-        // No fixed model list, exclusions, or token-price ceiling: ask OpenRouter
+      ...(isGatewayAutoRouter?{
+        // No fixed model list, exclusions, or token-price ceiling: ask FreeLLMAPI
         // to choose a capable low-cost model, then prefer a high-throughput endpoint.
         plugins:[{id:"auto-router",cost_tier:"low"}],
         provider:{sort:"throughput"},
@@ -457,22 +442,22 @@ export async function chatCompletion(
     }
     const latencyMs=Date.now()-started;const tokenUsage=usageStore.tokenUsageValues(payload.usage);
     const modelUsed=typeof payload.model==="string"?payload.model:model;
-    const reportedUsdCost=isOpenRouterAuto&&typeof payload.usage?.cost==="number"&&Number.isFinite(payload.usage.cost)&&payload.usage.cost>=0?payload.usage.cost:null;
+    const reportedUsdCost=isGatewayAutoRouter&&typeof payload.usage?.cost==="number"&&Number.isFinite(payload.usage.cost)&&payload.usage.cost>=0?payload.usage.cost:null;
     const estimatedCostInr=reportedUsdCost!==null
       ?Number((reportedUsdCost*usdToInrRate).toFixed(6))
       :tokenUsage.usageReported
         ?usageStore.estimateCostInr(tokenUsage.promptTokens,tokenUsage.completionTokens,provider,process.env,modelUsed,rates)
         :usageStore.estimateCostInr(Math.ceil(promptChars/4),request.max_tokens??1024,provider,process.env,modelUsed,rates);
-    const usageTier=billable?(isOpenRouterAuto&&modelUsed.endsWith(":free")?"free-tier":"paid"):(modelUsed.endsWith(":free")||policy.mode==="free"||provider.kind==="free-tier"?"free-tier":provider.kind??"paid");
-    await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model:modelUsed,tier:usageTier,...tokenUsage,estimatedCostInr,latencyMs,status:"success",note:tokenUsage.usageReported?(reportedUsdCost!==null?"OpenRouter-reported cost converted to INR.":undefined):"Provider did not return token usage; cost is estimated using configured model prices where available."});
+    const usageTier=billable?(isGatewayAutoRouter&&modelUsed.endsWith(":free")?"free-tier":"paid"):(modelUsed.endsWith(":free")||policy.mode==="free"||provider.kind==="free-tier"?"free-tier":provider.kind??"paid");
+    await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model:modelUsed,tier:usageTier,...tokenUsage,estimatedCostInr,latencyMs,status:"success",note:tokenUsage.usageReported?(reportedUsdCost!==null?"FreeLLMAPI-reported cost converted to INR.":undefined):"Provider did not return token usage; cost is estimated using configured model prices where available."});
     return {id:typeof payload.id==="string"?payload.id:undefined,model:modelUsed,content,usage:payload.usage,provider:provider.name,latencyMs};
   }catch(error){
     const failure=error instanceof GatewayError?error:controller.signal.aborted
       ?new GatewayError(
-        timedOut?"OpenRouter request timed out after "+Math.round(timeoutMs/1000)+" seconds.":requestCancelled?"Model request was cancelled by the client.":"Model request was aborted.",
+        timedOut?"FreeLLMAPI request timed out after "+Math.round(timeoutMs/1000)+" seconds.":requestCancelled?"Model request was cancelled by the client.":"Model request was aborted.",
         timedOut?504:499,provider.name)
       :new GatewayError(error instanceof Error?error.message:"Unknown provider error.",502,provider.name);
-    await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model,tier:billable?"paid":(model.endsWith(":free")||policy.mode==="free"||provider.kind==="free-tier"?"free-tier":provider.kind??"paid"),promptTokens:0,completionTokens:0,totalTokens:0,usageReported:false,estimatedCostInr:billable?usageStore.estimateCostInr(Math.ceil(promptChars/4),request.max_tokens??1024,provider,process.env,model,rates):0,latencyMs:Date.now()-started,status:"error",note:failure.message+(isOpenRouterAuto?" OpenRouter usage cost is unverified because provider usage data was unavailable.":" Usage unavailable; paid cost is a conservative estimate.")});
+    await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model,tier:billable?"paid":(model.endsWith(":free")||policy.mode==="free"||provider.kind==="free-tier"?"free-tier":provider.kind??"paid"),promptTokens:0,completionTokens:0,totalTokens:0,usageReported:false,estimatedCostInr:billable?usageStore.estimateCostInr(Math.ceil(promptChars/4),request.max_tokens??1024,provider,process.env,model,rates):0,latencyMs:Date.now()-started,status:"error",note:failure.message+(isGatewayAutoRouter?" FreeLLMAPI usage cost is unverified because provider usage data was unavailable.":" Usage unavailable; paid cost is a conservative estimate.")});
     throw failure;
   }finally{clearTimeout(timeout);request.signal?.removeEventListener("abort",abort);}
 }
