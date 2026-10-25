@@ -35,7 +35,7 @@ export async function GET(request: Request) {
       headers: { Authorization: "Bearer " + key },
       cache: "no-store",
       signal: AbortSignal.timeout(8000),
-    }) : Promise.reject(new Error("OPENROUTER_API_KEY is not configured on the server.")),
+    }) : Promise.reject(new Error("FREELLMAPI_BASE_URL and FREELLMAPI_API_KEY are not both configured on the server.")),
     fetch(auditBase + "/", { cache: "no-store", signal: AbortSignal.timeout(5000) }),
     process.env.UX_DIRECT_BRAIN_API_KEY ? fetch(new URL("/api/brain/health", process.env.UX_DIRECT_PUBLIC_URL || "https://ux-direct.zunaid-cb7.workers.dev"), {
       headers: { Authorization: "Bearer " + process.env.UX_DIRECT_BRAIN_API_KEY },
