@@ -165,8 +165,7 @@ export async function POST(request: Request) {
           ],
 
           temperature: 0.1,
-          // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
-          ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
+
           max_tokens: 3200,
           response_format: { type: "json_object" },
         }),
