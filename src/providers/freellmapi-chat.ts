@@ -1,9 +1,3 @@
-const EXPLICIT_FREE_MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:/-]*:free$/i;
-
-export function isFreeModelId(value: unknown): value is string {
-  return typeof value === "string" && EXPLICIT_FREE_MODEL_ID.test(value.trim());
-}
-
 export type ChatPromptMessage = { role: "user" | "assistant"; content: string };
 export type ChatPromptLimits = { maxMessages?: number; maxTotalChars?: number; maxMessageChars?: number };
 
@@ -39,26 +33,6 @@ export function compactRecentMessages(
     totalChars += content.length;
   }
   return selected.reverse();
-}
-
-export function collectFreeModelCandidates(
-  primary: string,
-  configuredModels: string[],
-  discoveredModels: string[],
-  maxCandidates = 3,
-): string[] {
-  const values = [
-    primary,
-    ...configuredModels.flatMap((value) => value.split(",")),
-    ...discoveredModels,
-  ];
-  const unique: string[] = [];
-  for (const value of values) {
-    const model = typeof value === "string" ? value.trim() : "";
-    if (isFreeModelId(model) && !unique.includes(model)) unique.push(model);
-    if (unique.length >= Math.max(1, Math.min(3, Math.floor(maxCandidates)))) break;
-  }
-  return unique;
 }
 
 /** Returns true only for non-empty assistant text in a complete OpenAI-compatible SSE data line. */
