@@ -501,9 +501,7 @@ export async function POST(request: Request) {
     "Do not include a learningCandidate unless there is a durable reusable lesson. If none, set learningCandidate:null.",
   ].join("\n");
   const generationStartedAt = Date.now();
-  // FreeLLMAPI sends HTTP 200 headers immediately and the body only once the full plan is
-  // generated, so each attempt needs room for a complete multi-thousand-token plan. One shared
-  // deadline keeps the sequential chain bounded.
+  // Allow sufficient time for FreeLLMAPI to return a complete structured plan.
   const generationDeadlineMs = 270000;
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
@@ -548,10 +546,6 @@ export async function POST(request: Request) {
               { role: "user", content: userContent },
             ],
 
-            ...(model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}),
-            ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
-            // Qwen 3.5 thinks by default; unbounded reasoning spends the attempt before any JSON is written.
-            ...(model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}),
             max_tokens: isRecovery ? 6000 : 9000,
             // JSON mode is enabled for the first attempt. Compact retries use normal text mode
             // because some provider/model routes have returned successful but empty choices.
