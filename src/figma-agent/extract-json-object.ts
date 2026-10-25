@@ -63,7 +63,7 @@ function parseJsonRecordText(text: string): JsonRecord | null {
 }
 
 /**
- * Parses arbitrary structured JSON responses from OpenRouter's compatible API.
+ * Parses arbitrary structured JSON responses from FreeLLMAPI's OpenAI-compatible API.
  * Accepts plain JSON, fenced/prefixed JSON, parsed payloads, text content blocks,
  * and tool/function-call arguments. It intentionally does not assume a particular
  * task schema; each endpoint validates its own required fields after extraction.
