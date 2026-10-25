@@ -410,8 +410,6 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            "HTTP-Referer": origin,
-
           },
           body: JSON.stringify({
             model: currentModel,
