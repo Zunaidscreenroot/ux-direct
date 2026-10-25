@@ -256,8 +256,9 @@
         roles.forEach(function (role) {
           const select = modelRoleSelects[role[0]];
           const eligible = availableModels.filter(role[1]);
-          const list = eligible.length ? eligible : availableModels;
+          const list = eligible;
           select.replaceChildren();
+          if (!list.length) select.appendChild(new Option("No compatible model", ""));
           list.forEach(function (model) {
             const option = document.createElement("option");
             option.value = model.id;
