@@ -39,7 +39,7 @@ The supported operations are an explicit allowlist. The agent does not execute a
 
 ## Model routing and cost
 
-Figma generation and direct action planning use OpenRouter Auto first with the LOW cost tier, followed by explicit vision-capable fallbacks in cost order when a response is missing or invalid. Fallbacks are sequential, not parallel. Full screenshot QA/repair is conditional on the quality gate, so stronger review is reserved for outputs that need it.
+Figma generation and direct action planning use the configured FreeLLMAPI Auto route. The router selects from its configured upstream pool; ensure the selected profile supports vision and structured JSON output. Fallbacks are sequential, not parallel. Full screenshot QA/repair is conditional on the quality gate, so stronger review is reserved for outputs that need it.
 
 The API key stays on the backend; it is not exposed to the Figma plugin UI.
 
