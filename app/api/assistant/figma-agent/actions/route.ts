@@ -318,7 +318,7 @@ export async function POST(request: Request) {
       const response = await fetch(baseUrl + "/chat/completions", {
         method: "POST",
         headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json", Accept: "application/json",
-          "HTTP-Referer": new URL(request.url).origin, "X-FreeLLMAPI-Title": "UX Direct Native Figma Actions" },
+           },
         body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content }],
 
           ...(model.startsWith("google/gemini-") ? { temperature: 0.1 } : {}),
