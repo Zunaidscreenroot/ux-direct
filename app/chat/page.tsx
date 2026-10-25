@@ -175,7 +175,7 @@ export default function ChatWorkspace() {
     const text = (value ?? draft).trim();
     if (!text || busy) return;
     if (!status?.connected || !selectedModel) {
-      setChatError("OpenRouter Auto is not ready. Refresh the connection status and check the OpenRouter connection.");
+      setChatError("FreeLLMAPI Auto is not ready. Refresh the connection status and check the FreeLLMAPI connection.");
       return;
     }
     const conversation = [...messages, { id: crypto.randomUUID(), role: "user" as const, content: text }];
@@ -208,7 +208,7 @@ export default function ChatWorkspace() {
       };
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        throw new Error(typeof payload.error === "string" ? payload.error : "OpenRouter returned HTTP " + response.status + ".");
+        throw new Error(typeof payload.error === "string" ? payload.error : "FreeLLMAPI returned HTTP " + response.status + ".");
       }
       if (!response.body) throw new Error("The model response stream was empty.");
       const reader = response.body.getReader();
@@ -245,7 +245,7 @@ export default function ChatWorkspace() {
       buffer += decoder.decode();
       if (buffer.trim()) consumeLine(buffer);
       if (!fullText.trim() && !controller.signal.aborted) {
-        setMessages([...conversation, { id: assistantId, role: "assistant", content: "OpenRouter Auto returned no readable text. Please try again.", brain: brainTrace }]);
+        setMessages([...conversation, { id: assistantId, role: "assistant", content: "FreeLLMAPI Auto returned no readable text. Please try again.", brain: brainTrace }]);
       }
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -289,7 +289,7 @@ export default function ChatWorkspace() {
         <div className="ud-sidebar-bottom">
           <div className="ud-user-dot">Z</div>
           <div className="ud-user-copy"><strong>UX Intelligence</strong><span>Shared brain enabled</span></div>
-          <span className={"ud-live-dot" + (status?.connected ? " online" : "")} title={status?.connected ? "OpenRouter connected" : "OpenRouter not connected"} />
+          <span className={"ud-live-dot" + (status?.connected ? " online" : "")} title={status?.connected ? "FreeLLMAPI connected" : "FreeLLMAPI not connected"} />
         </div>
       </aside>
 
@@ -301,7 +301,7 @@ export default function ChatWorkspace() {
           </div>
           <div className="ud-breadcrumb"><span>Workspace</span><b>/</b><strong>{activeTitle}</strong></div>
           <div className="ud-top-actions">
-            <span className={"ud-provider-chip" + (status?.connected ? " connected" : status ? " disconnected" : "")}><i />{status?.connected ? "OpenRouter · Auto" : statusBusy ? "Connecting…" : "Connection needed"}</span>
+            <span className={"ud-provider-chip" + (status?.connected ? " connected" : status ? " disconnected" : "")}><i />{status?.connected ? "FreeLLMAPI · Auto" : statusBusy ? "Connecting…" : "Connection needed"}</span>
             <button className="ud-icon-button" onClick={() => void refreshStatus()} title="Refresh service connections" aria-label="Refresh service connections">↻</button>
             <div className="ud-avatar">Z</div>
           </div>
@@ -322,7 +322,7 @@ export default function ChatWorkspace() {
               <button onClick={() => void sendText("Review this UX problem like a senior designer. Help me frame evidence, severity, and recommendations.")}><span>✦</span><strong>Think through a UX problem</strong><small>Reason about evidence, severity, and trade-offs.</small><b>↗</b></button>
             </div>
           </div> : <div className="ud-messages">
-            <div className="ud-thread-heading"><span className="ud-thread-mark">◌</span><div><strong>UX Direct</strong><small>OpenRouter Auto · low cost, throughput-prioritized</small></div><button onClick={newChat}>New chat ＋</button></div>
+            <div className="ud-thread-heading"><span className="ud-thread-mark">◌</span><div><strong>UX Direct</strong><small>FreeLLMAPI Auto · low cost, throughput-prioritized</small></div><button onClick={newChat}>New chat ＋</button></div>
             {messages.map((message) => <article className={"ud-message " + message.role} key={message.id}>
               <div className={"ud-message-avatar " + message.role}>{message.role === "assistant" ? "u" : "Z"}</div>
               <div className="ud-message-body"><div className="ud-message-role">{message.role === "assistant" ? "UX Direct" : "You"}</div><div className="ud-message-text">{message.content || (busy && message.role === "assistant" ? <span className="ud-typing"><i /><i /><i /></span> : "")}</div>{message.brain && <div className="ud-message-meta"><span className={message.brain.status === "complete" && (message.brain.memoryCount + message.brain.knowledgeChunkCount) > 0 ? "retrieval-ok" : "retrieval-note"}>{message.brain.status === "complete" ? "Shared brain · " + message.brain.memoryCount + " memories · " + message.brain.knowledgeChunkCount + " references" : message.brain.status === "empty" ? "Shared brain · no matching approved context" : message.brain.status === "disabled" ? "Shared brain · API key not configured" : message.brain.status === "degraded" ? "Shared brain · retrieval unavailable" : "Shared brain · status not reported"}</span>{message.brain.model && <span>Model · {message.brain.model.split("/").slice(-1)[0].replace(/:free$/, "")}</span>}{message.brain.learningStatus === "learned" && <span>Learning · added to shared memory</span>}{message.brain.learningStatus === "skipped_sensitive" && <span>Learning · sensitive content not stored</span>}{message.brain.learningStatus === "failed" && <span>Learning · capture failed</span>}</div>}</div>
@@ -332,16 +332,16 @@ export default function ChatWorkspace() {
           <div className="ud-composer-zone">
             {chatError && <div className="ud-chat-error" role="alert">{chatError}</div>}
             <form className="ud-composer" onSubmit={onSubmit}>
-              <textarea ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onComposerKeyDown} placeholder={status?.connected ? "Message UX Direct…" : "Connecting to OpenRouter…"} rows={1} aria-label="Message UX Direct" disabled={statusBusy} />
+              <textarea ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onComposerKeyDown} placeholder={status?.connected ? "Message UX Direct…" : "Connecting to FreeLLMAPI…"} rows={1} aria-label="Message UX Direct" disabled={statusBusy} />
               <div className="ud-composer-bottom">
                 <div className="ud-composer-meta">
                   <span className="ud-mode-tag"><i /> LOW-COST AUTO</span>
-                  <label className="ud-model-select-label"><span>Model</span><select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={!status?.models.length} aria-label="OpenRouter routing mode">{status?.models.map((model) => <option value={model.id} key={model.id}>{model.name}</option>)}</select></label>
+                  <label className="ud-model-select-label"><span>Model</span><select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={!status?.models.length} aria-label="FreeLLMAPI routing mode">{status?.models.map((model) => <option value={model.id} key={model.id}>{model.name}</option>)}</select></label>
                 </div>
                 {busy ? <button type="button" className="ud-send-button stop" onClick={() => abortRef.current?.abort()}><span>■</span> Stop</button> : <button type="submit" className="ud-send-button" disabled={!draft.trim() || !status?.connected || !selectedModel} aria-label="Send message"><span>↑</span></button>}
               </div>
             </form>
-            <p className="ud-disclaimer">UX Direct lets OpenRouter choose a suitable model in its low-cost band and prioritizes throughput. The selected model and actual usage cost can vary.</p>
+            <p className="ud-disclaimer">UX Direct lets FreeLLMAPI choose a suitable model in its low-cost band and prioritizes throughput. The selected model and actual usage cost can vary.</p>
           </div>
         </section>}
 
@@ -364,7 +364,7 @@ export default function ChatWorkspace() {
         {activeTab === "connections" && <section className="ud-connections-workspace">
           <div className="ud-page-overline">SYSTEM STATUS</div><div className="ud-connections-heading"><div><h1>Connections.</h1><p>Your AI model, audit engine, and shared brain — in one place.</p></div><button className="ud-secondary-button" onClick={() => void refreshStatus()} disabled={statusBusy}>{statusBusy ? "Checking…" : "Check again ↻"}</button></div>
           <div className="ud-connection-grid">
-            <article className="ud-connection-card"><div className="ud-connection-card-top"><span className="ud-connection-icon purple">◎</span><span className={"ud-status-pill " + (status?.connected ? "ok" : "error")}>{status?.connected ? "Connected" : statusBusy ? "Checking" : "Needs attention"}</span></div><h2>OpenRouter Auto routing</h2><p>OpenRouter selects a suitable model dynamically, prioritizes its low-cost band, and prefers higher-throughput endpoints. No fixed model allowlist or app-imposed spending budget is sent; actual cost depends on the selected model.</p><dl><div><dt>Routing policy</dt><dd>Low cost + throughput</dd></div><div><dt>Model choice</dt><dd>Managed by OpenRouter</dd></div><div><dt>Last check</dt><dd>{status?.checkedAt ? new Date(status.checkedAt).toLocaleTimeString() : "Not checked"}</dd></div></dl>{status?.error && <p className="ud-connection-error">{status.error}</p>}</article>
+            <article className="ud-connection-card"><div className="ud-connection-card-top"><span className="ud-connection-icon purple">◎</span><span className={"ud-status-pill " + (status?.connected ? "ok" : "error")}>{status?.connected ? "Connected" : statusBusy ? "Checking" : "Needs attention"}</span></div><h2>FreeLLMAPI Auto routing</h2><p>FreeLLMAPI selects a suitable model dynamically, prioritizes its low-cost band, and prefers higher-throughput endpoints. No fixed model allowlist or app-imposed spending budget is sent; actual cost depends on the selected model.</p><dl><div><dt>Routing policy</dt><dd>Low cost + throughput</dd></div><div><dt>Model choice</dt><dd>Managed by FreeLLMAPI</dd></div><div><dt>Last check</dt><dd>{status?.checkedAt ? new Date(status.checkedAt).toLocaleTimeString() : "Not checked"}</dd></div></dl>{status?.error && <p className="ud-connection-error">{status.error}</p>}</article>
             <article className="ud-connection-card"><div className="ud-connection-card-top"><span className="ud-connection-icon green">⌘</span><span className={"ud-status-pill " + (status?.uxAudit.reachable ? "ok" : "error")}>{status?.uxAudit.reachable ? "Reachable" : statusBusy ? "Checking" : "Unavailable"}</span></div><h2>UX Audit engine</h2><p>The existing audit product is embedded here. It remains a separate backend Worker, but you do not need to open it as a second product.</p><dl><div><dt>Service</dt><dd>Cloudflare Worker</dd></div><div><dt>Workspace route</dt><dd>/#audit</dd></div><div><dt>Audit endpoint</dt><dd>Server-side</dd></div></dl>{!status?.uxAudit.reachable && <p className="ud-connection-error">{status?.uxAudit.error || "Audit worker did not respond during the last check."}</p>}</article>
             <article className="ud-connection-card"><div className="ud-connection-card-top"><span className="ud-connection-icon cyan">✦</span><span className={"ud-status-pill " + (status?.brain.reachable ? "ok" : "muted")}>{status?.brain.reachable ? "Reachable" : statusBusy ? "Checking" : "Not verified"}</span></div><h2>Shared Knowledge Brain</h2><p>Approved shared context is retrieved for chat when the server-side brain key is configured. Chat continues if memory retrieval is temporarily unavailable.</p><dl><div><dt>Memory context</dt><dd>{status?.brain.reachable ? "Available" : "Best effort"}</dd></div><div><dt>Scope</dt><dd>UX Direct + UX Audit</dd></div><div><dt>Retrieval tests</dt><dd>{status?.brain.retrievalRegressionTests?.configuredCases ? status.brain.retrievalRegressionTests.configuredCases + " configured · " + (status.brain.retrievalRegressionTests.status === "not_run" ? "not run" : status.brain.retrievalRegressionTests.status) : status?.brain.retrievalRegressionTests?.status === "not_configured" ? "Not configured" : "Not verified"}</dd></div><div><dt>Last evaluation</dt><dd>{status?.brain.retrievalRegressionTests?.lastRunAt ? status.brain.retrievalRegressionTests.passed + "/" + status.brain.retrievalRegressionTests.configuredCases + " passed · " + new Date(status.brain.retrievalRegressionTests.lastRunAt).toLocaleTimeString() : "Not run yet"}</dd></div><div><dt>Retrieval mode</dt><dd>Postgres full-text · no model call</dd></div></dl><button className="ud-secondary-button" onClick={() => void runRetrievalRegressionTests()} disabled={!status?.brain.reachable || regressionBusy}>{regressionBusy ? "Running retrieval tests…" : "Run retrieval tests ↻"}</button>{regressionNotice && <p className="ud-connection-error" role="status">{regressionNotice}</p>}</article>
           </div>
