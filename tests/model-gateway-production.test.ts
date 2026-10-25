@@ -75,7 +75,7 @@ test("legacy gateway credentials remain server-only and are not saved in browser
 test("The configured free-model catalog stays available separately from dynamic low-cost routing", () => {
   const env = read(".env.example");
   assert.ok(env.includes("OPENROUTER_MODELS=google/gemma-4-31b-it:free"));
-  assert.ok(env.includes("OPENROUTER_AUTO_ROUTING=true"));
+  assert.ok(env.includes("OPENROUTER_AUTO_ROUTING=false"));
   assert.ok(env.includes("OPENROUTER_AUTO_ROUTING=true"));
   assert.ok(!env.includes("OPENROUTER_AUTO_MAX_INPUT_USD_PER_1M"));
   assert.ok(!env.includes("OPENROUTER_AUTO_MAX_OUTPUT_USD_PER_1M"));
