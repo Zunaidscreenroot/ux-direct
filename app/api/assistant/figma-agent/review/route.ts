@@ -211,7 +211,7 @@ export async function POST(request: Request) {
   if (outputImage) userContent.push({ type: "image_url", image_url: { url: outputImage } });
 
   const endpoint = freeLlmBaseUrl() + "/chat/completions";
-  // Visual QA uses the same explicit quality-first OpenRouter routes as design generation.
+  // Visual QA uses the user-selected vision specialist model.
   const selectedVisionModel = parsed.data.visionModel || "";
   try { if (selectedVisionModel) await resolveFreeLlmModel(selectedVisionModel, "vision"); }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid vision model." }, { status: 400, headers }); }
@@ -227,8 +227,6 @@ export async function POST(request: Request) {
           Authorization: "Bearer " + apiKey,
           "Content-Type": "application/json",
           Accept: "application/json",
-          "HTTP-Referer": new URL(request.url).origin,
-          "X-OpenRouter-Title": "UX Direct Visual QA",
         },
         body: JSON.stringify({
           model,
