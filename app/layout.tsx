@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "UX Direct — AI UX Partner",
-  description: "A chat-first UX intelligence workspace with free OpenRouter chat, audits, IA discovery, and competitor benchmarking.",
+  description: "A chat-first UX intelligence workspace with FreeLLMAPI-powered chat, audits, IA discovery, and competitor benchmarking.",
 };
 
 export default function RootLayout({

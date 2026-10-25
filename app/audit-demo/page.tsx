@@ -108,7 +108,7 @@ export default function AuditDemoPage() {
           <Link href="/" className="audit-back">← UX Direct cockpit</Link>
           <div className="eyebrow" style={{ marginTop: 24 }}><span className="pulse" /> UX AUDIT & BENCHMARKING</div>
           <h1>Find friction. <em>Show the evidence.</em></h1>
-          <p className="intro">Use the existing OpenRouter Model Gateway to audit supplied screenshots, label evidence regions, calibrate severity against the user goal, and compare named competitor pages.</p>
+          <p className="intro">Use the existing FreeLLMAPI Model Gateway to audit supplied screenshots, label evidence regions, calibrate severity against the user goal, and compare named competitor pages.</p>
         </div>
       </header>
 
@@ -220,7 +220,7 @@ export default function AuditDemoPage() {
         {lighthouseResult ? <div className="audit-lighthouse-result"><p><strong>Provider:</strong> {lighthouseResult.provider} · <strong>Checked:</strong> {new Date(lighthouseResult.checkedAt).toLocaleString()}</p><JsonReport value={lighthouseResult.report} /></div> : null}
       </section>
 
-      <footer className="audit-footer">UX DIRECT <span>·</span> OPENROUTER-POWERED AUDIT / EVIDENCE-BASED BENCHMARKING</footer>
+      <footer className="audit-footer">UX DIRECT <span>·</span> FREELLMAPI-POWERED AUDIT / EVIDENCE-BASED BENCHMARKING</footer>
       <style jsx global>{`
         .audit-workbench{min-height:100vh;background:#fbfcfa;color:#17211f;padding:42px clamp(18px,4vw,64px) 28px}
         .audit-heading{max-width:1400px;margin:0 auto 28px}.audit-back{color:#466956;text-decoration:none;font-size:12px;font-weight:800}

@@ -5,14 +5,14 @@ export type ModulePolicy = { enabled: boolean; mode: GatewayMode; selectedModelK
 export type ModelPolicy = { monthlyBudgetInr: number; maxRequestCostInr: number; inputPriceInrPerMillion: number; outputPriceInrPerMillion: number };
 export type GatewaySettings = { version: 1; globalMonthlyBudgetInr: number; usdToInrRate: number; paidRoutingEnabled: boolean; modules: Record<string, ModulePolicy>; models: Record<string, ModelPolicy>; updatedAt?: string };
 export const GATEWAY_MODULES = [
-  { id: "reasoning", label: "Reasoning & task planning", description: "OpenRouter-managed low-cost reasoning for internal product workflows.", alias: "uxd/reasoning", tasks: ["reasoning", "task planning", "analysis"], suggestedBudgetShare: 180 },
-  { id: "classification", label: "Classification", description: "Classify and route internal work through OpenRouter's low-cost router.", alias: "uxd/classify", tasks: ["classification", "intent", "routing"], suggestedBudgetShare: 80 },
+  { id: "reasoning", label: "Reasoning & task planning", description: "FreeLLMAPI-managed routing for internal product workflows.", alias: "uxd/reasoning", tasks: ["reasoning", "task planning", "analysis"], suggestedBudgetShare: 180 },
+  { id: "classification", label: "Classification", description: "Classify and route internal work through FreeLLMAPI's configured router.", alias: "uxd/classify", tasks: ["classification", "intent", "routing"], suggestedBudgetShare: 80 },
   { id: "extraction", label: "Structured extraction", description: "Extract fields, requirements, rules and entities.", alias: "uxd/extract", tasks: ["extraction", "structured output", "requirements"], suggestedBudgetShare: 80 },
   { id: "summarization", label: "Summarization", description: "Summarize briefs, notes, research and references.", alias: "uxd/summarize", tasks: ["summaries", "summarization", "long context"], suggestedBudgetShare: 80 },
   { id: "vision", label: "Visual / screen analysis", description: "Interpret screenshots, UI states and visual references.", alias: "uxd/vision", tasks: ["vision", "visual analysis", "screenshots"], suggestedBudgetShare: 100 },
   { id: "critique", label: "UX critique & quality review", description: "Review UX decisions, accessibility, edge cases and consistency.", alias: "uxd/critique", tasks: ["critique", "reasoning", "quality"], suggestedBudgetShare: 120 },
-  { id: "ia-audit", label: "IA architecture review", description: "Evidence-backed analysis of sitemap structure and findability risks, routed by OpenRouter.", alias: "uxd/ia-audit", tasks: ["information architecture", "reasoning", "structured output"], suggestedBudgetShare: 250 },
-  { id: "general", label: "General gateway calls", description: "Reserved for the homepage chat, which uses its own explicit free-only route.", alias: "direct", tasks: ["general", "chat"], suggestedBudgetShare: 50 }
+  { id: "ia-audit", label: "IA architecture review", description: "Evidence-backed analysis of sitemap structure and findability risks, routed by FreeLLMAPI.", alias: "uxd/ia-audit", tasks: ["information architecture", "reasoning", "structured output"], suggestedBudgetShare: 250 },
+  { id: "general", label: "General gateway calls", description: "Reserved for the homepage chat through the configured FreeLLMAPI router.", alias: "direct", tasks: ["general", "chat"], suggestedBudgetShare: 50 }
 ] as const;
 type BlobStore = { get(key: string, options: { type: "json" }): Promise<unknown>; setJSON(key: string, value: unknown): Promise<void> };
 const runtimeSettings = new Map<string, GatewaySettings>();
@@ -43,13 +43,13 @@ function pricePolicy(inputUsd = 0, outputUsd = 0, fx = 97): ModelPolicy {
 }
 export function defaultGatewaySettings(): GatewaySettings {
   const modules: Record<string, ModulePolicy> = {};
-  const autoRouterKey = modelKey("openrouter-auto", "openrouter/auto");
+  const autoRouterKey = modelKey("freellmapi", "auto");
   const testMode = process.env.NODE_ENV === "test";
   for (const m of GATEWAY_MODULES) {
     modules[m.id] = {
       enabled: true,
       mode: testMode ? "free" : "paid",
-      // Internal work uses OpenRouter Auto Router; homepage chat keeps its separate :free-only pool.
+      // Internal work uses FreeLLMAPI Auto router; homepage chat uses the same FreeLLMAPI gateway.
       selectedModelKey: !testMode && m.id !== "general" ? autoRouterKey : "auto",
       monthlyBudgetInr: 0,
       maxRequestCostInr: 0,
@@ -67,15 +67,13 @@ export function defaultGatewaySettings(): GatewaySettings {
     [modelKey("groq", "openai/gpt-oss-20b")]: pricePolicy(.075, .3),
     [modelKey("deepseek", "deepseek-flash")]: pricePolicy(.30, 1.20),
     [modelKey("deepseek", "deepseek-v4-pro")]: pricePolicy(1.32, 3.96),
-    [modelKey("openrouter-auto", "openrouter/auto")]: pricePolicy(),
-    [modelKey("openrouter", "apodex/apodex-1.1-mini:free")]: pricePolicy(),
+    [modelKey("freellmapi", "auto")]: pricePolicy(),
     [modelKey("ollama", "qwen2.5:7b")]: pricePolicy(),
     [modelKey("ollama", "gemma4:31b")]: pricePolicy(),
     [modelKey("cerebras", "gpt-oss-120b")]: pricePolicy(),
     [modelKey("openai", "gpt-4o-mini")]: pricePolicy(.15, .6)
   };
-  const autoRouterConfigured = process.env.OPENROUTER_AUTO_ROUTING === "true" &&
-    Boolean(process.env.OPENROUTER_API_KEY?.trim());
+  const autoRouterConfigured = Boolean(process.env.FREELLMAPI_BASE_URL?.trim() && process.env.FREELLMAPI_API_KEY?.trim());
   return {
     version: 1,
     globalMonthlyBudgetInr: Math.min(1_000_000_000, Math.max(0, Number(process.env.MODEL_GATEWAY_MONTHLY_BUDGET_INR) || 0)),
@@ -98,11 +96,11 @@ function cleanSettings(input: unknown): GatewaySettings {
     const requestedModelKey = typeof c.selectedModelKey === "string" && c.selectedModelKey.length <= 220 ? c.selectedModelKey : base.selectedModelKey;
     modules[m.id] = {
       enabled: typeof c.enabled === "boolean" ? c.enabled : true,
-      // Production internal modules use OpenRouter's cost-optimized router; tests/dev may exercise other modes.
+      // Production internal modules use the configured FreeLLMAPI router; tests/dev may exercise other modes.
       mode: process.env.NODE_ENV === "production" ? "paid" :
         (mode === "free" || mode === "paid" || mode === "local" || mode === "mock" ? mode : base.mode),
-      // Migrate previous fixed OpenRouter selections to the dynamic router alias.
-      selectedModelKey: requestedModelKey.startsWith("openrouter-paid::") ? base.selectedModelKey : requestedModelKey,
+      // Migrate the previous OpenRouter Auto selection to FreeLLMAPI Auto.
+      selectedModelKey: (requestedModelKey.startsWith("openrouter-auto::") || requestedModelKey.startsWith("openrouter::") || requestedModelKey.startsWith("openrouter-paid::")) ? base.selectedModelKey : requestedModelKey,
       monthlyBudgetInr: amount(c.monthlyBudgetInr, base.monthlyBudgetInr),
       maxRequestCostInr: amount(c.maxRequestCostInr, base.maxRequestCostInr),
       allowFallback: typeof c.allowFallback === "boolean" ? c.allowFallback : base.allowFallback

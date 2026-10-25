@@ -75,7 +75,7 @@ function parseJsonText(input: string): unknown {
 }
 
 /**
- * OpenRouter's OpenAI-compatible response can represent structured output as
+ * FreeLLMAPI's OpenAI-compatible response can represent structured output as
  * plain text, an array of text blocks, already-parsed JSON, or function/tool
  * arguments. Normalize those forms into the one native Figma plan shape.
  */

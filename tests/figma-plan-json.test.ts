@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describeModelContent, extractPlanJson } from "../src/figma-agent/extract-plan-json";
-import { FIGMA_AGENT_MODELS } from "../src/providers/openrouter-models";
+import { FIGMA_AGENT_MODELS } from "../src/providers/freellmapi-models";
 
 const plan = {
   summary: "Improve loan balance hierarchy and make active status easier to scan.",
@@ -26,7 +26,7 @@ test("extracts a native plan from fenced JSON and explanatory preambles", () => 
   assert.deepEqual(extractPlanJson("Planning complete. " + JSON.stringify(plan) + " End."), plan);
 });
 
-test("extracts a native plan from Anthropic/OpenRouter text content blocks", () => {
+test("extracts a native plan from structured text content blocks", () => {
   assert.deepEqual(extractPlanJson([
     { type: "thinking", thinking: "I should preserve the original hierarchy." },
     { type: "text", text: JSON.stringify(plan) },
@@ -63,7 +63,7 @@ test("content diagnostics describe shape only, not model output", () => {
   assert.equal(describeModelContent([{ type: "text" }, { type: "tool_use" }]), "array[text,tool_use]");
 });
 
-test("extracts a native plan from the full OpenRouter chat-completions envelope", () => {
+test("extracts a native plan from an OpenAI-compatible chat-completions envelope", () => {
   const envelope = {
     id: "gen-test",
     model: "google/gemini-3.7-flash",
@@ -96,7 +96,7 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("28–42 native nodes total INCLUDING nested children"), "The retry must explicitly cap output complexity.");
   assert.ok(route.includes("max_tokens: isRecovery ? 6000 : 9000"), "Keep generation output bounded to a complete native plan.");
   assert.ok(route.includes("modelIndex === 0 ? 80000 : 70000"), "The primary and fallback get useful completion windows.");
-  assert.ok(route.includes('model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}'), "GPT-6 Luna prefers throughput and low reasoning effort for stability.");
+  assert.equal(route.includes("provider: { sort: \"throughput\" }"), false, "FreeLLMAPI Auto does not receive OpenRouter-only provider sorting.");
   assert.ok(route.includes("isRecovery ? 45000"), "Compact retries have a bounded but useful completion window.");
   assert.ok(route.includes("sourceTextInventory: collectSourceTextInventory"), "Compact retries retain a full bounded source-text checklist.");
   assert.ok(route.includes("depth > 4 || state.count >= 60"), "Recovery preserves short text layers nested inside instances/cards.");
@@ -105,18 +105,18 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("payload_keys="), "Empty provider responses should report envelope shape for diagnosis.");
 });
 
-test("Figma agent uses GPT-6 Luna primary, Auto fallback, and no plugin live QA", () => {
+test("Figma agent uses FreeLLMAPI Auto and no plugin live QA", () => {
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
-  const catalog = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
+  const catalog = readFileSync(resolve(process.cwd(), "src/providers/freellmapi-models.ts"), "utf8");
   assert.ok(route.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Generation uses the shared Figma-specific chain.");
-  assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Figma generation includes the explicit low-cost Auto fallback.");
+  assert.equal(route.includes("auto-router"), false, "Figma generation does not send OpenRouter-only plugin fields.");
   assert.ok(route.includes("const attemptsForModel = 2"), "The primary model and fallback each get one compact retry.");
   assert.ok(route.includes("provider returned an empty response body"), "Empty provider bodies are diagnosed clearly.");
   assert.ok(route.includes("provider returned a non-JSON response body"), "Invalid response bodies are diagnosed clearly.");
   assert.equal(route.includes("Promise.all(models"), false, "Model requests stay sequential.");
-  assert.deepEqual(FIGMA_AGENT_MODELS.map((entry) => entry.id), ["openai/gpt-6-luna", "openrouter/auto"], "GPT-6 Luna is primary and OpenRouter Auto is the fallback.");
-  assert.ok(catalog.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openai/gpt-6-luna"'));
-  assert.ok(catalog.includes('FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openai/gpt-6-luna"'));
+  assert.deepEqual(FIGMA_AGENT_MODELS.map((entry) => entry.id), ["auto"], "FreeLLMAPI Auto selects the upstream model.");
+  assert.ok(catalog.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "auto"'));
+  assert.ok(catalog.includes('FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "auto"'));
   const review = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/review/route.ts"), "utf8");
   const refine = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/refine/route.ts"), "utf8");
   assert.ok(review.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
@@ -133,16 +133,14 @@ test("Figma agent uses GPT-6 Luna primary, Auto fallback, and no plugin live QA"
   assert.equal(ui.includes("TinyFish"), false, "TinyFish should be removed from the plugin flow.");
 });
 
-test("Figma agent routes report body-read timeouts instead of empty bodies and bound Qwen reasoning", () => {
+test("Figma agent routes report body-read timeouts instead of empty bodies", () => {
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   assert.equal(route.includes('response.text().catch(() => "")'), false, "An aborted body read must not be reported as an empty body.");
   assert.ok(route.includes("if (controller.signal.aborted) throw readError;"));
   assert.ok(route.includes("const generationDeadlineMs = 270000;"), "The sequential chain has a bounded 270-second deadline.");
-  assert.ok(route.includes('model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}'));
   for (const name of ["refine", "review", "actions"]) {
     const sub = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/" + name + "/route.ts"), "utf8");
     assert.equal(sub.includes("await response.json().catch(() => null)"), false, name + " must not hide body-read timeouts.");
-    assert.ok(sub.includes('model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}'), name + " bounds Qwen reasoning.");
   }
 });
 

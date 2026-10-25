@@ -205,7 +205,7 @@ export async function POST(request: Request) {
     const model = "uxd/ia-audit";
     const isGatewayTaskAlias = model.startsWith("uxd/");
     const inferredProvider = isGatewayTaskAlias ? undefined
-      : process.env.UXD_IA_PROVIDER?.trim() || (model.includes("/") ? "openrouter" : undefined);
+      : process.env.UXD_IA_PROVIDER?.trim() || (model.includes("/") ? "freellmapi" : undefined);
     const configuredModule = process.env.UXD_IA_GATEWAY_MODULE || "";
     const moduleId = isGatewayTaskAlias ? undefined :
       ["reasoning", "classification", "extraction", "summarization", "vision", "critique", "general"].includes(configuredModule)

@@ -6,7 +6,7 @@ import { captureVerifiedTaskLesson, resolveFigmaTaskProject } from "@/src/memory
 import { finishTaskRun } from "@/src/memory/task-run-log";
 import { neonRequest } from "@/src/memory/neon-rest";
 import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
-import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/freellmapi-models";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 import { normalizeVisualReview } from "@/src/figma-agent/normalize-visual-review";
 import { evaluateVisualQualityGate } from "@/src/figma-agent/visual-quality-gate";
@@ -167,8 +167,9 @@ export async function POST(request: Request) {
   if (!parsed.data.sourceCanvas || !parsed.data.outputCanvas) {
     return NextResponse.json({ error: "Source and output canvas evidence are required for visual review." }, { status: 400, headers });
   }
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (!apiKey) return NextResponse.json({ error: "OpenRouter is not configured." }, { status: 503, headers });
+  const apiKey = process.env.FREELLMAPI_API_KEY?.trim();
+  const baseUrl = process.env.FREELLMAPI_BASE_URL?.trim().replace(/\/+$/, "");
+  if (!apiKey || !baseUrl) return NextResponse.json({ error: "Configure FREELLMAPI_BASE_URL and FREELLMAPI_API_KEY on the UX Direct Worker." }, { status: 503, headers });
   const sourceImage = safeImage(parsed.data.sourceImage);
   const outputImage = safeImage(parsed.data.outputImage);
   const sourceCanvas = compactCanvas(parsed.data.sourceCanvas);
@@ -208,8 +209,8 @@ export async function POST(request: Request) {
   if (sourceImage) userContent.push({ type: "image_url", image_url: { url: sourceImage } });
   if (outputImage) userContent.push({ type: "image_url", image_url: { url: outputImage } });
 
-  const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // Visual QA uses the same explicit quality-first OpenRouter routes as design generation.
+  const endpoint = baseUrl + "/chat/completions";
+  // Visual QA uses the same explicit quality-first FreeLLMAPI routes as design generation.
   const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
   const errors: string[] = [];
   for (const [modelIndex, model] of models.entries()) {
@@ -222,8 +223,7 @@ export async function POST(request: Request) {
           Authorization: "Bearer " + apiKey,
           "Content-Type": "application/json",
           Accept: "application/json",
-          "HTTP-Referer": new URL(request.url).origin,
-          "X-OpenRouter-Title": "UX Direct Visual QA",
+
         },
         body: JSON.stringify({
           model,
@@ -242,10 +242,9 @@ export async function POST(request: Request) {
             },
             { role: "user", content: userContent },
           ],
-          ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
+
           temperature: 0.1,
-          // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
-          ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
+
           max_tokens: 1800,
           response_format: { type: "json_object" },
         }),

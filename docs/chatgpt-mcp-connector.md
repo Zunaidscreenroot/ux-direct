@@ -28,7 +28,7 @@ Never commit these values or paste them into source control. Keep the connection
 4. Enter the current `UX_DIRECT_MCP_CONNECTION_CODE`, review the listed access, select the consent checkbox, and authorize.
 5. Back in ChatGPT, verify the connector exposes tools such as `ux_direct_status`, `ux_direct_uxaudit_status`, and `ux_direct_uxaudit_discover_site`.
 
-The initial authorization grants the configured UX Direct scopes. UX Audit screenshot audits and benchmarking can incur OpenRouter model charges. Learning/approval tools can write to the shared product database; reusable lessons should remain drafts until the owner explicitly approves them.
+The initial authorization grants the configured UX Direct scopes. Screenshot audits and benchmarking can incur upstream model charges depending on the configured provider. Learning/approval tools can write to the shared product database; reusable lessons should remain drafts until the owner explicitly approves them.
 
 ## Verification checklist
 

@@ -23,7 +23,7 @@ This implementation keeps the existing UX Direct model gateway, shared brain and
 - No Cloudflare Browser Run.
 - No Lost Pixel.
 - No axe-core runtime dependency.
-- Do not use a generic agent framework or a separate model client in place of the existing OpenRouter Model Gateway.
+- Do not use a generic agent framework or a separate model client in place of the existing FreeLLMAPI-backed Model Gateway.
 
 ## Runtime boundary
 

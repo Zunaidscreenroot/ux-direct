@@ -179,19 +179,19 @@ test("paid provider keys do not enable paid routing without explicit opt-in", as
 });
 
 
-test("internal routing stays blocked until OpenRouter routing is enabled", async () => {
+test("internal routing stays blocked when FreeLLMAPI routing is not explicitly enabled", async () => {
   const { saveGatewaySettings, defaultGatewaySettings, modelKey } = await import("../src/model-gateway/control-store");
   const settings = defaultGatewaySettings();
   settings.paidRoutingEnabled = false;
   settings.modules.critique = {
     ...settings.modules.critique,
     mode: "paid",
-    selectedModelKey: modelKey("openrouter-auto", "openrouter/auto"),
+    selectedModelKey: modelKey("freellmapi", "auto"),
     allowFallback: false
   };
   await saveGatewaySettings(settings);
   const configured: ProviderConfig[] = [
-    { name: "openrouter-auto", baseUrl: "https://openrouter.example/api/v1", apiKey: "test-key", models: ["openrouter/auto"], kind: "paid" },
+    { name: "freellmapi", baseUrl: "https://freellmapi.example/v1", apiKey: "test-key", models: ["auto"], kind: "free-tier" },
     { name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" }
   ];
   await assert.rejects(() => chatCompletion({
@@ -203,26 +203,25 @@ test("internal routing stays blocked until OpenRouter routing is enabled", async
 });
 
 
-test("homepage free models stay separate from the dynamic internal OpenRouter router", async () => {
+test("FreeLLMAPI is configured only when its base URL and key are present", async () => {
   const { providersFromEnv } = await import("../src/model-gateway");
-  const env = {
+  const empty = providersFromEnv({ NODE_ENV: "production" });
+  assert.equal(empty.some(provider => provider.name === "freellmapi"), false);
+  const configured = providersFromEnv({
     NODE_ENV: "production",
-    OPENROUTER_API_KEY: "test-only",
-    OPENROUTER_MODELS: "vendor/free-model:free,vendor/not-enabled"
-  };
-  const noRouter = providersFromEnv({ ...env, OPENROUTER_AUTO_ROUTING: "false", ALLOW_PAID_MODELS: "false" });
-  assert.deepEqual(noRouter.find(p => p.name === "openrouter")?.models, ["vendor/free-model:free"]);
-  assert.equal(noRouter.find(p => p.name === "openrouter")?.kind, "free-tier");
-  assert.equal(noRouter.some(p => p.name === "openrouter-auto"), false);
-
-  const routerEnabled = providersFromEnv({ ...env, OPENROUTER_AUTO_ROUTING: "true", ALLOW_PAID_MODELS: "false" });
-  assert.deepEqual(routerEnabled.find(p => p.name === "openrouter")?.models, ["vendor/free-model:free"]);
-  assert.equal(routerEnabled.find(p => p.name === "openrouter")?.kind, "free-tier");
-  assert.deepEqual(routerEnabled.find(p => p.name === "openrouter-auto")?.models, ["openrouter/auto"]);
-  assert.equal(routerEnabled.find(p => p.name === "openrouter-auto")?.kind, "paid");
+    FREELLMAPI_BASE_URL: "https://freellmapi.example/v1",
+    FREELLMAPI_API_KEY: "test-only",
+    FREELLMAPI_MODELS: "auto"
+  });
+  const provider = configured.find(item => item.name === "freellmapi");
+  assert.ok(provider);
+  assert.deepEqual(provider.models, ["auto"]);
+  assert.equal(provider.kind, "free-tier");
+  assert.equal(configured.some(item => item.name.includes("openrouter")), false);
 });
 
-test("OpenRouter Auto uses low-cost routing and throughput preference without model filters or a monthly budget", async () => {
+
+test("FreeLLMAPI Auto delegates model choice without OpenRouter-only request fields", async () => {
   const { chatCompletion } = await import("../src/model-gateway");
   const { saveGatewaySettings, defaultGatewaySettings, modelKey } = await import("../src/model-gateway/control-store");
   const settings = defaultGatewaySettings();
@@ -230,21 +229,21 @@ test("OpenRouter Auto uses low-cost routing and throughput preference without mo
   settings.modules["ia-audit"] = {
     ...settings.modules["ia-audit"],
     mode: "paid",
-    selectedModelKey: modelKey("openrouter-auto", "openrouter/auto"),
+    selectedModelKey: modelKey("freellmapi", "auto"),
     monthlyBudgetInr: 0,
     maxRequestCostInr: 0
   };
   await saveGatewaySettings(settings);
   let body: Record<string, unknown> = {};
   const configured: ProviderConfig[] = [
-    { name: "openrouter-auto", baseUrl: "https://openrouter.example/api/v1", apiKey: "test", models: ["openrouter/auto"], kind: "paid" },
+    { name: "freellmapi", baseUrl: "https://freellmapi.example/v1", apiKey: "test", models: ["auto"], kind: "free-tier" },
     { name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" }
   ];
   try {
     const result = await chatCompletion({
-      model: "openrouter/auto",
+      model: "auto",
       moduleId: "ia-audit",
-      providerId: "openrouter-auto",
+      providerId: "freellmapi",
       messages: [{ role: "user", content: "Review this information architecture." }],
       max_tokens: 64
     }, {
@@ -252,24 +251,23 @@ test("OpenRouter Auto uses low-cost routing and throughput preference without mo
       fetchImpl: (async (_input: RequestInfo | URL, init?: RequestInit) => {
         body = JSON.parse(String(init?.body));
         return new Response(JSON.stringify({
-          model: "vendor/selected-cheap-model",
+          model: "vendor/selected-model",
           choices: [{ message: { content: "IA review complete." } }],
           usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.0001 }
         }), { status: 200, headers: { "Content-Type": "application/json" } });
       }) as typeof fetch
     });
-    assert.deepEqual(body.plugins, [{ id: "auto-router", cost_tier: "low" }]);
-    assert.deepEqual(body.provider, { sort: "throughput" });
-    assert.equal("max_price" in body, false);
-    assert.equal("allowed_models" in (body.plugins as Array<Record<string, unknown>>)[0], false);
-    assert.equal("excluded_models" in (body.plugins as Array<Record<string, unknown>>)[0], false);
-    assert.deepEqual(body.usage, { include: true });
-    assert.equal(result.model, "vendor/selected-cheap-model");
+    assert.equal(body.model, "auto");
+    assert.equal("plugins" in body, false);
+    assert.equal("provider" in body, false);
+    assert.equal("usage" in body, false);
+    assert.equal(result.model, "vendor/selected-model");
     assert.equal(result.content, "IA review complete.");
   } finally {
     await saveGatewaySettings(defaultGatewaySettings());
   }
 });
+
 
 test("custom endpoints are disabled unless local or paid mode is explicitly enabled", async () => {
   const { providersFromEnv } = await import("../src/model-gateway");
@@ -294,14 +292,14 @@ test("an explicitly chosen model never silently fails over from a paid internal 
   const { saveGatewaySettings, defaultGatewaySettings, modelKey } = await import("../src/model-gateway/control-store");
   const configured: ProviderConfig[] = [
     { name: "groq", baseUrl: "https://groq.example/v1", apiKey: "test", models: ["openai/gpt-oss-20b"], kind: "free-tier" },
-    { name: "openrouter-auto", baseUrl: "https://paid.example/v1", apiKey: "test", models: ["openrouter/auto"], kind: "paid" },
+    { name: "freellmapi", baseUrl: "https://freellmapi.example/v1", apiKey: "test", models: ["auto"], kind: "free-tier" },
     { name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" }
   ];
   const settings = defaultGatewaySettings();
   settings.modules.general = {
     ...settings.modules.general,
     mode: "paid",
-    selectedModelKey: modelKey("openrouter-auto", "openrouter/auto"),
+    selectedModelKey: modelKey("freellmapi", "auto"),
     allowFallback: false
   };
   await saveGatewaySettings(settings);

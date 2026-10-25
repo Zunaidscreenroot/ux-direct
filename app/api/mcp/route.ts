@@ -369,7 +369,7 @@ async function runUxAuditPage(input: Record<string, unknown>) {
         url: target.href,
         projectName,
         auditMode: mode,
-        verifiedModels: [{ provider: "OpenRouter", model: "openrouter/auto", tier: "paid" }],
+        verifiedModels: [{ provider: "FreeLLMAPI", model: "auto", tier: "router" }],
       },
     });
     page = result?.page;
@@ -819,7 +819,7 @@ const TOOLS = [
   },
   {
     name: "ux_direct_uxaudit_status",
-    description: "Check the UX Audit service and OpenRouter connectivity without running inference. Read-only.",
+    description: "Check the UX Audit service and FreeLLMAPI connectivity without running inference. Read-only.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -831,7 +831,7 @@ const TOOLS = [
   },
   {
     name: "ux_direct_uxaudit_run_page_audit",
-    description: "Run an evidence-led desktop or mobile UX audit through UX Audit, then save the result to Past Findings and a recent IA session. Desktop is 1440 px wide; mobile is 393×852 CSS px. May incur OpenRouter model costs. If automated capture is blocked, supply screenshotDataUrl from the actual page, never a CDN/403 error screenshot.",
+    description: "Run an evidence-led desktop or mobile UX audit through UX Audit, then save the result to Past Findings and a recent IA session. Desktop is 1440 px wide; mobile is 393×852 CSS px. May incur upstream model costs depending on the FreeLLMAPI routing profile. If automated capture is blocked, supply screenshotDataUrl from the actual page, never a CDN/403 error screenshot.",
     inputSchema: { type: "object", properties: {
       url: { type: "string", minLength: 8, maxLength: 1800, description: "Exact page URL to audit." },
       mode: { type: "string", enum: ["desktop", "mobile"], description: "Desktop (1440 px wide) or mobile (393×852 CSS px)." },
@@ -1313,8 +1313,8 @@ async function callTool(name: string, args: unknown, request: Request) {
 
   /* eslint-disable @typescript-eslint/no-explicit-any -- Normalize the UX Audit API payload contract at the MCP boundary. */
   if (name === "ux_direct_uxaudit_status") {
-    const result = await requestUxAudit("/api/openrouter-status", { method: "GET", timeoutMs: 12_000 });
-    return toolText({ service: "UX Audit", checkedAt: new Date().toISOString(), openRouter: result, baseUrl: uxauditOrigin() });
+    const result = await requestUxAudit("/api/freellmapi-status", { method: "GET", timeoutMs: 12_000 });
+    return toolText({ service: "UX Audit", provider: "FreeLLMAPI", checkedAt: new Date().toISOString(), freeLlmApi: result, baseUrl: uxauditOrigin() });
   }
 
   if (name === "ux_direct_uxaudit_discover_site") {
@@ -1413,7 +1413,7 @@ async function callTool(name: string, args: unknown, request: Request) {
               url: entry.url.origin + "/",
               projectName: entry.name,
               auditMode: mode,
-              verifiedModels: [{ provider: "OpenRouter", model: "openrouter/auto", tier: "paid" }],
+              verifiedModels: [{ provider: "FreeLLMAPI", model: "auto", tier: "router" }],
             },
           });
           const page = result?.page;
@@ -1524,7 +1524,7 @@ export async function POST(request: Request) {
           protocolVersion: PROTOCOL_VERSIONS.has(requested) ? requested : "2025-11-25",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "ux-direct", version: "0.1.0" },
-          instructions: "UX Direct is the conversational cockpit and native Figma executor inside the installed plugin. This MCP connection has full control: backend/connection status, plugin health checks, bounded Figma canvas reads, explicitly confirmed canvas writes, task planning, UX Audit workflows and owner-authorized shared-brain learning. Figma commands run through the approved file's native plugin APIs, so the plugin must be open and connected; Figma OAuth is not required. Read the canvas before writing, send writes only for an explicit user request with confirm=true, and verify every queued action from its command ID; current canvas evidence takes precedence over remembered rules. Keep client-specific past findings separate from generalized approved shared knowledge; preserve Hindi/Hinglish feedback. Audit workflows may incur OpenRouter costs.",
+          instructions: "UX Direct is the conversational cockpit and native Figma executor inside the installed plugin. This MCP connection has full control: backend/connection status, plugin health checks, bounded Figma canvas reads, explicitly confirmed canvas writes, task planning, UX Audit workflows and owner-authorized shared-brain learning. Figma commands run through the approved file's native plugin APIs, so the plugin must be open and connected; Figma OAuth is not required. Read the canvas before writing, send writes only for an explicit user request with confirm=true, and verify every queued action from its command ID; current canvas evidence takes precedence over remembered rules. Keep client-specific past findings separate from generalized approved shared knowledge; preserve Hindi/Hinglish feedback. Audit workflows may incur upstream model costs depending on the FreeLLMAPI routing profile.",
         }, headers);
       }
       case "ping":
