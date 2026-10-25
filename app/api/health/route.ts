@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { providersFromEnv } from "@/src/model-gateway";
-import { OPENROUTER_MODELS } from "@/src/providers/openrouter-models";
+import { FREELLMAPI_MODELS } from "@/src/providers/freellmapi-models";
 
 const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 function isAllowedOrigin(origin: string | null, request: Request): boolean {
@@ -34,8 +34,8 @@ export async function GET(request: Request) {
     mode: activeProviders.length ? activeProviders.map(provider => provider.name).join(", ") : "mock",
     modelProviderConfigured: activeProviders.length > 0,
     modelRouting: {
-      provider: "OpenRouter",
-      models: OPENROUTER_MODELS,
+      provider: "FreeLLMAPI",
+      models: FREELLMAPI_MODELS,
       providerFiltersApplied: false,
       autoRouterFiltersApplied: false,
     },
