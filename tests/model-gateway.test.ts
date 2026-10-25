@@ -292,14 +292,14 @@ test("an explicitly chosen model never silently fails over from a paid internal 
   const { saveGatewaySettings, defaultGatewaySettings, modelKey } = await import("../src/model-gateway/control-store");
   const configured: ProviderConfig[] = [
     { name: "groq", baseUrl: "https://groq.example/v1", apiKey: "test", models: ["openai/gpt-oss-20b"], kind: "free-tier" },
-    { name: "openrouter-auto", baseUrl: "https://paid.example/v1", apiKey: "test", models: ["openrouter/auto"], kind: "paid" },
+    { name: "freellmapi", baseUrl: "https://freellmapi.example/v1", apiKey: "test", models: ["auto"], kind: "free-tier" },
     { name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" }
   ];
   const settings = defaultGatewaySettings();
   settings.modules.general = {
     ...settings.modules.general,
     mode: "paid",
-    selectedModelKey: modelKey("openrouter-auto", "openrouter/auto"),
+    selectedModelKey: modelKey("freellmapi", "auto"),
     allowFallback: false
   };
   await saveGatewaySettings(settings);
