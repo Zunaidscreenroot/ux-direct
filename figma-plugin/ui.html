@@ -262,12 +262,12 @@
           list.forEach(function (model) {
             const option = document.createElement("option");
             option.value = model.id;
-            option.textContent = model.name || model.id;
+            option.textContent = (model.name || model.id) + " · " + [model.vision ? "vision" : "", model.reasoning ? "reasoning" : "", model.tools ? "tools" : ""].filter(Boolean).join(" · ");
             select.appendChild(option);
           });
           const preferred = saved[role[0] + "Model"];
           if (preferred && list.some(function (model) { return model.id === preferred; })) select.value = preferred;
-          else if (list.length) select.value = list[0].id;
+          else if (list.length) select.value = (list.find(function (model) { return /glm/i.test(model.id); }) || list[0]).id;
           select.disabled = list.length === 0;
           select.addEventListener("change", saveModelRoles);
         });
