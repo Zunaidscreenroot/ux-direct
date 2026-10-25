@@ -6,7 +6,7 @@ import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/task-learning";
 import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { deferTaskWork, finishTaskRun, startTaskRun, type RetrievalRecord } from "@/src/memory/task-run-log";
-import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/freellmapi-models";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality } from "@/src/figma-agent/design-plan-quality";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
@@ -381,8 +381,9 @@ export async function POST(request: Request) {
   const requestStartedAt = Date.now();
   const headers = cors(request);
   if (!allowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
-  const key = process.env.OPENROUTER_API_KEY?.trim();
-  if (!key) return NextResponse.json({ error: "OpenRouter is not configured on the UX Direct Worker." }, { status: 503, headers });
+  const key = process.env.FREELLMAPI_API_KEY?.trim();
+  const baseUrl = process.env.FREELLMAPI_BASE_URL?.trim().replace(/\/+$/, "");
+  if (!key || !baseUrl) return NextResponse.json({ error: "Configure FREELLMAPI_BASE_URL and FREELLMAPI_API_KEY on the UX Direct Worker." }, { status: 503, headers });
 
   let input: unknown;
   try { input = await request.json(); } catch { return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400, headers }); }
@@ -397,7 +398,7 @@ export async function POST(request: Request) {
   const parsedInput = requestSchema.safeParse(input);
   if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
   // Ignore a model override from older plugin UI builds. Figma generation is intentionally
-  // locked to OpenRouter Auto's LOW cost tier to prevent app-level model fan-out.
+  // locked to FreeLLMAPI Auto's LOW cost tier to prevent app-level model fan-out.
   const renderedScreen = typeof parsedInput.data.renderedScreen === "string" &&
     parsedInput.data.renderedScreen.length <= 52000 &&
     new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.renderedScreen)
@@ -472,7 +473,7 @@ export async function POST(request: Request) {
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
-  const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
+  const endpoint = baseUrl + "/chat/completions";
   // GPT-6 Luna is primary; Auto is the low-cost fallback. Both routes get one compact retry.
   // Provider selection favors throughput, and the shared deadline bounds the complete chain.
   const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
@@ -500,7 +501,7 @@ export async function POST(request: Request) {
     "Do not include a learningCandidate unless there is a durable reusable lesson. If none, set learningCandidate:null.",
   ].join("\n");
   const generationStartedAt = Date.now();
-  // OpenRouter sends HTTP 200 headers immediately and the body only once the full plan is
+  // FreeLLMAPI sends HTTP 200 headers immediately and the body only once the full plan is
   // generated, so each attempt needs room for a complete multi-thousand-token plan. One shared
   // deadline keeps the sequential chain bounded.
   const generationDeadlineMs = 270000;
@@ -538,8 +539,7 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "application/json",
-            "HTTP-Referer": new URL(request.url).origin,
-            "X-OpenRouter-Title": "UX Direct Figma Agent",
+
           },
           body: JSON.stringify({
             model,
@@ -547,7 +547,7 @@ export async function POST(request: Request) {
               { role: "system", content: isRecovery ? recoverySystem : system },
               { role: "user", content: userContent },
             ],
-            ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
+
             ...(model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}),
             ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
             // Qwen 3.5 thinks by default; unbounded reasoning spends the attempt before any JSON is written.
