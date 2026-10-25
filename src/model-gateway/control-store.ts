@@ -68,7 +68,6 @@ export function defaultGatewaySettings(): GatewaySettings {
     [modelKey("deepseek", "deepseek-flash")]: pricePolicy(.30, 1.20),
     [modelKey("deepseek", "deepseek-v4-pro")]: pricePolicy(1.32, 3.96),
     [modelKey("freellmapi", "auto")]: pricePolicy(),
-    [modelKey("freellmapi", "apodex/apodex-1.1-mini:free")]: pricePolicy(),
     [modelKey("ollama", "qwen2.5:7b")]: pricePolicy(),
     [modelKey("ollama", "gemma4:31b")]: pricePolicy(),
     [modelKey("cerebras", "gpt-oss-120b")]: pricePolicy(),
@@ -97,11 +96,11 @@ function cleanSettings(input: unknown): GatewaySettings {
     const requestedModelKey = typeof c.selectedModelKey === "string" && c.selectedModelKey.length <= 220 ? c.selectedModelKey : base.selectedModelKey;
     modules[m.id] = {
       enabled: typeof c.enabled === "boolean" ? c.enabled : true,
-      // Production internal modules use OpenRouter's cost-optimized router; tests/dev may exercise other modes.
+      // Production internal modules use the configured FreeLLMAPI router; tests/dev may exercise other modes.
       mode: process.env.NODE_ENV === "production" ? "paid" :
         (mode === "free" || mode === "paid" || mode === "local" || mode === "mock" ? mode : base.mode),
       // Migrate the previous OpenRouter Auto selection to FreeLLMAPI Auto.
-      selectedModelKey: (requestedModelKey.startsWith("openrouter-auto::") || requestedModelKey.startsWith("openrouter/auto::") || requestedModelKey.startsWith("openrouter-paid::")) ? base.selectedModelKey : requestedModelKey,
+      selectedModelKey: (requestedModelKey.startsWith("openrouter-auto::") || requestedModelKey.startsWith("openrouter::") || requestedModelKey.startsWith("openrouter-paid::")) ? base.selectedModelKey : requestedModelKey,
       monthlyBudgetInr: amount(c.monthlyBudgetInr, base.monthlyBudgetInr),
       maxRequestCostInr: amount(c.maxRequestCostInr, base.maxRequestCostInr),
       allowFallback: typeof c.allowFallback === "boolean" ? c.allowFallback : base.allowFallback
