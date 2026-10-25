@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { OPENROUTER_MODELS, OPENROUTER_MODEL_LABELS } from "@/src/providers/openrouter-models";
+import { FREELLMAPI_MODELS, FREELLMAPI_MODEL_LABELS } from "@/src/providers/freellmapi-models";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,10 +27,11 @@ export async function GET(request: Request) {
   if (origin && origin !== new URL(request.url).origin && !ALLOWED_ORIGINS.has(origin)) {
     return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: corsHeaders(origin) });
   }
-  const key = process.env.OPENROUTER_API_KEY?.trim();
+  const key = process.env.FREELLMAPI_API_KEY?.trim();
+  const baseUrl = process.env.FREELLMAPI_BASE_URL?.trim().replace(/\/+$/, "");
   const auditBase = (process.env.UX_AUDIT_BASE_URL?.trim() || "https://uxaudit.zunaid-cb7.workers.dev").replace(/\/+$/, "");
   const [keyResult, auditResult, brainResult] = await Promise.allSettled([
-    key ? fetch("https://openrouter.ai/api/v1/key", {
+    key && baseUrl ? fetch(baseUrl + "/models?available=true", {
       headers: { Authorization: "Bearer " + key },
       cache: "no-store",
       signal: AbortSignal.timeout(8000),
@@ -47,8 +48,8 @@ export async function GET(request: Request) {
   let keyError = "";
   if (keyResult.status === "fulfilled") {
     keyOk = keyResult.value.ok;
-    if (!keyOk) keyError = "OpenRouter rejected the configured API key (HTTP " + keyResult.value.status + ").";
-  } else keyError = keyResult.reason instanceof Error ? keyResult.reason.message : "OpenRouter key check failed.";
+    if (!keyOk) keyError = "FreeLLMAPI rejected the configured key or base URL (HTTP " + keyResult.value.status + ").";
+  } else keyError = keyResult.reason instanceof Error ? keyResult.reason.message : "FreeLLMAPI connection check failed.";
 
   const auditReachable = auditResult.status === "fulfilled" && auditResult.value.ok;
   const brainReachable = brainResult.status === "fulfilled" && brainResult.value.ok;
@@ -69,12 +70,12 @@ export async function GET(request: Request) {
   const connected = keyOk;
   return NextResponse.json({
     connected,
-    provider: "OpenRouter",
-    defaultModel: OPENROUTER_MODELS[0],
+    provider: "FreeLLMAPI",
+    defaultModel: FREELLMAPI_MODELS[0],
     fallbackModel: null,
-    models: OPENROUTER_MODELS.map((id, index) => ({ id, name: OPENROUTER_MODEL_LABELS[index] })),
+    models: FREELLMAPI_MODELS.map((id, index) => ({ id, name: FREELLMAPI_MODEL_LABELS[index] })),
     checkedAt: new Date().toISOString(),
-    ...(connected ? {} : { error: keyError || "The configured OpenRouter model chain is not ready." }),
+    ...(connected ? {} : { error: keyError || "The configured FreeLLMAPI route is not ready." }),
     uxAudit: { reachable: auditReachable, baseUrl: auditBase, ...(auditReachable ? {} : { error: "Could not reach the UX Audit Worker." }) },
     brain: { reachable: brainReachable, ...brainDiagnostics, ...(brainReachable ? {} : { error: "Shared-brain health check failed or its server key is not configured." }) },
   }, { headers: corsHeaders(origin) });
