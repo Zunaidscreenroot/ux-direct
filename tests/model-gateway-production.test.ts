@@ -47,7 +47,7 @@ test("UX Direct chat, Figma routes and provider health use FreeLLMAPI", () => {
   }
   assert.ok(status.includes("defaultModel: FREELLMAPI_MODELS[0]"));
   assert.ok(status.includes("FREELLMAPI_MODEL_LABELS[index]"));
-  assert.ok(status.includes('baseUrl + "/models?available=true"'));
+  assert.ok(status.includes('baseUrl + "/models"'));
   assert.equal(status.includes("openrouter.ai"), false);
 });
 
