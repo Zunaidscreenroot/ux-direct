@@ -21,8 +21,7 @@ function capability(id: string, raw: Record<string, unknown>) {
     /vision|image input|multimodal/.test(metadata);
   const reasoning = /reason|thinking|deepseek-r1|glm|kimi|qwen3|qwq|o1|o3|o4|nemotron|deepseek-v/.test(text) ||
     /reasoning|thinking/.test(metadata);
-  const tools = /tool|function|agent|coder|qwen|glm|gpt|claude|gemini|deepseek/.test(text) ||
-    /tool.call|function.call/.test(metadata);
+  const tools = /tool.call|function.call|tool_calling|supports_tools|tools.*true/.test(metadata);
   const context = Number(raw.context_length ?? raw.context_window ?? raw.contextLength ?? 0);
   return { vision, reasoning, tools, contextWindow: Number.isFinite(context) && context > 0 ? context : null };
 }
