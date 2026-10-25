@@ -509,6 +509,37 @@ export async function POST(request: Request) {
     "Every node must have type, name, x, y, width and height. Types: FRAME, RECTANGLE, ELLIPSE, TEXT, LINE, POLYGON, STAR. ELLIPSE may include arcData:{startingAngle,endingAngle,innerRadius} with radian angles and endingAngle greater than startingAngle. TEXT must have text. Only FRAME can contain children. Coordinates must be relative to the immediate parent. Use color:'#RRGGBB' and noFill:true only for transparent structural frames.",
     "Do not include a learningCandidate unless there is a durable reusable lesson. If none, set learningCandidate:null.",
   ].join("\n");
+  let visualAnalysis = "";
+  if (renderedScreen && visionModel) {
+    try {
+      const visionResponse = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          model: visionModel,
+          messages: [
+            { role: "system", content: "You are UX Direct's specialist visual-analysis sub-agent. Inspect the supplied screenshot only. Return a concise evidence-based visual inventory: hierarchy, layout, spacing, typography, contrast, component patterns, visible states, alignment issues, and source details that must be preserved. Do not redesign or output JSON schema. Do not infer hidden interactions or claim facts not visible." },
+            { role: "user", content: [
+              { type: "text", text: "Analyse this selected Figma source screenshot for the downstream native design-planning agent. Keep the report concise and grounded in visible evidence." },
+              { type: "image_url", image_url: { url: renderedScreen } }
+            ] }
+          ],
+          temperature: 0.1,
+          max_tokens: 1400
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(45000)
+      });
+      if (visionResponse.ok) {
+        const visionPayload = await visionResponse.json() as { choices?: Array<{ message?: { content?: unknown } }> };
+        const content = visionPayload.choices?.[0]?.message?.content;
+        if (typeof content === "string") visualAnalysis = content.slice(0, 7000);
+        else if (Array.isArray(content)) visualAnalysis = content.map((part) => part && typeof part === "object" && typeof (part as Record<string, unknown>).text === "string" ? String((part as Record<string, unknown>).text) : "").join("\\n").slice(0, 7000);
+      }
+    } catch {
+      // Vision sub-agent is best-effort. The execution model still receives the source screenshot.
+    }
+  }
   const generationStartedAt = Date.now();
   // FreeLLMAPI may send HTTP 200 headers before the full plan body is
   // generated, so each attempt needs room for a complete multi-thousand-token plan. One shared
@@ -535,7 +566,7 @@ export async function POST(request: Request) {
           ? "RECOVERY RETRY: The prior response was absent, incomplete, or invalid. Return a smaller complete JSON object following the exact compact output budget in the system message. Do not continue the old text or explain the failure.\nSOURCE CONTEXT:\n" + recoveryContext + validationBlock
           : (renderedScreen
             ? "Design a high-fidelity, source-faithful improvement. Combine the rendered screen image with its native layer tree. Avoid generic redesigns. Context:\n" + userContext + validationBlock
-            : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext + validationBlock);
+            : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext + validationBlock) + (visualAnalysis ? "\n\nSPECIALIST VISION ANALYSIS (evidence from the source screenshot; preserve source details):\n" + visualAnalysis : "");
         const modelImages: Array<Record<string, unknown>> = [];
         if (renderedScreen) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
         if (referenceImage) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
