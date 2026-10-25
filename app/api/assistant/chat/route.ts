@@ -340,8 +340,8 @@ export async function POST(request: Request) {
   }
   const key = process.env.FREELLMAPI_API_KEY?.trim();
   const baseUrl = process.env.FREELLMAPI_BASE_URL?.trim().replace(/\/+$/, "");
-  if (!key) {
-    return NextResponse.json({ error: "FreeLLMAPI is not configured. Add FREELLMAPI_API_KEY to the UX Direct Worker secrets." }, { status: 503, headers: responseHeaders });
+  if (!key || !baseUrl) {
+    return NextResponse.json({ error: "Configure FREELLMAPI_BASE_URL and FREELLMAPI_API_KEY on the UX Direct Worker." }, { status: 503, headers: responseHeaders });
   }
 
   let body: unknown;
