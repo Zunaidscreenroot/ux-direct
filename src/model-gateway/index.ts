@@ -442,7 +442,7 @@ export async function chatCompletion(
         ?usageStore.estimateCostInr(tokenUsage.promptTokens,tokenUsage.completionTokens,provider,process.env,modelUsed,rates)
         :usageStore.estimateCostInr(Math.ceil(promptChars/4),request.max_tokens??1024,provider,process.env,modelUsed,rates);
     const usageTier=billable?(isGatewayAutoRouter&&modelUsed.endsWith(":free")?"free-tier":"paid"):(modelUsed.endsWith(":free")||policy.mode==="free"||provider.kind==="free-tier"?"free-tier":provider.kind??"paid");
-    await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model:modelUsed,tier:usageTier,...tokenUsage,estimatedCostInr,latencyMs,status:"success",note:tokenUsage.usageReported?(reportedUsdCost!==null?"FreeLLMAPI-reported cost converted to INR.":undefined):"Provider did not return token usage; cost is estimated using configured model prices where available."});
+    await usageStore.recordModelUsage({requestId,moduleId,provider:provider.name,model:modelUsed,tier:usageTier,...tokenUsage,estimatedCostInr,latencyMs,status:"success",note:isGatewayAutoRouter&&reportedUsdCost===null?"FreeLLMAPI did not report upstream cost. The displayed estimate uses local pricing configuration and is unverified; actual spend may be higher.":tokenUsage.usageReported?(reportedUsdCost!==null?"FreeLLMAPI-reported cost converted to INR.":undefined):"Provider did not return token usage; cost is estimated using configured model prices where available."});
     return {id:typeof payload.id==="string"?payload.id:undefined,model:modelUsed,content,usage:payload.usage,provider:provider.name,latencyMs};
   }catch(error){
     const failure=error instanceof GatewayError?error:controller.signal.aborted
