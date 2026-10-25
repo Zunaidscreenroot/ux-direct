@@ -5,8 +5,8 @@ import { retrieveBrainContext, saveBrainFeedback } from "@/src/memory/shared-bra
 import { detectCoachingSignal, detectExplicitTrainingIntent, resolveChatLearningScope, resolveLearningScope } from "@/src/memory/learning-signal";
 import { containsSensitiveMaterial, createLearningMarkerTransform, referencesUnstatedClient, type InlineLearningCandidate } from "@/src/memory/inline-learning";
 import { recordOperationalEvent } from "@/src/observability/event-log";
-import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
-import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { hasAssistantTextDelta } from "@/src/providers/freellmapi-chat";
+import { FREELLMAPI_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/freellmapi-models";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,7 +44,7 @@ type BrainContextInfo = {
 
 const MAX_MESSAGES = 100;
 const MAX_TOTAL_CHARS = 80000;
-const ROUTER_MODEL = OPENROUTER_MODELS[0];
+const ROUTER_MODEL = FREELLMAPI_MODELS[0];
 const FIRST_TEXT_TIMEOUT_MS = 30_000;
 const SYSTEM_PROMPT = [
   UX_DIRECT_DESIGN_ROLE + " You are UX Direct, a thoughtful UI/UX design partner.",
@@ -338,9 +338,10 @@ export async function POST(request: Request) {
   if (!originIsAllowed(request)) {
     return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: responseHeaders });
   }
-  const key = process.env.OPENROUTER_API_KEY?.trim();
+  const key = process.env.FREELLMAPI_API_KEY?.trim();
+  const baseUrl = process.env.FREELLMAPI_BASE_URL?.trim().replace(/\/+$/, "");
   if (!key) {
-    return NextResponse.json({ error: "OpenRouter is not configured. Add OPENROUTER_API_KEY to the UX Direct Worker secrets." }, { status: 503, headers: responseHeaders });
+    return NextResponse.json({ error: "FreeLLMAPI is not configured. Add FREELLMAPI_API_KEY to the UX Direct Worker secrets." }, { status: 503, headers: responseHeaders });
   }
 
   let body: unknown;
@@ -351,7 +352,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400, headers: responseHeaders });
   }
   const value = body as Record<string, unknown>;
-  // Let OpenRouter choose the model dynamically; never pin a stale provider/model ID from the browser.
+  // Let FreeLLMAPI choose the model dynamically; never pin a stale provider/model ID from the browser.
   const model = ROUTER_MODEL;
   if (!Array.isArray(value.messages) || value.messages.length < 1 || value.messages.length > MAX_MESSAGES) {
     return NextResponse.json({ error: "messages must contain between 1 and " + MAX_MESSAGES + " entries." }, { status: 400, headers: responseHeaders });
@@ -392,7 +393,7 @@ export async function POST(request: Request) {
     ...(learning.recordId ? { learningRecordId: learning.recordId, learningDraftId: learning.recordId } : {}),
   };
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
-  const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
+  const endpoint = baseUrl + "/chat/completions";
   const candidates = [ROUTER_MODEL];
   const failures: string[] = [];
   let lastStatus = 502;
@@ -410,7 +411,7 @@ export async function POST(request: Request) {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
             "HTTP-Referer": origin,
-            "X-OpenRouter-Title": "UX Direct",
+
           },
           body: JSON.stringify({
             model: currentModel,
@@ -418,9 +419,8 @@ export async function POST(request: Request) {
             stream: true,
             temperature: 0.4,
             max_tokens: 25000,
-            plugins: [{ id: "auto-router", cost_tier: "low" }],
-            provider: { sort: "throughput" },
-            usage: { include: true },
+
+            stream_options: { include_usage: true },
           }),
           cache: "no-store",
           signal: controller.signal,
@@ -429,21 +429,21 @@ export async function POST(request: Request) {
           const details = (await providerResponse.text().catch(() => "")).replace(/[\r\n]+/g, " ").trim().slice(0, 260);
           const status = providerResponse.status;
           const message = [401, 403].includes(status)
-            ? "OpenRouter rejected the configured API key or account access (HTTP " + status + ")."
-            : "Model " + currentModel + " via OpenRouter returned HTTP " + status + (details ? ": " + details : ".");
+            ? "FreeLLMAPI rejected the configured API key or account access (HTTP " + status + ")."
+            : "Model " + currentModel + " via FreeLLMAPI returned HTTP " + status + (details ? ": " + details : ".");
           throw Object.assign(new Error(message), { status });
         }
         const probe = await probeForFirstText(providerResponse);
         if (!probe.hasText) {
           if (probe.reader) await probe.reader.cancel().catch(() => {});
-          throw Object.assign(new Error("Model " + currentModel + " via OpenRouter returned an empty text stream before its first token."), { status: 502 });
+          throw Object.assign(new Error("Model " + currentModel + " via FreeLLMAPI returned an empty text stream before its first token."), { status: 502 });
         }
         // Stop the startup timer once the first visible text arrives; let the full answer stream without an app-imposed timeout.
         clearTimeout(timer);
         return { model: currentModel, probe, controller };
       } catch (error) {
         if (controller.signal.aborted) {
-          throw Object.assign(new Error("Model " + currentModel + " via OpenRouter did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
+          throw Object.assign(new Error("Model " + currentModel + " via FreeLLMAPI did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
         }
         throw error;
       } finally {
@@ -456,7 +456,7 @@ export async function POST(request: Request) {
   const attempts: Array<ReturnType<typeof startAttempt>> = [];
   let winner: { model: string; probe: ProbedStream; controller: AbortController } | null = null;
 
-  // One server-selected OpenRouter Auto route only; never retry on a named model.
+  // One server-selected FreeLLMAPI Auto route only; never retry on a named model.
   for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
     const candidate = candidates[candidateIndex];
     const attempt = startAttempt(candidate, candidateIndex === 0 ? FIRST_TEXT_TIMEOUT_MS : 16000);
@@ -482,7 +482,7 @@ export async function POST(request: Request) {
   }
 
   for (const attempt of attempts) attempt.controller.abort();
-  const userMessage = "OpenRouter Auto failed to start a usable response. " + failures.join(" | ");
+  const userMessage = "FreeLLMAPI Auto failed to start a usable response. " + failures.join(" | ");
   return NextResponse.json(
     { error: userMessage, attemptedModels: candidates },
     { status: lastStatus === 429 ? 429 : 502, headers: brainHeaders(brain, undefined, request) },
