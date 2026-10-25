@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   const baseUrl = process.env.FREELLMAPI_BASE_URL?.trim().replace(/\/+$/, "");
   const auditBase = (process.env.UX_AUDIT_BASE_URL?.trim() || "https://uxaudit.zunaid-cb7.workers.dev").replace(/\/+$/, "");
   const [keyResult, auditResult, brainResult] = await Promise.allSettled([
-    key && baseUrl ? fetch(baseUrl + "/models?available=true", {
+    key && baseUrl ? fetch(baseUrl + "/models", {
       headers: { Authorization: "Bearer " + key },
       cache: "no-store",
       signal: AbortSignal.timeout(8000),
