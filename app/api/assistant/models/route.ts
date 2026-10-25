@@ -17,7 +17,7 @@ function headers(request: Request): HeadersInit {
 function capability(id: string, raw: Record<string, unknown>) {
   const text = id.toLowerCase();
   const metadata = JSON.stringify(raw).toLowerCase();
-  const vision = /vision|visual|multimodal|image|vl-|4v|llava|pixtral|gemini|gpt-4o/.test(text) ||
+  const vision = /vision|visual|multimodal|image|vl-|4v|llava|pixtral|gemini|gpt-4o|glm.*v|4\.6v|4\.5v/.test(text) ||
     /vision|image input|multimodal/.test(metadata);
   const reasoning = /reason|thinking|deepseek-r1|glm|kimi|qwen3|qwq|o1|o3|o4|nemotron|deepseek-v/.test(text) ||
     /reasoning|thinking/.test(metadata);
