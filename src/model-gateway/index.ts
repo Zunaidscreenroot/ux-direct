@@ -132,15 +132,16 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
   providers.push({ name: "mock", baseUrl: "mock://local", models: ["mock/ux-direct"], kind: "mock" });
   const paidRoutingReady = env.ALLOW_PAID_MODELS === "true" && Number(env.MODEL_GATEWAY_MONTHLY_BUDGET_INR ?? "3000") > 0;
   // Keep homepage chat's explicit free provider pool separate from paid internal jobs.
+  const openRouterLegacyEnabled = env.MODEL_GATEWAY_ENABLE_OPENROUTER_LEGACY === "true";
   const openRouterBaseUrl = trimSlash(env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1");
   const openRouterModels = csv(env.OPENROUTER_MODELS).filter(model => model.endsWith(":free"));
-  if (env.OPENROUTER_API_KEY && openRouterModels.length) providers.push({
+  if (openRouterLegacyEnabled && env.OPENROUTER_API_KEY && openRouterModels.length) providers.push({
     name: "openrouter", baseUrl: openRouterBaseUrl,
     apiKey: env.OPENROUTER_API_KEY, models: openRouterModels, kind: "free-tier"
   });
   // Internal jobs use OpenRouter Auto Router, which chooses a low-cost available model per request.
   // This is opt-in and separate from the homepage's explicit :free-only model pool.
-  if (env.OPENROUTER_API_KEY && env.OPENROUTER_AUTO_ROUTING === "true") providers.push({
+  if (openRouterLegacyEnabled && env.OPENROUTER_API_KEY && env.OPENROUTER_AUTO_ROUTING === "true") providers.push({
     name: "openrouter-auto", baseUrl: openRouterBaseUrl,
     apiKey: env.OPENROUTER_API_KEY, models: ["openrouter/auto"], kind: "paid"
   });
