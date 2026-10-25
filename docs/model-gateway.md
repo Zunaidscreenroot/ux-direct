@@ -1,76 +1,54 @@
-# UX Direct model gateway (zero gateway fees)
+# UX Direct model gateway
 
-UX Direct includes a small, self-hosted-in-application gateway inspired by LiteLLM's provider abstraction. There is **no gateway subscription, proxy vendor, or gateway usage fee**. Requests go from the UX Direct server directly to the chosen model provider. Provider/model usage can still cost money; free model tiers and local models may have limits or infrastructure costs.
+UX Direct includes an application-side model gateway with a consistent OpenAI-compatible request/response shape, model allowlists, server-side credentials, usage logging, budget controls, and mock support. The application gateway itself does not charge a gateway fee. FreeLLMAPI's upstream providers may still have quotas, data-retention terms, or usage charges; do not assume an auto route is unlimited or free.
 
-## Accountant controls and module routing
+## Primary inference provider
 
-Every module has a switch, routing mode and model-selection policy. No monthly gateway/module budget is assigned by default. UX Direct assistant chat and internal IA/UX analysis use `openrouter/auto` with the low-cost tier and a throughput-first provider preference. Assistant chat exposes only this model option, requests up to 25,000 output tokens, and does not fall back to named models. The generic Model Gateway API may still list other configured providers for explicit, authenticated API use.
+The assistant chat, Figma design agent, visual review/refinement, and internal IA/UX analysis use the configured FreeLLMAPI instance. The direct routes send requests to:
 
-OpenRouter chooses the model dynamically for each internal request in the low-cost band, then prioritizes the highest-throughput compatible endpoint for the selected model. No per-token ceiling or model allow/exclude list is sent. The actual model and provider-reported usage cost are recorded from the response. The low-cost tier is a routing preference, not a hard monthly spend limit; total spend can accumulate without an explicitly assigned budget. Internal Auto Router requests use a 120-second timeout for larger IA/UX analysis; other provider calls default to 45 seconds. The 25,000-token output request is a maximum, not a promise that every model selected by Auto supports that many output tokens.
+- GET {FREELLMAPI_BASE_URL}/models?available=true for connection health.
+- POST {FREELLMAPI_BASE_URL}/chat/completions for model inference.
 
-Settings and usage keys are branch/environment scoped, so preview does not overwrite production settings or usage records. Netlify Blobs is best-effort key/value storage rather than transactional accounting; concurrent paid calls may race a cap. Use transactional reservations before relying on caps as a production financial guarantee.
+Set FREELLMAPI_BASE_URL to the API root that ends in /v1, and FREELLMAPI_API_KEY to the key expected by the installed FreeLLMAPI gateway. The model identifier currently used by UX Direct is auto; the FreeLLMAPI instance must support this alias. Upstream model selection and fallback are controlled by the configured FreeLLMAPI profile, not by OpenRouter-specific plugins or provider filters.
 
-## What it provides
+Local development example (adjust to the port used by your instance):
 
-- A common `chatCompletion()` interface for OpenAI-compatible chat-completion APIs.
-- Environment-based provider configuration and explicit model allowlists.
-- Provider-independent response shape with model, provider, latency and token usage.
-- Request timeout, cancellation, input validation, and normalized errors.
-- No database, external gateway account, telemetry service, or additional runtime dependency.
+    FREELLMAPI_BASE_URL=http://127.0.0.1:31415/v1
+    FREELLMAPI_API_KEY=your-local-gateway-key
+    FREELLMAPI_MODELS=auto
 
-## Dashboard and usage accounting
+A local 127.0.0.1 address works only when the UX Direct server and FreeLLMAPI share a reachable host/network. A Cloudflare Worker cannot use your laptop's loopback address. Production must use a reachable HTTPS endpoint or secured tunnel, with the provider key configured as a server-only Worker secret. Do not expose the gateway publicly without authentication and rate limiting.
 
-The main dashboard includes a Model Gateway tab, provider readiness and non-editable API-key placeholders for the final setup step. It shows per-request prompt/completion/total tokens, the model actually selected by the router, provider, latency, estimated cost, month-to-date spend and whether a monthly budget has been explicitly assigned. No monthly budget is assigned by default. `GET /api/model-gateway/dashboard` returns only sanitized readiness and ledger data.
+## Environment and security
 
-The initial usage ledger is in-memory best-effort telemetry and may reset on serverless restarts. Treat it as operational visibility rather than a durable billing source until persistent storage and concurrency-safe budget reservation are implemented.
+- FREELLMAPI_BASE_URL: FreeLLMAPI OpenAI-compatible API root, including /v1.
+- FREELLMAPI_API_KEY: server-side gateway key; never expose it to a client bundle or commit a real key.
+- FREELLMAPI_MODELS: comma-separated model allowlist; currently defaults to auto.
+- MODEL_GATEWAY_ACCESS_KEY: protects the generic Model Gateway API.
+- MODEL_GATEWAY_ADMIN_KEY: protects server-side routing/budget settings.
+- MODEL_GATEWAY_MONTHLY_BUDGET_INR, MODEL_GATEWAY_INPUT_PRICE_INR_PER_1M, MODEL_GATEWAY_OUTPUT_PRICE_INR_PER_1M: generic gateway budget and pricing controls.
 
-## Configure providers
+The dashboard reports actual usage values only when the selected gateway returns them. If FreeLLMAPI does not expose selected model, token usage, or cost metadata, UX Direct must not invent those values; unreported upstream cost is unknown until the router supplies auditable usage data. A gateway-reported cost is evidence from the configured instance, not an independently verified bill.
 
-Set secrets only in the server environment; never expose them through `NEXT_PUBLIC_*` variables or commit them.
+## Existing gateway API
 
-OpenRouter:
-```env
-OPENROUTER_API_KEY=...
-OPENROUTER_MODELS=provider/model-name:free
-# UX Direct assistant chat and internal IA/UX analysis use dynamic low-cost Auto routing.
-OPENROUTER_AUTO_ROUTING=true
-# Optional:
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-```
+The generic gateway still supports configured providers such as local Ollama and explicitly enabled direct-provider adapters. UX Direct's chat and Figma request paths use FreeLLMAPI; do not reintroduce provider-specific upstream filters into those request bodies.
 
-OpenAI:
-```env
-OPENAI_API_KEY=...
-OPENAI_MODELS=gpt-4o-mini
-# Optional:
-OPENAI_BASE_URL=https://api.openai.com/v1
-```
+- GET /api/model-gateway/models: model catalog and configured provider status, protected by gateway access authentication.
+- POST /api/model-gateway/chat: non-streaming chat completion, protected by gateway access authentication.
+- GET /api/model-gateway/dashboard: sanitized provider readiness, usage ledger, and budget snapshot. This endpoint never returns API keys.
+- GET /api/assistant/status: FreeLLMAPI availability plus separate UX Audit and shared-brain service health.
+- GET /api/health: basic worker and configured model-provider health.
 
-Any OpenAI-compatible service, including a local Ollama-compatible endpoint or a provider's compatible API:
-```env
-CUSTOM_OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:11434/v1
-CUSTOM_OPENAI_COMPATIBLE_MODELS=default
-# CUSTOM_OPENAI_COMPATIBLE_API_KEY is optional
-```
+The deterministic mock/ux-direct model is a no-network test mode, not real inference. A successful mock response must never be presented as a successful FreeLLMAPI inference.
 
-For custom provider endpoints, make sure the endpoint is reachable from the deployed server. A localhost endpoint only works when the app and model server share the same host/network.
+## Operational checks
 
-## Example server-side usage
+1. Verify GET /v1/models from the machine where UX Direct runs.
+2. Verify GET /v1/models?available=true using the configured authentication header.
+3. Send a small POST /v1/chat/completions request with model "auto" and confirm a non-empty response.
+4. If UX Direct chat streams, verify Server-Sent Events and cancellation with the same API root.
+5. Verify that a deployed Worker can reach the configured HTTPS route; a local request does not prove production connectivity.
+6. Check npm test, npm run typecheck, npm run lint, npm run build, and npm run cf:build before promotion.
 
-```ts
-import { chatCompletion, providersFromEnv } from "@/src/model-gateway";
-
-const result = await chatCompletion({
-  model: "gpt-4o-mini",
-  messages: [{ role: "user", content: "Review this UX decision." }],
-  max_tokens: 500
-}, { providers: providersFromEnv() });
-
-console.log(result.content, result.provider, result.usage);
-```
-
-Do not call this module directly from browser/plugin code: route requests through a server-side Next.js API handler, authenticate callers, validate request size and model allowlists, and apply per-user rate limits before exposing it. Do not automatically retry paid requests unless duplicate billing is acceptable. Never log API keys or full confidential prompts.
-
-## Current scope and follow-up
-
-This slice implements non-streaming chat completions, a deterministic no-network mock, provider/model catalog, task-based selection, authenticated chat/model endpoints, a Model Gateway dashboard, per-request token ledger, INR cost reporting and explicit guards for fixed routes, plus a zero-cost mock smoke test. Assistant chat and internal UX/IA analysis are routed dynamically through OpenRouter's low-cost router without a named-model fallback; no monthly gateway budget is assigned unless deliberately configured. Direct-provider task planning remains separately guarded. Streaming live output and concurrency-safe monthly spend controls remain follow-up work. Usage records persist to Netlify Blobs when running in Netlify and use runtime memory as a local fallback.
+FreeLLMAPI's provider catalog, alias behavior, model capabilities, rate limits, and upstream billing may vary by installation. Confirm those characteristics against the installed instance rather than assuming OpenRouter compatibility beyond the API fields tested above.
