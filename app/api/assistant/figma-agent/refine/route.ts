@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { getActiveChatProvider } from "@/src/providers/active-chat-provider";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 
 export const runtime = "nodejs";
@@ -102,8 +103,12 @@ export async function OPTIONS(request: Request) {
 export async function POST(request: Request) {
   const headers = corsHeaders(request);
   if (!isAllowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
-  const key = process.env.OPENROUTER_API_KEY?.trim();
-  if (!key) return NextResponse.json({ error: "OpenRouter is not configured." }, { status: 503, headers });
+  const activeProvider = getActiveChatProvider();
+  const key = activeProvider.apiKey;
+  if (!activeProvider.configured || !key) return NextResponse.json({
+    error: activeProvider.configurationError || activeProvider.label + " is not configured.",
+    provider: activeProvider.label,
+  }, { status: 503, headers });
   const body: unknown = await request.json().catch(() => null);
   const parsed = z.object({
     prompt: z.string().trim().min(2).max(5000),
@@ -128,8 +133,10 @@ export async function POST(request: Request) {
   if (!found.size || !Array.from(found.keys()).some((id) => id.length > 0)) {
     return NextResponse.json({ error: "Generated variation contains no editable native node IDs." }, { status: 400, headers });
   }
-  const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
+  const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
+  const models = activeProvider.id === "openrouter"
+    ? FIGMA_AGENT_MODELS.map((entry) => entry.id)
+    : [activeProvider.model];
   const errors: string[] = [];
   for (const [modelIndex, model] of models.entries()) {
     const controller = new AbortController();
@@ -138,7 +145,7 @@ export async function POST(request: Request) {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", Accept: "application/json",
-          "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Design Refiner" },
+          ...(activeProvider.id === "openrouter" ? { "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Design Refiner" } : {}) },
         body: JSON.stringify({
           model,
           messages: [
@@ -162,7 +169,7 @@ export async function POST(request: Request) {
               ...(safeImage(parsed.data.outputImage) ? [{ type: "image_url", image_url: { url: safeImage(parsed.data.outputImage)! } }] : []),
             ] },
           ],
-          ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
+          ...(activeProvider.id === "openrouter" && model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
           temperature: 0.1,
           // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
           ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
