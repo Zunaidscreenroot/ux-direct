@@ -36,8 +36,8 @@ function validateFreeLlmApiBaseUrl(baseUrl: string, env: Record<string, string |
 }
 
 /**
- * Main assistant chat can be switched between OpenRouter and a self-hosted
- * FreeLLMAPI OpenAI-compatible endpoint using server-side environment variables.
+ * UX Direct chat and Figma model routes can be switched between OpenRouter and a
+ * self-hosted FreeLLMAPI OpenAI-compatible endpoint using server-side environment variables.
  * FreeLLMAPI's unified key must be used here, not an upstream provider's key.
  */
 export function getActiveChatProvider(
@@ -85,6 +85,6 @@ export function getActiveChatProvider(
     baseUrl: "",
     model: "",
     configured: false,
-    configurationError: "UX_DIRECT_CHAT_PROVIDER must be either openrouter or freellmapi.",
+    configurationError: "UX_DIRECT_MODEL_PROVIDER (or legacy UX_DIRECT_CHAT_PROVIDER) must be either openrouter or freellmapi.",
   };
 }
