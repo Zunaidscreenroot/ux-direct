@@ -123,6 +123,7 @@ test("tool list exposes status, Figma executor, task planning and shared brain o
       "ux_direct_connection_status",
       "ux_direct_figma_plugin_queue_health_check",
       "ux_direct_figma_plugin_health_check_status",
+      "ux_direct_figma_canvas_capabilities",
       "ux_direct_figma_canvas_read",
       "ux_direct_figma_canvas_write",
       "ux_direct_figma_canvas_command_status",
