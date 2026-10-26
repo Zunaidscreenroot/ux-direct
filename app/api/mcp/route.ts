@@ -1098,7 +1098,7 @@ async function callTool(name: string, args: unknown, request: Request) {
       return toolText({ error: "target must be current-page, selection, node, or test-lab." }, true);
     }
     if (input.operation === "batch" && (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 40)) return toolText({ error: "batch requires 1–40 actions." }, true);
-    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && isFigmaCanvasNonBatchableStepOperation((step as Record<string, unknown>).operation)) && input.actions.length > 1) return toolText({ error: "Exports and inline image fills must be standalone commands." }, true);
+    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && isFigmaCanvasNonBatchableStepOperation((step as Record<string, unknown>).operation))) return toolText({ error: "Operations marked batchable=false must be sent as standalone commands, not through batch." }, true);
     if (input.operation !== "batch" && input.actions !== undefined) return toolText({ error: "actions is supported only for batch." }, true);
     if (input.operation === "batch" && Array.isArray(input.actions)) {
       const totalCreated = input.actions.reduce((sum, step) => {
