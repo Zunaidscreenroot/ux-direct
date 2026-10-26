@@ -43,7 +43,7 @@ function validateFreeLlmApiBaseUrl(baseUrl: string, env: Record<string, string |
 export function getActiveChatProvider(
   env: Record<string, string | undefined> = process.env,
 ): ActiveChatProvider {
-  const selected = (env.UX_DIRECT_CHAT_PROVIDER || "openrouter").trim().toLowerCase();
+  const selected = (env.UX_DIRECT_MODEL_PROVIDER || env.UX_DIRECT_CHAT_PROVIDER || "openrouter").trim().toLowerCase();
 
   if (selected === "openrouter") {
     const apiKey = env.OPENROUTER_API_KEY?.trim() || "";
