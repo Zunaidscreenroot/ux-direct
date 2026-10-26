@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Script } from "node:vm";
-import { FIGMA_CANVAS_COMMANDS, FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS, FIGMA_CANVAS_OPERATION_IDS, FIGMA_CANVAS_STEP_OPERATION_IDS } from "../src/figma-agent/command-registry";
+import { FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS, FIGMA_CANVAS_COMMANDS, FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS, FIGMA_CANVAS_OPERATION_IDS, FIGMA_CANVAS_STEP_OPERATION_IDS } from "../src/figma-agent/command-registry";
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 const mcp = read("app/api/mcp/route.ts");
@@ -23,6 +23,11 @@ test("canonical Figma command registry stays unique and encodes standalone-only 
   assert.equal(new Set(ids).size, ids.length, "Command IDs must be unique.");
   assert.deepEqual(FIGMA_CANVAS_OPERATION_IDS, ids);
   assert.deepEqual(FIGMA_CANVAS_STEP_OPERATION_IDS, ids.filter((id) => id !== "batch"));
+  assert.deepEqual(
+    FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS,
+    FIGMA_CANVAS_COMMANDS.filter((command) => command.id !== "batch" && command.batchable).map((command) => command.id),
+  );
+  assert.ok(!(FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS as readonly string[]).includes("delete-node"));
   assert.equal((FIGMA_CANVAS_STEP_OPERATION_IDS as readonly string[]).includes("batch"), false);
   assert.ok(
     FIGMA_CANVAS_COMMANDS.filter((command) => command.destructive).every((command) =>
@@ -54,7 +59,7 @@ test("canvas write tool requires explicit confirmation and uses the canonical co
   assert.ok(mcp.includes('if (input.confirm !== true)'));
   assert.ok(mcp.includes("enum: FIGMA_CANVAS_OPERATION_IDS"));
   assert.ok(bridge.includes("z.enum(FIGMA_CANVAS_OPERATION_IDS)"));
-  assert.ok(bridge.includes("z.enum(FIGMA_CANVAS_STEP_OPERATION_IDS)"));
+  assert.ok(bridge.includes("z.enum(FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS)"));
   assert.ok(commandRegistry.includes('id: "delete-node"'));
   assert.ok(commandRegistry.includes('id: "reparent-node"'));
   assert.ok(commandRegistry.includes("requiresExplicitIntent: true"));
@@ -116,7 +121,8 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
   }
   assert.ok(plugin.includes('svg.length > 35000'), "SVG output is capped to fit the bridge result envelope");
   assert.ok(mcp.includes('capabilities: { tools: { listChanged: false } }'), "MCP advertises tool-list change support");
-  assert.ok(mcp.includes("enum: FIGMA_CANVAS_OPERATION_IDS"), "MCP write schema derives operation IDs from the canonical registry");
+  assert.ok(mcp.includes("enum: FIGMA_CANVAS_OPERATION_IDS"), "MCP top-level write schema derives operation IDs from the canonical registry");
+  assert.ok(mcp.includes("enum: FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS"), "Nested batch schema exposes only batch-safe operations");
   assert.ok(mcp.includes('actions: {\n          type: "array", minItems: 1, maxItems: 40'), "MCP schema exposes sequential action batches");
   assert.ok(bridge.includes("value.operation === \"batch\" && value.actions && value.actions.some((step) => FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS.includes(step.operation))"), "Bridge derives standalone-only actions from the shared command policy");
   assert.ok(plugin.includes('if (payload.operation === "batch")'), "Native executor supports ordered batches");
