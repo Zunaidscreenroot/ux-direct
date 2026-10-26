@@ -18,7 +18,7 @@ test("defaults to OpenRouter and does not require FreeLLMAPI configuration", () 
 test("selects FreeLLMAPI with the configured server URL, unified key and model", () => {
   const provider = getActiveChatProvider({
     NODE_ENV: "production",
-    UX_DIRECT_CHAT_PROVIDER: "freellmapi",
+    UX_DIRECT_MODEL_PROVIDER: "freellmapi",
     FREELLMAPI_BASE_URL: "https://freellmapi.example.com/v1/",
     FREELLMAPI_API_KEY: "freellmapi-unified-test-key",
     FREELLMAPI_CHAT_MODEL: "auto",
