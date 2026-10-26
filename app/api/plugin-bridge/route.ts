@@ -5,6 +5,7 @@ import { recordOperationalEvent } from "@/src/observability/event-log";
 import { saveBrainFeedback } from "@/src/memory/shared-brain";
 import { buildFigmaFailureLesson } from "@/src/memory/task-learning";
 import { ALLOWED_FIGMA_FILE_KEY, isAllowedFigmaFileKey } from "@/src/security/figma-access";
+import { FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS, FIGMA_CANVAS_OPERATION_IDS, FIGMA_CANVAS_STEP_OPERATION_IDS } from "@/src/figma-agent/command-registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -187,11 +188,7 @@ const CANVAS_TEXT_RANGE = z.object({
   }
 });
 const CANVAS_WRITE_STEP = z.object({
-  operation: z.enum([
-    "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node",
-    "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
-    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "insert-image", "create-variables", "bind-variable",
-  ]),
+  operation: z.enum(FIGMA_CANVAS_STEP_OPERATION_IDS),
   target: z.enum(["current-page", "selection", "node", "test-lab"]).optional(),
   elements: z.array(CANVAS_ELEMENT).min(1).max(20).optional(),
   nodeId: z.string().trim().min(1).max(100).optional(),
@@ -230,11 +227,7 @@ const CANVAS_WRITE_STEP = z.object({
   patch: CANVAS_PATCH.optional(),
 }).strict();
 const CANVAS_WRITE_PAYLOAD = z.object({
-  operation: z.enum([
-    "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node",
-    "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
-    "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "insert-image", "create-variables", "bind-variable",
-  ]),
+  operation: z.enum(FIGMA_CANVAS_OPERATION_IDS),
   confirm: z.literal(true),
   target: z.enum(["current-page", "selection", "node", "test-lab"]).optional(),
   elements: z.array(CANVAS_ELEMENT).min(1).max(20).optional(),
@@ -354,7 +347,7 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   if (value.operation !== "batch" && value.actions) {
     ctx.addIssue({ code: "custom", path: ["actions"], message: "actions is supported only for batch." });
   }
-  if (value.operation === "batch" && value.actions && value.actions.some((step) => ["export-svg", "export-node", "create-image-fill", "insert-image"].includes(step.operation)) && value.actions.length > 1) {
+  if (value.operation === "batch" && value.actions && value.actions.some((step) => FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS.includes(step.operation)) && value.actions.length > 1) {
     ctx.addIssue({ code: "custom", path: ["actions"], message: "Exports and image insertion/fills with inline image data must be standalone commands to preserve bridge size limits." });
   }
   if (value.operation === "batch" && value.actions) {
