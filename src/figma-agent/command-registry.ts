@@ -57,7 +57,6 @@ export const FIGMA_CANVAS_STEP_OPERATION_IDS = FIGMA_CANVAS_COMMANDS
     ...Exclude<FigmaCanvasOperation, "batch">[],
   ];
 
-/** Operations whose payloads must be sent alone rather than inside a multi-step batch. */
 /** Operations eligible to be nested inside a batch; high-impact or standalone-only commands are excluded. */
 export const FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS = FIGMA_CANVAS_COMMANDS
   .filter(({ id, batchable }) => id !== "batch" && batchable)
@@ -66,6 +65,7 @@ export const FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS = FIGMA_CANVAS_COMMANDS
     ...Exclude<FigmaCanvasOperation, "batch">[],
   ];
 
+/** Operations whose payloads must be sent alone rather than inside a multi-step batch. */
 export const FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS = FIGMA_CANVAS_COMMANDS
   .filter(({ id, batchable }) => id !== "batch" && !batchable)
   .map(({ id }) => id) as Exclude<FigmaCanvasOperation, "batch">[];
