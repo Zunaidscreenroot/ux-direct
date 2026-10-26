@@ -5,7 +5,7 @@ import { recordOperationalEvent } from "@/src/observability/event-log";
 import { saveBrainFeedback } from "@/src/memory/shared-brain";
 import { buildFigmaFailureLesson } from "@/src/memory/task-learning";
 import { ALLOWED_FIGMA_FILE_KEY, isAllowedFigmaFileKey } from "@/src/security/figma-access";
-import { FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS, FIGMA_CANVAS_OPERATION_IDS, FIGMA_CANVAS_STEP_OPERATION_IDS } from "@/src/figma-agent/command-registry";
+import { FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS, FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS, FIGMA_CANVAS_OPERATION_IDS } from "@/src/figma-agent/command-registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -188,7 +188,7 @@ const CANVAS_TEXT_RANGE = z.object({
   }
 });
 const CANVAS_WRITE_STEP = z.object({
-  operation: z.enum(FIGMA_CANVAS_STEP_OPERATION_IDS),
+  operation: z.enum(FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS),
   target: z.enum(["current-page", "selection", "node", "test-lab"]).optional(),
   elements: z.array(CANVAS_ELEMENT).min(1).max(20).optional(),
   nodeId: z.string().trim().min(1).max(100).optional(),
