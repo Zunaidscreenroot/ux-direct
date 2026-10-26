@@ -42,8 +42,10 @@ test("Figma routes use GPT-6 Luna as primary and OpenRouter Auto as low-cost fal
     "app/api/assistant/figma-agent/actions/route.ts",
   ]) {
     const source = read(path);
-    assert.ok(source.includes("FIGMA_AGENT_MODELS"), path + " uses the shared Figma chain");
-    assert.ok(source.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), path + " pins Auto to the low-cost tier");
+    assert.ok(source.includes("FIGMA_AGENT_MODELS"), path + " retains the shared OpenRouter chain");
+    assert.ok(source.includes("getActiveChatProvider"), path + " uses the shared provider setting");
+    assert.ok(source.includes('activeProvider.id === "openrouter"'), path + " gates OpenRouter behavior");
+    assert.ok(source.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), path + " pins OpenRouter Auto to the low-cost tier");
     assert.equal(source.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false, path + " has no stale provider allowlist");
   }
 });
