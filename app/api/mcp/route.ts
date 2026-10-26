@@ -3,7 +3,7 @@ import { getMcpIssuer, verifyMcpPayload } from "@/lib/mcp-oauth";
 import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
 import { NextResponse } from "next/server";
 import { addBrainKnowledgeDocument, listBrainFeedback, listBrainKnowledgeDocuments, reviewBrainEvalCase, reviewBrainFeedback, reviewBrainKnowledgeDocument, retrieveBrainContext, runBrainRetrievalEvals, saveBrainEvalCase, saveBrainFeedback } from "@/src/memory/shared-brain";
-import { FIGMA_CANVAS_COMMANDS, FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS, FIGMA_CANVAS_OPERATION_IDS, isFigmaCanvasNonBatchableStepOperation } from "@/src/figma-agent/command-registry";
+import { FIGMA_CANVAS_COMMANDS, FIGMA_CANVAS_OPERATION_IDS, isFigmaCanvasNonBatchableStepOperation } from "@/src/figma-agent/command-registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
