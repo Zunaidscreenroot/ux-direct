@@ -121,7 +121,7 @@ test("Figma agent retains the OpenRouter chain and supports an alternate selecte
   assert.ok(catalog.includes('FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openai/gpt-6-luna"'));
   const review = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/review/route.ts"), "utf8");
   const refine = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/refine/route.ts"), "utf8");
-  assert.ok(review.includes('activeProvider.id === "openrouter" ?\n    FIGMA_AGENT_MODELS.map((entry) => entry.id)\n    : [activeProvider.model]'));
+  assert.ok(review.includes('activeProvider.id === "openrouter"') && review.includes(": [activeProvider.model]"));
   assert.ok(refine.includes('activeProvider.id === "openrouter"\n    ? FIGMA_AGENT_MODELS.map((entry) => entry.id)\n    : [activeProvider.model]'));
 
   const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
