@@ -213,7 +213,7 @@
     <div id="selectionChip" class="context-chip" hidden><span aria-hidden="true">▣</span><span id="selectionName" class="context-name"></span></div>
     <form id="chatForm" class="composer">
       <div id="beamRoot" aria-hidden="true"></div>
-      <div class="routing-note" role="note">Design model: OpenRouter · Qwen 397B primary / Qwen 35B fallback</div>
+      <div id="routingNote" class="routing-note" role="note">Design model: OpenRouter · auto, low cost, image-capable</div>
       <div id="attachmentChip" class="attachment-chip" hidden>
         <span aria-hidden="true">▧</span><span id="attachmentName" class="attachment-name"></span>
         <button id="removeAttachment" class="attachment-remove" type="button" aria-label="Remove attached image" title="Remove image">×</button>
@@ -248,6 +248,7 @@
     let selectedProvider = "openrouter";
     let providerOptions = [];
     let providerSwitching = false;
+    let legacyBackend = false;
     let nativeHealthReport = null;
     let nativeHealthRunning = false;
     let nativeHealthProgress = "";
@@ -549,12 +550,17 @@
       const current = providerOptions.find(function (option) { return option.id === selectedProvider; });
       const select = $("providerSelect");
       if (select.value !== selectedProvider) select.value = selectedProvider;
-      select.disabled = providerSwitching || isSending;
+      select.disabled = providerSwitching || isSending || legacyBackend;
+      $("routingNote").textContent = selectedProvider === "freellmapi"
+        ? "Design model: FreeLLMAPI · auto"
+        : "Design model: OpenRouter · auto, low cost, image-capable";
       providerHealthy = !!(current && current.configured && current.reachable === true);
       $("providerDot").className = "dot " + (providerHealthy ? "connected" : current && current.configured === false ? "" : "disconnected");
-      $("providerDetail").textContent = current
-        ? current.description + " — " + current.detail
-        : "Provider status unavailable.";
+      $("providerDetail").textContent = legacyBackend
+        ? "Provider switching needs the latest backend deploy. Using OpenRouter until then."
+        : current
+          ? current.description + " — " + current.detail
+          : "Provider status unavailable.";
       const coreConnected = backendHealthy && figmaBridgeHealthy && providerHealthy;
       setOverallStatus(coreConnected ? "connected" : "disconnected", coreConnected ? "Connected" : "Not connected");
       renderHealthPanel();
@@ -627,11 +633,24 @@
             providerOptions = Array.isArray(data.providers.options) ? data.providers.options : [];
             if (!providerSwitching && (data.providers.selected === "openrouter" || data.providers.selected === "freellmapi")) selectedProvider = data.providers.selected;
           }
+          legacyBackend = false;
         } else {
-          backendHealthy = false;
-          providerOptions = [];
-          brainHealthy = null;
-          connectionError = results[0].status === "rejected" ? String(results[0].reason) : "Backend status check failed.";
+          // The consolidated endpoint is missing on an older deployment; fall back to the original status endpoints.
+          const legacy = await Promise.allSettled([
+            fetch(API + "/api/health?fileKey=" + encodeURIComponent(fileKey), { cache: "no-store", headers: { "Accept": "application/json" } }),
+            fetch(API + "/api/assistant/status", { cache: "no-store", headers: { "Accept": "application/json" } })
+          ]);
+          const health = legacy[0].status === "fulfilled" && legacy[0].value.ok ? await legacy[0].value.json().catch(function () { return null; }) : null;
+          const assistant = legacy[1].status === "fulfilled" && legacy[1].value.ok ? await legacy[1].value.json().catch(function () { return null; }) : null;
+          backendHealthy = !!(health && health.status === "ok" && health.deployment && health.deployment.platform === "cloudflare-workers");
+          connectionError = backendHealthy ? "" : "Backend health check failed.";
+          brainHealthy = assistant && assistant.brain && typeof assistant.brain.reachable === "boolean" ? assistant.brain.reachable : null;
+          legacyBackend = backendHealthy;
+          selectedProvider = "openrouter";
+          providerOptions = [
+            { id: "openrouter", label: "OpenRouter", description: "Auto router · low cost", configured: true, reachable: !!(assistant && assistant.connected === true), detail: assistant && assistant.connected === true ? "API key verified." : "Could not verify the OpenRouter key." },
+            { id: "freellmapi", label: "FreeLLMAPI", description: "Free-tier router", configured: false, reachable: null, detail: "Needs the latest backend deploy." }
+          ];
         }
       } catch (_) {
         backendHealthy = false;
