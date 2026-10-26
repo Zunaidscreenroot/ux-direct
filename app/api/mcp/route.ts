@@ -3,7 +3,7 @@ import { getMcpIssuer, verifyMcpPayload } from "@/lib/mcp-oauth";
 import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
 import { NextResponse } from "next/server";
 import { addBrainKnowledgeDocument, listBrainFeedback, listBrainKnowledgeDocuments, reviewBrainEvalCase, reviewBrainFeedback, reviewBrainKnowledgeDocument, retrieveBrainContext, runBrainRetrievalEvals, saveBrainEvalCase, saveBrainFeedback } from "@/src/memory/shared-brain";
-import { FIGMA_CANVAS_COMMANDS, FIGMA_CANVAS_OPERATION_IDS, isFigmaCanvasNonBatchableStepOperation } from "@/src/figma-agent/command-registry";
+import { FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS, FIGMA_CANVAS_COMMANDS, FIGMA_CANVAS_OPERATION_IDS, isFigmaCanvasNonBatchableStepOperation } from "@/src/figma-agent/command-registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -576,7 +576,7 @@ const TOOLS = [
           items: {
             type: "object",
             properties: {
-              operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "insert-image", "create-variables", "bind-variable"] },
+              operation: { type: "string", enum: FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS },
               target: { type: "string", enum: ["current-page", "selection", "node", "test-lab"] },
               nodeId: { type: "string", minLength: 1, maxLength: 100 },
         parentNodeId: { type: "string", minLength: 1, maxLength: 100 },
