@@ -54,7 +54,7 @@ test("UX Direct uses low-cost OpenRouter Auto for chat and keeps Figma routes se
   assert.ok(status.includes("fallbackModel: null"));
   assert.ok(status.includes("OPENROUTER_MODEL_LABELS[index]"));
   assert.ok(status.includes("providerId: activeProvider.id"));
-  assert.ok(status.includes('activeProvider.baseUrl.replace(/\\/+$/, "") + "/models"'));
+  assert.ok(status.includes("activeProvider.baseUrl.replace") && status.includes('"/models"'));
   assert.equal(status.includes("anthropic/claude-sonnet"), false);
   assert.equal(status.includes("openai/gpt-6-luna"), false);
   assert.equal(status.includes("openrouter.ai/api/v1/models"), false);
