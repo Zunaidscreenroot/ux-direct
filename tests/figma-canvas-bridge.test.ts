@@ -207,12 +207,14 @@ test("bridge supports saved health reports above the legacy 100-check ceiling", 
   assert.ok(bridge.includes('mode === "health-state"'));
 });
 
-test("normal conversational chat uses only low-cost OpenRouter Auto with a 25k output-token request", () => {
+test("normal conversational chat supports the selected provider and keeps OpenRouter Auto routing isolated", () => {
   assert.ok(chatRoute.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0];"));
+  assert.ok(chatRoute.includes("getActiveChatProvider"));
   assert.equal(chatRoute.includes("FALLBACK_MODEL"), false);
   assert.equal(chatRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
-  assert.ok(chatRoute.includes("const candidates = [ROUTER_MODEL];"));
+  assert.ok(chatRoute.includes("const candidates = [model];"));
   assert.ok(chatRoute.includes("max_tokens: 25000"));
+  assert.ok(chatRoute.includes('activeProvider.id === "openrouter"'));
   assert.ok(chatRoute.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
   assert.ok(chatRoute.includes('provider: { sort: "throughput" }'));
 });
