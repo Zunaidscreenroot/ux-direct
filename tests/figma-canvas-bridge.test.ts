@@ -415,9 +415,10 @@ test("broad refinement routes through screenshot-aware design generation; precis
   assert.ok(pluginUi.includes("downloadNativeExport"), "Native export operations return a downloadable artifact.");
 });
 
-test("native action planner covers Figma page, export, boolean, flatten and image-fill APIs safely", () => {
+test("native action planner uses canonical command IDs for its schema and prompt", () => {
+  assert.ok(actionAgent.includes("z.enum(FIGMA_CANVAS_STEP_OPERATION_IDS)"), "AI action schema must derive from the shared command registry.");
+  assert.ok(actionAgent.includes('FIGMA_CANVAS_STEP_OPERATION_IDS.join(", ")'), "The planner prompt must list commands from the same registry.");
   for (const operation of ["flatten-nodes", "boolean-operation", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "create-image-fill"]) {
-    assert.ok(actionAgent.includes('"' + operation + '"'), "AI planner schema is missing " + operation);
     assert.ok(commandRegistry.includes('id: "' + operation + '"'), "Canonical registry is missing " + operation);
     assert.ok(plugin.includes('payload.operation === "' + operation + '"'), "Native executor is missing " + operation);
   }
