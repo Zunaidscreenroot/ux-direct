@@ -123,7 +123,9 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
 test("in-Figma design agent retrieves approved brain context and validates native layer plans", () => {
   assert.ok(agent.includes('retrieveBrainContext('), "Figma design planning must retrieve shared memory.");
   assert.ok(agent.includes('resolveBrainScopes('), "Brain retrieval must be scope-filtered.");
-  assert.ok(agent.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Figma generation must use GPT-6 Luna with OpenRouter Auto fallback.");
+  assert.ok(agent.includes('const models = activeProvider.id === "openrouter"'), "Figma generation retains its OpenRouter chain when OpenRouter is selected.");
+  assert.ok(agent.includes(": [activeProvider.model]"), "Figma generation uses the selected provider model when it is not OpenRouter.");
+  assert.ok(agent.includes("getActiveChatProvider"), "Figma generation shares the server-side provider selection.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "No provider restrictions should be sent to OpenRouter.");
   const generalModels = modelPolicy.slice(modelPolicy.indexOf("export const OPENROUTER_MODELS"), modelPolicy.indexOf("export const OPENROUTER_MODEL_LABELS"));
   assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
@@ -170,7 +172,8 @@ test("Figma agent normalizes provider-native design fields and uses the requeste
   assert.ok(planNormalizer.includes("export function normalizePlan("), "The reusable normalizer must be directly testable.");
   assert.ok(planNormalizer.includes("item.fill ?? item.backgroundColor"), "Provider fill aliases must map to the native Figma color field.");
   assert.ok(planNormalizer.includes("item.kind ?? item.elementType ?? item.nodeType"), "Provider layer type aliases must be normalized.");
-  assert.ok(agent.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Figma agent must try the shared Auto-first fallback chain sequentially.");
+  assert.ok(agent.includes('const models = activeProvider.id === "openrouter"'), "Figma agent retains the OpenRouter quality chain when selected.");
+  assert.ok(agent.includes(": [activeProvider.model]"), "A non-OpenRouter provider is attempted using its configured model.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "Model requests must not be provider filtered.");
   assert.ok(agent.includes("const normalizedPlan = normalizePlan(rawPlan, canvas);"), "A normalized model plan must be validated before any canvas write.");
   assert.ok(agent.includes('PlanSchema.safeParse(normalizedPlan)'), "Native plan schema validation must remain mandatory.");
@@ -207,12 +210,14 @@ test("bridge supports saved health reports above the legacy 100-check ceiling", 
   assert.ok(bridge.includes('mode === "health-state"'));
 });
 
-test("normal conversational chat uses only low-cost OpenRouter Auto with a 25k output-token request", () => {
+test("normal conversational chat supports the selected provider and keeps OpenRouter Auto routing isolated", () => {
   assert.ok(chatRoute.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0];"));
+  assert.ok(chatRoute.includes("getActiveChatProvider"));
   assert.equal(chatRoute.includes("FALLBACK_MODEL"), false);
   assert.equal(chatRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
-  assert.ok(chatRoute.includes("const candidates = [ROUTER_MODEL];"));
+  assert.ok(chatRoute.includes("const candidates = [model];"));
   assert.ok(chatRoute.includes("max_tokens: 25000"));
+  assert.ok(chatRoute.includes('activeProvider.id === "openrouter"'));
   assert.ok(chatRoute.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
   assert.ok(chatRoute.includes('provider: { sort: "throughput" }'));
 });

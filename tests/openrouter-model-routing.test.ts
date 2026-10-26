@@ -12,13 +12,18 @@ test("general assistant chat exposes OpenRouter Auto as its only model option", 
   assert.ok(UX_DIRECT_DESIGN_ROLE.toLowerCase().includes("ui/ux designer"));
 });
 
-test("assistant chat forces low-cost Auto routing, requests 25k output tokens, and has no named-model fallback", () => {
+test("assistant chat uses one server-selected provider/model and applies OpenRouter-only routing options conditionally", () => {
   const source = read("app/api/assistant/chat/route.ts");
-  assert.ok(source.includes("OPENROUTER_MODELS"), "chat uses the single-model configuration");
-  assert.ok(source.includes("const candidates = [ROUTER_MODEL];"), "only one model route is attempted");
+  const provider = read("src/providers/active-chat-provider.ts");
+  assert.ok(source.includes("OPENROUTER_MODELS"), "OpenRouter remains available as the default");
+  assert.ok(source.includes("const candidates = [model];"), "only one model route is attempted");
+  assert.ok(source.includes("getActiveChatProvider"), "provider selection is resolved server-side");
+  assert.ok(provider.includes("FREELLMAPI_API_KEY"), "FreeLLMAPI credentials are server-side");
+  assert.ok(provider.includes("FREELLMAPI_BASE_URL"), "FreeLLMAPI uses a configured OpenAI-compatible base URL");
   assert.ok(source.includes("max_tokens: 25000"), "assistant chat requests 25,000 output tokens");
-  assert.ok(source.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Auto Router uses the low-cost tier");
-  assert.ok(source.includes('provider: { sort: "throughput" }'), "compatible endpoints are throughput-prioritized");
+  assert.ok(source.includes('activeProvider.id === "openrouter"'), "OpenRouter-specific routing is conditionally applied");
+  assert.ok(source.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "OpenRouter Auto keeps the low-cost tier");
+  assert.ok(source.includes('provider: { sort: "throughput" }'), "OpenRouter Auto keeps throughput prioritization");
   assert.ok(!source.includes("FALLBACK_MODEL"), "there is no separate named-model fallback");
   assert.ok(!source.includes("OPENROUTER_MODELS.slice(2)"), "there is no additional candidate chain");
 });
@@ -37,8 +42,10 @@ test("Figma routes use GPT-6 Luna as primary and OpenRouter Auto as low-cost fal
     "app/api/assistant/figma-agent/actions/route.ts",
   ]) {
     const source = read(path);
-    assert.ok(source.includes("FIGMA_AGENT_MODELS"), path + " uses the shared Figma chain");
-    assert.ok(source.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), path + " pins Auto to the low-cost tier");
+    assert.ok(source.includes("FIGMA_AGENT_MODELS"), path + " retains the shared OpenRouter chain");
+    assert.ok(source.includes("getActiveChatProvider"), path + " uses the shared provider setting");
+    assert.ok(source.includes('activeProvider.id === "openrouter"'), path + " gates OpenRouter behavior");
+    assert.ok(source.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), path + " pins OpenRouter Auto to the low-cost tier");
     assert.equal(source.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false, path + " has no stale provider allowlist");
   }
 });

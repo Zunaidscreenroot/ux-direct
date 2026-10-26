@@ -18,22 +18,27 @@ test("home opens the unified chat-first workspace instead of the operations dash
   assert.equal(page.includes("ModelGatewayPanel"), false);
 });
 
-test("UX Direct uses low-cost OpenRouter Auto for chat and keeps Figma routes separately configured", () => {
+test("UX Direct selects one chat provider and shares provider configuration with Figma agent routes", () => {
   const route = read("app/api/assistant/chat/route.ts");
   const figmaAgent = read("app/api/assistant/figma-agent/route.ts");
   const review = read("app/api/assistant/figma-agent/review/route.ts");
   const refine = read("app/api/assistant/figma-agent/refine/route.ts");
   const status = read("app/api/assistant/status/route.ts");
   const policy = read("src/providers/openrouter-models.ts");
+  const activeProvider = read("src/providers/active-chat-provider.ts");
   assert.ok(route.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0]"));
   assert.equal(route.includes("FALLBACK_MODEL"), false);
-  assert.ok(route.includes("const candidates = [ROUTER_MODEL];"));
+  assert.ok(route.includes("const candidates = [model];"));
+  assert.ok(route.includes("getActiveChatProvider"));
+  assert.ok(route.includes('activeProvider.id === "openrouter"'));
   assert.ok(route.includes("max_tokens: 25000"));
   assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
   assert.ok(route.includes('provider: { sort: "throughput" }'));
   assert.equal(route.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.ok(route.includes("FIRST_TEXT_TIMEOUT_MS = 30_000"));
-  assert.ok(route.includes("OPENROUTER_API_KEY"));
+  assert.ok(activeProvider.includes("FREELLMAPI_API_KEY"));
+  assert.ok(activeProvider.includes("FREELLMAPI_BASE_URL"));
+  assert.ok(activeProvider.includes('model: "openrouter/auto"'));
   const figmaModels = policy.slice(policy.indexOf("export const FIGMA_AGENT_MODELS"), policy.indexOf("export type FigmaAgentModelId"));
   assert.deepEqual([...figmaModels.matchAll(/id: "([^"]+)"/g)].map((match) => match[1]), ["openai/gpt-6-luna", "openrouter/auto"]);
   assert.ok(policy.includes("UX_DIRECT_DESIGN_ROLE"));
@@ -41,13 +46,17 @@ test("UX Direct uses low-cost OpenRouter Auto for chat and keeps Figma routes se
   assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
   for (const routeText of [figmaAgent, review, refine]) {
     assert.ok(routeText.includes("FIGMA_AGENT_MODELS"));
+    assert.ok(routeText.includes("getActiveChatProvider"));
+    assert.ok(routeText.includes('activeProvider.id === "openrouter"'));
     assert.equal(routeText.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
     assert.ok(routeText.includes("UX_DIRECT_DESIGN_ROLE"));
   }
   assert.equal(route.includes("openai/gpt-6-luna"), false);
-  assert.ok(status.includes("defaultModel: OPENROUTER_MODELS[0]"));
+  assert.ok(status.includes("defaultModel: activeProvider.model"));
   assert.ok(status.includes("fallbackModel: null"));
   assert.ok(status.includes("OPENROUTER_MODEL_LABELS[index]"));
+  assert.ok(status.includes("providerId: activeProvider.id"));
+  assert.ok(status.includes("activeProvider.baseUrl.replace") && status.includes('"/models"'));
   assert.equal(status.includes("anthropic/claude-sonnet"), false);
   assert.equal(status.includes("openai/gpt-6-luna"), false);
   assert.equal(status.includes("openrouter.ai/api/v1/models"), false);

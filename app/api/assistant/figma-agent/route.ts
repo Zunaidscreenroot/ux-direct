@@ -7,6 +7,7 @@ import { resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/tas
 import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { deferTaskWork, finishTaskRun, startTaskRun, type RetrievalRecord } from "@/src/memory/task-run-log";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { getActiveChatProvider } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality } from "@/src/figma-agent/design-plan-quality";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
@@ -381,8 +382,12 @@ export async function POST(request: Request) {
   const requestStartedAt = Date.now();
   const headers = cors(request);
   if (!allowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
-  const key = process.env.OPENROUTER_API_KEY?.trim();
-  if (!key) return NextResponse.json({ error: "OpenRouter is not configured on the UX Direct Worker." }, { status: 503, headers });
+  const activeProvider = getActiveChatProvider();
+  const key = activeProvider.apiKey;
+  if (!activeProvider.configured || !key) return NextResponse.json({
+    error: activeProvider.configurationError || activeProvider.label + " is not configured on the UX Direct Worker.",
+    provider: activeProvider.label,
+  }, { status: 503, headers });
 
   let input: unknown;
   try { input = await request.json(); } catch { return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400, headers }); }
@@ -472,10 +477,12 @@ export async function POST(request: Request) {
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
-  const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  // GPT-6 Luna is primary; Auto is the low-cost fallback. Both routes get one compact retry.
-  // Provider selection favors throughput, and the shared deadline bounds the complete chain.
-  const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
+  const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
+  // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its server-selected auto route.
+  // Both are bounded by compact retry and the shared generation deadline.
+  const models = activeProvider.id === "openrouter"
+    ? FIGMA_AGENT_MODELS.map((entry) => entry.id)
+    : [activeProvider.model];
   const errors: string[] = [];
   let validationFeedback = "";
   const recoveryContext = JSON.stringify({
@@ -538,8 +545,10 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "application/json",
-            "HTTP-Referer": new URL(request.url).origin,
-            "X-OpenRouter-Title": "UX Direct Figma Agent",
+            ...(activeProvider.id === "openrouter" ? {
+              "HTTP-Referer": new URL(request.url).origin,
+              "X-OpenRouter-Title": "UX Direct Figma Agent",
+            } : {}),
           },
           body: JSON.stringify({
             model,
@@ -547,8 +556,8 @@ export async function POST(request: Request) {
               { role: "system", content: isRecovery ? recoverySystem : system },
               { role: "user", content: userContent },
             ],
-            ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
-            ...(model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}),
+            ...(activeProvider.id === "openrouter" && model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
+            ...(activeProvider.id === "openrouter" && model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}),
             ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
             // Qwen 3.5 thinks by default; unbounded reasoning spends the attempt before any JSON is written.
             ...(model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}),
