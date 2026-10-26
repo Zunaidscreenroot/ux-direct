@@ -1328,7 +1328,7 @@
       const memory = payload.brain && payload.brain.status === "complete"
         ? String(payload.brain.memories || 0) + " memories and " + String(payload.brain.knowledgeChunks || 0) + " Knowledge Base chunks retrieved"
         : "shared-memory retrieval unavailable for this run";
-      stage("planning", "Plan validated · " + memory + (renderedScreen ? " · rendered screenshot analysed" : " · layer-only analysis"));
+      stage("planning", "Plan validated · " + memory + (renderedScreen && !(payload.visualAnalysis && payload.visualAnalysis.imageReceived === false) ? " · rendered screenshot analysed" : " · layer-only analysis" + (payload.visualAnalysis && payload.visualAnalysis.warning ? " (" + String(payload.visualAnalysis.warning).slice(0, 140) + ")" : "")));
 
       const viewport = canvas && canvas.viewport && canvas.viewport.bounds ? canvas.viewport.bounds : {};
       const rootX = sourceNode && Number.isFinite(sourceNode.x)

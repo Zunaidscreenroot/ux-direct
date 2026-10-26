@@ -515,6 +515,15 @@ export async function POST(request: Request) {
   // generated, so each attempt needs room for a complete multi-thousand-token plan. One shared
   // deadline keeps the sequential chain bounded.
   const generationDeadlineMs = 270000;
+  // FreeLLMAPI only has vision on the few free routes that have keys and quota. When none can serve the
+  // screenshot, one more pass sends native layer evidence only (and says so) instead of failing outright.
+  const imagePasses = llm.id === "freellmapi" && (renderedScreen || referenceImage) ? 2 : 1;
+  for (let imagePass = 0; imagePass < imagePasses; imagePass += 1) {
+  const sendImages = imagePass === 0;
+  if (!sendImages) errors.push("No vision-capable route was available; retrying with native layer evidence only.");
+  const withoutImageClaim = (text: string) => sendImages ? text
+    : text.replace("Rendered selected-node image is attached.", "No rendered image is available for this attempt; use native layer evidence and do not claim visual inspection.")
+        .replace("Rendered screenshot attached to this request.", "No screenshot available; use native layer evidence only.");
   modelLoop: for (let modelIndex = 0; modelIndex < generationModels.length; modelIndex += 1) {
     const model = generationModels[modelIndex];
     const attemptsForModel = 2;
@@ -533,13 +542,13 @@ export async function POST(request: Request) {
           ? "\n\nAUTOMATED VALIDATION FEEDBACK — fix every listed defect in this new plan before returning JSON:\n" + validationFeedback
           : "";
         const modelUserText = isRecovery
-          ? "RECOVERY RETRY: The prior response was absent, incomplete, or invalid. Return a smaller complete JSON object following the exact compact output budget in the system message. Do not continue the old text or explain the failure.\nSOURCE CONTEXT:\n" + recoveryContext + validationBlock
-          : (renderedScreen
+          ? "RECOVERY RETRY: The prior response was absent, incomplete, or invalid. Return a smaller complete JSON object following the exact compact output budget in the system message. Do not continue the old text or explain the failure.\nSOURCE CONTEXT:\n" + withoutImageClaim(recoveryContext) + validationBlock
+          : (renderedScreen && sendImages
             ? "Design a high-fidelity, source-faithful improvement. Combine the rendered screen image with its native layer tree. Avoid generic redesigns. Context:\n" + userContext + validationBlock
-            : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext + validationBlock);
+            : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + withoutImageClaim(userContext) + validationBlock);
         const modelImages: Array<Record<string, unknown>> = [];
-        if (renderedScreen) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
-        if (referenceImage) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
+        if (renderedScreen && sendImages) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
+        if (referenceImage && sendImages) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
         const userContent: string | Array<Record<string, unknown>> = modelImages.length
           ? [{ type: "text", text: modelUserText }, ...modelImages]
           : modelUserText;
@@ -736,7 +745,7 @@ export async function POST(request: Request) {
           provider: providerLabel,
           routedVia: response.headers.get("x-routed-via"),
           brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
-          visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
+          visualAnalysis: { imageReceived: !!renderedScreen && sendImages, layerNodeCount: canvas.nodeCount, warning: sendImages ? (parsedInput.data.visualCaptureWarning || null) : "No vision-capable FreeLLMAPI route was available, so this plan used native layer evidence only. Add a vision-capable free key (for example Gemini) to FreeLLMAPI for screenshot-aware design." },
           generation: { recoveryAttempted: isRecovery, finishReason, modelIndex: modelIndex + 1, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt },
         }, { headers });
       } catch (error) {
@@ -748,6 +757,7 @@ export async function POST(request: Request) {
         clearTimeout(timer);
       }
     }
+  }
   }
   recordOperationalEvent({
     source: "backend", event: "Figma generation failed", status: "error", category: "model", action: providerId,
