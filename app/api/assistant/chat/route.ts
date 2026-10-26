@@ -7,6 +7,7 @@ import { containsSensitiveMaterial, createLearningMarkerTransform, referencesUns
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
 import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { getActiveChatProvider } from "@/src/providers/active-chat-provider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -338,9 +339,13 @@ export async function POST(request: Request) {
   if (!originIsAllowed(request)) {
     return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: responseHeaders });
   }
-  const key = process.env.OPENROUTER_API_KEY?.trim();
-  if (!key) {
-    return NextResponse.json({ error: "OpenRouter is not configured. Add OPENROUTER_API_KEY to the UX Direct Worker secrets." }, { status: 503, headers: responseHeaders });
+  const activeProvider = getActiveChatProvider();
+  const key = activeProvider.apiKey;
+  if (!activeProvider.configured || !key) {
+    return NextResponse.json({
+      error: activeProvider.configurationError || `${activeProvider.label} is not configured on the UX Direct Worker.`,
+      provider: activeProvider.label,
+    }, { status: 503, headers: responseHeaders });
   }
 
   let body: unknown;
@@ -351,8 +356,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400, headers: responseHeaders });
   }
   const value = body as Record<string, unknown>;
-  // Let OpenRouter choose the model dynamically; never pin a stale provider/model ID from the browser.
-  const model = ROUTER_MODEL;
+  // Provider and model are selected server-side; never accept a provider/model override from the browser.
+  const model = activeProvider.id === "openrouter" ? ROUTER_MODEL : activeProvider.model;
   if (!Array.isArray(value.messages) || value.messages.length < 1 || value.messages.length > MAX_MESSAGES) {
     return NextResponse.json({ error: "messages must contain between 1 and " + MAX_MESSAGES + " entries." }, { status: 400, headers: responseHeaders });
   }
@@ -392,8 +397,8 @@ export async function POST(request: Request) {
     ...(learning.recordId ? { learningRecordId: learning.recordId, learningDraftId: learning.recordId } : {}),
   };
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
-  const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const candidates = [ROUTER_MODEL];
+  const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
+  const candidates = [model];
   const failures: string[] = [];
   let lastStatus = 502;
   const origin = new URL(request.url).origin;
@@ -409,8 +414,10 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            "HTTP-Referer": origin,
-            "X-OpenRouter-Title": "UX Direct",
+            ...(activeProvider.id === "openrouter" ? {
+              "HTTP-Referer": origin,
+              "X-OpenRouter-Title": "UX Direct",
+            } : {}),
           },
           body: JSON.stringify({
             model: currentModel,
@@ -418,9 +425,11 @@ export async function POST(request: Request) {
             stream: true,
             temperature: 0.4,
             max_tokens: 25000,
-            plugins: [{ id: "auto-router", cost_tier: "low" }],
-            provider: { sort: "throughput" },
-            usage: { include: true },
+            ...(activeProvider.id === "openrouter" ? {
+              plugins: [{ id: "auto-router", cost_tier: "low" }],
+              provider: { sort: "throughput" },
+              usage: { include: true },
+            } : {}),
           }),
           cache: "no-store",
           signal: controller.signal,
@@ -429,21 +438,21 @@ export async function POST(request: Request) {
           const details = (await providerResponse.text().catch(() => "")).replace(/[\r\n]+/g, " ").trim().slice(0, 260);
           const status = providerResponse.status;
           const message = [401, 403].includes(status)
-            ? "OpenRouter rejected the configured API key or account access (HTTP " + status + ")."
-            : "Model " + currentModel + " via OpenRouter returned HTTP " + status + (details ? ": " + details : ".");
+            ? activeProvider.label + " rejected the configured API key or account access (HTTP " + status + "). Check the key issued by the selected provider."
+            : "Model " + currentModel + " via " + activeProvider.label + " returned HTTP " + status + (details ? ": " + details : ".");
           throw Object.assign(new Error(message), { status });
         }
         const probe = await probeForFirstText(providerResponse);
         if (!probe.hasText) {
           if (probe.reader) await probe.reader.cancel().catch(() => {});
-          throw Object.assign(new Error("Model " + currentModel + " via OpenRouter returned an empty text stream before its first token."), { status: 502 });
+          throw Object.assign(new Error("Model " + currentModel + " via " + activeProvider.label + " returned an empty text stream before its first token."), { status: 502 });
         }
         // Stop the startup timer once the first visible text arrives; let the full answer stream without an app-imposed timeout.
         clearTimeout(timer);
         return { model: currentModel, probe, controller };
       } catch (error) {
         if (controller.signal.aborted) {
-          throw Object.assign(new Error("Model " + currentModel + " via OpenRouter did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
+          throw Object.assign(new Error("Model " + currentModel + " via " + activeProvider.label + " did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
         }
         throw error;
       } finally {
@@ -482,7 +491,7 @@ export async function POST(request: Request) {
   }
 
   for (const attempt of attempts) attempt.controller.abort();
-  const userMessage = "OpenRouter Auto failed to start a usable response. " + failures.join(" | ");
+  const userMessage = activeProvider.label + " failed to start a usable response. " + failures.join(" | ");
   return NextResponse.json(
     { error: userMessage, attemptedModels: candidates },
     { status: lastStatus === 429 ? 429 : 502, headers: brainHeaders(brain, undefined, request) },
