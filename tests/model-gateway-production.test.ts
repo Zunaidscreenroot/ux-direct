@@ -18,7 +18,7 @@ test("home opens the unified chat-first workspace instead of the operations dash
   assert.equal(page.includes("ModelGatewayPanel"), false);
 });
 
-test("UX Direct uses low-cost OpenRouter Auto for chat and keeps Figma routes separately configured", () => {
+test("UX Direct selects one chat provider and shares provider configuration with Figma agent routes", () => {
   const route = read("app/api/assistant/chat/route.ts");
   const figmaAgent = read("app/api/assistant/figma-agent/route.ts");
   const review = read("app/api/assistant/figma-agent/review/route.ts");
@@ -46,6 +46,8 @@ test("UX Direct uses low-cost OpenRouter Auto for chat and keeps Figma routes se
   assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
   for (const routeText of [figmaAgent, review, refine]) {
     assert.ok(routeText.includes("FIGMA_AGENT_MODELS"));
+    assert.ok(routeText.includes("getActiveChatProvider"));
+    assert.ok(routeText.includes('activeProvider.id === "openrouter"'));
     assert.equal(routeText.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
     assert.ok(routeText.includes("UX_DIRECT_DESIGN_ROLE"));
   }
