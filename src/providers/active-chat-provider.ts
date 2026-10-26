@@ -23,6 +23,9 @@ function validateFreeLlmApiBaseUrl(baseUrl: string, env: Record<string, string |
   if (!["https:", "http:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
     return "FREELLMAPI_BASE_URL must be a clean HTTP(S) base URL without credentials, query parameters, or fragments.";
   }
+  if (!parsed.pathname.replace(/\/+$/, "").endsWith("/v1")) {
+    return "FREELLMAPI_BASE_URL must include the /v1 path, for example https://your-host.example/v1.";
+  }
   if (env.NODE_ENV === "production" && parsed.protocol !== "https:") {
     return "FREELLMAPI_BASE_URL must use HTTPS in production.";
   }
