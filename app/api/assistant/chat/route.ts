@@ -465,7 +465,7 @@ export async function POST(request: Request) {
   const attempts: Array<ReturnType<typeof startAttempt>> = [];
   let winner: { model: string; probe: ProbedStream; controller: AbortController } | null = null;
 
-  // One server-selected OpenRouter Auto route only; never retry on a named model.
+  // One server-selected model route only; never accept model/provider overrides from the browser.
   for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
     const candidate = candidates[candidateIndex];
     const attempt = startAttempt(candidate, candidateIndex === 0 ? FIRST_TEXT_TIMEOUT_MS : 16000);
