@@ -16,15 +16,15 @@ export const FIGMA_CANVAS_COMMANDS = [
   { id: "clone-node", label: "Clone node", summary: "Duplicate one existing node.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
   { id: "delete-node", label: "Delete node", summary: "Delete one explicitly identified node on the current page.", risk: "high", destructive: true, batchable: false, requiresExplicitIntent: true },
   { id: "reorder-node", label: "Reorder node", summary: "Change one node's position in its parent's order.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
-  { id: "reparent-node", label: "Reparent node", summary: "Move one node into a different parent on the current page.", risk: "high", destructive: true, batchable: true, requiresExplicitIntent: true },
+  { id: "reparent-node", label: "Reparent node", summary: "Move one node into a different parent on the current page.", risk: "high", destructive: true, batchable: false, requiresExplicitIntent: true },
   { id: "group-nodes", label: "Group nodes", summary: "Group an explicit set of two or more nodes.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
   { id: "flatten-nodes", label: "Flatten nodes", summary: "Flatten selected explicit nodes into flattened artwork.", risk: "high", destructive: true, batchable: false, requiresExplicitIntent: true },
   { id: "boolean-operation", label: "Boolean operation", summary: "Apply a boolean operation to explicit node IDs.", risk: "high", destructive: true, batchable: false, requiresExplicitIntent: true },
-  { id: "ungroup-node", label: "Ungroup node", summary: "Ungroup one explicitly identified group.", risk: "medium", destructive: true, batchable: true, requiresExplicitIntent: true },
+  { id: "ungroup-node", label: "Ungroup node", summary: "Ungroup one explicitly identified group.", risk: "medium", destructive: true, batchable: false, requiresExplicitIntent: true },
   { id: "create-component", label: "Create component", summary: "Convert a supported node into a component.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
-  { id: "create-component-set", label: "Create component set", summary: "Combine compatible components into a variants set.", risk: "high", destructive: true, batchable: true, requiresExplicitIntent: true },
+  { id: "create-component-set", label: "Create component set", summary: "Combine compatible components into a variants set.", risk: "high", destructive: true, batchable: false, requiresExplicitIntent: true },
   { id: "create-instance", label: "Create instance", summary: "Create an instance from an explicit component.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
-  { id: "swap-component", label: "Swap component", summary: "Replace an instance's component with a specified component.", risk: "high", destructive: true, batchable: true, requiresExplicitIntent: true },
+  { id: "swap-component", label: "Swap component", summary: "Replace an instance's component with a specified component.", risk: "high", destructive: true, batchable: false, requiresExplicitIntent: true },
   { id: "detach-instance", label: "Detach instance", summary: "Detach an instance from its component.", risk: "high", destructive: true, batchable: false, requiresExplicitIntent: true },
   { id: "set-selection", label: "Set selection", summary: "Change the active selection to explicit node IDs.", risk: "low", destructive: false, batchable: true, requiresExplicitIntent: false },
   { id: "zoom-to-nodes", label: "Zoom to nodes", summary: "Adjust the viewport to show explicit nodes.", risk: "low", destructive: false, batchable: true, requiresExplicitIntent: false },
@@ -68,4 +68,10 @@ export const FIGMA_CANVAS_COMMAND_POLICY: Record<FigmaCanvasOperation, FigmaCanv
 
 export function isFigmaCanvasOperation(value: unknown): value is FigmaCanvasOperation {
   return typeof value === "string" && FIGMA_CANVAS_COMMANDS.some((command) => command.id === value);
+}
+
+/** Runtime predicate shared by validators that accept untrusted JSON. */
+export function isFigmaCanvasNonBatchableStepOperation(value: unknown): boolean {
+  return typeof value === "string" &&
+    FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS.some((operation) => operation === value);
 }
