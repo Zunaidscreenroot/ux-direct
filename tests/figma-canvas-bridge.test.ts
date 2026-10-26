@@ -18,6 +18,22 @@ const chatRoute = read("app/api/assistant/chat/route.ts");
 const modelPolicy = read("src/providers/openrouter-models.ts");
 const cockpitEffects = read("figma-plugin/ui-effects.tsx");
 
+test("canonical Figma command registry stays unique and encodes standalone-only destructive operations", () => {
+  const ids = FIGMA_CANVAS_COMMANDS.map((command) => command.id);
+  assert.equal(new Set(ids).size, ids.length, "Command IDs must be unique.");
+  assert.deepEqual(FIGMA_CANVAS_OPERATION_IDS, ids);
+  assert.deepEqual(FIGMA_CANVAS_STEP_OPERATION_IDS, ids.filter((id) => id !== "batch"));
+  assert.equal((FIGMA_CANVAS_STEP_OPERATION_IDS as readonly string[]).includes("batch"), false);
+  assert.ok(
+    FIGMA_CANVAS_COMMANDS.filter((command) => command.destructive).every((command) =>
+      command.batchable === false && command.requiresExplicitIntent === true),
+    "Destructive commands must require explicit intent and must never be hidden in a batch.",
+  );
+  assert.ok(FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS.includes("delete-node"));
+  assert.ok(FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS.includes("insert-image"));
+  assert.equal((FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS as readonly string[]).includes("create-elements"), false);
+});
+
 test("conversational cockpit inline JavaScript parses successfully", () => {
   const match = pluginUi.match(/<script>([\s\S]*?)<\/script>/i);
   assert.ok(match, "Figma plugin UI must contain its main script block.");
@@ -396,7 +412,7 @@ test("broad refinement routes through screenshot-aware design generation; precis
 test("native action planner covers Figma page, export, boolean, flatten and image-fill APIs safely", () => {
   for (const operation of ["flatten-nodes", "boolean-operation", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "create-image-fill"]) {
     assert.ok(actionAgent.includes('"' + operation + '"'), "AI planner schema is missing " + operation);
-    assert.ok(commandRegistry.includes('id: "' + operation + '"\u0027), "Canonical registry is missing " + operation);
+    assert.ok(commandRegistry.includes('id: "' + operation + '"'), "Canonical registry is missing " + operation);
     assert.ok(plugin.includes('payload.operation === "' + operation + '"'), "Native executor is missing " + operation);
   }
   assert.ok(actionAgent.includes("canvas.pages"), "Page switching must validate against the approved-file page catalogue.");
