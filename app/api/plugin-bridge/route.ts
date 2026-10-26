@@ -347,8 +347,8 @@ const CANVAS_WRITE_PAYLOAD = z.object({
   if (value.operation !== "batch" && value.actions) {
     ctx.addIssue({ code: "custom", path: ["actions"], message: "actions is supported only for batch." });
   }
-  if (value.operation === "batch" && value.actions && value.actions.some((step) => FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS.includes(step.operation)) && value.actions.length > 1) {
-    ctx.addIssue({ code: "custom", path: ["actions"], message: "Exports and image insertion/fills with inline image data must be standalone commands to preserve bridge size limits." });
+  if (value.operation === "batch" && value.actions && value.actions.some((step) => FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS.includes(step.operation))) {
+    ctx.addIssue({ code: "custom", path: ["actions"], message: "Operations marked batchable=false must be sent as standalone commands, not through batch." });
   }
   if (value.operation === "batch" && value.actions) {
     const totalCreated = value.actions.reduce((sum, step) => sum + (step.operation === "create-elements" && step.elements ? step.elements.length : 0), 0);
