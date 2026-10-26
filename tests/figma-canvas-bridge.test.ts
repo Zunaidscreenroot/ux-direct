@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Script } from "node:vm";
+import { FIGMA_CANVAS_COMMANDS, FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS, FIGMA_CANVAS_OPERATION_IDS, FIGMA_CANVAS_STEP_OPERATION_IDS } from "../src/figma-agent/command-registry";
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 const mcp = read("app/api/mcp/route.ts");
 const bridge = read("app/api/plugin-bridge/route.ts");
+const commandRegistry = read("src/figma-agent/command-registry.ts");
 const plugin = read("figma-plugin/code.js");
 const pluginUi = read("figma-plugin/ui.html");
 const agent = read("app/api/assistant/figma-agent/route.ts");
@@ -23,6 +25,7 @@ test("conversational cockpit inline JavaScript parses successfully", () => {
 });
 
 test("Figma execution tools are exposed to authorized MCP clients", () => {
+  assert.ok(mcp.includes('name: "ux_direct_figma_canvas_capabilities"'));
   assert.ok(mcp.includes('name: "ux_direct_figma_canvas_read"'));
   assert.ok(mcp.includes('name: "ux_direct_figma_canvas_write"'));
   assert.ok(mcp.includes('name: "ux_direct_figma_canvas_command_status"'));
@@ -31,22 +34,22 @@ test("Figma execution tools are exposed to authorized MCP clients", () => {
   assert.ok(mcp.includes('maxNodes: { type: "integer", minimum: 1, maximum: 100'));
 });
 
-test("canvas write tool requires explicit confirmation and supports only named operations", () => {
+test("canvas write tool requires explicit confirmation and uses the canonical command policy", () => {
   assert.ok(mcp.includes('if (input.confirm !== true)'));
-  assert.ok(mcp.includes('"clone-node", "delete-node", "reorder-node"'));
-  assert.ok(mcp.includes('"reparent-node", "group-nodes", "flatten-nodes", "boolean-operation"'));
-  assert.ok(mcp.includes('"create-component", "create-component-set", "create-instance", "swap-component"'));
-  assert.ok(mcp.includes('"rename-page", "set-current-page", "export-svg"'));
-  assert.ok(mcp.includes('"set-selection", "zoom-to-nodes"'));
-  assert.ok(mcp.includes('"create-page", "rename-page", "set-current-page"'));
-  assert.ok(mcp.includes('"export-svg", "export-node", "apply-style"'));
+  assert.ok(mcp.includes("enum: FIGMA_CANVAS_OPERATION_IDS"));
+  assert.ok(bridge.includes("z.enum(FIGMA_CANVAS_OPERATION_IDS)"));
+  assert.ok(bridge.includes("z.enum(FIGMA_CANVAS_STEP_OPERATION_IDS)"));
+  assert.ok(commandRegistry.includes('id: "delete-node"'));
+  assert.ok(commandRegistry.includes('id: "reparent-node"'));
+  assert.ok(commandRegistry.includes("requiresExplicitIntent: true"));
+  assert.ok(commandRegistry.includes("batchable: false"));
   assert.ok(mcp.includes('enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR"]'));
   assert.ok(mcp.includes('textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] }'));
   assert.ok(mcp.includes('paddingLeft: { type: "number", minimum: 0, maximum: 1000 }'));
   assert.ok(mcp.includes('shadowBlur: { type: "number", minimum: 0, maximum: 200 }'));
   assert.ok(mcp.includes('"ux_direct_figma_canvas_write"'));
   assert.ok(mcp.includes('"ux_direct_figma_plugin_queue_health_check"'));
-  assert.ok(!mcp.includes('figma.deleteNode'));
+  assert.ok(!plugin.includes('figma.deleteNode'));
 });
 
 test("bridge authenticates server-issued commands and strictly validates write payloads", () => {
@@ -55,6 +58,7 @@ test("bridge authenticates server-issued commands and strictly validates write p
   assert.ok(bridge.includes('z.array(CANVAS_ELEMENT).min(1).max(20)'));
   assert.ok(bridge.includes('!["read-canvas", "write-canvas"].includes(command.action)'));
   assert.ok(bridge.includes('serializedResult.length > 60000'));
+  assert.ok(bridge.includes("FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS.includes(step.operation)"));
 });
 
 test("native plugin checks the approved file before canvas access and caps reads", () => {
@@ -81,8 +85,7 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
     '"create-component"', '"create-instance"', '"detach-instance"', '"set-selection"',
     '"zoom-to-nodes"', '"create-page"', '"rename-page"', '"export-svg"', '"apply-style"',
   ]) {
-    assert.ok(mcp.includes(action), "MCP schema missing " + action);
-    assert.ok(bridge.includes(action), "Plugin bridge validation missing " + action);
+    assert.ok(commandRegistry.includes(action), "Canonical registry missing " + action);
   }
   for (const api of [
     'figma.createLine()', 'figma.createPolygon()', 'figma.createStar()', 'figma.createSlice()',
@@ -97,9 +100,9 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
   }
   assert.ok(plugin.includes('svg.length > 35000'), "SVG output is capped to fit the bridge result envelope");
   assert.ok(mcp.includes('capabilities: { tools: { listChanged: false } }'), "MCP advertises tool-list change support");
-  assert.ok(mcp.includes('enum: ["batch", "create-elements", "update-node"'), "Batch operation is part of the exposed write tool");
+  assert.ok(mcp.includes("enum: FIGMA_CANVAS_OPERATION_IDS"), "MCP write schema derives operation IDs from the canonical registry");
   assert.ok(mcp.includes('actions: {\n          type: "array", minItems: 1, maxItems: 40'), "MCP schema exposes sequential action batches");
-  assert.ok(bridge.includes('value.operation === "batch" && value.actions && value.actions.some((step) => ["export-svg", "export-node", "create-image-fill", "insert-image"].includes(step.operation))'), "Bridge prevents large exports and inline image payloads in batches");
+  assert.ok(bridge.includes("value.operation === \"batch\" && value.actions && value.actions.some((step) => FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS.includes(step.operation))"), "Bridge derives standalone-only actions from the shared command policy");
   assert.ok(plugin.includes('if (payload.operation === "batch")'), "Native executor supports ordered batches");
   assert.ok(plugin.includes('state: batchResults.length ? "partial" : "failed"'), "Batch result reports partial completion instead of claiming atomic success");
   assert.ok(plugin.includes('if (typeof spec.textCase === "string") node.textCase = spec.textCase'), "Text creation applies text case");
@@ -117,7 +120,7 @@ test("canvas writer exposes native node, layout, style, component, selection, pa
   assert.ok(plugin.includes('if (payload.operation === "reparent-node")'), "Native executor supports layer reparenting");
   assert.ok(plugin.includes('if (payload.operation === "set-current-page")'), "Native executor supports switching to an approved page");
   assert.ok(plugin.includes('while (ancestor)'), "Reparent operation rejects parent/child cycles");
-  assert.ok(mcp.includes('"flatten-nodes"') && mcp.includes('"boolean-operation"') && mcp.includes('"export-node"'), "MCP write schema exposes extended actions");
+  assert.ok(commandRegistry.includes('id: "flatten-nodes"') && commandRegistry.includes('id: "boolean-operation"') && commandRegistry.includes('id: "export-node"'), "Canonical registry exposes extended actions");
 });
 
 test("in-Figma design agent retrieves approved brain context and validates native layer plans", () => {
@@ -352,7 +355,7 @@ test("native editor applies Auto Layout sizing and exposes image/variable operat
   assert.ok(actionAgent.includes("const rawStyles = isRecord(canvasRaw.styles) ? canvasRaw.styles : {}"));
   assert.ok(actionAgent.includes("variableCollections = Array.isArray(canvasRaw.variableCollections)"));
   assert.ok(agent.includes('paintStyleId: z.string().trim().min(1).max(300).optional()'));
-  assert.ok(bridge.includes('"create-image-fill", "insert-image"].includes(step.operation)') || bridge.includes('"create-image-fill", "insert-image"].includes(step.operation)'));
+  assert.ok(bridge.includes("FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS.includes(step.operation)"));
 });
  
 test("Figma cockpit uses Libraries.dev Thinking Orbs for task-state updates", () => {
@@ -393,14 +396,13 @@ test("broad refinement routes through screenshot-aware design generation; precis
 test("native action planner covers Figma page, export, boolean, flatten and image-fill APIs safely", () => {
   for (const operation of ["flatten-nodes", "boolean-operation", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "create-image-fill"]) {
     assert.ok(actionAgent.includes('"' + operation + '"'), "AI planner schema is missing " + operation);
-    assert.ok(mcp.includes('"' + operation + '"'), "MCP exposes missing operation " + operation);
-    assert.ok(bridge.includes('"' + operation + '"'), "Bridge is missing validation for " + operation);
+    assert.ok(commandRegistry.includes('id: "' + operation + '"\u0027), "Canonical registry is missing " + operation);
     assert.ok(plugin.includes('payload.operation === "' + operation + '"'), "Native executor is missing " + operation);
   }
   assert.ok(actionAgent.includes("canvas.pages"), "Page switching must validate against the approved-file page catalogue.");
   assert.ok(actionAgent.includes("references a page ID outside the supplied approved-file page catalogue"));
   assert.ok(actionAgent.includes("no user-attached image was provided"), "A screenshot may not be misused as an image asset.");
-  assert.ok(mcp.includes('"create-image-fill", "insert-image", "create-variables", "bind-variable"'), "MCP runtime permits the safe native image and token actions.");
+  assert.ok(FIGMA_CANVAS_OPERATION_IDS.includes("create-image-fill") && FIGMA_CANVAS_OPERATION_IDS.includes("insert-image") && FIGMA_CANVAS_OPERATION_IDS.includes("create-variables") && FIGMA_CANVAS_OPERATION_IDS.includes("bind-variable"), "Canonical registry includes native image and token actions.");
   assert.ok(mcp.includes('["current-page", "selection", "node", "test-lab"].includes(String(input.target))'), "MCP and bridge agree on the node target.");
 });
 
