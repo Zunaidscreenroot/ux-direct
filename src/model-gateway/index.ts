@@ -144,6 +144,12 @@ export function providersFromEnv(env: Record<string, string | undefined> = proce
     name: "openrouter-auto", baseUrl: openRouterBaseUrl,
     apiKey: env.OPENROUTER_API_KEY, models: ["openrouter/auto"], kind: "paid"
   });
+  // FreeLLMAPI: self-hosted OpenAI-compatible router that stacks free-tier provider keys behind one endpoint.
+  // Model "auto" (or auto:fast / auto:smart) lets the router pick and fail over between providers.
+  if (env.FREELLMAPI_BASE_URL && env.FREELLMAPI_API_KEY) providers.push({
+    name: "freellmapi", baseUrl: trimSlash(env.FREELLMAPI_BASE_URL),
+    apiKey: env.FREELLMAPI_API_KEY, models: csv(env.FREELLMAPI_MODELS, "auto,auto:fast,auto:smart"), kind: "free-tier"
+  });
   const geminiBillingKind = env.GEMINI_BILLING_MODE === "paid" ? "paid" : "free-tier";
   if ((env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY) && (geminiBillingKind !== "paid" || paidRoutingReady)) providers.push({
     name: "gemini", baseUrl: trimSlash(env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai"),
@@ -200,6 +206,9 @@ export function getModelCatalog(providers = providersFromEnv()): ModelCatalogEnt
     { id: "openai/gpt-oss-120b", provider: "groq", label: "GPT OSS 120B · Groq", tier: "free-tier", tasks: ["reasoning","critique","structured output"], notes: "Free quotas may apply. Published paid price $0.15 input / $0.60 output per 1M tokens.", usdInputPerMillion: .15, usdOutputPerMillion: .6, pricingSource: GROQ_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
     { id: "openai/gpt-oss-20b", provider: "groq", label: "GPT OSS 20B · Groq", tier: "free-tier", tasks: ["classification","extraction","fast drafts"], notes: "Free quotas may apply. Published paid price $0.075 input / $0.30 output per 1M tokens.", usdInputPerMillion: .075, usdOutputPerMillion: .3, pricingSource: GROQ_PRICE_SOURCE, pricingReviewedAt: "2026-10-11" },
     { id: "gpt-oss-120b", provider: "cerebras", label: "GPT OSS 120B · Cerebras", tier: "free-tier", tasks: ["reasoning","critique"], notes: "Check model ID and available quota in your account." },
+    { id: "auto", provider: "freellmapi", label: "FreeLLMAPI Auto · free-tier router", tier: "free-tier", tasks: ["reasoning","critique","information architecture","structured output","vision"], notes: "FreeLLMAPI picks the provider/model per request and fails over on 429/5xx. Quality can dip late in the day when daily free caps are hit; limits reset at UTC midnight." },
+    { id: "auto:fast", provider: "freellmapi", label: "FreeLLMAPI Auto Fast", tier: "free-tier", tasks: ["classification","extraction","summaries"], notes: "Latency-first FreeLLMAPI routing strategy." },
+    { id: "auto:smart", provider: "freellmapi", label: "FreeLLMAPI Auto Smart", tier: "free-tier", tasks: ["reasoning","critique","complex planning"], notes: "Quality-first FreeLLMAPI routing strategy." },
     { id: "apodex/apodex-1.1-mini:free", provider: "openrouter", label: "Apodex 1.1 Mini · OpenRouter free", tier: "free-tier", tasks: ["reasoning","research","summaries"], notes: "Explicit :free model; free availability and rate limits may change." },
     { id: "openrouter/auto", provider: "openrouter-auto", label: "OpenRouter Auto · low-cost routing", tier: "paid", tasks: ["reasoning","critique","information architecture","structured output"], notes: "OpenRouter selects a currently available low-cost model for each request; the selected model can change." },
     { id: "nvidia/nemotron-3-ultra-550b-a55b:free", provider: "openrouter", label: "NVIDIA Nemotron 3 Ultra · free", tier: "free-tier", tasks: ["reasoning","planning","research"], notes: "Current OpenRouter free model; very large reasoning model. Free provider endpoints have rate limits and may log inputs." , pricingSource: "https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b:free", pricingReviewedAt: "2026-10-11" },

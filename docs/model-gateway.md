@@ -38,6 +38,14 @@ OPENROUTER_AUTO_ROUTING=true
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 ```
 
+FreeLLMAPI (migration target; OpenAI-compatible router stacking free-tier provider keys):
+```env
+FREELLMAPI_BASE_URL=https://your-host/v1
+FREELLMAPI_API_KEY=freellmapi-...
+FREELLMAPI_MODELS=auto,auto:fast,auto:smart
+```
+Use model `auto` for router-chosen models, `auto:fast` / `auto:smart` for strategies. The provider is registered as `free-tier`, so it passes free routing mode without paid-routing opt-in. Responses carry an `X-Routed-Via` header naming the serving provider/model. Daily free caps reset at UTC midnight. The router must be hosted somewhere reachable from the Cloudflare Worker; `localhost` will not work in production. OpenRouter paths are unchanged until the assistant chat and IA/UX routes are cut over.
+
 OpenAI:
 ```env
 OPENAI_API_KEY=...
