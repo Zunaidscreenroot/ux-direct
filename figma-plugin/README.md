@@ -39,9 +39,14 @@ The supported operations are an explicit allowlist. The agent does not execute a
 
 ## Model routing and cost
 
-Figma generation and direct action planning use OpenRouter Auto first with the LOW cost tier, followed by explicit vision-capable fallbacks in cost order when a response is missing or invalid. Fallbacks are sequential, not parallel. Full screenshot QA/repair is conditional on the quality gate, so stronger review is reserved for outputs that need it.
+The connection panel (top-right status pill) has a **Model provider** dropdown. The choice is saved on the backend and used by chat, design generation, visual review, refinement and native actions.
 
-The API key stays on the backend; it is not exposed to the Figma plugin UI.
+- **OpenRouter**: `openrouter/auto` pinned to the LOW cost tier, restricted to models that accept text and image input, support structured output, have a large context window and sit under a price ceiling (no `:free` endpoints, which may log prompts). The allow-list is built live from OpenRouter's model catalogue and cached for 10 minutes; if it is empty or rejected, routing falls back to plain `cost_tier: low`.
+- **FreeLLMAPI**: the self-hosted FreeLLMAPI router with model `auto`. It picks the provider/model per request and fails over on 429/5xx.
+
+Requests are sequential with one compact retry. API keys stay on the backend. Switching to a provider that is not configured on the Worker is refused.
+
+The panel shows two things: **UX Direct backend** (Workers backend, plugin bridge and knowledge base combined) and the **provider**. UX Audit and ChatGPT status are intentionally not shown here: audits are routed to the UX Audit service by the UX Direct backend. Open `/backend` on the UX Direct site for the live node map and activity log.
 
 ## Architecture
 
@@ -49,6 +54,8 @@ The API key stays on the backend; it is not exposed to the Figma plugin UI.
 - figma-plugin/code.js: the native Figma API executor, file-scope guard, bounded readback, and named write operations.
 - app/api/assistant/figma-agent/route.ts: screenshot-aware full design planner, schema validation, Auto Layout planning, reference-image context, and model routing.
 - app/api/assistant/figma-agent/actions/route.ts: direct native action planner with exact node/page/style/variable catalogue validation.
+- src/providers/figma-llm.ts: provider selection (OpenRouter / FreeLLMAPI), OpenRouter low-cost multimodal allow-list, request targets.
+- app/api/backend/status, app/api/backend/provider and app/backend/page.tsx: consolidated status, provider switch, and the node viewer with activity log.
 - app/api/plugin-bridge/route.ts and app/api/mcp/route.ts: validated queue/bridge contracts and tool dispatch.
 - src/figma-agent/normalize-plan.ts: normalizes model plans into a native layout contract before any writes.
 - tests/figma-canvas-bridge.test.ts and the other tests/*.test.ts files: regression checks, operation allowlists, schema constraints, intent routing, and UI syntax.

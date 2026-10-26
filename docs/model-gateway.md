@@ -44,7 +44,7 @@ FREELLMAPI_BASE_URL=https://your-host/v1
 FREELLMAPI_API_KEY=freellmapi-...
 FREELLMAPI_MODELS=auto,auto:fast,auto:smart
 ```
-Use model `auto` for router-chosen models, `auto:fast` / `auto:smart` for strategies. The provider is registered as `free-tier`, so it passes free routing mode without paid-routing opt-in. Responses carry an `X-Routed-Via` header naming the serving provider/model. Daily free caps reset at UTC midnight. The router must be hosted somewhere reachable from the Cloudflare Worker; `localhost` will not work in production. OpenRouter paths are unchanged until the assistant chat and IA/UX routes are cut over.
+Use model `auto` for router-chosen models, `auto:fast` / `auto:smart` for strategies. The provider is registered as `free-tier`, so it passes free routing mode without paid-routing opt-in. Responses carry an `X-Routed-Via` header naming the serving provider/model. Daily free caps reset at UTC midnight. The router must be hosted somewhere reachable from the Cloudflare Worker; `localhost` will not work in production. The Figma plugin's chat, generation, review, refine and action routes follow the provider dropdown (stored in R2); the generic gateway API and the IA/UX analysis routes still use OpenRouter Auto. See `figma-plugin/README.md`.
 
 OpenAI:
 ```env

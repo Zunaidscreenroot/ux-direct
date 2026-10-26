@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import { buildFigmaLlmTarget, getOpenRouterAllowList, selectFigmaProvider } from "@/src/providers/figma-llm";
 import { z } from "zod";
-import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 
 export const runtime = "nodejs";
@@ -237,8 +238,10 @@ export async function OPTIONS(request: Request) {
 export async function POST(request: Request) {
   const headers = cors(request);
   if (!allowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (!apiKey) return NextResponse.json({ error: "OpenRouter is not configured." }, { status: 503, headers });
+  const llm = buildFigmaLlmTarget(await selectFigmaProvider(), new URL(request.url).origin);
+  if (!llm) return NextResponse.json({ error: "The selected model provider is not configured." }, { status: 503, headers });
+  const apiKey = llm.key;
+  const allowList = llm.id === "openrouter" ? await getOpenRouterAllowList() : [];
   const raw = await request.json().catch(() => null);
   const requestSchema = z.object({
     prompt: z.string().trim().min(2).max(5000),
@@ -307,19 +310,18 @@ export async function POST(request: Request) {
   const content: string | Array<Record<string, unknown>> = images.length
     ? [{ type: "text", text: userText }, ...images]
     : userText;
-  const models = FIGMA_AGENT_MODELS.map(m => m.id);
+  const models = llm.models;
   const errors: string[] = [];
   for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
     const model = models[modelIndex];
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), modelIndex === 0 ? 60000 : 45000);
     try {
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const response = await fetch(llm.endpoint, {
         method: "POST",
-        headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json", Accept: "application/json",
-          "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Native Figma Actions" },
+        headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json", Accept: "application/json", ...llm.headers },
         body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content }],
-          ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
+          ...llm.bodyExtras(allowList),
           ...(model.startsWith("google/gemini-") ? { temperature: 0.1 } : {}),
           // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
           ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),

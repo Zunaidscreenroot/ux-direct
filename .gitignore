@@ -12,3 +12,4 @@ coverage/
 *.log
 .netlify/
 *.tsbuildinfo
+next-env.d.ts

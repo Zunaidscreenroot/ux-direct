@@ -105,22 +105,23 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("payload_keys="), "Empty provider responses should report envelope shape for diagnosis.");
 });
 
-test("Figma agent uses GPT-6 Luna primary, Auto fallback, and no plugin live QA", () => {
+test("Figma agent uses the selected provider's router model and no plugin live QA", () => {
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   const catalog = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
-  assert.ok(route.includes("const models = FIGMA_AGENT_MODELS.map((entry) => entry.id)"), "Generation uses the shared Figma-specific chain.");
-  assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Figma generation includes the explicit low-cost Auto fallback.");
+  assert.ok(route.includes("const generationModels: string[] = llm.models"), "Generation uses the selected provider's router model.");
+  assert.ok(route.includes("...llm.bodyExtras(allowListActive ? openRouterAllowList : [])"), "Figma generation applies the provider's routing options (OpenRouter low-cost auto with allow-list).");
+  assert.ok(readFileSync(resolve(process.cwd(), "src/providers/figma-llm.ts"), "utf8").includes('cost_tier: "low"'), "OpenRouter routing stays pinned to the low-cost tier.");
   assert.ok(route.includes("const attemptsForModel = 2"), "The primary model and fallback each get one compact retry.");
   assert.ok(route.includes("provider returned an empty response body"), "Empty provider bodies are diagnosed clearly.");
   assert.ok(route.includes("provider returned a non-JSON response body"), "Invalid response bodies are diagnosed clearly.");
   assert.equal(route.includes("Promise.all(models"), false, "Model requests stay sequential.");
-  assert.deepEqual(FIGMA_AGENT_MODELS.map((entry) => entry.id), ["openai/gpt-6-luna", "openrouter/auto"], "GPT-6 Luna is primary and OpenRouter Auto is the fallback.");
+  assert.deepEqual(FIGMA_AGENT_MODELS.map((entry) => entry.id), ["openai/gpt-6-luna", "openrouter/auto"], "Legacy catalog constants are unchanged; routes use the shared provider module instead.");
   assert.ok(catalog.includes('FIGMA_AGENT_DEFAULT_MODEL: FigmaAgentModelId = "openai/gpt-6-luna"'));
   assert.ok(catalog.includes('FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openai/gpt-6-luna"'));
   const review = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/review/route.ts"), "utf8");
   const refine = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/refine/route.ts"), "utf8");
-  assert.ok(review.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
-  assert.ok(refine.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
+  assert.ok(review.includes("const models = llm.models"));
+  assert.ok(refine.includes("const models = llm.models"));
 
   const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
   assert.equal(ui.includes('fetch(API + "/api/assistant/figma-agent/live-qa"'), false, "The plugin must not run live browser QA.");

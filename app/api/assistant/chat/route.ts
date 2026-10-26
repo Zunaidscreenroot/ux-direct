@@ -7,6 +7,7 @@ import { containsSensitiveMaterial, createLearningMarkerTransform, referencesUns
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
 import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { buildFigmaLlmTarget, getOpenRouterAllowList, selectFigmaProvider } from "@/src/providers/figma-llm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,6 +54,7 @@ const SYSTEM_PROMPT = [
   "Be conversational like a helpful design colleague. Answer directly, explain trade-offs, and ask a follow-up only when a missing detail genuinely blocks the work.",
   "Be concise by default. Answer the question first, avoid repeating the prompt, and reserve long structured explanations for requests that need them.",
   "Never invent evidence, claim you inspected a website when you did not, or treat a hypothesis as a measured business outcome.",
+  "You run behind a model router that picks the underlying model per request. If asked which model you are, say you are UX Direct, that the router chooses the model, and that the exact model for each reply is shown by the app; never claim to be a specific vendor model.",
   "For UX findings, distinguish observed evidence, interpretation, severity, recommendation, and validation.",
   "Only use retrieved approved shared-brain context when it is relevant. Current user instructions and direct evidence take precedence.",
   "Private task-learning protocol: if this response contains one durable, reusable UX/product/design-system/accessibility/workflow lesson learned from the user's task, append exactly one final marker after the answer: <UXD_LEARNING>{JSON}</UXD_LEARNING>. JSON fields: title, normalizedRule, rationale, scopeKey, feedbackKind, keywords, originalLanguage. Omit the marker for greetings, simple facts, transient requests, speculative conclusions, or tasks with no reusable lesson. Keep normalizedRule concise and generalizable. Prefer narrow project/client scope; use indian-bfsi only for reusable Indian financial-services patterns, project:ux-direct for Figma/plugin/tooling, project:ux-audit for audit workflow, project:general-ux for general task patterns, and UX_SHARED_BRAIN only for genuinely cross-product rules. Never include raw prompts, screenshot or canvas text, personal identifiers, financial/health details, secrets, or confidential client facts. The private marker is removed before the answer reaches the user; never explain it in normal prose.",
@@ -338,11 +340,6 @@ export async function POST(request: Request) {
   if (!originIsAllowed(request)) {
     return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: responseHeaders });
   }
-  const key = process.env.OPENROUTER_API_KEY?.trim();
-  if (!key) {
-    return NextResponse.json({ error: "OpenRouter is not configured. Add OPENROUTER_API_KEY to the UX Direct Worker secrets." }, { status: 503, headers: responseHeaders });
-  }
-
   let body: unknown;
   try { body = await request.json(); } catch {
     return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400, headers: responseHeaders });
@@ -351,8 +348,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400, headers: responseHeaders });
   }
   const value = body as Record<string, unknown>;
-  // Let OpenRouter choose the model dynamically; never pin a stale provider/model ID from the browser.
-  const model = ROUTER_MODEL;
+  const llm = buildFigmaLlmTarget(await selectFigmaProvider(value.provider), new URL(request.url).origin);
+  if (!llm) {
+    recordOperationalEvent({ source: "backend", event: "Chat blocked", status: "error", category: "model", summary: "The selected model provider is not configured on the Worker." });
+    return NextResponse.json({ error: "The selected model provider is not configured. Pick the other provider in the connection panel or add its secrets to the UX Direct Worker." }, { status: 503, headers: responseHeaders });
+  }
+  const key = llm.key;
+  const allowList = llm.id === "openrouter" ? await getOpenRouterAllowList() : [];
+  // Let the router choose the model dynamically; never pin a stale provider/model ID from the browser.
+  const model = llm.models[0] ?? ROUTER_MODEL;
   if (!Array.isArray(value.messages) || value.messages.length < 1 || value.messages.length > MAX_MESSAGES) {
     return NextResponse.json({ error: "messages must contain between 1 and " + MAX_MESSAGES + " entries." }, { status: 400, headers: responseHeaders });
   }
@@ -392,8 +396,10 @@ export async function POST(request: Request) {
     ...(learning.recordId ? { learningRecordId: learning.recordId, learningDraftId: learning.recordId } : {}),
   };
   const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
-  const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
-  const candidates = [ROUTER_MODEL];
+  const endpoint = llm.endpoint;
+  const candidates = [model];
+  let routedVia: string | null = null;
+  const chatStartedAt = Date.now();
   const failures: string[] = [];
   let lastStatus = 502;
   const origin = new URL(request.url).origin;
@@ -409,8 +415,7 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            "HTTP-Referer": origin,
-            "X-OpenRouter-Title": "UX Direct",
+            ...llm.headers,
           },
           body: JSON.stringify({
             model: currentModel,
@@ -418,32 +423,32 @@ export async function POST(request: Request) {
             stream: true,
             temperature: 0.4,
             max_tokens: 25000,
-            plugins: [{ id: "auto-router", cost_tier: "low" }],
-            provider: { sort: "throughput" },
-            usage: { include: true },
+            ...llm.bodyExtras(allowList),
+            ...(llm.id === "openrouter" ? { provider: { sort: "throughput" }, usage: { include: true } } : {}),
           }),
           cache: "no-store",
           signal: controller.signal,
         });
+        routedVia = providerResponse.headers.get("x-routed-via");
         if (!providerResponse.ok) {
           const details = (await providerResponse.text().catch(() => "")).replace(/[\r\n]+/g, " ").trim().slice(0, 260);
           const status = providerResponse.status;
           const message = [401, 403].includes(status)
-            ? "OpenRouter rejected the configured API key or account access (HTTP " + status + ")."
-            : "Model " + currentModel + " via OpenRouter returned HTTP " + status + (details ? ": " + details : ".");
+            ? llm.label + " rejected the configured API key or account access (HTTP " + status + ")."
+            : "Model " + currentModel + " via " + llm.label + " returned HTTP " + status + (details ? ": " + details : ".");
           throw Object.assign(new Error(message), { status });
         }
         const probe = await probeForFirstText(providerResponse);
         if (!probe.hasText) {
           if (probe.reader) await probe.reader.cancel().catch(() => {});
-          throw Object.assign(new Error("Model " + currentModel + " via OpenRouter returned an empty text stream before its first token."), { status: 502 });
+          throw Object.assign(new Error("Model " + currentModel + " via " + llm.label + " returned an empty text stream before its first token."), { status: 502 });
         }
         // Stop the startup timer once the first visible text arrives; let the full answer stream without an app-imposed timeout.
         clearTimeout(timer);
         return { model: currentModel, probe, controller };
       } catch (error) {
         if (controller.signal.aborted) {
-          throw Object.assign(new Error("Model " + currentModel + " via OpenRouter did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
+          throw Object.assign(new Error("Model " + currentModel + " via " + llm.label + " did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
         }
         throw error;
       } finally {
@@ -478,11 +483,24 @@ export async function POST(request: Request) {
     for (const attempt of attempts) {
       if (attempt.controller !== winner.controller) attempt.controller.abort();
     }
-    return forwardProbedStream(winner.probe, brain, winner.model, request, lastUserMessage + "\n" + previousUserMessage);
+    recordOperationalEvent({
+      source: "backend", event: "Chat response started", status: "success", category: "model", action: llm.id, mode: llm.id,
+      summary: llm.label + " → " + winner.model + (routedVia ? " (via " + routedVia + ")" : ""),
+      durationMs: Date.now() - chatStartedAt,
+    });
+    const streamed = forwardProbedStream(winner.probe, brain, winner.model, request, lastUserMessage + "\n" + previousUserMessage);
+    streamed.headers.set("X-UXD-Provider", llm.label);
+    if (routedVia) streamed.headers.set("X-UXD-Routed-Via", routedVia);
+    streamed.headers.append("Access-Control-Expose-Headers", "X-UXD-Model, X-UXD-Provider, X-UXD-Routed-Via");
+    return streamed;
   }
 
   for (const attempt of attempts) attempt.controller.abort();
-  const userMessage = "OpenRouter Auto failed to start a usable response. " + failures.join(" | ");
+  recordOperationalEvent({
+    source: "backend", event: "Chat failed", status: "error", category: "model", action: llm.id, mode: llm.id,
+    summary: llm.label + ": " + (failures[0] || "no usable response").slice(0, 190), durationMs: Date.now() - chatStartedAt,
+  });
+  const userMessage = llm.label + " failed to start a usable response. " + failures.join(" | ");
   return NextResponse.json(
     { error: userMessage, attemptedModels: candidates },
     { status: lastStatus === 429 ? 429 : 502, headers: brainHeaders(brain, undefined, request) },

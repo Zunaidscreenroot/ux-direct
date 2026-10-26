@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { getMcpIssuer, verifyMcpPayload } from "@/lib/mcp-oauth";
 import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
+import { recordOperationalEvent } from "@/src/observability/event-log";
 import { NextResponse } from "next/server";
 import { addBrainKnowledgeDocument, listBrainFeedback, listBrainKnowledgeDocuments, reviewBrainEvalCase, reviewBrainFeedback, reviewBrainKnowledgeDocument, retrieveBrainContext, runBrainRetrievalEvals, saveBrainEvalCase, saveBrainFeedback } from "@/src/memory/shared-brain";
 
@@ -1538,10 +1539,16 @@ export async function POST(request: Request) {
         if (!claimHasScope(claims, toolScope(name))) {
           return rpcResult(id, toolText({ error: "OAuth token is missing required scope " + toolScope(name) + ". Reconnect UX Direct with full access." }, true), headers);
         }
+        // Audit tools are the only path to the UX Audit service; log them under "audit" so the backend viewer shows the routing.
+        const toolCategory = name.startsWith("ux_direct_uxaudit_") ? "audit" : name.startsWith("ux_direct_brain_") ? "brain" : "mcp";
+        const toolStartedAt = Date.now();
         try {
-          return rpcResult(id, await callTool(name, params.arguments ?? {}, request), headers);
+          const toolResult = await callTool(name, params.arguments ?? {}, request);
+          recordOperationalEvent({ source: "backend", event: "MCP tool " + name, status: "success", category: toolCategory, summary: "ChatGPT called " + name + ".", durationMs: Date.now() - toolStartedAt });
+          return rpcResult(id, toolResult, headers);
         } catch (error) {
           const messageText = error instanceof Error ? error.message : "UX Direct tool call failed.";
+          recordOperationalEvent({ source: "backend", event: "MCP tool " + name, status: "error", category: toolCategory, summary: messageText.slice(0, 200), durationMs: Date.now() - toolStartedAt });
           return rpcResult(id, toolText({ error: messageText.slice(0, 500) }, true), headers);
         }
       }

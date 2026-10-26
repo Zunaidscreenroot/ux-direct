@@ -27,20 +27,20 @@ test("UX Direct uses low-cost OpenRouter Auto for chat and keeps Figma routes se
   const policy = read("src/providers/openrouter-models.ts");
   assert.ok(route.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0]"));
   assert.equal(route.includes("FALLBACK_MODEL"), false);
-  assert.ok(route.includes("const candidates = [ROUTER_MODEL];"));
+  assert.ok(route.includes("const candidates = [model];"));
   assert.ok(route.includes("max_tokens: 25000"));
-  assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
+  assert.ok(route.includes("...llm.bodyExtras(allowList)"));
   assert.ok(route.includes('provider: { sort: "throughput" }'));
   assert.equal(route.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.ok(route.includes("FIRST_TEXT_TIMEOUT_MS = 30_000"));
-  assert.ok(route.includes("OPENROUTER_API_KEY"));
+  assert.ok(read("src/providers/figma-llm.ts").includes("OPENROUTER_API_KEY"));
   const figmaModels = policy.slice(policy.indexOf("export const FIGMA_AGENT_MODELS"), policy.indexOf("export type FigmaAgentModelId"));
   assert.deepEqual([...figmaModels.matchAll(/id: "([^"]+)"/g)].map((match) => match[1]), ["openai/gpt-6-luna", "openrouter/auto"]);
   assert.ok(policy.includes("UX_DIRECT_DESIGN_ROLE"));
   const generalModels = policy.slice(policy.indexOf("export const OPENROUTER_MODELS"), policy.indexOf("export const OPENROUTER_MODEL_LABELS"));
   assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
   for (const routeText of [figmaAgent, review, refine]) {
-    assert.ok(routeText.includes("FIGMA_AGENT_MODELS"));
+    assert.ok(routeText.includes("buildFigmaLlmTarget"));
     assert.equal(routeText.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
     assert.ok(routeText.includes("UX_DIRECT_DESIGN_ROLE"));
   }

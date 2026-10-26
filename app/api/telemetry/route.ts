@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getOperationalEvents, recordOperationalEvent } from "@/src/observability/event-log";
+import { getRecentOperationalEvents, recordOperationalEvent } from "@/src/observability/event-log";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 
 const ALLOWED_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
@@ -39,9 +39,9 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const limit = Number(url.searchParams.get("limit") || "30");
   return NextResponse.json({
-    events: getOperationalEvents(Number.isFinite(limit) ? limit : 30),
-    retention: "best_effort_runtime",
-    note: "Recent events are held in server memory and may reset when serverless instances restart; the full native API health report is persisted separately in the plugin bridge store."
+    events: await getRecentOperationalEvents(Number.isFinite(limit) ? limit : 30),
+    retention: "best_effort_persisted",
+    note: "Recent events are kept in server memory and mirrored to R2 (last 300). Simultaneous writes can occasionally drop an event; the full native API health report is persisted separately in the plugin bridge store."
   }, { headers: corsHeaders(origin) });
 }
 export async function POST(request: Request) {

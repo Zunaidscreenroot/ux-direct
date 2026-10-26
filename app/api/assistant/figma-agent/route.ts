@@ -6,7 +6,9 @@ import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/task-learning";
 import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { deferTaskWork, finishTaskRun, startTaskRun, type RetrievalRecord } from "@/src/memory/task-run-log";
-import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
+import { buildFigmaLlmTarget, getOpenRouterAllowList, selectFigmaProvider } from "@/src/providers/figma-llm";
+import { recordOperationalEvent } from "@/src/observability/event-log";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality } from "@/src/figma-agent/design-plan-quality";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
@@ -381,19 +383,12 @@ export async function POST(request: Request) {
   const requestStartedAt = Date.now();
   const headers = cors(request);
   if (!allowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
-  // Opt-in: FIGMA_AGENT_PROVIDER=freellmapi routes Figma generation through the FreeLLMAPI router.
-  // Anything else keeps the existing OpenRouter path.
-  const useFreeLlmApi = process.env.FIGMA_AGENT_PROVIDER?.trim().toLowerCase() === "freellmapi";
-  const providerLabel = useFreeLlmApi ? "FreeLLMAPI" : "OpenRouter";
-  const key = (useFreeLlmApi ? process.env.FREELLMAPI_API_KEY : process.env.OPENROUTER_API_KEY)?.trim();
-  const freeLlmApiBase = process.env.FREELLMAPI_BASE_URL?.trim();
-  if (!key || (useFreeLlmApi && !freeLlmApiBase)) return NextResponse.json({ error: providerLabel + " is not configured on the UX Direct Worker." }, { status: 503, headers });
-
   let input: unknown;
   try { input = await request.json(); } catch { return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400, headers }); }
   const requestSchema = z.object({
     prompt: z.string().trim().min(2).max(5000),
     model: z.string().trim().min(1).max(100).optional(),
+    provider: z.enum(["openrouter", "freellmapi"]).optional(),
     canvas: z.unknown(),
     renderedScreen: z.string().max(52000).nullable().optional(),
     referenceImage: z.string().max(250000).nullable().optional(),
@@ -401,6 +396,16 @@ export async function POST(request: Request) {
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
   if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
+  const providerId = await selectFigmaProvider(parsedInput.data.provider);
+  const llm = buildFigmaLlmTarget(providerId, new URL(request.url).origin);
+  if (!llm) {
+    recordOperationalEvent({ source: "backend", event: "Figma generation blocked", status: "error", summary: (providerId === "freellmapi" ? "FreeLLMAPI" : "OpenRouter") + " is not configured on the Worker.", category: "model", action: providerId });
+    return NextResponse.json({ error: (providerId === "freellmapi" ? "FreeLLMAPI" : "OpenRouter") + " is not configured on the UX Direct Worker. Pick the other provider or add its secrets." }, { status: 503, headers });
+  }
+  const key = llm.key;
+  const providerLabel = llm.label;
+  const openRouterAllowList = providerId === "openrouter" ? await getOpenRouterAllowList() : [];
+  let allowListActive = openRouterAllowList.length > 0;
   // Ignore a model override from older plugin UI builds. Figma generation is intentionally
   // locked to OpenRouter Auto's LOW cost tier to prevent app-level model fan-out.
   const renderedScreen = typeof parsedInput.data.renderedScreen === "string" &&
@@ -477,14 +482,11 @@ export async function POST(request: Request) {
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
-  const endpoint = ((useFreeLlmApi ? freeLlmApiBase! : (process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1")).replace(/\/+$/, "")) + "/chat/completions";
+  const endpoint = llm.endpoint;
   // GPT-6 Luna is primary; Auto is the low-cost fallback. Both routes get one compact retry.
   // Provider selection favors throughput, and the shared deadline bounds the complete chain.
-  const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
-  // FreeLLMAPI does its own provider selection and failover, so it gets a single router model.
-  const generationModels: string[] = useFreeLlmApi
-    ? [process.env.FREELLMAPI_FIGMA_MODEL?.trim() || "auto:smart"]
-    : models;
+  // Both providers get one router model (OpenRouter auto / FreeLLMAPI auto) and do their own selection and failover.
+  const generationModels: string[] = llm.models;
   const errors: string[] = [];
   let validationFeedback = "";
   const recoveryContext = JSON.stringify({
@@ -547,8 +549,7 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "application/json",
-            "HTTP-Referer": new URL(request.url).origin,
-            "X-OpenRouter-Title": "UX Direct Figma Agent",
+            ...llm.headers,
           },
           body: JSON.stringify({
             model,
@@ -556,7 +557,7 @@ export async function POST(request: Request) {
               { role: "system", content: isRecovery ? recoverySystem : system },
               { role: "user", content: userContent },
             ],
-            ...(model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
+            ...llm.bodyExtras(allowListActive ? openRouterAllowList : []),
             ...(model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}),
             ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
             // Qwen 3.5 thinks by default; unbounded reasoning spends the attempt before any JSON is written.
@@ -595,6 +596,8 @@ export async function POST(request: Request) {
         if (!response.ok) {
           const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
           errors.push(model + (isRecovery ? " compact retry" : "") + ": " + detail);
+          // A rejected low-cost allow-list (no candidate left) falls back to plain cost_tier low once.
+          if (allowListActive && [400, 404, 422].includes(response.status)) { allowListActive = false; continue; }
           if (!isRecovery && [408, 429, 500, 502, 503, 504].includes(response.status)) continue;
           break;
         }
@@ -716,6 +719,11 @@ export async function POST(request: Request) {
           if (!isRecovery) continue;
           break;
         }
+        recordOperationalEvent({
+          source: "backend", event: "Figma generation completed", status: "success", category: "model", action: providerId,
+          summary: providerLabel + " → " + (typeof payload.model === "string" ? payload.model : model) + (response.headers.get("x-routed-via") ? " (via " + response.headers.get("x-routed-via") + ")" : "") + " · " + parsedPlan.data.elements.length + " sections",
+          requestId: taskRunId, durationMs: Date.now() - requestStartedAt, mode: providerId,
+        });
         return NextResponse.json({
           ok: true,
           taskRunId,
@@ -741,6 +749,11 @@ export async function POST(request: Request) {
       }
     }
   }
+  recordOperationalEvent({
+    source: "backend", event: "Figma generation failed", status: "error", category: "model", action: providerId,
+    summary: providerLabel + ": " + (errors[0] || "Plan generation failed.").slice(0, 190),
+    requestId: taskRunId, durationMs: Date.now() - requestStartedAt, mode: providerId,
+  });
   deferTaskWork(finishTaskRun({ id: taskRunId, outcome: "failed", durationMs: Date.now() - requestStartedAt,
     retrieval: taskRetrieval, errorSummary: errors[0] || "Plan generation failed." }));
   return NextResponse.json({
