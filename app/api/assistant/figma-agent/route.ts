@@ -381,8 +381,13 @@ export async function POST(request: Request) {
   const requestStartedAt = Date.now();
   const headers = cors(request);
   if (!allowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
-  const key = process.env.OPENROUTER_API_KEY?.trim();
-  if (!key) return NextResponse.json({ error: "OpenRouter is not configured on the UX Direct Worker." }, { status: 503, headers });
+  // Opt-in: FIGMA_AGENT_PROVIDER=freellmapi routes Figma generation through the FreeLLMAPI router.
+  // Anything else keeps the existing OpenRouter path.
+  const useFreeLlmApi = process.env.FIGMA_AGENT_PROVIDER?.trim().toLowerCase() === "freellmapi";
+  const providerLabel = useFreeLlmApi ? "FreeLLMAPI" : "OpenRouter";
+  const key = (useFreeLlmApi ? process.env.FREELLMAPI_API_KEY : process.env.OPENROUTER_API_KEY)?.trim();
+  const freeLlmApiBase = process.env.FREELLMAPI_BASE_URL?.trim();
+  if (!key || (useFreeLlmApi && !freeLlmApiBase)) return NextResponse.json({ error: providerLabel + " is not configured on the UX Direct Worker." }, { status: 503, headers });
 
   let input: unknown;
   try { input = await request.json(); } catch { return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400, headers }); }
@@ -472,10 +477,14 @@ export async function POST(request: Request) {
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
-  const endpoint = ((process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")) + "/chat/completions";
+  const endpoint = ((useFreeLlmApi ? freeLlmApiBase! : (process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1")).replace(/\/+$/, "")) + "/chat/completions";
   // GPT-6 Luna is primary; Auto is the low-cost fallback. Both routes get one compact retry.
   // Provider selection favors throughput, and the shared deadline bounds the complete chain.
   const models = FIGMA_AGENT_MODELS.map((entry) => entry.id);
+  // FreeLLMAPI does its own provider selection and failover, so it gets a single router model.
+  const generationModels: string[] = useFreeLlmApi
+    ? [process.env.FREELLMAPI_FIGMA_MODEL?.trim() || "auto:smart"]
+    : models;
   const errors: string[] = [];
   let validationFeedback = "";
   const recoveryContext = JSON.stringify({
@@ -504,8 +513,8 @@ export async function POST(request: Request) {
   // generated, so each attempt needs room for a complete multi-thousand-token plan. One shared
   // deadline keeps the sequential chain bounded.
   const generationDeadlineMs = 270000;
-  modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
-    const model = models[modelIndex];
+  modelLoop: for (let modelIndex = 0; modelIndex < generationModels.length; modelIndex += 1) {
+    const model = generationModels[modelIndex];
     const attemptsForModel = 2;
     for (let recoveryAttempt = 0; recoveryAttempt < attemptsForModel; recoveryAttempt += 1) {
       const isRecovery = recoveryAttempt === 1;
@@ -716,6 +725,8 @@ export async function POST(request: Request) {
           learningCandidate,
           learning: "awaiting-verification",
           model: typeof payload.model === "string" ? payload.model : model,
+          provider: providerLabel,
+          routedVia: response.headers.get("x-routed-via"),
           brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
           visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
           generation: { recoveryAttempted: isRecovery, finishReason, modelIndex: modelIndex + 1, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt },
@@ -734,7 +745,7 @@ export async function POST(request: Request) {
     retrieval: taskRetrieval, errorSummary: errors[0] || "Plan generation failed." }));
   return NextResponse.json({
     error: "UX Direct could not produce a valid native Figma design plan. No canvas changes were made.",
-    attemptedModels: models,
+    attemptedModels: generationModels,
     details: errors.slice(0, 6),
   }, { status: 502, headers });
 }
