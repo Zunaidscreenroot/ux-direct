@@ -28,5 +28,10 @@
   },
   "observability": {
     "enabled": true
+  },
+  "previews": {
+    "vars": {
+      "UX_SHARED_BRAIN_URL": "https://ux-direct.zunaid-cb7.workers.dev"
+    }
   }
 }
