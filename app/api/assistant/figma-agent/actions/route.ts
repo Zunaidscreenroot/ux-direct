@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
-import { getActiveChatProvider } from "@/src/providers/active-chat-provider";
+import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
 import { extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 import { FIGMA_CANVAS_STEP_OPERATION_IDS } from "@/src/figma-agent/command-registry";
 
@@ -236,7 +236,7 @@ export async function OPTIONS(request: Request) {
 export async function POST(request: Request) {
   const headers = cors(request);
   if (!allowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
-  const activeProvider = getActiveChatProvider();
+  const activeProvider = await getResolvedActiveChatProvider();
   const apiKey = activeProvider.apiKey;
   if (!activeProvider.configured || !apiKey) return NextResponse.json({
     error: activeProvider.configurationError || activeProvider.label + " is not configured.",
