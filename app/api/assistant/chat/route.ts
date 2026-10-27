@@ -7,7 +7,7 @@ import { containsSensitiveMaterial, createLearningMarkerTransform, referencesUns
 import { recordOperationalEvent } from "@/src/observability/event-log";
 import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
 import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
-import { getActiveChatProvider } from "@/src/providers/active-chat-provider";
+import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -339,7 +339,7 @@ export async function POST(request: Request) {
   if (!originIsAllowed(request)) {
     return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: responseHeaders });
   }
-  const activeProvider = getActiveChatProvider();
+  const activeProvider = await getResolvedActiveChatProvider();
   const key = activeProvider.apiKey;
   if (!activeProvider.configured || !key) {
     return NextResponse.json({

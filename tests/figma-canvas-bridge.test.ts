@@ -150,7 +150,7 @@ test("in-Figma design agent retrieves approved brain context and validates nativ
   assert.ok(agent.includes('resolveBrainScopes('), "Brain retrieval must be scope-filtered.");
   assert.ok(agent.includes('const models = activeProvider.id === "openrouter"'), "Figma generation retains its OpenRouter chain when OpenRouter is selected.");
   assert.ok(agent.includes(": [activeProvider.model]"), "Figma generation uses the selected provider model when it is not OpenRouter.");
-  assert.ok(agent.includes("getActiveChatProvider"), "Figma generation shares the server-side provider selection.");
+  assert.ok(agent.includes("getResolvedActiveChatProvider"), "Figma generation shares the server-side provider selection.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "No provider restrictions should be sent to OpenRouter.");
   const generalModels = modelPolicy.slice(modelPolicy.indexOf("export const OPENROUTER_MODELS"), modelPolicy.indexOf("export const OPENROUTER_MODEL_LABELS"));
   assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
@@ -237,7 +237,7 @@ test("bridge supports saved health reports above the legacy 100-check ceiling", 
 
 test("normal conversational chat supports the selected provider and keeps OpenRouter Auto routing isolated", () => {
   assert.ok(chatRoute.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0];"));
-  assert.ok(chatRoute.includes("getActiveChatProvider"));
+  assert.ok(chatRoute.includes("getResolvedActiveChatProvider"));
   assert.equal(chatRoute.includes("FALLBACK_MODEL"), false);
   assert.equal(chatRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.ok(chatRoute.includes("const candidates = [model];"));

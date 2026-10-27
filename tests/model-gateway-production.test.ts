@@ -29,7 +29,7 @@ test("UX Direct selects one chat provider and shares provider configuration with
   assert.ok(route.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0]"));
   assert.equal(route.includes("FALLBACK_MODEL"), false);
   assert.ok(route.includes("const candidates = [model];"));
-  assert.ok(route.includes("getActiveChatProvider"));
+  assert.ok(route.includes("getResolvedActiveChatProvider"));
   assert.ok(route.includes('activeProvider.id === "openrouter"'));
   assert.ok(route.includes("max_tokens: 25000"));
   assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
@@ -46,7 +46,7 @@ test("UX Direct selects one chat provider and shares provider configuration with
   assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
   for (const routeText of [figmaAgent, review, refine]) {
     assert.ok(routeText.includes("FIGMA_AGENT_MODELS"));
-    assert.ok(routeText.includes("getActiveChatProvider"));
+    assert.ok(routeText.includes("getResolvedActiveChatProvider"));
     assert.ok(routeText.includes('activeProvider.id === "openrouter"'));
     assert.equal(routeText.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
     assert.ok(routeText.includes("UX_DIRECT_DESIGN_ROLE"));

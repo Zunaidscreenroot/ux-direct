@@ -91,6 +91,15 @@
     .small-button { border:1px solid var(--figma-color-border,#ddd); border-radius:8px; padding:5px 7px; background:var(--figma-color-bg,#fff); color:var(--figma-color-text,#333); font-size:10px; }
     .small-button:disabled { opacity:.5; cursor:wait; }
     .service-list { display:flex; flex-direction:column; }
+    .provider-card { margin-top:10px; padding:11px; border:1px solid var(--figma-color-border,#ddd); border-radius:11px; background:var(--figma-color-bg-secondary,#f8f8f8); }
+    .provider-card-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .provider-card-copy { min-width:0; }
+    .provider-card-title { font-size:11px; font-weight:700; line-height:1.4; }
+    .provider-card-subtitle { margin-top:3px; color:var(--figma-color-text-secondary,#777); font-size:10px; line-height:1.45; }
+    .provider-select { width:145px; max-width:48%; min-height:31px; padding:5px 8px; border:1px solid var(--figma-color-border,#ddd); border-radius:8px; background:var(--figma-color-bg,#fff); color:var(--figma-color-text,#222); font-size:11px; }
+    .provider-select:disabled { opacity:.65; cursor:wait; }
+    .provider-hint { margin:7px 1px 0; color:var(--figma-color-text-secondary,#777); font-size:10px; line-height:1.45; overflow-wrap:anywhere; }
+    .provider-hint.error { color:#bf3540; }
     .service-row { display:grid; grid-template-columns:10px minmax(0,1fr); column-gap:8px; align-items:start; padding:10px 2px; border-top:1px solid var(--figma-color-border,#eee); }
     .service-row .dot { margin-top:4px; }
     .service-name { font-size:11px; font-weight:650; line-height:1.4; }
@@ -144,6 +153,19 @@
       </div>
     </div>
     <div id="serviceList" class="service-list"></div>
+    <section class="provider-card" aria-label="Model provider switcher">
+      <div class="provider-card-head">
+        <div class="provider-card-copy">
+          <div class="provider-card-title">Model provider</div>
+          <div class="provider-card-subtitle">Switch chat and Figma AI between available providers</div>
+        </div>
+        <select id="providerSelect" class="provider-select" aria-label="Select model provider" disabled>
+          <option value="openrouter">OpenRouter</option>
+          <option value="freellmapi">FreeLLMAPI</option>
+        </select>
+      </div>
+      <p id="providerHint" class="provider-hint" role="status" aria-live="polite">Checking provider configuration…</p>
+    </section>
     <section class="health-card" aria-label="Figma native API health checks">
       <button id="healthSummary" class="health-summary" type="button" aria-expanded="false" aria-controls="healthDetails">
         <span class="health-summary-copy">
@@ -196,7 +218,7 @@
     <div id="selectionChip" class="context-chip" hidden><span aria-hidden="true">▣</span><span id="selectionName" class="context-name"></span></div>
     <form id="chatForm" class="composer">
       <div id="beamRoot" aria-hidden="true"></div>
-      <div class="routing-note" role="note">Design model: OpenRouter · Qwen 397B primary / Qwen 35B fallback</div>
+      <div id="routingNote" class="routing-note" role="note">Design model: OpenRouter · openrouter/auto</div>
       <div id="attachmentChip" class="attachment-chip" hidden>
         <span aria-hidden="true">▧</span><span id="attachmentName" class="attachment-name"></span>
         <button id="removeAttachment" class="attachment-remove" type="button" aria-label="Remove attached image" title="Remove image">×</button>
@@ -237,6 +259,11 @@
     let statusRefreshTimer = null;
     let heartbeatTimer = null;
     let connectionError = "";
+    let providerSwitcherState = null;
+    let providerOptions = [];
+    let activeProviderId = "openrouter";
+    let activeProviderLabel = "OpenRouter";
+    let providerSwitching = false;
     const chatHistory = [];
     const processLabels = {
       idle: "Ready for a design task",
@@ -522,7 +549,7 @@
     function renderStatuses() {
       renderService("backend", "UX Direct backend", backendHealthy ? "Connected" : "Not connected",
         connectionError || (backendHealthy ? "Cloudflare Workers health endpoint verified." : "Backend health check failed."), backendHealthy);
-      renderService("provider", "OpenRouter · model routing", providerHealthy ? "Connected" : "Not connected",
+      renderService("provider", activeProviderLabel + " · model routing", providerHealthy ? "Connected" : "Not connected",
         providerHealthy ? "API key verified; internal chat uses the configured model router." : "Model provider could not be verified.", providerHealthy);
       renderService("figma", "Figma native plugin bridge", figmaBridgeHealthy ? "Connected" : "Not connected",
         figmaBridgeHealthy ? "This plugin session is sending fresh heartbeats." : "The plugin bridge is unavailable or the session is stale.", figmaBridgeHealthy);
@@ -561,6 +588,107 @@
       }
     }
 
+    function renderProviderSwitcher(state) {
+      if (state && Array.isArray(state.providers)) {
+        providerSwitcherState = state;
+        providerOptions = state.providers;
+        activeProviderId = state.activeProvider || "openrouter";
+        const selectedProvider = providerOptions.find(function (provider) { return provider.id === activeProviderId; });
+        activeProviderLabel = selectedProvider ? selectedProvider.label : (state.activeProviderLabel || "Model provider");
+      }
+      const select = $("providerSelect");
+      const hint = $("providerHint");
+      if (!select || !hint) return;
+      const currentState = providerSwitcherState;
+      if (!currentState) {
+        select.disabled = true;
+        hint.textContent = "Provider configuration could not be loaded. Use Refresh to retry.";
+        return;
+      }
+
+      select.innerHTML = "";
+      providerOptions.forEach(function (provider) {
+        const option = document.createElement("option");
+        option.value = provider.id;
+        option.textContent = provider.label + (provider.configured ? "" : " · not configured");
+        option.disabled = !provider.configured && provider.id !== activeProviderId;
+        select.appendChild(option);
+      });
+      select.value = activeProviderId;
+      select.disabled = providerSwitching || !verifiedFileKey;
+      const active = providerOptions.find(function (provider) { return provider.id === activeProviderId; });
+      if (!active) {
+        hint.className = "provider-hint error";
+        hint.textContent = "The active provider wasn't recognized. Refresh to reload provider settings.";
+      } else if (!active.configured) {
+        hint.className = "provider-hint error";
+        hint.textContent = active.configurationError || (active.label + " isn't configured on the Worker yet.");
+      } else if (activeProviderId === "freellmapi") {
+        hint.className = "provider-hint";
+        hint.textContent = "Active: FreeLLMAPI · " + active.model + ". The API endpoint must be hosted separately and reachable over HTTPS.";
+      } else {
+        const freeLlm = providerOptions.find(function (provider) { return provider.id === "freellmapi"; });
+        hint.className = "provider-hint";
+        hint.textContent = "Active: OpenRouter · " + active.model + ". " +
+          (freeLlm && !freeLlm.configured
+            ? "FreeLLMAPI is disabled until FREELLMAPI_BASE_URL and FREELLMAPI_API_KEY are set on the Worker."
+            : "Provider keys remain on the backend.");
+      }
+      const routingNote = $("routingNote");
+      if (routingNote && active) {
+        routingNote.textContent = "Design model: " + active.label + " · " + active.model;
+      }
+    }
+
+    async function changeActiveProvider(nextProviderId) {
+      if (providerSwitching || !verifiedFileKey || nextProviderId === activeProviderId) return;
+      const target = providerOptions.find(function (provider) { return provider.id === nextProviderId; });
+      if (!target || !target.configured) {
+        $("providerSelect").value = activeProviderId;
+        $("providerHint").className = "provider-hint error";
+        $("providerHint").textContent = target && target.configurationError
+          ? target.configurationError
+          : "That provider isn't configured. Set its server-side URL and key before switching.";
+        return;
+      }
+
+      providerSwitching = true;
+      renderProviderSwitcher(providerSwitcherState);
+      $("providerHint").className = "provider-hint";
+      $("providerHint").textContent = "Switching to " + target.label + "…";
+      try {
+        const response = await fetch(API + "/api/assistant/provider", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({
+            provider: nextProviderId,
+            fileKey: verifiedFileKey,
+            clientId: pluginClientId,
+            sessionToken: pluginSessionToken
+          })
+        });
+        const data = await response.json().catch(function () { return {}; });
+        if (!response.ok) throw new Error(data.error || ("Provider switch failed (HTTP " + response.status + ")."));
+        renderProviderSwitcher(data);
+        void sendTelemetry("Model provider switched", "success", "UX Direct runtime provider changed from the cockpit.", {
+          mode: nextProviderId,
+          category: "provider",
+          action: "switch-model-provider"
+        });
+        await refreshConnections();
+      } catch (error) {
+        $("providerSelect").value = activeProviderId;
+        $("providerHint").className = "provider-hint error";
+        $("providerHint").textContent = error && error.message
+          ? error.message
+          : "Provider switch failed. The active provider was not changed.";
+      } finally {
+        providerSwitching = false;
+        renderProviderSwitcher(providerSwitcherState);
+      }
+    }
+
     async function refreshConnections() {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
       $("refreshStatus").disabled = true;
@@ -570,7 +698,8 @@
         fetch(API + "/api/health?fileKey=" + encodeURIComponent(fileKey), { cache: "no-store", headers: { "Accept": "application/json" } }),
         fetch(API + "/api/assistant/status", { cache: "no-store", headers: { "Accept": "application/json" } }),
         fetch(API + "/api/connections?fileKey=" + encodeURIComponent(fileKey) + "&clientId=" + encodeURIComponent(pluginClientId), { cache: "no-store", headers: { "Accept": "application/json" } }),
-        syncPluginBridge()
+        syncPluginBridge(),
+        fetch(API + "/api/assistant/provider?fileKey=" + encodeURIComponent(fileKey), { cache: "no-store", headers: { "Accept": "application/json" } })
       ]);
       try {
         if (results[0].status === "fulfilled" && results[0].value.ok) {
@@ -597,6 +726,12 @@
           const plugin = data.figmaPlugin || {};
         } else {
           chatgptState = "unknown";
+        }
+        if (results[4].status === "fulfilled" && results[4].value.ok) {
+          const providerState = await results[4].value.json();
+          renderProviderSwitcher(providerState);
+        } else {
+          renderProviderSwitcher(null);
         }
       } catch (_) {
         backendHealthy = false;
@@ -1562,6 +1697,7 @@
       runNativeHealthChecks();
     });
     $("refreshStatus").addEventListener("click", function () { void refreshConnections(); });
+    $("providerSelect").addEventListener("change", function () { void changeActiveProvider(this.value); });
     $("closeStatus").addEventListener("click", function () { toggleStatusPanel(false); });
     $("chatForm").addEventListener("submit", function (event) {
       event.preventDefault();

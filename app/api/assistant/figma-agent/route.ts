@@ -7,7 +7,7 @@ import { resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/tas
 import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { deferTaskWork, finishTaskRun, startTaskRun, type RetrievalRecord } from "@/src/memory/task-run-log";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
-import { getActiveChatProvider } from "@/src/providers/active-chat-provider";
+import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality } from "@/src/figma-agent/design-plan-quality";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
@@ -382,7 +382,7 @@ export async function POST(request: Request) {
   const requestStartedAt = Date.now();
   const headers = cors(request);
   if (!allowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
-  const activeProvider = getActiveChatProvider();
+  const activeProvider = await getResolvedActiveChatProvider();
   const key = activeProvider.apiKey;
   if (!activeProvider.configured || !key) return NextResponse.json({
     error: activeProvider.configurationError || activeProvider.label + " is not configured on the UX Direct Worker.",
