@@ -3,6 +3,7 @@ import { z } from "zod";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getActiveChatProvider } from "@/src/providers/active-chat-provider";
 import { extractPlanJson } from "@/src/figma-agent/extract-plan-json";
+import { FIGMA_CANVAS_STEP_OPERATION_IDS } from "@/src/figma-agent/command-registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -148,10 +149,7 @@ const elementSchema: z.ZodTypeAny = z.lazy(() => z.object({
 }));
 
 const actionSchema = z.object({
-  operation: z.enum(["update-node", "create-elements", "insert-image", "create-image-fill", "delete-node", "clone-node", "reorder-node", "reparent-node",
-    "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
-    "detach-instance", "set-text-range", "apply-style", "create-variables", "bind-variable", "set-selection", "zoom-to-nodes",
-    "create-page", "rename-page", "set-current-page", "export-svg", "export-node"]),
+  operation: z.enum(FIGMA_CANVAS_STEP_OPERATION_IDS),
   nodeId: z.string().trim().min(1).max(100).optional(),
   parentNodeId: z.string().trim().min(1).max(100).optional(),
   nodeIds: z.array(z.string().trim().min(1).max(100)).max(100).optional(),
@@ -291,7 +289,7 @@ export async function POST(request: Request) {
   const system = [
     UX_DIRECT_DESIGN_ROLE + " You are the native-canvas action planner for UX Direct. Work on actual selected/inspected Figma nodes; do not create a new screen unless explicitly requested.",
     "Translate the user's request into the smallest valid ordered set of native Figma operations. Return JSON only: {summary:string, actions:[...]}. Each action maps directly to a Figma native command; the plugin executes them sequentially and verifies read-back.",
-    "Allowed operations: update-node, create-elements, insert-image, create-image-fill, delete-node, clone-node, reorder-node, reparent-node, group-nodes, flatten-nodes, boolean-operation, ungroup-node, create-component, create-component-set, create-instance, swap-component, detach-instance, set-text-range, apply-style, create-variables, bind-variable, set-selection, zoom-to-nodes, create-page, rename-page, set-current-page, export-svg, export-node.",
+    "Allowed operations: " + FIGMA_CANVAS_STEP_OPERATION_IDS.join(", ") + ".",
     "For color or text fill changes use update-node.patch.fillColor; for text content edits use update-node.patch.text. For typography set fontFamily, fontStyle, fontSize, textAutoResize and textAlignHorizontal only on TEXT nodes. For responsive UI use layoutMode, itemSpacing, padding, alignment, sizing and constraints through update-node; prefer modern HUG/FILL sizing with an Auto Layout parent.",
     "Use only node IDs that appear in canvas. Do not guess or fabricate IDs. Page changes are separate: set-current-page must use an exact ID from canvas.pages; create-page/rename-page require a direct request. If the target is ambiguous, choose the smallest reasonable set in the current selection and name it in the summary. Never delete nodes unless deletion was explicitly asked. Preserve unrelated content and the original visual intent.",
     "Use create-elements to add native layers into the current selected container (target:'node', parentNodeId:'...'). Children are nested under FRAME elements only. Use insert-image only when an actual user-attached image is available in this request; set useAttachedImage:true and don't invent an image URL. A rendered screenshot is visual evidence only, not an insertable asset. Never place base64 data in model output.",

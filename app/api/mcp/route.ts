@@ -3,6 +3,7 @@ import { getMcpIssuer, verifyMcpPayload } from "@/lib/mcp-oauth";
 import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
 import { NextResponse } from "next/server";
 import { addBrainKnowledgeDocument, listBrainFeedback, listBrainKnowledgeDocuments, reviewBrainEvalCase, reviewBrainFeedback, reviewBrainKnowledgeDocument, retrieveBrainContext, runBrainRetrievalEvals, saveBrainEvalCase, saveBrainFeedback } from "@/src/memory/shared-brain";
+import { FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS, FIGMA_CANVAS_COMMANDS, FIGMA_CANVAS_OPERATION_IDS, isFigmaCanvasNonBatchableStepOperation } from "@/src/figma-agent/command-registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -454,6 +455,12 @@ const TOOLS = [
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: "ux_direct_figma_canvas_capabilities",
+    description: "Return the canonical native Figma command catalogue, including risk, destructive impact, and batch eligibility. Read-only. Check this before planning writes; every write still requires confirm=true, destructive/high-impact operations must match the user's specific request, and commands marked batchable=false must be sent as a standalone operation.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: "ux_direct_figma_canvas_read",
     description: "Read the currently selected layers or a bounded tree of the active Figma page through the open UX Direct plugin. This queues a native Plugin API command; retrieve the result with ux_direct_figma_canvas_command_status. Reads are limited to the exact allowlisted Figma file and do not mutate the canvas.",
     inputSchema: {
@@ -478,7 +485,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        operation: { type: "string", enum: ["batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "insert-image", "create-variables", "bind-variable"] },
+        operation: { type: "string", enum: FIGMA_CANVAS_OPERATION_IDS },
         confirm: { type: "boolean", const: true, description: "Must be true only after the owner explicitly requests this specific write." },
         target: { type: "string", enum: ["current-page", "selection", "node", "test-lab"] },
         elements: {
@@ -569,7 +576,7 @@ const TOOLS = [
           items: {
             type: "object",
             properties: {
-              operation: { type: "string", enum: ["create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node", "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "insert-image", "create-variables", "bind-variable"] },
+              operation: { type: "string", enum: FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS },
               target: { type: "string", enum: ["current-page", "selection", "node", "test-lab"] },
               nodeId: { type: "string", minLength: 1, maxLength: 100 },
         parentNodeId: { type: "string", minLength: 1, maxLength: 100 },
@@ -995,6 +1002,22 @@ async function callTool(name: string, args: unknown, request: Request) {
     });
   }
 
+  if (name === "ux_direct_figma_canvas_capabilities") {
+    return toolText({
+      commands: FIGMA_CANVAS_COMMANDS,
+      policy: {
+        everyWriteRequiresExplicitConfirm: true,
+        destructiveAndHighImpactOperationsRequireSpecificUserIntent: true,
+        nonBatchableOperationsMustRunAlone: true,
+        maxActionsPerBatch: 40,
+        maxCreatedNodesPerBatch: 100,
+        fileScope: "exact allowlisted Figma file",
+        execution: "native Figma Plugin API through the active scoped plugin session",
+        verification: "check ux_direct_figma_canvas_command_status and native readback before reporting success",
+      },
+    });
+  }
+
   if (name === "ux_direct_figma_canvas_read") {
     if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
     const input = args as Record<string, unknown>;
@@ -1029,11 +1052,7 @@ async function callTool(name: string, args: unknown, request: Request) {
   if (name === "ux_direct_figma_canvas_write") {
     if (!args || typeof args !== "object" || Array.isArray(args)) return toolText({ error: "Tool arguments must be an object." }, true);
     const input = args as Record<string, unknown>;
-    const allowedOperations = new Set([
-      "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node", "reparent-node",
-      "group-nodes", "flatten-nodes", "boolean-operation", "ungroup-node", "create-component", "create-component-set", "create-instance", "swap-component",
-      "detach-instance", "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "insert-image", "create-variables", "bind-variable",
-    ]);
+    const allowedOperations = new Set<string>(FIGMA_CANVAS_OPERATION_IDS);
     if (input.confirm !== true) return toolText({ error: "Write blocked: confirm=true is required after an explicit request for this specific canvas action." }, true);
     if (typeof input.operation !== "string" || !allowedOperations.has(input.operation)) {
       return toolText({ error: "operation is not a supported Figma canvas action." }, true);
@@ -1079,7 +1098,7 @@ async function callTool(name: string, args: unknown, request: Request) {
       return toolText({ error: "target must be current-page, selection, node, or test-lab." }, true);
     }
     if (input.operation === "batch" && (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 40)) return toolText({ error: "batch requires 1–40 actions." }, true);
-    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && ["export-svg", "export-node", "create-image-fill", "insert-image"].includes(String((step as Record<string, unknown>).operation))) && input.actions.length > 1) return toolText({ error: "Exports and inline image fills must be standalone commands." }, true);
+    if (input.operation === "batch" && Array.isArray(input.actions) && input.actions.some((step) => step && typeof step === "object" && isFigmaCanvasNonBatchableStepOperation((step as Record<string, unknown>).operation))) return toolText({ error: "Operations marked batchable=false must be sent as standalone commands, not through batch." }, true);
     if (input.operation !== "batch" && input.actions !== undefined) return toolText({ error: "actions is supported only for batch." }, true);
     if (input.operation === "batch" && Array.isArray(input.actions)) {
       const totalCreated = input.actions.reduce((sum, step) => {
