@@ -17,7 +17,7 @@ test("assistant chat uses one server-selected provider/model and applies OpenRou
   const provider = read("src/providers/active-chat-provider.ts");
   assert.ok(source.includes("OPENROUTER_MODELS"), "OpenRouter remains available as the default");
   assert.ok(source.includes("const candidates = [model];"), "only one model route is attempted");
-  assert.ok(source.includes("getActiveChatProvider"), "provider selection is resolved server-side");
+  assert.ok(source.includes("getResolvedActiveChatProvider"), "provider selection is resolved server-side");
   assert.ok(provider.includes("FREELLMAPI_API_KEY"), "FreeLLMAPI credentials are server-side");
   assert.ok(provider.includes("FREELLMAPI_BASE_URL"), "FreeLLMAPI uses a configured OpenAI-compatible base URL");
   assert.ok(source.includes("max_tokens: 25000"), "assistant chat requests 25,000 output tokens");
@@ -43,7 +43,7 @@ test("Figma routes use GPT-6 Luna as primary and OpenRouter Auto as low-cost fal
   ]) {
     const source = read(path);
     assert.ok(source.includes("FIGMA_AGENT_MODELS"), path + " retains the shared OpenRouter chain");
-    assert.ok(source.includes("getActiveChatProvider"), path + " uses the shared provider setting");
+    assert.ok(source.includes("getResolvedActiveChatProvider"), path + " uses the shared provider setting");
     assert.ok(source.includes('activeProvider.id === "openrouter"'), path + " gates OpenRouter behavior");
     assert.ok(source.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), path + " pins OpenRouter Auto to the low-cost tier");
     assert.equal(source.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false, path + " has no stale provider allowlist");
