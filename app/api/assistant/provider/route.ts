@@ -60,7 +60,6 @@ export async function OPTIONS(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const origin = request.headers.get("origin");
   const url = new URL(request.url);
   if (!originAllowed(request)) {
     return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: corsHeaders(request) });
