@@ -627,8 +627,12 @@
         hint.className = "provider-hint";
         hint.textContent = "Active: FreeLLMAPI · " + active.model + ". The API endpoint must be hosted separately and reachable over HTTPS.";
       } else {
-        hint.className = "provider-hint";
-        hint.textContent = "Active: OpenRouter · " + active.model + ". Provider keys remain on the backend.";
+        const freeLlm = providerOptions.find(function (provider) { return provider.id === "freellmapi"; });
+        hint.className = freeLlm && !freeLlm.configured ? "provider-hint" : "provider-hint";
+        hint.textContent = "Active: OpenRouter · " + active.model + ". " +
+          (freeLlm && !freeLlm.configured
+            ? "FreeLLMAPI is disabled until FREELLMAPI_BASE_URL and FREELLMAPI_API_KEY are set on the Worker."
+            : "Provider keys remain on the backend.");
       }
       const routingNote = $("routingNote");
       if (routingNote && active) {
