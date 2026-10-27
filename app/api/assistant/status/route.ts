@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { OPENROUTER_MODELS, OPENROUTER_MODEL_LABELS } from "@/src/providers/openrouter-models";
-import { getActiveChatProvider } from "@/src/providers/active-chat-provider";
+import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
   if (origin && origin !== new URL(request.url).origin && !ALLOWED_ORIGINS.has(origin)) {
     return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: corsHeaders(origin) });
   }
-  const activeProvider = getActiveChatProvider();
+  const activeProvider = await getResolvedActiveChatProvider();
   const key = activeProvider.apiKey;
   const providerHealthUrl = activeProvider.id === "openrouter"
     ? "https://openrouter.ai/api/v1/key"
