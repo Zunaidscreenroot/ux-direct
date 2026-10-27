@@ -110,7 +110,7 @@ test("Figma agent retains the OpenRouter chain and supports an alternate selecte
   const catalog = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
   assert.ok(route.includes('const models = activeProvider.id === "openrouter"'), "Generation uses the shared Figma chain when OpenRouter is selected.");
   assert.ok(route.includes(": [activeProvider.model]"), "Generation uses the alternate provider model when selected.");
-  assert.ok(route.includes("getActiveChatProvider"), "Generation shares the server-side provider selector.");
+  assert.ok(route.includes("getResolvedActiveChatProvider"), "Generation shares the server-side provider selector.");
   assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Figma generation includes the explicit low-cost Auto fallback.");
   assert.ok(route.includes("const attemptsForModel = 2"), "The primary model and fallback each get one compact retry.");
   assert.ok(route.includes("provider returned an empty response body"), "Empty provider bodies are diagnosed clearly.");
