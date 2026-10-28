@@ -21,6 +21,7 @@ test("home opens the unified chat-first workspace instead of the operations dash
 test("UX Direct selects one chat provider and shares provider configuration with Figma agent routes", () => {
   const route = read("app/api/assistant/chat/route.ts");
   const figmaAgent = read("app/api/assistant/figma-agent/route.ts");
+  const nativeActions = read("app/api/assistant/figma-agent/actions/route.ts");
   const review = read("app/api/assistant/figma-agent/review/route.ts");
   const refine = read("app/api/assistant/figma-agent/refine/route.ts");
   const status = read("app/api/assistant/status/route.ts");
@@ -51,7 +52,7 @@ test("UX Direct selects one chat provider and shares provider configuration with
   assert.ok(policy.includes("UX_DIRECT_DESIGN_ROLE"));
   const generalModels = policy.slice(policy.indexOf("export const OPENROUTER_MODELS"), policy.indexOf("export const OPENROUTER_MODEL_LABELS"));
   assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
-  for (const routeText of [figmaAgent, review, refine]) {
+  for (const routeText of [figmaAgent, nativeActions, review, refine]) {
     assert.ok(routeText.includes("FIGMA_AGENT_MODELS"));
     assert.ok(routeText.includes("getResolvedActiveChatProvider"));
     assert.ok(routeText.includes('activeProvider.id === "openrouter"'));
