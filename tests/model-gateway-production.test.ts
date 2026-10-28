@@ -24,6 +24,7 @@ test("UX Direct selects one chat provider and shares provider configuration with
   const review = read("app/api/assistant/figma-agent/review/route.ts");
   const refine = read("app/api/assistant/figma-agent/refine/route.ts");
   const status = read("app/api/assistant/status/route.ts");
+  const uxAudit = read("app/api/ux-audit/analyze/route.ts");
   const policy = read("src/providers/openrouter-models.ts");
   const activeProvider = read("src/providers/active-chat-provider.ts");
   assert.ok(route.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0]"));
@@ -56,9 +57,13 @@ test("UX Direct selects one chat provider and shares provider configuration with
     assert.ok(routeText.includes('activeProvider.id === "openrouter"'));
     assert.equal(routeText.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
     assert.ok(routeText.includes("UX_DIRECT_DESIGN_ROLE"));
+    assert.ok(routeText.includes('activeProvider.visionModel || "auto:vision"'));
+    assert.ok(routeText.includes("hasVisionInput"));
   }
   assert.equal(route.includes("openai/gpt-6-luna"), false);
   assert.ok(status.includes("defaultModel: activeProvider.model"));
+  assert.ok(uxAudit.includes('activeProvider.id === "freellmapi"'));
+  assert.ok(uxAudit.includes('activeProvider.visionModel || "auto:vision"'));
   assert.ok(status.includes("fallbackModel: null"));
   assert.ok(status.includes("OPENROUTER_MODEL_LABELS[index]"));
   assert.ok(status.includes("providerId: activeProvider.id"));
