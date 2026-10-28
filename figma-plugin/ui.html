@@ -1706,7 +1706,7 @@
           const answer = await executeNativeActionPlan(prompt, function (status) {
             if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
           });
-          assistantMessage.bubble.textContent = answer;
+          assistantMessage.bubble.innerHTML = renderMarkdownHtml(answer);
           chatHistory.push({ role: "assistant", content: answer });
           await sendTelemetry("Native Figma editing completed", "success", "UX Direct planned and executed native Figma editing operations, then verified the selected tree.", {
             durationMs: Date.now() - startedAt, selectedCount: (currentSelection.selection || []).length, model: "figma-native-actions"
@@ -1722,7 +1722,7 @@
               $("conversation").scrollTop = $("conversation").scrollHeight;
             }
           });
-          assistantMessage.bubble.textContent = answer;
+          assistantMessage.bubble.innerHTML = renderMarkdownHtml(answer);
           chatHistory.push({ role: "assistant", content: answer });
           await sendTelemetry("Figma design-agent task completed", "success", "UX Direct generated a native layout, executed Figma Plugin API commands, and verified the selected variation.", {
             durationMs: Date.now() - startedAt,
