@@ -21,12 +21,12 @@ declare global {
 }
 
 const PROCESS_TO_ORB: Record<ProcessState, OrbState> = {
-  idle: "listening",
+  idle: "breathing",
   scanning: "searching",
   capturing: "searching",
-  brain: "connecting",
+  brain: "solving",
   memory: "searching",
-  planning: "solving",
+  planning: "shaping",
   waiting: "connecting",
   creating: "composing",
   rendering: "working",
