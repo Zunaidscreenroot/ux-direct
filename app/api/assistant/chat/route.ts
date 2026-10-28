@@ -47,6 +47,8 @@ const MAX_MESSAGES = 100;
 const MAX_TOTAL_CHARS = 80000;
 const ROUTER_MODEL = OPENROUTER_MODELS[0];
 const FIRST_TEXT_TIMEOUT_MS = 30_000;
+// Render Free services can take 50s+ to wake; allow FreeLLMAPI a longer first-token window.
+const FREELLMAPI_FIRST_TEXT_TIMEOUT_MS = 90_000;
 const SYSTEM_PROMPT = [
   UX_DIRECT_DESIGN_ROLE + " You are UX Direct, a thoughtful UI/UX design partner.",
   "Focus on evidence-led UX, information architecture, user journeys, interaction design, accessibility, and measurable business hypotheses.",
@@ -340,6 +342,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: responseHeaders });
   }
   const activeProvider = await getResolvedActiveChatProvider();
+  const firstTextTimeoutMs = activeProvider.id === "freellmapi"
+    ? FREELLMAPI_FIRST_TEXT_TIMEOUT_MS
+    : FIRST_TEXT_TIMEOUT_MS;
   const key = activeProvider.apiKey;
   if (!activeProvider.configured || !key) {
     return NextResponse.json({
@@ -452,7 +457,7 @@ export async function POST(request: Request) {
         return { model: currentModel, probe, controller };
       } catch (error) {
         if (controller.signal.aborted) {
-          throw Object.assign(new Error("Model " + currentModel + " via " + activeProvider.label + " did not start producing text within " + FIRST_TEXT_TIMEOUT_MS + "ms."), { status: 504 });
+          throw Object.assign(new Error("Model " + currentModel + " via " + activeProvider.label + " did not start producing text within " + startupTimeoutMs + "ms."), { status: 504 });
         }
         throw error;
       } finally {
@@ -468,7 +473,7 @@ export async function POST(request: Request) {
   // One server-selected model route only; never accept model/provider overrides from the browser.
   for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
     const candidate = candidates[candidateIndex];
-    const attempt = startAttempt(candidate, candidateIndex === 0 ? FIRST_TEXT_TIMEOUT_MS : 16000);
+    const attempt = startAttempt(candidate, candidateIndex === 0 ? firstTextTimeoutMs : 16000);
     attempts.push(attempt);
     try {
       winner = await attempt.promise;

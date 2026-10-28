@@ -36,6 +36,10 @@ test("UX Direct selects one chat provider and shares provider configuration with
   assert.ok(route.includes('provider: { sort: "throughput" }'));
   assert.equal(route.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.ok(route.includes("FIRST_TEXT_TIMEOUT_MS = 30_000"));
+  assert.ok(route.includes("FREELLMAPI_FIRST_TEXT_TIMEOUT_MS = 90_000"));
+  assert.ok(route.includes('activeProvider.id === "freellmapi"'));
+  assert.ok(route.includes('candidateIndex === 0 ? firstTextTimeoutMs : 16000'));
+  assert.ok(route.includes('" did not start producing text within " + startupTimeoutMs + "ms."'));
   assert.ok(activeProvider.includes("FREELLMAPI_API_KEY"));
   assert.ok(activeProvider.includes("FREELLMAPI_BASE_URL"));
   assert.ok(activeProvider.includes('model: "openrouter/auto"'));
