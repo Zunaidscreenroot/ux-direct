@@ -310,9 +310,10 @@ export async function POST(request: Request) {
   const content: string | Array<Record<string, unknown>> = images.length
     ? [{ type: "text", text: userText }, ...images]
     : userText;
+  const hasVisionInput = Boolean(renderedScreen || referenceImage);
   const models = activeProvider.id === "openrouter"
     ? FIGMA_AGENT_MODELS.map(m => m.id)
-    : [activeProvider.model];
+    : [hasVisionInput ? (activeProvider.visionModel || "auto:vision") : activeProvider.model];
   const errors: string[] = [];
   for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
     const model = models[modelIndex];
