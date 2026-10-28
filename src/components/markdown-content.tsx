@@ -1,3 +1,4 @@
+import * as React from "react";
 import { Fragment, type ReactNode } from "react";
 
 function renderInlineMarkdown(value: string): ReactNode[] {
