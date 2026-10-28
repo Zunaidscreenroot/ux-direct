@@ -45,7 +45,7 @@ const ORB_LABEL: Record<OrbState, string> = {
   connecting: "Connecting to UX Direct services",
   weaving: "Refining the design",
   composing: "Creating editable Figma layers",
-  breathing: "Task complete",
+  breathing: "Ready for the next design task",
   shaping: "Shaping the design",
 };
 
