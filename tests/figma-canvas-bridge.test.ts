@@ -149,7 +149,8 @@ test("in-Figma design agent retrieves approved brain context and validates nativ
   assert.ok(agent.includes('retrieveBrainContext('), "Figma design planning must retrieve shared memory.");
   assert.ok(agent.includes('resolveBrainScopes('), "Brain retrieval must be scope-filtered.");
   assert.ok(agent.includes('const models = activeProvider.id === "openrouter"'), "Figma generation retains its OpenRouter chain when OpenRouter is selected.");
-  assert.ok(agent.includes(": [activeProvider.model]"), "Figma generation uses the selected provider model when it is not OpenRouter.");
+  assert.ok(agent.includes("const hasVisionInput = Boolean(renderedScreen || referenceImage)"), "Figma generation detects screenshot/reference images.");
+  assert.ok(agent.includes(": [hasVisionInput ? (activeProvider.visionModel || \"auto:vision\") : activeProvider.model]"), "Figma generation uses auto:vision for images and auto:smart for text.");
   assert.ok(agent.includes("getResolvedActiveChatProvider"), "Figma generation shares the server-side provider selection.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "No provider restrictions should be sent to OpenRouter.");
   const generalModels = modelPolicy.slice(modelPolicy.indexOf("export const OPENROUTER_MODELS"), modelPolicy.indexOf("export const OPENROUTER_MODEL_LABELS"));
@@ -198,7 +199,7 @@ test("Figma agent normalizes provider-native design fields and uses the requeste
   assert.ok(planNormalizer.includes("item.fill ?? item.backgroundColor"), "Provider fill aliases must map to the native Figma color field.");
   assert.ok(planNormalizer.includes("item.kind ?? item.elementType ?? item.nodeType"), "Provider layer type aliases must be normalized.");
   assert.ok(agent.includes('const models = activeProvider.id === "openrouter"'), "Figma agent retains the OpenRouter quality chain when selected.");
-  assert.ok(agent.includes(": [activeProvider.model]"), "A non-OpenRouter provider is attempted using its configured model.");
+  assert.ok(agent.includes(": [hasVisionInput ? (activeProvider.visionModel || \"auto:vision\") : activeProvider.model]"), "A non-OpenRouter provider uses its smart model for text and vision model for images.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "Model requests must not be provider filtered.");
   assert.ok(agent.includes("const normalizedPlan = normalizePlan(rawPlan, canvas);"), "A normalized model plan must be validated before any canvas write.");
   assert.ok(agent.includes('PlanSchema.safeParse(normalizedPlan)'), "Native plan schema validation must remain mandatory.");
