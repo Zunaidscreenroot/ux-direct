@@ -28,5 +28,8 @@
   },
   "observability": {
     "enabled": true
+  },
+  "vars": {
+    "FREELLMAPI_BASE_URL": "https://freellmapi-otg5.onrender.com/v1"
   }
 }
