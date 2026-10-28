@@ -335,7 +335,7 @@ export default function ChatWorkspace() {
           <div className="ud-composer-zone">
             {chatError && <div className="ud-chat-error" role="alert">{chatError}</div>}
             <form className="ud-composer" onSubmit={onSubmit}>
-              <textarea ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onComposerKeyDown} placeholder={status?.connected ? "Message UX Direct…" : "Connecting to OpenRouter…"} rows={1} aria-label="Message UX Direct" disabled={statusBusy} />
+              <textarea ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onComposerKeyDown} placeholder={status?.connected ? "Message UX Direct…" : "Connecting to " + (status?.provider || "model provider") + "…"} rows={1} aria-label="Message UX Direct" disabled={statusBusy} />
               <div className="ud-composer-bottom">
                 <div className="ud-composer-meta">
                   <span className="ud-mode-tag"><i /> {status?.providerId === "freellmapi" ? "SMART ROUTING" : "LOW-COST AUTO"}</span>
