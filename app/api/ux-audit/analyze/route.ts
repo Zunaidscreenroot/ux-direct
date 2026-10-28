@@ -231,7 +231,7 @@ export async function POST(request: Request) {
       }, { timeoutMs: 120_000 });
       response = {
         content: routed.content,
-        model: routed.model,
+        model: routed.model || "uxd/vision",
         provider: routed.provider,
         latencyMs: routed.latencyMs,
         usage: routed.usage,
