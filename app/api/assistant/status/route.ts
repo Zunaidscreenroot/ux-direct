@@ -85,7 +85,7 @@ export async function GET(request: Request) {
     fallbackModel: null,
     models: activeProvider.id === "openrouter"
       ? OPENROUTER_MODELS.map((id, index) => ({ id, name: OPENROUTER_MODEL_LABELS[index] }))
-      : [{ id: activeProvider.model, name: activeProvider.model === "auto" ? "FreeLLMAPI · Auto routing" : activeProvider.model }],
+      : [{ id: activeProvider.model, name: activeProvider.model === "auto:smart" ? "FreeLLMAPI · Smart routing" : activeProvider.model }],
     checkedAt: new Date().toISOString(),
     ...(connected ? {} : { error: keyError || "The configured " + activeProvider.label + " model route is not ready." }),
     uxAudit: { reachable: auditReachable, baseUrl: auditBase, ...(auditReachable ? {} : { error: "Could not reach the UX Audit Worker." }) },
