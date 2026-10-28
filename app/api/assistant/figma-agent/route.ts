@@ -480,9 +480,10 @@ export async function POST(request: Request) {
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its server-selected auto route.
   // Both are bounded by compact retry and the shared generation deadline.
+  const hasVisionInput = Boolean(renderedScreen || referenceImage);
   const models = activeProvider.id === "openrouter"
     ? FIGMA_AGENT_MODELS.map((entry) => entry.id)
-    : [activeProvider.model];
+    : [hasVisionInput ? (activeProvider.visionModel || "auto:vision") : activeProvider.model];
   const errors: string[] = [];
   let validationFeedback = "";
   const recoveryContext = JSON.stringify({
