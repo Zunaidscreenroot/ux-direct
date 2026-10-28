@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { chatCompletionWithFallback, GatewayError, type ChatMessage } from "@/src/model-gateway";
+import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
 import { deduplicateFindings, normalizeRegion } from "@/src/ux-audit/annotations";
 import { buildAuditUserPrompt, UX_AUDIT_SYSTEM_PROMPT } from "@/src/ux-audit/prompt";
 import { AUDIT_CATEGORIES, type AuditFinding, type AuditScreenshot, type AuditSeverity, type BenchmarkComparison, type UXAuditReport } from "@/src/ux-audit/types";
@@ -158,20 +159,84 @@ export async function POST(request: Request) {
     ...screenshots.map((s) => ({ type: "image_url" as const, image_url: { url: s.url, detail: "high" as const } }))
   ];
 
+  const activeProvider = await getResolvedActiveChatProvider();
   try {
-    const response = await chatCompletionWithFallback({
-      // Let the configured gateway choose a vision-capable model dynamically.
-      // This keeps UX audits on the same low-cost/throughput route as other internal work,
-      // while homepage chat remains on its separate free-only model pool.
-      model: "uxd/vision",
-      messages: [
-        { role: "system", content: UX_AUDIT_SYSTEM_PROMPT },
-        { role: "user", content: imageParts }
-      ],
-      max_tokens: 6000,
-      temperature: 0.15,
-      signal: request.signal
-    }, { timeoutMs: 120_000 });
+    const startedAt = Date.now();
+    let response: { content: string; model: string; provider: string; latencyMs: number; usage?: unknown };
+    if (activeProvider.id === "freellmapi") {
+      const upstream = await fetch(activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + activeProvider.apiKey,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          model: activeProvider.visionModel || "auto:vision",
+          messages: [
+            { role: "system", content: UX_AUDIT_SYSTEM_PROMPT },
+            { role: "user", content: imageParts },
+          ],
+          max_tokens: 6000,
+          temperature: 0.15,
+          response_format: { type: "json_object" },
+        }),
+        cache: "no-store",
+        signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
+      });
+      const body: unknown = await upstream.json().catch(() => null);
+      const bodyRecord = record(body) || {};
+      if (!upstream.ok) {
+        const errorRecord = record(bodyRecord.error) || {};
+        const error = new Error(
+          "FreeLLMAPI " + (activeProvider.visionModel || "auto:vision") + " returned HTTP " + upstream.status +
+          (typeof errorRecord.message === "string" ? ": " + errorRecord.message.slice(0, 200) : "."),
+        ) as Error & { status?: number };
+        error.status = upstream.status;
+        throw error;
+      }
+      const choices = Array.isArray(bodyRecord.choices) ? bodyRecord.choices : [];
+      const firstChoice = record(choices[0]) || {};
+      const message = record(firstChoice.message) || {};
+      const rawContent = message.content;
+      const content = typeof rawContent === "string"
+        ? rawContent
+        : Array.isArray(rawContent)
+          ? rawContent.filter((part) => record(part)?.type === "text" && typeof record(part)?.text === "string")
+              .map((part) => String((record(part) || {}).text)).join("")
+          : "";
+      if (!content.trim()) {
+        const error = new Error("FreeLLMAPI auto:vision returned no readable response text.") as Error & { status?: number };
+        error.status = 502;
+        throw error;
+      }
+      response = {
+        content,
+        model: typeof bodyRecord.model === "string" ? bodyRecord.model : (activeProvider.visionModel || "auto:vision"),
+        provider: activeProvider.label,
+        latencyMs: Date.now() - startedAt,
+        usage: bodyRecord.usage,
+      };
+    } else {
+      const routed = await chatCompletionWithFallback({
+        // Use the internal model gateway when OpenRouter is selected.
+        model: "uxd/vision",
+        messages: [
+          { role: "system", content: UX_AUDIT_SYSTEM_PROMPT },
+          { role: "user", content: imageParts },
+        ],
+        max_tokens: 6000,
+        temperature: 0.15,
+        signal: request.signal,
+      }, { timeoutMs: 120_000 });
+      response = {
+        content: routed.content,
+        model: routed.model || "uxd/vision",
+        provider: routed.provider,
+        latencyMs: routed.latencyMs,
+        usage: routed.usage,
+      };
+    }
     let jsonText = response.content.trim();
     jsonText = jsonText.replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
     const start = jsonText.indexOf("{");
@@ -179,7 +244,10 @@ export async function POST(request: Request) {
     if (start >= 0 && end > start) jsonText = jsonText.slice(start, end + 1);
     let parsed: unknown;
     try { parsed = JSON.parse(jsonText); }
-    catch { return NextResponse.json({ error: "The selected model did not return valid structured audit JSON. Try a vision-capable OpenRouter model.", provider: response.provider, model: response.model }, { status: 502, headers: { "Cache-Control": "no-store" } }); }
+    catch {
+      const routeLabel = activeProvider.id === "freellmapi" ? "FreeLLMAPI auto:vision" : "the selected vision-capable OpenRouter route";
+      return NextResponse.json({ error: "The selected model did not return valid structured audit JSON. Check " + routeLabel + " and try again.", provider: response.provider, model: response.model }, { status: 502, headers: { "Cache-Control": "no-store" } });
+    }
     const report = normalizeReport(parsed, normalizedInput);
     if (!report) return NextResponse.json({ error: "The model response did not match the UX audit report schema.", provider: response.provider, model: response.model }, { status: 502, headers: { "Cache-Control": "no-store" } });
     return NextResponse.json({
@@ -190,7 +258,9 @@ export async function POST(request: Request) {
       usage: response.usage ?? null
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    const status = error instanceof GatewayError ? error.status : 502;
+    const status = error instanceof GatewayError ? error.status :
+      typeof error === "object" && error !== null && "status" in error && typeof (error as { status?: unknown }).status === "number"
+        ? (error as { status: number }).status : 502;
     return NextResponse.json({
       error: error instanceof Error ? error.message : "UX audit failed.",
       status: status >= 400 && status <= 599 ? status : 502

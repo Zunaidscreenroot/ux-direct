@@ -134,9 +134,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Generated variation contains no editable native node IDs." }, { status: 400, headers });
   }
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
+  const hasVisionInput = Boolean(safeImage(parsed.data.sourceImage) || safeImage(parsed.data.outputImage));
   const models = activeProvider.id === "openrouter"
     ? FIGMA_AGENT_MODELS.map((entry) => entry.id)
-    : [activeProvider.model];
+    : [hasVisionInput ? (activeProvider.visionModel || "auto:vision") : activeProvider.model];
   const errors: string[] = [];
   for (const [modelIndex, model] of models.entries()) {
     const controller = new AbortController();

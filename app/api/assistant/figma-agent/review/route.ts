@@ -214,10 +214,11 @@ export async function POST(request: Request) {
   if (outputImage) userContent.push({ type: "image_url", image_url: { url: outputImage } });
 
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
-  // Keep the explicit quality-first chain for OpenRouter, or use FreeLLMAPI auto routing.
+  // Screenshots must use the dedicated vision chain; text-only reviews use the smart chain.
+  const hasVisionInput = Boolean(sourceImage || outputImage);
   const models = activeProvider.id === "openrouter"
     ? FIGMA_AGENT_MODELS.map((entry) => entry.id)
-    : [activeProvider.model];
+    : [hasVisionInput ? (activeProvider.visionModel || "auto:vision") : activeProvider.model];
   const errors: string[] = [];
   for (const [modelIndex, model] of models.entries()) {
     const controller = new AbortController();

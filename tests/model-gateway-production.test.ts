@@ -21,9 +21,11 @@ test("home opens the unified chat-first workspace instead of the operations dash
 test("UX Direct selects one chat provider and shares provider configuration with Figma agent routes", () => {
   const route = read("app/api/assistant/chat/route.ts");
   const figmaAgent = read("app/api/assistant/figma-agent/route.ts");
+  const nativeActions = read("app/api/assistant/figma-agent/actions/route.ts");
   const review = read("app/api/assistant/figma-agent/review/route.ts");
   const refine = read("app/api/assistant/figma-agent/refine/route.ts");
   const status = read("app/api/assistant/status/route.ts");
+  const uxAudit = read("app/api/ux-audit/analyze/route.ts");
   const policy = read("src/providers/openrouter-models.ts");
   const activeProvider = read("src/providers/active-chat-provider.ts");
   assert.ok(route.includes("const ROUTER_MODEL = OPENROUTER_MODELS[0]"));
@@ -42,21 +44,27 @@ test("UX Direct selects one chat provider and shares provider configuration with
   assert.ok(route.includes('" did not start producing text within " + startupTimeoutMs + "ms."'));
   assert.ok(activeProvider.includes("FREELLMAPI_API_KEY"));
   assert.ok(activeProvider.includes("FREELLMAPI_BASE_URL"));
+  assert.ok(activeProvider.includes('env.FREELLMAPI_CHAT_MODEL?.trim() || "auto:smart"'));
+  assert.ok(activeProvider.includes('env.FREELLMAPI_VISION_MODEL?.trim() || "auto:vision"'));
   assert.ok(activeProvider.includes('model: "openrouter/auto"'));
   const figmaModels = policy.slice(policy.indexOf("export const FIGMA_AGENT_MODELS"), policy.indexOf("export type FigmaAgentModelId"));
   assert.deepEqual([...figmaModels.matchAll(/id: "([^"]+)"/g)].map((match) => match[1]), ["openai/gpt-6-luna", "openrouter/auto"]);
   assert.ok(policy.includes("UX_DIRECT_DESIGN_ROLE"));
   const generalModels = policy.slice(policy.indexOf("export const OPENROUTER_MODELS"), policy.indexOf("export const OPENROUTER_MODEL_LABELS"));
   assert.deepEqual([...generalModels.matchAll(/"([^"]+)"/g)].map((match) => match[1]), ["openrouter/auto"]);
-  for (const routeText of [figmaAgent, review, refine]) {
+  for (const routeText of [figmaAgent, nativeActions, review, refine]) {
     assert.ok(routeText.includes("FIGMA_AGENT_MODELS"));
     assert.ok(routeText.includes("getResolvedActiveChatProvider"));
     assert.ok(routeText.includes('activeProvider.id === "openrouter"'));
     assert.equal(routeText.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
     assert.ok(routeText.includes("UX_DIRECT_DESIGN_ROLE"));
+    assert.ok(routeText.includes('activeProvider.visionModel || "auto:vision"'));
+    assert.ok(routeText.includes("hasVisionInput"));
   }
   assert.equal(route.includes("openai/gpt-6-luna"), false);
   assert.ok(status.includes("defaultModel: activeProvider.model"));
+  assert.ok(uxAudit.includes('activeProvider.id === "freellmapi"'));
+  assert.ok(uxAudit.includes('activeProvider.visionModel || "auto:vision"'));
   assert.ok(status.includes("fallbackModel: null"));
   assert.ok(status.includes("OPENROUTER_MODEL_LABELS[index]"));
   assert.ok(status.includes("providerId: activeProvider.id"));

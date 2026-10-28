@@ -6,6 +6,8 @@ export type ActiveChatProvider = {
   apiKey: string;
   baseUrl: string;
   model: string;
+  /** Used only when a request contains images. */
+  visionModel?: string;
   configured: boolean;
   configurationError?: string;
 };
@@ -62,7 +64,8 @@ export function getActiveChatProvider(
   if (selected === "freellmapi") {
     const apiKey = env.FREELLMAPI_API_KEY?.trim() || "";
     const baseUrl = trimTrailingSlashes(env.FREELLMAPI_BASE_URL?.trim() || "");
-    const model = env.FREELLMAPI_CHAT_MODEL?.trim() || "auto";
+    const model = env.FREELLMAPI_CHAT_MODEL?.trim() || "auto:smart";
+    const visionModel = env.FREELLMAPI_VISION_MODEL?.trim() || "auto:vision";
     const urlError = validateFreeLlmApiBaseUrl(baseUrl, env);
     const configurationError = urlError || (!apiKey
       ? "FreeLLMAPI is selected, but FREELLMAPI_API_KEY is missing. Use the unified key from your FreeLLMAPI dashboard."
@@ -73,6 +76,7 @@ export function getActiveChatProvider(
       apiKey,
       baseUrl,
       model,
+      visionModel,
       configured: !configurationError,
       ...(configurationError ? { configurationError } : {}),
     };
