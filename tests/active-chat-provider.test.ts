@@ -21,13 +21,15 @@ test("selects FreeLLMAPI with the configured server URL, unified key and model",
     UX_DIRECT_MODEL_PROVIDER: "freellmapi",
     FREELLMAPI_BASE_URL: "https://freellmapi.example.com/v1/",
     FREELLMAPI_API_KEY: "freellmapi-unified-test-key",
-    FREELLMAPI_CHAT_MODEL: "auto",
+    FREELLMAPI_CHAT_MODEL: "auto:smart",
+    FREELLMAPI_VISION_MODEL: "auto:vision",
     OPENROUTER_API_KEY: "openrouter-test-key",
   });
 
   assert.equal(provider.id, "freellmapi");
   assert.equal(provider.baseUrl, "https://freellmapi.example.com/v1");
-  assert.equal(provider.model, "auto");
+  assert.equal(provider.model, "auto:smart");
+  assert.equal(provider.visionModel, "auto:vision");
   assert.equal(provider.configured, true);
   assert.equal(provider.apiKey, "freellmapi-unified-test-key");
 });
