@@ -95,7 +95,7 @@ test("FreeLLMAPI Figma routes get an ordered fallback chain defaulting to the au
   const base = { NODE_ENV: "production", UX_DIRECT_MODEL_PROVIDER: "freellmapi", FREELLMAPI_BASE_URL: "https://freellmapi.example.com/v1", FREELLMAPI_API_KEY: "k" };
   const defaults = getActiveChatProvider(base);
   assert.deepEqual(figmaModelChain(defaults, false, ["x"]), ["auto:smart"]);
-  assert.deepEqual(figmaModelChain(defaults, true, ["x"]), ["auto:vision"]);
+  assert.deepEqual(figmaModelChain(defaults, true, ["x"]), ["auto:vision", "auto"]);
 
   const pinned = getActiveChatProvider({ ...base,
     FREELLMAPI_FIGMA_MODELS: " groq/openai/gpt-oss-120b, auto:smart,,auto:smart ",
