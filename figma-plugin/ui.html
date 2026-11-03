@@ -1037,6 +1037,47 @@
       $("attachmentName").textContent = attachedImageData ? attachedImageName + " · attached" : "";
     }
 
+    async function requestStructuralLint(body) {
+      try {
+        const response = await fetch(API + "/api/assistant/figma-agent/lint", {
+          method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          cache: "no-store", body: JSON.stringify(body)
+        });
+        const result = await response.json().catch(function () { return {}; });
+        return response.ok && result.ok === true && Array.isArray(result.issues) ? result : null;
+      } catch (_) { return null; }
+    }
+
+    function formatLintIssues(issues) {
+      return (Array.isArray(issues) ? issues : []).slice(0, 4).map(function (item) {
+        return "• [" + String(item.severity || "issue") + "] " + String(item.issue || "") + " " + String(item.evidence || "");
+      }).join("\n");
+    }
+
+    // Deterministic, model-free post-write gate: overlap, clipping, collapsed text and
+    // source-content preservation. It reuses the completion read-back; only when that read
+    // collapsed component internals and content looks missing does it read once more with
+    // instances expanded, so absence is proven before it is reported.
+    async function runStructuralLintGate(options) {
+      function lintBody(outputCanvas) {
+        return { prompt: options.prompt, sourceCanvas: options.sourceCanvas, outputCanvas: outputCanvas,
+          sourceRootId: options.sourceRootId || undefined, outputRootId: options.outputRootId || undefined };
+      }
+      let lint = await requestStructuralLint(lintBody(options.outputCanvas));
+      const unproven = lint && lint.content && lint.content.partial === true &&
+        ((lint.content.missingText || []).length || (lint.content.missingNumbers || []).length);
+      if (unproven) {
+        const expanded = await runNativeCanvasCommand("read-canvas", {
+          scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true
+        }, 90000).catch(function () { return null; });
+        if (expanded && Array.isArray(expanded.nodes)) lint = await requestStructuralLint(lintBody(expanded)) || lint;
+      }
+      if (!lint) return { passed: false, issues: [], text: "Structural lint was unavailable, so overlap, clipping and source content were not verified." };
+      return { passed: lint.passed === true, issues: lint.issues,
+        text: String(lint.summary || (lint.passed ? "Structural lint passed" : "Structural lint failed")) +
+          (lint.passed ? "" : "\n" + formatLintIssues(lint.issues)) };
+    }
+
     async function runVisualQualityLoop(options) {
       const prompt = String(options && options.prompt || "");
       const repairIteration = Number(options && options.repairIteration) || 0;
@@ -1645,10 +1686,20 @@
             : "Expected " + completedElementCount + " generated child layers, but read-back confirmed " + verifiedChildCount + ".";
         throw new Error(problem + " The variation may be partial; the source frame remains untouched. Inspect the new frame before retrying.");
       }
-      let visualNote = "\n\nPost-variation visual QA disabled as requested; native layer read-back passed.";
-      visualNote += await finalizeTaskOutcome("verified",
-        "Native structure/read-back passed; post-variation visual QA disabled as requested.", "");
-      stage("done", "Variation created · native structure read-back passed");
+      stage("verifying", "Structural lint · checking overlap, clipping and source content…");
+      const lint = await runStructuralLintGate({
+        prompt: prompt, sourceCanvas: canvas, outputCanvas: verified,
+        sourceRootId: sourceNode && sourceNode.id, outputRootId: createdFrameId
+      });
+      let visualNote = "\n\nPost-variation visual QA disabled as requested; native layer read-back passed." +
+        "\n" + lint.text;
+      visualNote += await finalizeTaskOutcome(lint.passed ? "verified" : "failed",
+        lint.passed
+          ? "Native structure/read-back and structural lint passed; post-variation visual QA disabled as requested."
+          : "Structural lint blocked the variation: " + lint.text,
+        lint.passed ? "" : lint.text);
+      if (lint.passed) stage("done", "Variation created · native structure read-back passed");
+      else stage("error", "Variation created · structural lint found issues to fix");
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
       return 'Created "' + plan.frame.name + '" as a separate editable Figma variation with ' +
         completedElementCount + ' native layers. ' + String(plan.summary || "The variation is ready for review.") +
@@ -1656,7 +1707,9 @@
         visualNote +
         (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') +
         '\nThe source frame was preserved. The new variation is selected on the canvas.' +
-        '\nThe generated variation is ready for manual review.';
+        (lint.passed
+          ? '\nThe generated variation is ready for manual review.'
+          : '\nThis variation is NOT accepted yet: fix the issues above or ask UX Direct to retry.');
       } catch (error) {
         if (taskRunId) {
           await finalizeTaskOutcome("failed", String(error && error.message || error || "Native Figma task failed"),

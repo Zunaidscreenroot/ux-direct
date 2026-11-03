@@ -12,6 +12,7 @@ import { figmaAttemptTimeoutMs, figmaModelChain, routedVia, shouldRetryWithoutJs
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 import { normalizeVisualReview } from "@/src/figma-agent/normalize-visual-review";
 import { evaluateVisualQualityGate } from "@/src/figma-agent/visual-quality-gate";
+import { runStructuralLint } from "@/src/figma-agent/structural-lint";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -177,6 +178,12 @@ export async function POST(request: Request) {
   }, { status: 503, headers });
   const sourceImage = safeImage(parsed.data.sourceImage);
   const outputImage = safeImage(parsed.data.outputImage);
+  // Run on the raw read-backs: compaction drops clipsContent and nodes past depth 4.
+  const structuralLint = runStructuralLint({
+    prompt: parsed.data.prompt,
+    sourceCanvas: parsed.data.sourceCanvas,
+    outputCanvas: parsed.data.outputCanvas,
+  });
   const sourceCanvas = compactCanvas(parsed.data.sourceCanvas);
   const outputCanvas = compactCanvas(parsed.data.outputCanvas);
   let memoryContext = "Shared memory was unavailable for this review.";
@@ -304,16 +311,26 @@ export async function POST(request: Request) {
           ", issue-array=" + String(Boolean(decodedRecord.issues || decodedRecord.findings || decodedRecord.defects || decodedRecord.problems)) + ").");
         continue;
       }
+      // Deterministic findings outrank the model's judgement: they are prepended,
+      // and any high-severity structural defect caps the score below the gate.
+      const mergedIssues = [...structuralLint.issues, ...validated.data.issues].slice(0, 12);
+      const structuralHigh = structuralLint.issues.some(issue => issue.severity === "high");
+      const mergedReview = {
+        ...validated.data,
+        issues: mergedIssues,
+        score: structuralHigh ? Math.min(validated.data.score, 70) : validated.data.score,
+      };
       const qualityGate = evaluateVisualQualityGate({
-        score: validated.data.score,
-        issues: validated.data.issues,
+        score: mergedReview.score,
+        issues: mergedReview.issues,
         hasSourceImage: !!sourceImage,
         hasOutputImage: !!outputImage,
       });
       const safeLearningCandidate = sanitizeInlineLearningCandidate(learningCandidate);
       return NextResponse.json({
         ok: true,
-        review: validated.data,
+        review: mergedReview,
+        structuralLint,
         qualityGate,
         learning: safeLearningCandidate ? "candidate-ready-for-final-verification" : "no-candidate",
         learningCandidate: safeLearningCandidate,
