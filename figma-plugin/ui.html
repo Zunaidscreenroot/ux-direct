@@ -699,6 +699,34 @@
       }
     }
 
+    // A sleeping FreeLLMAPI host (e.g. Render Free) needs up to a minute to wake.
+    // Wake it when the plugin opens so the first Figma task doesn't spend its attempt on the cold start.
+    let freeModelWarmAt = 0;
+    let freeModelWarmPending = false;
+    async function warmFreeModelServer(fileKey) {
+      if (activeProviderId !== "freellmapi" || freeModelWarmPending || Date.now() - freeModelWarmAt < 10 * 60 * 1000) return;
+      freeModelWarmPending = true;
+      const hint = $("providerHint");
+      if (hint) { hint.className = "provider-hint"; hint.textContent = "Waking the free model server… the first request after idle can take up to a minute."; }
+      try {
+        const response = await fetch(API + "/api/assistant/provider?warm=1&fileKey=" + encodeURIComponent(fileKey), { cache: "no-store", headers: { "Accept": "application/json" } });
+        const data = await response.json().catch(function () { return {}; });
+        if (data && data.ok) {
+          freeModelWarmAt = Date.now();
+          renderProviderSwitcher(null);
+          const readyHint = $("providerHint");
+          if (readyHint && !data.skipped) readyHint.textContent += " Free model server ready" + (typeof data.modelCount === "number" ? " · " + data.modelCount + " models" : "") + ".";
+        } else if (hint) {
+          hint.className = "provider-hint error";
+          hint.textContent = (data && data.error) || "The free model server could not be reached.";
+        }
+      } catch (_) {
+        if (hint) { hint.className = "provider-hint error"; hint.textContent = "The free model server could not be reached."; }
+      } finally {
+        freeModelWarmPending = false;
+      }
+    }
+
     async function refreshConnections() {
       if (!verifiedFileKey || verifiedFileKey !== ALLOWED_FILE_KEY) return;
       $("refreshStatus").disabled = true;
@@ -740,6 +768,7 @@
         if (results[4].status === "fulfilled" && results[4].value.ok) {
           const providerState = await results[4].value.json();
           renderProviderSwitcher(providerState);
+          warmFreeModelServer(fileKey);
         } else {
           renderProviderSwitcher(null);
         }
