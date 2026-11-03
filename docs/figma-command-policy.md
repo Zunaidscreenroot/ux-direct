@@ -21,6 +21,7 @@ MCP's top-level write schema, MCP's nested batch schema, the server bridge's Zod
 4. **Bridge session:** writes require the live session token, exact allowlisted file key, an online plugin, command expiry and the one-active-command lock.
 5. **Native executor:** the plugin independently checks the approved file scope and validates target IDs before native API access or mutation.
 6. **Verification:** callers retrieve the command result and use native readback/visual review before claiming success.
+7. **Structural lint:** `src/figma-agent/structural-lint.ts` runs model-free checks on the read-back (text/text and icon/text overlap, clipping by a clipping ancestor, collapsed text, and source text/value/graphic preservation). Variations are not logged as verified unless it passes; visual review merges its findings and caps the score when a high-severity defect remains.
 
 ## Why batch restrictions matter
 
