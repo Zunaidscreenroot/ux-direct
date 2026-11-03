@@ -74,8 +74,8 @@ export function getActiveChatProvider(
     const apiKey = env.FREELLMAPI_API_KEY?.trim() || "";
     // FREELLMAPI_TUNNEL_URL (secret, synced from the self-hosted tunnel) wins over the static base URL.
     const baseUrl = trimTrailingSlashes(env.FREELLMAPI_TUNNEL_URL?.trim() || env.FREELLMAPI_BASE_URL?.trim() || "");
-    const model = env.FREELLMAPI_CHAT_MODEL?.trim() || "auto:smart";
-    const visionModel = env.FREELLMAPI_VISION_MODEL?.trim() || "auto:vision";
+    const model = env.FREELLMAPI_CHAT_MODEL?.trim() || "auto";
+    const visionModel = env.FREELLMAPI_VISION_MODEL?.trim() || "auto";
     const urlError = validateFreeLlmApiBaseUrl(baseUrl, env);
     const configurationError = urlError || (!apiKey
       ? "FreeLLMAPI is selected, but FREELLMAPI_API_KEY is missing. Use the unified key from your FreeLLMAPI dashboard."
@@ -87,9 +87,9 @@ export function getActiveChatProvider(
       baseUrl,
       model,
       visionModel,
-      // Defaults to the auto:smart / auto:vision aliases; FreeLLMAPI fails over between upstream models itself.
+      // Defaults to the plain auto profile; FreeLLMAPI fails over between upstream models itself.
       figmaModels: modelList(env.FREELLMAPI_FIGMA_MODELS, [model]),
-      figmaVisionModels: modelList(env.FREELLMAPI_FIGMA_VISION_MODELS, [visionModel, "auto"]),
+      figmaVisionModels: modelList(env.FREELLMAPI_FIGMA_VISION_MODELS, [visionModel]),
       configured: !configurationError,
       ...(configurationError ? { configurationError } : {}),
     };
@@ -116,7 +116,7 @@ export const FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS = 100_000;
 export function figmaModelChain(provider: ActiveChatProvider, hasVisionInput: boolean, openRouterChain: string[]): string[] {
   if (provider.id === "openrouter") return [...openRouterChain];
   const chain = hasVisionInput
-    ? (provider.figmaVisionModels?.length ? provider.figmaVisionModels : [provider.visionModel || "auto:vision"])
+    ? (provider.figmaVisionModels?.length ? provider.figmaVisionModels : [provider.visionModel || "auto"])
     : (provider.figmaModels?.length ? provider.figmaModels : [provider.model]);
   return [...chain];
 }

@@ -31,10 +31,10 @@
   },
   "vars": {
     // FreeLLMAPI base URL comes from the FREELLMAPI_TUNNEL_URL Worker secret (synced by scripts/freellmapi-tunnel-sync.sh); FREELLMAPI_BASE_URL is the static fallback.
-    "FREELLMAPI_CHAT_MODEL": "auto:smart",
-    "FREELLMAPI_VISION_MODEL": "auto:vision",
+    "FREELLMAPI_CHAT_MODEL": "auto",
+    "FREELLMAPI_VISION_MODEL": "auto",
     // Figma fallback chains: put exact ids of your strongest enabled free models first (see GET /v1/models).
-    "FREELLMAPI_FIGMA_MODELS": "auto:smart",
-    "FREELLMAPI_FIGMA_VISION_MODELS": "auto:vision,auto"
+    "FREELLMAPI_FIGMA_MODELS": "auto",
+    "FREELLMAPI_FIGMA_VISION_MODELS": "auto"
   }
 }

@@ -172,7 +172,7 @@ export async function POST(request: Request) {
           Accept: "application/json",
         },
         body: JSON.stringify({
-          model: activeProvider.visionModel || "auto:vision",
+          model: activeProvider.visionModel || "auto",
           messages: [
             { role: "system", content: UX_AUDIT_SYSTEM_PROMPT },
             { role: "user", content: imageParts },
@@ -189,7 +189,7 @@ export async function POST(request: Request) {
       if (!upstream.ok) {
         const errorRecord = record(bodyRecord.error) || {};
         const error = new Error(
-          "FreeLLMAPI " + (activeProvider.visionModel || "auto:vision") + " returned HTTP " + upstream.status +
+          "FreeLLMAPI " + (activeProvider.visionModel || "auto") + " returned HTTP " + upstream.status +
           (typeof errorRecord.message === "string" ? ": " + errorRecord.message.slice(0, 200) : "."),
         ) as Error & { status?: number };
         error.status = upstream.status;
@@ -206,13 +206,13 @@ export async function POST(request: Request) {
               .map((part) => String((record(part) || {}).text)).join("")
           : "";
       if (!content.trim()) {
-        const error = new Error("FreeLLMAPI auto:vision returned no readable response text.") as Error & { status?: number };
+        const error = new Error("FreeLLMAPI returned no readable response text.") as Error & { status?: number };
         error.status = 502;
         throw error;
       }
       response = {
         content,
-        model: typeof bodyRecord.model === "string" ? bodyRecord.model : (activeProvider.visionModel || "auto:vision"),
+        model: typeof bodyRecord.model === "string" ? bodyRecord.model : (activeProvider.visionModel || "auto"),
         provider: activeProvider.label,
         latencyMs: Date.now() - startedAt,
         usage: bodyRecord.usage,
@@ -245,7 +245,7 @@ export async function POST(request: Request) {
     let parsed: unknown;
     try { parsed = JSON.parse(jsonText); }
     catch {
-      const routeLabel = activeProvider.id === "freellmapi" ? "FreeLLMAPI auto:vision" : "the selected vision-capable OpenRouter route";
+      const routeLabel = activeProvider.id === "freellmapi" ? "FreeLLMAPI auto" : "the selected vision-capable OpenRouter route";
       return NextResponse.json({ error: "The selected model did not return valid structured audit JSON. Check " + routeLabel + " and try again.", provider: response.provider, model: response.model }, { status: 502, headers: { "Cache-Control": "no-store" } });
     }
     const report = normalizeReport(parsed, normalizedInput);
