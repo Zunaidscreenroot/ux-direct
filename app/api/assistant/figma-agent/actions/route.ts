@@ -5,6 +5,7 @@ import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-prov
 import { figmaAttemptTimeoutMs, figmaModelChain, routedVia, shouldRetryWithoutJsonMode } from "@/src/providers/active-chat-provider";
 import { extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 import { FIGMA_CANVAS_STEP_OPERATION_IDS } from "@/src/figma-agent/command-registry";
+import { BIND_VARIABLE_PROPERTIES, NATIVE_ACTION_EXTENDED_FIELDS, NATIVE_INSTANCE_ELEMENT_FIELDS, NATIVE_PATCH_EXTENDED_FIELDS, NATIVE_TEXT_RANGE_EXTENDED_FIELDS, extendedActionIssues, extendedActionNodeIds } from "@/src/figma-agent/native-action-schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +37,12 @@ function compactNode(value: unknown, state: { count: number }, depth = 0): Recor
     if (typeof value[key] === "number" && Number.isFinite(value[key])) output[key] = value[key];
   }
   if (Array.isArray(value.fillColors)) output.fillColors = value.fillColors.filter((v): v is string => typeof v === "string").slice(0, 4);
+  if (Array.isArray(value.effectTypes)) output.effectTypes = value.effectTypes.filter((v): v is string => typeof v === "string").slice(0, 4);
+  if (isRecord(value.componentProperties)) {
+    output.componentProperties = Object.fromEntries(Object.entries(value.componentProperties).slice(0, 20)
+      .filter(([, v]) => typeof v === "string" || typeof v === "boolean")
+      .map(([k, v]) => [k.slice(0, 80), typeof v === "string" ? v.slice(0, 120) : v]));
+  }
   if (Array.isArray(value.children) && depth < 5) {
     output.children = [];
     for (const child of value.children.slice(0, 60)) {
@@ -93,11 +100,13 @@ const patchSchema = z.object({
   shadowX: z.number().finite().min(-200).max(200).optional(),
   shadowY: z.number().finite().min(-200).max(200).optional(),
   shadowSpread: z.number().finite().min(-200).max(200).optional(),
+  ...NATIVE_PATCH_EXTENDED_FIELDS,
 }).strict().refine(v => Object.values(v).some(x => x !== undefined), { message: "Patch must contain an editable property." });
 
 const elementSchema: z.ZodTypeAny = z.lazy(() => z.object({
-  type: z.enum(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "VECTOR"]),
+  type: z.enum(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "VECTOR", "INSTANCE"]),
   name: z.string().trim().min(1).max(80),
+  ...NATIVE_INSTANCE_ELEMENT_FIELDS,
   x: z.number().finite().min(-10000).max(10000).optional(),
   y: z.number().finite().min(-10000).max(10000).optional(),
   width: z.number().finite().min(1).max(4096).optional(),
@@ -145,6 +154,8 @@ const elementSchema: z.ZodTypeAny = z.lazy(() => z.object({
   children: z.array(elementSchema).max(80).optional(),
 }).strict().superRefine((v, ctx) => {
   if (v.type === "TEXT" && typeof v.text !== "string") ctx.addIssue({ code: "custom", path: ["text"], message: "TEXT elements need text." });
+  if (v.type === "INSTANCE" && !v.componentId) ctx.addIssue({ code: "custom", path: ["componentId"], message: "INSTANCE elements need componentId from canvas.components." });
+  if (v.type !== "INSTANCE" && (v.componentId !== undefined || v.instanceProperties !== undefined)) ctx.addIssue({ code: "custom", path: ["componentId"], message: "componentId/instanceProperties are only for INSTANCE elements." });
   if (v.type !== "FRAME" && Array.isArray(v.children) && v.children.length) ctx.addIssue({ code: "custom", path: ["children"], message: "Only FRAME can contain children." });
   if (v.type !== "FRAME" && v.layoutMode !== undefined) ctx.addIssue({ code: "custom", path: ["layoutMode"], message: "Auto Layout requires a FRAME." });
 }));
@@ -172,6 +183,7 @@ const actionSchema = z.object({
     lineHeight: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(1).max(500) }).strict().optional(),
     letterSpacing: z.object({ unit: z.enum(["PIXELS", "PERCENT"]), value: z.number().finite().min(-100).max(500) }).strict().optional(),
     fillColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+    ...NATIVE_TEXT_RANGE_EXTENDED_FIELDS,
   }).strict().optional(),
   target: z.enum(["current-page", "node", "selection"]).optional(),
   name: z.string().trim().min(1).max(100).optional(),
@@ -193,8 +205,10 @@ const actionSchema = z.object({
     value: z.union([z.string().max(300), z.number().finite(), z.boolean()]),
   }).strict()).max(80).optional(),
   variableName: z.string().trim().min(1).max(100).optional(),
-  property: z.enum(["fill", "stroke", "opacity", "cornerRadius", "width", "height", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom"]).optional(),
+  property: z.enum(BIND_VARIABLE_PROPERTIES).optional(),
+  ...NATIVE_ACTION_EXTENDED_FIELDS,
 }).strict().superRefine((v, ctx) => {
+  for (const issue of extendedActionIssues(v)) ctx.addIssue({ code: "custom", path: [issue.path], message: issue.message });
   if (v.operation === "update-node" && (!v.nodeId || !v.patch)) ctx.addIssue({ code: "custom", path: [], message: "update-node requires nodeId and patch." });
   if (v.operation === "create-elements" && (!v.target || (v.target === "node" && !v.parentNodeId) || !v.elements)) ctx.addIssue({ code: "custom", path: [], message: "create-elements requires target, an optional target parent, and elements." });
   if (v.operation === "insert-image" && (!v.useAttachedImage || !v.target || (v.target === "node" && !v.parentNodeId))) ctx.addIssue({ code: "custom", path: [], message: "insert-image requires an attached image and a target." });
@@ -225,8 +239,29 @@ function flattenNodes(nodes: unknown[], ids = new Set<string>()) {
   }
   return ids;
 }
-function idsUsedByAction(action: z.infer<typeof actionSchema>): string[] {
-  return [action.nodeId, action.parentNodeId, action.componentId, ...(action.nodeIds || [])].filter((id): id is string => typeof id === "string");
+type PlannedAction = z.infer<typeof actionSchema>;
+/** IDs that must be inspected canvas nodes. Component references are checked separately. */
+function idsUsedByAction(action: PlannedAction): string[] {
+  const nodeId = action.operation === "create-instance" ? undefined : action.nodeId;
+  const componentId = action.operation === "swap-component" ? undefined : action.componentId;
+  return [nodeId, action.parentNodeId, componentId, ...(action.nodeIds || []), ...extendedActionNodeIds(action)]
+    .filter((id): id is string => typeof id === "string");
+}
+function elementComponentIds(elements: unknown[] | undefined, ids: string[] = []): string[] {
+  for (const element of elements || []) {
+    if (!isRecord(element)) continue;
+    if (typeof element.componentId === "string") ids.push(element.componentId);
+    if (Array.isArray(element.children)) elementComponentIds(element.children, ids);
+  }
+  return ids;
+}
+/** Component IDs an action instantiates or swaps to; these may come from canvas.components or the selection. */
+function componentIdsUsedByAction(action: PlannedAction): string[] {
+  const ids = elementComponentIds(action.elements);
+  if (action.operation === "create-instance" && action.nodeId) ids.push(action.nodeId);
+  if (action.operation === "swap-component" && action.componentId) ids.push(action.componentId);
+  if (action.componentProperty?.type === "INSTANCE_SWAP" && typeof action.componentProperty.defaultValue === "string") ids.push(action.componentProperty.defaultValue);
+  return ids;
 }
 
 export async function OPTIONS(request: Request) {
@@ -274,13 +309,32 @@ export async function POST(request: Request) {
         isRecord(mode) && typeof mode.modeId === "string" && typeof mode.name === "string"
           ? [{ modeId: mode.modeId.slice(0, 100), name: mode.name.slice(0, 100) }] : []) : [] }];
   }) : [];
+  const components = Array.isArray(canvasRaw.components) ? canvasRaw.components.slice(0, 60).flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") return [];
+    const properties = isRecord(entry.properties) ? Object.fromEntries(Object.entries(entry.properties).slice(0, 20).flatMap(([key, def]) => {
+      if (!isRecord(def) || typeof def.type !== "string") return [];
+      return [[key.slice(0, 80), {
+        type: def.type.slice(0, 20),
+        ...(Array.isArray(def.options) ? { options: def.options.filter((o): o is string => typeof o === "string").slice(0, 20).map((o) => o.slice(0, 60)) } : {}),
+        ...(typeof def.defaultValue === "string" || typeof def.defaultValue === "boolean" ? { defaultValue: typeof def.defaultValue === "string" ? def.defaultValue.slice(0, 80) : def.defaultValue } : {}),
+      }]];
+    })) : {};
+    return [{ id: entry.id.slice(0, 100), name: entry.name.slice(0, 120),
+      ...(typeof entry.type === "string" ? { type: entry.type.slice(0, 20) } : {}),
+      ...(typeof entry.uses === "number" ? { uses: entry.uses } : {}),
+      ...(typeof entry.width === "number" ? { width: entry.width } : {}),
+      ...(typeof entry.height === "number" ? { height: entry.height } : {}),
+      ...(entry.remote === true ? { remote: true } : {}),
+      properties }];
+  }) : [];
   const pages = Array.isArray(canvasRaw.pages) ? canvasRaw.pages.slice(0, 100).flatMap((page) =>
     isRecord(page) && typeof page.id === "string" && typeof page.name === "string"
       ? [{ id: page.id.slice(0, 100), name: page.name.slice(0, 120) }] : []) : [];
   const canvas = { pageId: typeof canvasRaw.pageId === "string" ? canvasRaw.pageId.slice(0, 100) : "",
     pageName: typeof canvasRaw.pageName === "string" ? canvasRaw.pageName.slice(0, 100) : "",
-    pages, nodes: canvasNodes, nodeCount: state.count, styles, variables, variableCollections };
+    pages, nodes: canvasNodes, nodeCount: state.count, styles, variables, variableCollections, components };
   const allowedIds = flattenNodes(canvasNodes);
+  const allowedComponentIds = new Set<string>([...components.map((component) => component.id), ...allowedIds]);
   if (allowedIds.size === 0) return NextResponse.json({ error: "Select a layer/container first so the action planner can target real Figma node IDs." }, { status: 400, headers });
   const referenceImage = typeof input.data.referenceImage === "string" &&
     /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(input.data.referenceImage) ? input.data.referenceImage : null;
@@ -296,6 +350,10 @@ export async function POST(request: Request) {
     "Use create-elements to add native layers into the current selected container (target:'node', parentNodeId:'...'). Children are nested under FRAME elements only. Use insert-image only when an actual user-attached image is available in this request; set useAttachedImage:true and don't invent an image URL. A rendered screenshot is visual evidence only, not an insertable asset. Never place base64 data in model output.",
     "When a rendered screenshot is available, inspect hierarchy, text density, collisions, clipped content, component boundaries and spacing. Prefer minimal direct edits for narrow requests; use coherent native action batches for broader requests.",
     "Use apply-style only with a local style in canvas.styles (exact style ID preferred; exact name allowed only when unique). If absent or ambiguous, use a supported literal property instead of guessing. Use create-variables only for explicit design-token requests; bind-variable only to a variable listed in canvas.variables and pass its exact collectionName when duplicate names exist. For variants, create components first, then combine only actual sibling components. Use create-image-fill only for a user-attached image and an exact selected node ID; a rendered screenshot is evidence, not an asset. Use exports only when the user requests a deliverable or preview.",
+    "DESIGN SYSTEM FIRST: canvas.components lists components/component sets in this file ranked by how often they are used (uses), with their variant options and properties. When the request adds or changes a UI element that matches one of them (button, input, tab, list row, badge, icon, card…), insert an INSTANCE instead of drawing primitives: create-elements with {type:'INSTANCE', name, componentId, instanceProperties?} inside the target container, or create-instance with nodeId=<componentId>, parentNodeId, index. Pick variants and override text/booleans with instanceProperties using property names from canvas.components (e.g. {State:'Disabled', Label:'Continue'}); change existing instances with set-instance-properties, or swap-component only when a different component is needed. Never redraw something a listed component already provides.",
+    "STYLES AND TOKENS: prefer apply-style with a listed local style and bind-variable (fill, stroke, cornerRadius, padding, itemSpacing, strokeWeight, per-corner radii, min/max sizes, characters for STRING, visible for BOOLEAN) over literal values whenever a matching style/variable exists. Use create-styles only when the user asks to create or save styles. Use set-variable-mode to preview a collection mode (e.g. Light/Dark) on a frame.",
+    "NATIVE STRUCTURE: when related layers sit loose (a flat list, a row of buttons, label + value pairs), use wrap-in-auto-layout with their sibling nodeIds and autoLayout.layoutMode instead of moving them by x/y; spacing is inferred from current gaps when itemSpacing is omitted, so content and order are preserved. Use set-fills for gradients or multiple paints (paintProperty fills|strokes), set-effects for shadows/inner shadows/blurs, set-layout-grids for column grids, and update-node for strokeAlign, dashPattern, per-side strokes, per-corner radii, min/max sizes and wrap spacing. Use set-text-range for partial bold/colour/underline/links inside one text layer instead of splitting text layers.",
+    "COMPONENTS AND PROTOTYPES: add-component-property adds BOOLEAN/TEXT/INSTANCE_SWAP properties to a COMPONENT (or COMPONENT_SET for variants) and links them to an inner layer via linkedNodeId. set-reactions adds prototype interactions (ON_CLICK + NAVIGATE/OVERLAY/BACK/URL with optional transition) only when the user asks for prototyping/flows; destinationId must be an inspected node. set-flow-start marks a top-level frame as a flow start.",
     "Operation count 1–12. Use the least number of actions, prefer one update patch per node, and never return explanatory prose, markdown, unsupported fields, or tool calls.",
     "Native execution is irreversible for some operations. Ask for no confirmation in JSON; the host requires explicit user prompt to execute, and delete-node is allowed only when the request clearly asks to delete/remove.",
   ].join("\n");
@@ -355,6 +413,8 @@ export async function POST(request: Request) {
       const actions = parsedActions.data.actions;
       const badId = actions.flatMap(idsUsedByAction).find(id => !allowedIds.has(id));
       if (badId) { errors.push(model + ": action used a node ID not present in the inspected selection"); continue; }
+      const badComponentId = actions.flatMap(componentIdsUsedByAction).find(id => !allowedComponentIds.has(id));
+      if (badComponentId) { errors.push(model + ": action referenced a component ID that is not in canvas.components or the selection"); continue; }
       const styles: Record<string, unknown> = isRecord(canvas.styles) ? canvas.styles : {};
       const invalidStyleAction = actions.find((action) => {
         if (action.operation !== "apply-style" || !action.styleKind) return false;
@@ -384,6 +444,13 @@ export async function POST(request: Request) {
         return matches.length !== 1;
       });
       if (invalidVariableAction) { errors.push(model + ": bind-variable references a missing or ambiguous local variable; specify its exact collectionName"); continue; }
+      if (actions.some((action) => ["set-reactions", "set-flow-start"].includes(action.operation)) &&
+          !/\b(prototype|prototyping|interaction|flow|navigate|navigation|link|click|tap|hover|overlay|transition)\b/i.test(input.data.prompt)) {
+        errors.push(model + ": prototype actions rejected because the prompt did not ask for prototyping or interactions"); continue;
+      }
+      if (actions.some((action) => action.operation === "create-styles") && !/\bstyles?\b/i.test(input.data.prompt)) {
+        errors.push(model + ": create-styles rejected because the prompt did not ask to create or save styles"); continue;
+      }
       if (actions.some(a => a.operation === "delete-node") && !/\b(delete|remove|discard)\b/i.test(input.data.prompt)) {
         errors.push(model + ": deletion rejected because the prompt does not explicitly request removal"); continue;
       }

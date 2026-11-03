@@ -29,3 +29,22 @@ Batch execution can be partially completed if a later native operation fails. St
 ## Remaining limitation
 
 `confirm: true` is an explicit command-contract requirement, not a cryptographically independent approval receipt issued by a human in a separate UI. UX Direct should continue to use explicit user intent and scoped file access. Before offering unattended multi-user agents, add a host-issued approval/preview token bound to the exact command payload and target IDs; do not treat model-supplied confirmation alone as a human-approval mechanism.
+
+## Extended native actions
+
+`src/figma-agent/native-action-schema.ts` holds the Zod fields for the richer native actions. The bridge, the MCP tool schema (via `z.toJSONSchema`) and the AI action planner all spread the same fields, and `extendedActionIssues` holds the per-operation required-field rules, so a field the planner can emit is always one the bridge accepts.
+
+| Operation | Native API | Notes |
+|---|---|---|
+| `wrap-in-auto-layout` | `createFrame` + `layoutMode` + `appendChild` | Wraps loose siblings without changing content. Keeps visual order and infers `itemSpacing` from current gaps when omitted. Refuses to restructure inside instances. |
+| `set-fills` | `fills` / `strokes` | Solid and linear/radial/angular/diamond gradients. `angle` 0° = left→right, 90° = top→bottom. |
+| `set-effects` | `effects` | Drop/inner shadows, layer and background blur. |
+| `set-layout-grids` | `layoutGrids` | Columns, rows and square grids. |
+| `add-component-property` | `addComponentProperty`, `componentPropertyReferences` | A linked TEXT property defaults to the layer's current text. |
+| `set-instance-properties` | `setProperties` | Accepts property names without the `#id` suffix. |
+| `set-reactions` | `setReactionsAsync` | Appends by default (`reactionMode: "replace"` to overwrite). http(s) URLs only. |
+| `set-flow-start` | `flowStartingPoints` | Top-level frames only. |
+| `create-styles` | `createPaintStyle` / `createTextStyle` / `createEffectStyle` | Upserts by name. |
+| `set-variable-mode` | `setExplicitVariableModeForCollection` | For Light/Dark previews. |
+
+`create-elements` also accepts `type: "INSTANCE"` with `componentId` and `instanceProperties`, and `create-instance` accepts `parentNodeId`/`index`. `read-canvas` with `includeComponents: true` returns the component catalogue: components used on the page, ranked by use (library components included), plus local components and sets. Both AI paths (edit planner and screen generator) get this catalogue and are told to place instances before drawing primitives. Component IDs in a plan must come from the catalogue or the inspected selection.
