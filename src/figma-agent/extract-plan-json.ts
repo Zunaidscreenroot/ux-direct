@@ -9,7 +9,10 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 function isPlanObject(value: unknown): value is NativePlanLike {
-  return isRecord(value) && PLAN_KEYS.every((key) => key in value);
+  if (!isRecord(value)) return false;
+  if (PLAN_KEYS.every((key) => key in value)) return true;
+  // Block specs (the default plan format) carry sections instead of a raw layer tree.
+  return Array.isArray(value.sections) && !("elements" in value) && ("summary" in value || "frame" in value || value.sections.length > 0);
 }
 
 function parseJsonText(input: string): unknown {

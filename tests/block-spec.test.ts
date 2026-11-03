@@ -159,3 +159,15 @@ test("figma agent route renders block specs by default with a legacy rollback sw
   assert.ok(route.includes("if (isBlockSpec(rawPlan))"));
   assert.ok(route.includes('planFormat: blockSpec ? "blocks" : "elements"'));
 });
+
+test("plan extraction accepts block specs from fenced or prefixed model output", async () => {
+  const { extractPlanJson } = await import("../src/figma-agent/extract-plan-json");
+  const spec = JSON.parse(BLOCK_SPEC_EXAMPLE);
+  const fenced = "Here is the design:\n```json\n" + JSON.stringify(spec, null, 2) + "\n```";
+  const extracted = extractPlanJson(fenced) as Record<string, unknown>;
+  assert.ok(extracted && Array.isArray(extracted.sections), "fenced block spec is extracted");
+  assert.equal(isBlockSpec(extracted), true);
+  const envelope = { choices: [{ message: { role: "assistant", content: "Sure. " + JSON.stringify(spec) } }] };
+  assert.equal(isBlockSpec(extractPlanJson(envelope)), true, "block spec inside an OpenAI envelope is extracted");
+  assert.equal(extractPlanJson('{"sections":"nope"}'), null);
+});
