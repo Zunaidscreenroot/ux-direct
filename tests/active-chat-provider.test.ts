@@ -89,3 +89,36 @@ test("rejects unknown provider names instead of silently selecting another provi
   assert.equal(provider.configured, false);
   assert.match(provider.configurationError || "", /must be either openrouter or freellmapi/);
 });
+
+test("FreeLLMAPI Figma routes get an ordered fallback chain with the auto alias as safety net", async () => {
+  const { figmaModelChain } = await import("../src/providers/active-chat-provider");
+  const base = { NODE_ENV: "production", UX_DIRECT_MODEL_PROVIDER: "freellmapi", FREELLMAPI_BASE_URL: "https://freellmapi.example.com/v1", FREELLMAPI_API_KEY: "k" };
+  const defaults = getActiveChatProvider(base);
+  assert.deepEqual(figmaModelChain(defaults, false, ["x"]), ["auto:smart", "auto"]);
+  assert.deepEqual(figmaModelChain(defaults, true, ["x"]), ["auto:vision"]);
+
+  const pinned = getActiveChatProvider({ ...base,
+    FREELLMAPI_FIGMA_MODELS: " groq/openai/gpt-oss-120b, auto:smart,,auto:smart ",
+    FREELLMAPI_FIGMA_VISION_MODELS: "gemini/gemini-2.5-flash,auto:vision" });
+  assert.deepEqual(figmaModelChain(pinned, false, ["x"]), ["groq/openai/gpt-oss-120b", "auto:smart"]);
+  assert.deepEqual(figmaModelChain(pinned, true, ["x"]), ["gemini/gemini-2.5-flash", "auto:vision"]);
+});
+
+test("OpenRouter keeps its explicit Figma chain", async () => {
+  const { figmaModelChain } = await import("../src/providers/active-chat-provider");
+  const provider = getActiveChatProvider({ NODE_ENV: "test", OPENROUTER_API_KEY: "k" });
+  assert.deepEqual(figmaModelChain(provider, true, ["openai/gpt-6-luna", "openrouter/auto"]), ["openai/gpt-6-luna", "openrouter/auto"]);
+});
+
+test("FreeLLMAPI gets a cold-start first attempt and retries 4xx without JSON mode", async () => {
+  const { figmaAttemptTimeoutMs, shouldRetryWithoutJsonMode } = await import("../src/providers/active-chat-provider");
+  const free = getActiveChatProvider({ NODE_ENV: "production", UX_DIRECT_MODEL_PROVIDER: "freellmapi", FREELLMAPI_BASE_URL: "https://freellmapi.example.com/v1", FREELLMAPI_API_KEY: "k" });
+  const openrouter = getActiveChatProvider({ NODE_ENV: "test", OPENROUTER_API_KEY: "k" });
+  assert.equal(figmaAttemptTimeoutMs(free, 0, 60000, 45000), 100000);
+  assert.equal(figmaAttemptTimeoutMs(free, 1, 60000, 45000), 45000);
+  assert.equal(figmaAttemptTimeoutMs(openrouter, 0, 60000, 45000), 60000);
+  assert.equal(shouldRetryWithoutJsonMode(free, 400), true);
+  assert.equal(shouldRetryWithoutJsonMode(free, 422), true);
+  assert.equal(shouldRetryWithoutJsonMode(free, 401), false);
+  assert.equal(shouldRetryWithoutJsonMode(openrouter, 400), false);
+});

@@ -8,6 +8,7 @@ import { neonRequest } from "@/src/memory/neon-rest";
 import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
+import { figmaAttemptTimeoutMs, figmaModelChain, routedVia, shouldRetryWithoutJsonMode } from "@/src/providers/active-chat-provider";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 import { normalizeVisualReview } from "@/src/figma-agent/normalize-visual-review";
 import { evaluateVisualQualityGate } from "@/src/figma-agent/visual-quality-gate";
@@ -216,13 +217,14 @@ export async function POST(request: Request) {
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   // Screenshots must use the dedicated vision chain; text-only reviews use the smart chain.
   const hasVisionInput = Boolean(sourceImage || outputImage);
-  const models = activeProvider.id === "openrouter"
-    ? FIGMA_AGENT_MODELS.map((entry) => entry.id)
-    : [hasVisionInput ? (activeProvider.visionModel || "auto:vision") : activeProvider.model];
+  const models = figmaModelChain(activeProvider, hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id));
+  // A model that rejects JSON mode with a 4xx is retried once without response_format.
+  const attempts = models.map((model) => ({ model, jsonMode: true }));
   const errors: string[] = [];
-  for (const [modelIndex, model] of models.entries()) {
+  for (let modelIndex = 0; modelIndex < attempts.length; modelIndex++) {
+    const { model, jsonMode } = attempts[modelIndex];
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), modelIndex === 0 ? 60000 : 45000);
+    const timer = setTimeout(() => controller.abort(), figmaAttemptTimeoutMs(activeProvider, modelIndex, 60000, 45000));
     try {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -257,7 +259,7 @@ export async function POST(request: Request) {
           // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
           ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
           max_tokens: 1800,
-          response_format: { type: "json_object" },
+          ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
         }),
         cache: "no-store",
         signal: controller.signal,
@@ -270,7 +272,8 @@ export async function POST(request: Request) {
       const record = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
       if (!response.ok) {
         const providerError = record.error && typeof record.error === "object" ? record.error as Record<string, unknown> : {};
-        errors.push(model + ": " + String(providerError.message || "HTTP " + response.status).slice(0, 180));
+        errors.push(model + (jsonMode ? "" : " (no JSON mode)") + ": " + String(providerError.message || "HTTP " + response.status).slice(0, 180));
+        if (jsonMode && shouldRetryWithoutJsonMode(activeProvider, response.status)) attempts.splice(modelIndex + 1, 0, { model, jsonMode: false });
         continue;
       }
       const choices = Array.isArray(record.choices) ? record.choices : [];
@@ -317,6 +320,7 @@ export async function POST(request: Request) {
         visualInspection: qualityGate.visualInspection,
         outputImageInspected: !!outputImage,
         model: typeof record.model === "string" ? record.model : model,
+        routedVia: routedVia(response),
       }, { headers });
     } catch (error) {
       errors.push(model + ": " + (controller.signal.aborted ? "timed out" : error instanceof Error ? error.message.slice(0, 150) : "request failed"));

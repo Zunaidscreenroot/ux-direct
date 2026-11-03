@@ -55,10 +55,10 @@ test("UX Direct selects one chat provider and shares provider configuration with
   for (const routeText of [figmaAgent, nativeActions, review, refine]) {
     assert.ok(routeText.includes("FIGMA_AGENT_MODELS"));
     assert.ok(routeText.includes("getResolvedActiveChatProvider"));
-    assert.ok(routeText.includes('activeProvider.id === "openrouter"'));
     assert.equal(routeText.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
     assert.ok(routeText.includes("UX_DIRECT_DESIGN_ROLE"));
-    assert.ok(routeText.includes('activeProvider.visionModel || "auto:vision"'));
+    assert.ok(routeText.includes('figmaModelChain(activeProvider, hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id))'));
+    assert.ok(routeText.includes("routedVia(response)"));
     assert.ok(routeText.includes("hasVisionInput"));
   }
   assert.equal(route.includes("openai/gpt-6-luna"), false);

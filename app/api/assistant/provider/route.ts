@@ -4,6 +4,7 @@ import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import {
   getConfiguredProvider,
   getProviderSwitcherState,
+  getResolvedActiveChatProvider,
   isSupportedRuntimeChatProvider,
   setActiveChatProviderPreference,
 } from "@/src/providers/runtime-chat-provider";
@@ -69,6 +70,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Approved Figma file key required." }, { status: 403, headers: corsHeaders(request) });
   }
 
+  if (url.searchParams.get("warm") === "1") {
+    return NextResponse.json(await warmFreeLlmApi(), { headers: corsHeaders(request) });
+  }
+
   const [state, r2Ready] = await Promise.all([
     getProviderSwitcherState(),
     readR2Json("ux-direct-settings/active-chat-provider.json")
@@ -76,6 +81,39 @@ export async function GET(request: Request) {
       .catch(() => false),
   ]);
   return NextResponse.json({ ...state, preferenceStoreAvailable: r2Ready }, { headers: corsHeaders(request) });
+}
+
+/**
+ * Wake a sleeping FreeLLMAPI host (e.g. Render Free) before the first Figma task, so the
+ * cold start is not spent inside a model attempt. Never returns the key or upstream bodies.
+ */
+async function warmFreeLlmApi() {
+  const provider = await getResolvedActiveChatProvider();
+  if (provider.id !== "freellmapi") return { ok: true, provider: provider.id, skipped: true };
+  if (!provider.configured) return { ok: false, provider: provider.id, error: provider.configurationError || "FreeLLMAPI is not configured." };
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(provider.baseUrl + "/models", {
+      headers: { Authorization: "Bearer " + provider.apiKey, Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(90_000),
+    });
+    const ms = Date.now() - startedAt;
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, provider: provider.id, ms, status: response.status,
+        error: "FreeLLMAPI rejected the unified key. If it worked before, the host probably restarted and lost its SQLite data (provider keys and unified key). Re-add the provider keys, create a new unified key and update the FREELLMAPI_API_KEY Worker secret." };
+    }
+    if (!response.ok) return { ok: false, provider: provider.id, ms, status: response.status, error: "FreeLLMAPI responded with HTTP " + response.status + "." };
+    const payload = await response.json().catch(() => null) as { data?: unknown } | null;
+    const modelCount = payload && Array.isArray(payload.data) ? payload.data.length : null;
+    if (modelCount === 0) {
+      return { ok: false, provider: provider.id, ms, modelCount,
+        error: "FreeLLMAPI is awake but has no enabled models. Add provider keys in its dashboard; if they were there before, the host lost its stored data on restart." };
+    }
+    return { ok: true, provider: provider.id, ms, modelCount };
+  } catch {
+    return { ok: false, provider: provider.id, ms: Date.now() - startedAt, error: "FreeLLMAPI did not respond within 90 seconds." };
+  }
 }
 
 export async function POST(request: Request) {
