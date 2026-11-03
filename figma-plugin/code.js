@@ -1236,11 +1236,11 @@ function summarizeComponentDefinitions(component) {
   var definitions = {};
   try {
     var raw = component.componentPropertyDefinitions || {};
-    Object.keys(raw).slice(0, 20).forEach(function (key) {
+    Object.keys(raw).slice(0, 12).forEach(function (key) {
       var def = raw[key];
       var entry = { type: def.type };
-      if (def.type === "VARIANT" && Array.isArray(def.variantOptions)) entry.options = def.variantOptions.slice(0, 20);
-      else if (def.defaultValue !== undefined) entry.defaultValue = typeof def.defaultValue === "string" ? def.defaultValue.slice(0, 80) : def.defaultValue;
+      if (def.type === "VARIANT" && Array.isArray(def.variantOptions)) entry.options = def.variantOptions.slice(0, 12).map(function (o) { return String(o).slice(0, 40); });
+      else if (def.defaultValue !== undefined) entry.defaultValue = typeof def.defaultValue === "string" ? def.defaultValue.slice(0, 60) : def.defaultValue;
       definitions[key.split("#")[0]] = entry;
     });
   } catch (_) {}
@@ -1248,6 +1248,8 @@ function summarizeComponentDefinitions(component) {
 }
 // Bounded catalogue of components the AI may instantiate: components used by instances on this
 // page (ranked by use, includes library components) plus local components and sets in the file.
+var COMPONENT_CATALOGUE_BUDGET_MS = 8000;
+var COMPONENT_CATALOGUE_MAX_CHARS = 18000;
 async function collectComponentCatalogue() {
   var byId = new Map();
   function record(component, uses, source) {
@@ -1263,18 +1265,41 @@ async function collectComponentCatalogue() {
     if (page) item.pageName = page.name;
     byId.set(owner.id, item);
   }
+  // Hard time budget: large client files can have thousands of instances and dozens of
+  // unloaded pages, and read-canvas must finish well inside the UI's 90s command timeout.
+  var deadline = Date.now() + COMPONENT_CATALOGUE_BUDGET_MS;
+  function withinBudget() { return Date.now() < deadline; }
   try {
-    var instances = figma.currentPage.findAllWithCriteria({ types: ["INSTANCE"] }).slice(0, 300);
-    for (var i = 0; i < instances.length; i++) {
-      var main = null;
-      try { main = await instances[i].getMainComponentAsync(); } catch (_) {}
-      record(main, 1, "in-use");
+    var instances = figma.currentPage.findAllWithCriteria({ types: ["INSTANCE"] }).slice(0, 200);
+    for (var i = 0; i < instances.length && withinBudget(); i += 25) {
+      var batch = instances.slice(i, i + 25).map(function (instance) {
+        return instance.getMainComponentAsync().catch(function () { return null; });
+      });
+      var mains = await Promise.all(batch);
+      for (var m = 0; m < mains.length; m++) record(mains[m], 1, "in-use");
     }
   } catch (_) {}
   try {
-    var pages = figma.root.children;
-    for (var p = 0; p < pages.length && byId.size < 80; p++) {
-      if (pages[p].id !== figma.currentPage.id) await pages[p].loadAsync();
+    // Current page first, then pages that look like component libraries, then the rest,
+    // loading other pages only while the budget lasts.
+    var pages = figma.root.children.slice().sort(function (a, b) {
+      function rank(page) {
+        if (page.id === figma.currentPage.id) return 0;
+        return /component|design.?system|library|ui.?kit|foundation|atoms|elements/i.test(page.name) ? 1 : 2;
+      }
+      return rank(a) - rank(b);
+    });
+    for (var p = 0; p < pages.length && byId.size < 80 && withinBudget(); p++) {
+      if (pages[p].id !== figma.currentPage.id) {
+        // One huge page can outlast the budget on its own; stop waiting when time runs out.
+        var remaining = deadline - Date.now();
+        var loaded = await Promise.race([
+          pages[p].loadAsync().then(function () { return true; }),
+          new Promise(function (resolve) { setTimeout(function () { resolve(false); }, Math.max(0, remaining)); })
+        ]);
+        if (!loaded) break;
+      }
+      if (!withinBudget()) break;
       var found = pages[p].findAllWithCriteria({ types: ["COMPONENT_SET", "COMPONENT"] });
       for (var c = 0; c < found.length && byId.size < 80; c++) {
         if (found[c].type === "COMPONENT" && found[c].parent && found[c].parent.type === "COMPONENT_SET") continue;
@@ -1282,7 +1307,10 @@ async function collectComponentCatalogue() {
       }
     }
   } catch (_) {}
-  return Array.from(byId.values()).sort(function (a, b) { return b.uses - a.uses; }).slice(0, 60);
+  // The bridge rejects results over 60k chars, so keep the catalogue to a bounded share of that.
+  var ranked = Array.from(byId.values()).sort(function (a, b) { return b.uses - a.uses; }).slice(0, 40);
+  while (ranked.length > 5 && JSON.stringify(ranked).length > COMPONENT_CATALOGUE_MAX_CHARS) ranked.pop();
+  return ranked;
 }
 function parseHexColor(hex) {
   if (typeof hex !== "string" || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
