@@ -611,7 +611,7 @@ export async function POST(request: Request) {
       }
       // The first FreeLLMAPI attempt also absorbs a sleeping host's cold start.
       const firstAttemptMs = isFreeLlmApi ? FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS : 80000;
-      const attemptTimeoutMs = Math.min(isRecovery ? 45000 : (modelIndex === 0 ? firstAttemptMs : 70000), remainingMs);
+      const attemptTimeoutMs = Math.min(isRecovery ? (isFreeLlmApi ? 90000 : 45000) : (modelIndex === 0 ? firstAttemptMs : 70000), remainingMs);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
       try {

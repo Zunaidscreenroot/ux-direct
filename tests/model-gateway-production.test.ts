@@ -44,8 +44,8 @@ test("UX Direct selects one chat provider and shares provider configuration with
   assert.ok(route.includes('" did not start producing text within " + startupTimeoutMs + "ms."'));
   assert.ok(activeProvider.includes("FREELLMAPI_API_KEY"));
   assert.ok(activeProvider.includes("FREELLMAPI_BASE_URL"));
-  assert.ok(activeProvider.includes('env.FREELLMAPI_CHAT_MODEL?.trim() || "auto:smart"'));
-  assert.ok(activeProvider.includes('env.FREELLMAPI_VISION_MODEL?.trim() || "auto:vision"'));
+  assert.ok(activeProvider.includes('env.FREELLMAPI_CHAT_MODEL?.trim() || "auto"'));
+  assert.ok(activeProvider.includes('env.FREELLMAPI_VISION_MODEL?.trim() || "auto"'));
   assert.ok(activeProvider.includes('model: "openrouter/auto"'));
   const figmaModels = policy.slice(policy.indexOf("export const FIGMA_AGENT_MODELS"), policy.indexOf("export type FigmaAgentModelId"));
   assert.deepEqual([...figmaModels.matchAll(/id: "([^"]+)"/g)].map((match) => match[1]), ["openai/gpt-6-luna", "openrouter/auto"]);
@@ -64,7 +64,7 @@ test("UX Direct selects one chat provider and shares provider configuration with
   assert.equal(route.includes("openai/gpt-6-luna"), false);
   assert.ok(status.includes("defaultModel: activeProvider.model"));
   assert.ok(uxAudit.includes('activeProvider.id === "freellmapi"'));
-  assert.ok(uxAudit.includes('activeProvider.visionModel || "auto:vision"'));
+  assert.ok(uxAudit.includes('activeProvider.visionModel || "auto"'));
   assert.ok(status.includes("fallbackModel: null"));
   assert.ok(status.includes("OPENROUTER_MODEL_LABELS[index]"));
   assert.ok(status.includes("providerId: activeProvider.id"));
