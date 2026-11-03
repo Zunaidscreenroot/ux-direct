@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
+import { figmaAttemptTimeoutMs, figmaModelChain, routedVia, shouldRetryWithoutJsonMode } from "@/src/providers/active-chat-provider";
 import { extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 import { FIGMA_CANVAS_STEP_OPERATION_IDS } from "@/src/figma-agent/command-registry";
 import { BIND_VARIABLE_PROPERTIES, NATIVE_ACTION_EXTENDED_FIELDS, NATIVE_INSTANCE_ELEMENT_FIELDS, NATIVE_PATCH_EXTENDED_FIELDS, NATIVE_TEXT_RANGE_EXTENDED_FIELDS, extendedActionIssues, extendedActionNodeIds } from "@/src/figma-agent/native-action-schema";
@@ -369,14 +370,14 @@ export async function POST(request: Request) {
     ? [{ type: "text", text: userText }, ...images]
     : userText;
   const hasVisionInput = Boolean(renderedScreen || referenceImage);
-  const models = activeProvider.id === "openrouter"
-    ? FIGMA_AGENT_MODELS.map(m => m.id)
-    : [hasVisionInput ? (activeProvider.visionModel || "auto:vision") : activeProvider.model];
+  const models = figmaModelChain(activeProvider, hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id));
+  // A model that rejects JSON mode with a 4xx is retried once without response_format.
+  const attempts = models.map((model) => ({ model, jsonMode: true }));
   const errors: string[] = [];
-  for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
-    const model = models[modelIndex];
+  for (let modelIndex = 0; modelIndex < attempts.length; modelIndex++) {
+    const { model, jsonMode } = attempts[modelIndex];
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), modelIndex === 0 ? 60000 : 45000);
+    const timeout = setTimeout(() => controller.abort(), figmaAttemptTimeoutMs(activeProvider, modelIndex, 60000, 45000));
     try {
       const response = await fetch(activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions", {
         method: "POST",
@@ -387,7 +388,7 @@ export async function POST(request: Request) {
           ...(model.startsWith("google/gemini-") ? { temperature: 0.1 } : {}),
           // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
           ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
-          max_tokens: 3500, response_format: { type: "json_object" } }),
+          max_tokens: 3500, ...(jsonMode ? { response_format: { type: "json_object" } } : {}) }),
         cache: "no-store", signal: controller.signal,
       });
       const payload: unknown = await response.json().catch((readError: unknown) => {
@@ -398,7 +399,8 @@ export async function POST(request: Request) {
       const envelope = isRecord(payload) ? payload : {};
       if (!response.ok) {
         const err = isRecord(envelope.error) ? envelope.error : {};
-        errors.push(model + ": " + String(err.message || "HTTP " + response.status).slice(0, 140));
+        errors.push(model + (jsonMode ? "" : " (no JSON mode)") + ": " + String(err.message || "HTTP " + response.status).slice(0, 140));
+        if (jsonMode && shouldRetryWithoutJsonMode(activeProvider, response.status)) attempts.splice(modelIndex + 1, 0, { model, jsonMode: false });
         continue;
       }
       const choices = Array.isArray(envelope.choices) ? envelope.choices : [];
@@ -455,7 +457,7 @@ export async function POST(request: Request) {
       if (actions.some(a => ["insert-image", "create-image-fill"].includes(a.operation)) && !referenceImage) {
         errors.push(model + ": image insertion/fill rejected because no user-attached image was provided"); continue;
       }
-      return NextResponse.json({ ok: true, summary: parsedActions.data.summary, actions, model: typeof envelope.model === "string" ? envelope.model : model,
+      return NextResponse.json({ ok: true, summary: parsedActions.data.summary, actions, model: typeof envelope.model === "string" ? envelope.model : model, routedVia: routedVia(response),
         inspectedNodes: allowedIds.size, referenceImageAttached: !!referenceImage }, { headers });
     } catch (error) {
       errors.push(model + ": " + (controller.signal.aborted ? "timed out" : error instanceof Error ? error.message.slice(0, 140) : "request failed"));

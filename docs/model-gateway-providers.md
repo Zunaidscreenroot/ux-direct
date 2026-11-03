@@ -49,6 +49,15 @@ Switch back at any time with `UX_DIRECT_MODEL_PROVIDER=openrouter`. OpenRouter r
 
 A provider connection check reads `/v1/models` with the configured Bearer token. If it returns HTTP 401/403, check the unified FreeLLMAPI key and the base URL first. Do not print keys in logs or paste them into chat.
 
+### Figma tasks on FreeLLMAPI
+
+- **Fallback chain.** Figma generation, native actions, visual QA and refinement try `FREELLMAPI_FIGMA_MODELS` in order for text-only requests (default `auto:smart`) and `FREELLMAPI_FIGMA_VISION_MODELS` for requests with screenshots (default `auto:vision`). FreeLLMAPI already fails over on 429/5xx inside one request; this chain covers the cases it returns to us.
+- **JSON mode.** If a free model rejects `response_format` with 400/404/415/422, the same model is retried once without JSON mode. The output is still validated by the existing JSON extraction and schemas.
+- **Cold starts.** The first FreeLLMAPI attempt gets 100s because a sleeping host (Render Free) can take about a minute to wake. The plugin also calls `GET /api/assistant/provider?warm=1` when it opens, which wakes the host and reports key or model problems.
+- **Routed model.** Responses include `routedVia` (FreeLLMAPI's `X-Routed-Via` header), so you can see which upstream model actually answered.
+- **Persistence.** FreeLLMAPI keeps provider keys and the unified key in SQLite. Render Free has an ephemeral disk, so a restart or redeploy can wipe them, and requests then fail with 401 or "no models". Use a host with a persistent disk, or re-add keys and update the `FREELLMAPI_API_KEY` Worker secret after a reset. Keep the key a secret (`wrangler secret put FREELLMAPI_API_KEY`), never in `vars` or the plugin.
+- **Free-tier limits.** Upstream free tiers are rate-limited (requests per minute and per day) and may log prompts. Don't send confidential client data through free endpoints without approval.
+
 ## Environment configuration
 
 Copy `.env.example` into a local environment file and leave all provider keys blank during development. Never commit a real key or use a `NEXT_PUBLIC_*` variable for a secret.

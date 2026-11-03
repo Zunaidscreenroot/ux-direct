@@ -94,8 +94,8 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("if (!isRecovery) continue;"), "Missing content and invalid schemas must cause a compact retry.");
   assert.ok(route.includes("compactRecoveryCanvas(canvas)"), "The retry should send a bounded source layer tree.");
   assert.ok(route.includes("28–42 native nodes total INCLUDING nested children"), "The retry must explicitly cap output complexity.");
-  assert.ok(route.includes("max_tokens: isRecovery ? 6000 : 9000"), "Keep generation output bounded to a complete native plan.");
-  assert.ok(route.includes("modelIndex === 0 ? 80000 : 70000"), "The primary and fallback get useful completion windows.");
+  assert.ok(route.includes("max_tokens: isRecovery ? 6000 : (isFreeLlmApi ? 8000 : 9000)"), "Keep generation output bounded to a complete native plan.");
+  assert.ok(route.includes("modelIndex === 0 ? firstAttemptMs : 70000") && route.includes("isFreeLlmApi ? FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS : 80000"), "The primary and fallback get useful completion windows.");
   assert.ok(route.includes('model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}'), "GPT-6 Luna prefers throughput and low reasoning effort for stability.");
   assert.ok(route.includes("isRecovery ? 45000"), "Compact retries have a bounded but useful completion window.");
   assert.ok(route.includes("sourceTextInventory: collectSourceTextInventory"), "Compact retries retain a full bounded source-text checklist.");
@@ -108,9 +108,9 @@ test("missing final content remains invalid and is handled by the route recovery
 test("Figma agent retains the OpenRouter chain and supports an alternate selected provider", () => {
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   const catalog = readFileSync(resolve(process.cwd(), "src/providers/openrouter-models.ts"), "utf8");
-  assert.ok(route.includes('const models = activeProvider.id === "openrouter"'), "Generation uses the shared Figma chain when OpenRouter is selected.");
+  assert.ok(route.includes('const models = figmaModelChain(activeProvider, hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id))'), "Generation uses the shared Figma chain when OpenRouter is selected.");
   assert.ok(route.includes("const hasVisionInput = Boolean(renderedScreen || referenceImage)"), "Generation identifies image-bearing requests.");
-  assert.ok(route.includes(": [hasVisionInput ? (activeProvider.visionModel || \"auto:vision\") : activeProvider.model]"), "Generation routes image requests to auto:vision and text requests to auto:smart.");
+  assert.ok(route.includes('figmaModelChain(activeProvider, hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id))'), "Generation routes image requests to auto:vision and text requests to auto:smart.");
   assert.ok(route.includes("getResolvedActiveChatProvider"), "Generation shares the server-side provider selector.");
   assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Figma generation includes the explicit low-cost Auto fallback.");
   assert.ok(route.includes("const attemptsForModel = 2"), "The primary model and fallback each get one compact retry.");
@@ -122,8 +122,8 @@ test("Figma agent retains the OpenRouter chain and supports an alternate selecte
   assert.ok(catalog.includes('FIGMA_AGENT_QA_MODEL: FigmaAgentModelId = "openai/gpt-6-luna"'));
   const review = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/review/route.ts"), "utf8");
   const refine = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/refine/route.ts"), "utf8");
-  assert.ok(review.includes('activeProvider.id === "openrouter"') && review.includes("const hasVisionInput = Boolean(sourceImage || outputImage)") && review.includes("activeProvider.visionModel || \"auto:vision\""));
-  assert.ok(refine.includes('activeProvider.id === "openrouter"') && refine.includes("const hasVisionInput = Boolean(safeImage(parsed.data.sourceImage) || safeImage(parsed.data.outputImage))") && refine.includes("activeProvider.visionModel || \"auto:vision\""));
+  assert.ok(review.includes('activeProvider.id === "openrouter"') && review.includes("const hasVisionInput = Boolean(sourceImage || outputImage)") && review.includes('figmaModelChain(activeProvider, hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id))'));
+  assert.ok(refine.includes('activeProvider.id === "openrouter"') && refine.includes("const hasVisionInput = Boolean(safeImage(parsed.data.sourceImage) || safeImage(parsed.data.outputImage))") && refine.includes('figmaModelChain(activeProvider, hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id))'));
 
   const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
   assert.equal(ui.includes('fetch(API + "/api/assistant/figma-agent/live-qa"'), false, "The plugin must not run live browser QA.");

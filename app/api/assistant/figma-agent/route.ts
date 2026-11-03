@@ -9,6 +9,7 @@ import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { deferTaskWork, finishTaskRun, startTaskRun, type RetrievalRecord } from "@/src/memory/task-run-log";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
+import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality } from "@/src/figma-agent/design-plan-quality";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
@@ -527,12 +528,11 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
-  // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its server-selected auto route.
+  // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its configured free-model chain.
   // Both are bounded by compact retry and the shared generation deadline.
   const hasVisionInput = Boolean(renderedScreen || referenceImage);
-  const models = activeProvider.id === "openrouter"
-    ? FIGMA_AGENT_MODELS.map((entry) => entry.id)
-    : [hasVisionInput ? (activeProvider.visionModel || "auto:vision") : activeProvider.model];
+  const models = figmaModelChain(activeProvider, hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id));
+  const isFreeLlmApi = activeProvider.id === "freellmapi";
   const errors: string[] = [];
   let validationFeedback = "";
   const recoveryContext = JSON.stringify({
@@ -571,7 +571,9 @@ export async function POST(request: Request) {
         errors.push("Generation deadline reached before " + model + (isRecovery ? " compact retry" : "") + " could run.");
         break modelLoop;
       }
-      const attemptTimeoutMs = Math.min(isRecovery ? 45000 : (modelIndex === 0 ? 80000 : 70000), remainingMs);
+      // The first FreeLLMAPI attempt also absorbs a sleeping host's cold start.
+      const firstAttemptMs = isFreeLlmApi ? FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS : 80000;
+      const attemptTimeoutMs = Math.min(isRecovery ? 45000 : (modelIndex === 0 ? firstAttemptMs : 70000), remainingMs);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
       try {
@@ -611,7 +613,8 @@ export async function POST(request: Request) {
             ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
             // Qwen 3.5 thinks by default; unbounded reasoning spends the attempt before any JSON is written.
             ...(model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}),
-            max_tokens: isRecovery ? 6000 : 9000,
+            // Many free upstream models cap output near 8k tokens and reject larger requests.
+            max_tokens: isRecovery ? 6000 : (isFreeLlmApi ? 8000 : 9000),
             // JSON mode is enabled for the first attempt. Compact retries use normal text mode
             // because some provider/model routes have returned successful but empty choices.
             ...(!isRecovery ? { response_format: { type: "json_object" } } : {}),
@@ -645,7 +648,9 @@ export async function POST(request: Request) {
         if (!response.ok) {
           const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
           errors.push(model + (isRecovery ? " compact retry" : "") + ": " + detail);
-          if (!isRecovery && [408, 429, 500, 502, 503, 504].includes(response.status)) continue;
+          // The compact retry runs without JSON mode, which covers free models that reject response_format.
+          if (!isRecovery && ([408, 429, 500, 502, 503, 504].includes(response.status) ||
+            shouldRetryWithoutJsonMode(activeProvider, response.status))) continue;
           break;
         }
         if (!responseText.trim()) {
@@ -794,6 +799,7 @@ export async function POST(request: Request) {
           learningCandidate,
           learning: "awaiting-verification",
           model: typeof payload.model === "string" ? payload.model : model,
+          routedVia: routedVia(response),
           brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
           visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
           generation: { recoveryAttempted: isRecovery, finishReason, modelIndex: modelIndex + 1, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt },

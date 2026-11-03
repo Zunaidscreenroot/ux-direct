@@ -8,11 +8,20 @@ export type ActiveChatProvider = {
   model: string;
   /** Used only when a request contains images. */
   visionModel?: string;
+  /** FreeLLMAPI only: ordered fallback chain for text-only Figma requests. */
+  figmaModels?: string[];
+  /** FreeLLMAPI only: ordered fallback chain for Figma requests that carry screenshots. */
+  figmaVisionModels?: string[];
   configured: boolean;
   configurationError?: string;
 };
 
 const trimTrailingSlashes = (value: string) => value.replace(/\/+$/, "");
+
+function modelList(value: string | undefined, fallback: string[]): string[] {
+  const models = (value || "").split(",").map((entry) => entry.trim()).filter(Boolean);
+  return [...new Set(models.length ? models : fallback)].slice(0, 6);
+}
 
 function validateFreeLlmApiBaseUrl(baseUrl: string, env: Record<string, string | undefined>): string | undefined {
   if (!baseUrl) return "Set FREELLMAPI_BASE_URL to the FreeLLMAPI server URL ending in /v1.";
@@ -77,6 +86,9 @@ export function getActiveChatProvider(
       baseUrl,
       model,
       visionModel,
+      // Defaults to the auto:smart / auto:vision aliases; FreeLLMAPI fails over between upstream models itself.
+      figmaModels: modelList(env.FREELLMAPI_FIGMA_MODELS, [model]),
+      figmaVisionModels: modelList(env.FREELLMAPI_FIGMA_VISION_MODELS, [visionModel]),
       configured: !configurationError,
       ...(configurationError ? { configurationError } : {}),
     };
@@ -91,4 +103,39 @@ export function getActiveChatProvider(
     configured: false,
     configurationError: "UX_DIRECT_MODEL_PROVIDER (or legacy UX_DIRECT_CHAT_PROVIDER) must be either openrouter or freellmapi.",
   };
+}
+
+/** Render Free (and similar hosts) sleep when idle; the first request after idle includes the wake-up. */
+export const FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS = 100_000;
+
+/**
+ * Ordered model chain for Figma routes. OpenRouter keeps its explicit quality chain;
+ * FreeLLMAPI uses the configured text or vision chain.
+ */
+export function figmaModelChain(provider: ActiveChatProvider, hasVisionInput: boolean, openRouterChain: string[]): string[] {
+  if (provider.id === "openrouter") return [...openRouterChain];
+  const chain = hasVisionInput
+    ? (provider.figmaVisionModels?.length ? provider.figmaVisionModels : [provider.visionModel || "auto:vision"])
+    : (provider.figmaModels?.length ? provider.figmaModels : [provider.model]);
+  return [...chain];
+}
+
+/** Per-attempt timeout; the first FreeLLMAPI attempt also covers a host cold start. */
+export function figmaAttemptTimeoutMs(provider: ActiveChatProvider, attemptIndex: number, firstMs: number, laterMs: number): number {
+  if (provider.id === "freellmapi" && attemptIndex === 0) return Math.max(firstMs, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS);
+  return attemptIndex === 0 ? firstMs : laterMs;
+}
+
+/**
+ * Some free upstream models reject JSON mode or a parameter with a 4xx instead of failing over
+ * inside FreeLLMAPI. Those requests are retried once on the same model without response_format.
+ */
+export function shouldRetryWithoutJsonMode(provider: ActiveChatProvider, status: number): boolean {
+  return provider.id === "freellmapi" && [400, 404, 415, 422].includes(status);
+}
+
+/** FreeLLMAPI reports the upstream platform/model it actually used. */
+export function routedVia(response: Response): string | undefined {
+  const value = response.headers.get("x-routed-via")?.trim();
+  return value ? value.slice(0, 160) : undefined;
 }
