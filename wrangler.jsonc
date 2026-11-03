@@ -30,7 +30,7 @@
     "enabled": true
   },
   "vars": {
-    "FREELLMAPI_BASE_URL": "https://freellmapi-otg5.onrender.com/v1",
+    // FREELLMAPI_BASE_URL is a Worker secret: the self-hosted tunnel URL can change, and the Mac updates it with `wrangler secret put`.
     "FREELLMAPI_CHAT_MODEL": "auto:smart",
     "FREELLMAPI_VISION_MODEL": "auto:vision",
     // Figma fallback chains: put exact ids of your strongest enabled free models first (see GET /v1/models).
