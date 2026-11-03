@@ -1290,7 +1290,15 @@ async function collectComponentCatalogue() {
       return rank(a) - rank(b);
     });
     for (var p = 0; p < pages.length && byId.size < 80 && withinBudget(); p++) {
-      if (pages[p].id !== figma.currentPage.id) await pages[p].loadAsync();
+      if (pages[p].id !== figma.currentPage.id) {
+        // One huge page can outlast the budget on its own; stop waiting when time runs out.
+        var remaining = deadline - Date.now();
+        var loaded = await Promise.race([
+          pages[p].loadAsync().then(function () { return true; }),
+          new Promise(function (resolve) { setTimeout(function () { resolve(false); }, Math.max(0, remaining)); })
+        ]);
+        if (!loaded) break;
+      }
       if (!withinBudget()) break;
       var found = pages[p].findAllWithCriteria({ types: ["COMPONENT_SET", "COMPONENT"] });
       for (var c = 0; c < found.length && byId.size < 80; c++) {
