@@ -201,7 +201,8 @@ test("Figma agent normalizes provider-native design fields and uses the requeste
   assert.ok(agent.includes('const models = figmaModelChain(activeProvider, hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id))'), "Figma agent retains the OpenRouter quality chain when selected.");
   assert.ok(agent.includes('figmaModelChain(activeProvider, hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id))'), "A non-OpenRouter provider uses its smart model for text and vision model for images.");
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "Model requests must not be provider filtered.");
-  assert.ok(agent.includes("const normalizedPlan = normalizePlan(rawPlan, canvas);"), "A normalized model plan must be validated before any canvas write.");
+  assert.ok(agent.includes("const normalizedPlan = normalizePlan(planInput, canvas);"), "A normalized model plan must be validated before any canvas write.");
+  assert.ok(agent.includes("planInput = expansion.plan;"), "Block specs must be rendered before normalization and validation.");
   assert.ok(agent.includes('PlanSchema.safeParse(normalizedPlan)'), "Native plan schema validation must remain mandatory.");
 });
 

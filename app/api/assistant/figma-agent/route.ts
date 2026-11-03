@@ -13,6 +13,7 @@ import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, should
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality } from "@/src/figma-agent/design-plan-quality";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
+import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, expandBlockSpec, isBlockSpec } from "@/src/figma-agent/block-spec";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -422,6 +423,26 @@ const SYSTEM = [
   "Return a concise user-facing summary of what you designed, not hidden reasoning. Never return null, an array at the root, a tool call, or explanatory text. Return one complete JSON object with summary, frame and elements keys; use learningCandidate:null when there is no durable reusable lesson."
 ].join("\n");
 
+// Block mode (default): the model returns a short semantic block spec and
+// src/figma-agent/block-spec.ts renders the native layer tree deterministically.
+// Set UXD_FIGMA_PLAN_MODE=legacy to roll back to model-authored layer trees.
+const LEARNING_CANDIDATE_RULE = "Optional root key learningCandidate: null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}; include it only if this task produced one durable reusable design or execution lesson, never as a task summary. Do not include client-specific names in cross-user or domain-wide rules, raw requirements, screen text, node IDs, screenshots or private facts.";
+const BLOCK_SYSTEM = [
+  UX_DIRECT_DESIGN_ROLE + " Users can give a short request. Infer the design procedure and execute the full playbook automatically without asking them to repeat it.",
+  "You are UX Direct's native Figma design agent. The user explicitly requested a design action. You plan the content and structure; UX Direct's renderer builds the native Figma layers.",
+  "Determine the scope from the selected node. If it is a card, component, widget or row, design a variation of that component only: no screen navigation, app bars or unrelated sections. If it is a complete screen, design a screen variation.",
+  "Before designing, extract a preservation inventory from the selected layer tree: every meaningful label, value, amount, date, status, indicator, repeated row and action. Keep each item unless the user's request explicitly removes or changes it. If something is not legible in the screenshot, trust the exact source text in the layer tree.",
+  "Analyse BOTH the attached rendered screen image (when present) and the native layer tree. Use the image for hierarchy, grouping, density and colours; use the layer tree for exact text and values.",
+  "Map the short prompt to a concrete design objective and keep everything else stable: product context, information architecture, content, interaction meaning and the source's colours (copy them into theme). Do not replace a task-specific screen with a generic dashboard or a stack of similar cards; do not invent features to fill space.",
+  "Group content the way a senior product designer would: one clear primary action, related values together in one card, status next to what it describes, secondary detail in lists.",
+  "For Indian BFSI designs, emphasize transparency, clear amount/date/status hierarchy, user control and accessible legibility. Never make up actual interest rates, contractual terms or legal-compliance claims; label illustrative financial values as sample.",
+  "Progress indicators must keep their meaning: a partial ring (for example 60% paid) is a progress_ring with percent 60, never a solid shape.",
+  BLOCK_SPEC_CONTRACT,
+  "EXAMPLE OF THE SHAPE ONLY (never copy its content): " + BLOCK_SPEC_EXAMPLE,
+  LEARNING_CANDIDATE_RULE,
+  "Return one complete JSON object with summary, frame, theme and sections; use learningCandidate:null when there is no durable reusable lesson. No markdown fences, explanation or reasoning.",
+].join("\n");
+
 export async function OPTIONS(request: Request) {
   if (!allowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers: cors(request) });
   return new Response(null, { status: 204, headers: cors(request) });
@@ -471,11 +492,19 @@ export async function POST(request: Request) {
       /\b(card|component|widget|tile|row|button|panel|item|summary|breakdown|loan)\b/i.test(selectedName) &&
       !/\b(screen|page|dashboard|flow)\b/i.test(selectedName));
   const designScope = componentSelection ? "selected_component_or_card" : "selected_screen_or_frame";
+  const blockMode = (process.env.UXD_FIGMA_PLAN_MODE || "blocks").trim().toLowerCase() !== "legacy";
+  const blockOperatingContract = [
+    "Treat the user's short prompt as the requested design change, not as the full procedure. Apply the built-in senior designer workflow automatically.",
+    "Inventory and preserve all meaningful source text, labels, values, amounts, dates, statuses, indicators, repeated rows and relationships unless the user explicitly asks to change them. Copy them into block fields exactly.",
+    "Translate only the requested improvement into a meaningful variation; preserve the source product identity and its colours (theme).",
+    "DESIGN SYSTEM FIRST: figmaCanvas.components lists the file's components ranked by use. For a button, input, tab, chip, badge, list row, nav bar or other control that a listed component provides, use a component block with its exact componentId and set variants/labels through instanceProperties using only the listed property names and options.",
+    "After creation the plugin runs one rendered screenshot + native layer review and may perform one bounded surgical repair. Preserve the source frame.",
+  ];
   const userContext = JSON.stringify({
     prompt: parsedInput.data.prompt,
     designScope,
     selectedNode: { name: selectedName, type: selectedType, width: selectedWidth, height: selectedHeight },
-    operatingContract: [
+    operatingContract: blockMode ? blockOperatingContract : [
       "Treat the user's short prompt as the requested design change, not as the full procedure. Apply the built-in senior designer and expert Figma workflow automatically.",
       "Inventory and preserve all meaningful source text, labels, values, amounts, dates, statuses, indicators, icons, repeated rows, and relationships unless the user explicitly asks to change them.",
       "Use both the rendered screenshot (when available) and native layer tree to infer visual style, layout, information hierarchy, reusable patterns, and content density before planning. If the user also attached a separate reference image, use it as visual inspiration or as content only when requested; never confuse it with the source screenshot or invent a successful asset insertion.",
@@ -526,7 +555,7 @@ export async function POST(request: Request) {
   const scopeInstructions = componentSelection
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
-  const system = buildBrainSystemPrompt(SYSTEM + "\n" + scopeInstructions, brain);
+  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions, brain);
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its configured free-model chain.
   // Both are bounded by compact retry and the shared generation deadline.
@@ -555,6 +584,15 @@ export async function POST(request: Request) {
     "OUTPUT BUDGET: use 3–6 meaningful top-level FRAME groups based on the actual screen; target 28–42 native nodes total INCLUDING nested children. Do not create a separate top-level group for a badge that belongs inside a card. Preserve every source label, amount, value, status, date and action. Keep every layer purposeful; do not add decorative placeholders to hit a count. Finish every string, array, object and the final closing brace.",
     "Every node must have type, name, x, y, width and height. Types: FRAME, RECTANGLE, ELLIPSE, TEXT, LINE, POLYGON, STAR, INSTANCE (componentId from canvas.components plus optional instanceProperties; no children). ELLIPSE may include arcData:{startingAngle,endingAngle,innerRadius} with radian angles and endingAngle greater than startingAngle. TEXT must have text. Only FRAME can contain children. Coordinates must be relative to the immediate parent. Use color:'#RRGGBB' and noFill:true only for transparent structural frames.",
     "Do not include a learningCandidate unless there is a durable reusable lesson. If none, set learningCandidate:null.",
+  ].join("\n");
+  const blockRecoverySystem = [
+    UX_DIRECT_DESIGN_ROLE,
+    "Create an improved native Figma variation of the selected source as a BLOCK SPEC. The user prompt is the design change, not the procedure.",
+    scopeInstructions,
+    "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Copy every listed text string exactly into block fields, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
+    "Do not redesign it as a generic dashboard. Do not invent contractual financial details.",
+    BLOCK_SPEC_CONTRACT,
+    "OUTPUT BUDGET: 3–6 sections and 10–22 blocks. Prefer list over many single rows. Finish every string, array, object and the final closing brace. learningCandidate:null. No markdown, explanation or reasoning.",
   ].join("\n");
   const generationStartedAt = Date.now();
   // OpenRouter sends HTTP 200 headers immediately and the body only once the full plan is
@@ -605,7 +643,7 @@ export async function POST(request: Request) {
           body: JSON.stringify({
             model,
             messages: [
-              { role: "system", content: isRecovery ? recoverySystem : system },
+              { role: "system", content: isRecovery ? (blockMode ? blockRecoverySystem : recoverySystem) : system },
               { role: "user", content: userContent },
             ],
             ...(activeProvider.id === "openrouter" && model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
@@ -727,7 +765,23 @@ export async function POST(request: Request) {
           ? rawPlan as Record<string, unknown>
           : {};
         const learningCandidate = sanitizeInlineLearningCandidate(rawPlanRecord.learningCandidate);
-        const normalizedPlan = normalizePlan(rawPlan, canvas);
+        // A block spec is rendered deterministically; a raw layer tree (legacy mode or a model
+        // that ignored the contract) still goes through the same normalizer and gates.
+        let planInput: unknown = rawPlan;
+        let blockSpec: { blocks: number; nodes: number; warnings: string[] } | null = null;
+        if (isBlockSpec(rawPlan)) {
+          const expansion = expandBlockSpec(rawPlan, canvas, { componentSelection });
+          blockSpec = { blocks: expansion.blockCount, nodes: expansion.nodeCount, warnings: expansion.warnings };
+          if (!expansion.plan) {
+            const issues = expansion.errors.slice(0, 4).join("; ");
+            validationFeedback = "The block spec could not be rendered: " + issues + " Return a corrected complete block spec; keep every source text.";
+            errors.push(model + (isRecovery ? " compact retry" : "") + ": block spec rejected (" + issues + ")");
+            if (!isRecovery) continue;
+            break;
+          }
+          planInput = expansion.plan;
+        }
+        const normalizedPlan = normalizePlan(planInput, canvas);
         const parsedPlan = PlanSchema.safeParse(normalizedPlan);
         if (!parsedPlan.success) {
           const issues = parsedPlan.error.issues.slice(0, 4)
@@ -796,6 +850,8 @@ export async function POST(request: Request) {
           taskProject,
           retrieval: taskRetrieval,
           plan: parsedPlan.data,
+          planFormat: blockSpec ? "blocks" : "elements",
+          blockSpec,
           learningCandidate,
           learning: "awaiting-verification",
           model: typeof payload.model === "string" ? payload.model : model,
