@@ -72,7 +72,8 @@ export function getActiveChatProvider(
 
   if (selected === "freellmapi") {
     const apiKey = env.FREELLMAPI_API_KEY?.trim() || "";
-    const baseUrl = trimTrailingSlashes(env.FREELLMAPI_BASE_URL?.trim() || "");
+    // FREELLMAPI_TUNNEL_URL (secret, synced from the self-hosted tunnel) wins over the static base URL.
+    const baseUrl = trimTrailingSlashes(env.FREELLMAPI_TUNNEL_URL?.trim() || env.FREELLMAPI_BASE_URL?.trim() || "");
     const model = env.FREELLMAPI_CHAT_MODEL?.trim() || "auto:smart";
     const visionModel = env.FREELLMAPI_VISION_MODEL?.trim() || "auto:vision";
     const urlError = validateFreeLlmApiBaseUrl(baseUrl, env);

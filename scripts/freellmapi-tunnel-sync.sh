@@ -1,5 +1,5 @@
 #!/bin/bash
-# Keeps the ux-direct Worker's FREELLMAPI_BASE_URL secret in sync with the current
+# Keeps the ux-direct Worker's FREELLMAPI_TUNNEL_URL secret in sync with the current
 # Cloudflare quick-tunnel URL (it changes every time cloudflared restarts).
 # Run every minute from a LaunchAgent. Needs `wrangler login` done once on this Mac.
 set -euo pipefail
@@ -18,6 +18,6 @@ base="$url/v1"
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$base/models" || true)
 case "$code" in 200|401) ;; *) echo "$(date) tunnel not ready ($code): $base"; exit 0 ;; esac
 
-printf '%s' "$base" | npx --yes wrangler secret put FREELLMAPI_BASE_URL --name "$WORKER"
+printf '%s' "$base" | npx --yes wrangler secret put FREELLMAPI_TUNNEL_URL --name "$WORKER"
 printf '%s' "$base" > "$STATE"
-echo "$(date) FREELLMAPI_BASE_URL -> $base"
+echo "$(date) FREELLMAPI_TUNNEL_URL -> $base"

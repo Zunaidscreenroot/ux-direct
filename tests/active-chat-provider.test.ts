@@ -122,3 +122,15 @@ test("FreeLLMAPI gets a cold-start first attempt and retries 4xx without JSON mo
   assert.equal(shouldRetryWithoutJsonMode(free, 401), false);
   assert.equal(shouldRetryWithoutJsonMode(openrouter, 400), false);
 });
+
+test("FREELLMAPI_TUNNEL_URL secret overrides the static FreeLLMAPI base URL", () => {
+  const provider = getActiveChatProvider({
+    NODE_ENV: "production",
+    UX_DIRECT_MODEL_PROVIDER: "freellmapi",
+    FREELLMAPI_BASE_URL: "https://old-host.example.com/v1",
+    FREELLMAPI_TUNNEL_URL: "https://toxic-example.trycloudflare.com/v1/",
+    FREELLMAPI_API_KEY: "k",
+  });
+  assert.equal(provider.configured, true);
+  assert.equal(provider.baseUrl, "https://toxic-example.trycloudflare.com/v1");
+});
