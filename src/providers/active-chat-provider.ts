@@ -72,7 +72,8 @@ export function getActiveChatProvider(
 
   if (selected === "freellmapi") {
     const apiKey = env.FREELLMAPI_API_KEY?.trim() || "";
-    const baseUrl = trimTrailingSlashes(env.FREELLMAPI_BASE_URL?.trim() || "");
+    // FREELLMAPI_TUNNEL_URL (secret, synced from the self-hosted tunnel) wins over the static base URL.
+    const baseUrl = trimTrailingSlashes(env.FREELLMAPI_TUNNEL_URL?.trim() || env.FREELLMAPI_BASE_URL?.trim() || "");
     const model = env.FREELLMAPI_CHAT_MODEL?.trim() || "auto:smart";
     const visionModel = env.FREELLMAPI_VISION_MODEL?.trim() || "auto:vision";
     const urlError = validateFreeLlmApiBaseUrl(baseUrl, env);
@@ -86,8 +87,8 @@ export function getActiveChatProvider(
       baseUrl,
       model,
       visionModel,
-      // Pin the strongest free models enabled in FreeLLMAPI first; the auto aliases stay as the safety net.
-      figmaModels: modelList(env.FREELLMAPI_FIGMA_MODELS, [model, "auto"]),
+      // Defaults to the auto:smart / auto:vision aliases; FreeLLMAPI fails over between upstream models itself.
+      figmaModels: modelList(env.FREELLMAPI_FIGMA_MODELS, [model]),
       figmaVisionModels: modelList(env.FREELLMAPI_FIGMA_VISION_MODELS, [visionModel]),
       configured: !configurationError,
       ...(configurationError ? { configurationError } : {}),

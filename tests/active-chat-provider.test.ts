@@ -90,11 +90,11 @@ test("rejects unknown provider names instead of silently selecting another provi
   assert.match(provider.configurationError || "", /must be either openrouter or freellmapi/);
 });
 
-test("FreeLLMAPI Figma routes get an ordered fallback chain with the auto alias as safety net", async () => {
+test("FreeLLMAPI Figma routes get an ordered fallback chain defaulting to the auto aliases", async () => {
   const { figmaModelChain } = await import("../src/providers/active-chat-provider");
   const base = { NODE_ENV: "production", UX_DIRECT_MODEL_PROVIDER: "freellmapi", FREELLMAPI_BASE_URL: "https://freellmapi.example.com/v1", FREELLMAPI_API_KEY: "k" };
   const defaults = getActiveChatProvider(base);
-  assert.deepEqual(figmaModelChain(defaults, false, ["x"]), ["auto:smart", "auto"]);
+  assert.deepEqual(figmaModelChain(defaults, false, ["x"]), ["auto:smart"]);
   assert.deepEqual(figmaModelChain(defaults, true, ["x"]), ["auto:vision"]);
 
   const pinned = getActiveChatProvider({ ...base,
@@ -121,4 +121,16 @@ test("FreeLLMAPI gets a cold-start first attempt and retries 4xx without JSON mo
   assert.equal(shouldRetryWithoutJsonMode(free, 422), true);
   assert.equal(shouldRetryWithoutJsonMode(free, 401), false);
   assert.equal(shouldRetryWithoutJsonMode(openrouter, 400), false);
+});
+
+test("FREELLMAPI_TUNNEL_URL secret overrides the static FreeLLMAPI base URL", () => {
+  const provider = getActiveChatProvider({
+    NODE_ENV: "production",
+    UX_DIRECT_MODEL_PROVIDER: "freellmapi",
+    FREELLMAPI_BASE_URL: "https://old-host.example.com/v1",
+    FREELLMAPI_TUNNEL_URL: "https://toxic-example.trycloudflare.com/v1/",
+    FREELLMAPI_API_KEY: "k",
+  });
+  assert.equal(provider.configured, true);
+  assert.equal(provider.baseUrl, "https://toxic-example.trycloudflare.com/v1");
 });
