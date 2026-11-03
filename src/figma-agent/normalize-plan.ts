@@ -22,8 +22,10 @@ function normalizeColor(value: unknown): string | null {
   return null;
 }
 
-function normalizeElementType(value: unknown, item: Record<string, unknown>): "RECTANGLE" | "ELLIPSE" | "TEXT" | "LINE" | "FRAME" | "POLYGON" | "STAR" {
+function normalizeElementType(value: unknown, item: Record<string, unknown>): "RECTANGLE" | "ELLIPSE" | "TEXT" | "LINE" | "FRAME" | "POLYGON" | "STAR" | "INSTANCE" {
   const raw = typeof value === "string" ? value.trim().toUpperCase().replace(/[ -]+/g, "_") : "";
+  // A component reference always means a real instance, whatever label the model used for its type.
+  if (typeof item.componentId === "string" && item.componentId.trim() && (raw === "INSTANCE" || raw === "COMPONENT" || !Array.isArray(item.children))) return "INSTANCE";
   const aliases: Record<string, "RECTANGLE" | "ELLIPSE" | "TEXT" | "LINE" | "FRAME" | "POLYGON" | "STAR"> = {
     RECT: "RECTANGLE", RECTANGLE: "RECTANGLE", SHAPE: "RECTANGLE", BUTTON: "FRAME", CARD: "FRAME", CONTAINER: "FRAME", FRAME: "FRAME", GROUP: "FRAME",
     ELLIPSE: "ELLIPSE", CIRCLE: "ELLIPSE", DOT: "ELLIPSE", AVATAR: "ELLIPSE",
@@ -270,6 +272,17 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
       height: Math.max(1, Math.min(4096, height)),
     };
     if (text !== undefined && type === "TEXT") normalized.text = text;
+    if (type === "INSTANCE") {
+      normalized.componentId = String(item.componentId).trim().slice(0, 100);
+      const props = item.instanceProperties ?? item.properties ?? item.props;
+      if (props && typeof props === "object" && !Array.isArray(props)) {
+        const entries = Object.entries(props as Record<string, unknown>)
+          .filter((entry): entry is [string, string | boolean] => typeof entry[1] === "string" || typeof entry[1] === "boolean")
+          .slice(0, 30)
+          .map(([key, value]) => [key.trim().slice(0, 120), typeof value === "string" ? value.slice(0, 500) : value]);
+        if (entries.length) normalized.instanceProperties = Object.fromEntries(entries);
+      }
+    }
     const fontSizeValue = item.fontSize ?? item.textSize;
     if (typeof fontSizeValue === "number" && Number.isFinite(fontSizeValue)) normalized.fontSize = Math.max(8, Math.min(96, fontSizeValue));
     if (typeof item.fontFamily === "string" || typeof fontRaw.family === "string") normalized.fontFamily = String(item.fontFamily ?? fontRaw.family).trim().slice(0, 100) || "Inter";
@@ -354,6 +367,13 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
         }
         normalized[targetKey] = enumKeys.has(targetKey) ? enumValue : rawValue.trim().slice(0, 100);
       }
+    }
+    if (type === "INSTANCE") {
+      // Instances render their component's own paints; literal colors would override the design system.
+      for (const key of ["color", "noFill", "strokeColor", "strokeWeight", "cornerRadius", "layoutMode", "itemSpacing",
+        "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "primaryAxisAlignItems", "counterAxisAlignItems",
+        "primaryAxisSizingMode", "counterAxisSizingMode", "layoutWrap", "clipsContent", "paintStyleId", "textStyleId"]) delete normalized[key];
+      return normalized;
     }
     if (Array.isArray(item.children) && depth < 4) {
       const children: Record<string, unknown>[] = [];

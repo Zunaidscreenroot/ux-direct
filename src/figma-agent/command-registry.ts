@@ -11,7 +11,7 @@
  */
 export const FIGMA_CANVAS_COMMANDS = [
   { id: "batch", label: "Run ordered batch", summary: "Run a validated sequence of native canvas actions.", risk: "high", destructive: false, batchable: false, requiresExplicitIntent: true },
-  { id: "create-elements", label: "Create elements", summary: "Create a bounded set of native frames, shapes, text or vectors.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
+  { id: "create-elements", label: "Create elements", summary: "Create a bounded set of native frames, shapes, text, vectors or component instances.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
   { id: "update-node", label: "Update node", summary: "Update supported properties on one existing node.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
   { id: "clone-node", label: "Clone node", summary: "Duplicate one existing node.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
   { id: "delete-node", label: "Delete node", summary: "Delete one explicitly identified node on the current page.", risk: "high", destructive: true, batchable: false, requiresExplicitIntent: true },
@@ -23,7 +23,7 @@ export const FIGMA_CANVAS_COMMANDS = [
   { id: "ungroup-node", label: "Ungroup node", summary: "Ungroup one explicitly identified group.", risk: "medium", destructive: true, batchable: false, requiresExplicitIntent: true },
   { id: "create-component", label: "Create component", summary: "Convert a supported node into a component.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
   { id: "create-component-set", label: "Create component set", summary: "Combine compatible components into a variants set.", risk: "high", destructive: true, batchable: false, requiresExplicitIntent: true },
-  { id: "create-instance", label: "Create instance", summary: "Create an instance from an explicit component.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
+  { id: "create-instance", label: "Create instance", summary: "Create an instance from an explicit component, optionally inside a parent container.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
   { id: "swap-component", label: "Swap component", summary: "Replace an instance's component with a specified component.", risk: "high", destructive: true, batchable: false, requiresExplicitIntent: true },
   { id: "detach-instance", label: "Detach instance", summary: "Detach an instance from its component.", risk: "high", destructive: true, batchable: false, requiresExplicitIntent: true },
   { id: "set-selection", label: "Set selection", summary: "Change the active selection to explicit node IDs.", risk: "low", destructive: false, batchable: true, requiresExplicitIntent: false },
@@ -39,6 +39,16 @@ export const FIGMA_CANVAS_COMMANDS = [
   { id: "insert-image", label: "Insert image", summary: "Insert supplied image data as a native image layer.", risk: "medium", destructive: false, batchable: false, requiresExplicitIntent: false },
   { id: "create-variables", label: "Create variables", summary: "Create named local variables in a specified collection.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
   { id: "bind-variable", label: "Bind variable", summary: "Bind a specified local variable to a supported node property.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
+  { id: "wrap-in-auto-layout", label: "Wrap in Auto Layout", summary: "Wrap explicit sibling nodes in a new Auto Layout frame, keeping their order and inferring spacing from the current gaps.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
+  { id: "set-fills", label: "Set fills or strokes", summary: "Replace a node's fills or strokes with solid and gradient paints.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
+  { id: "set-effects", label: "Set effects", summary: "Replace a node's effects with drop/inner shadows and layer/background blurs.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
+  { id: "set-layout-grids", label: "Set layout grids", summary: "Replace a frame's column, row or square layout grids.", risk: "low", destructive: false, batchable: true, requiresExplicitIntent: false },
+  { id: "add-component-property", label: "Add component property", summary: "Add a boolean, text, instance-swap or variant property to a component and optionally link it to a layer.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
+  { id: "set-instance-properties", label: "Set instance properties", summary: "Set variant, text, boolean or instance-swap property values on an instance.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
+  { id: "set-reactions", label: "Set prototype reactions", summary: "Add or replace prototype interactions (navigate, overlay, back, URL) on a node.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
+  { id: "set-flow-start", label: "Set flow start", summary: "Mark a top-level frame as a named prototype flow starting point.", risk: "low", destructive: false, batchable: true, requiresExplicitIntent: false },
+  { id: "create-styles", label: "Create styles", summary: "Create or update named local paint, text and effect styles.", risk: "medium", destructive: false, batchable: true, requiresExplicitIntent: false },
+  { id: "set-variable-mode", label: "Set variable mode", summary: "Set a node's explicit variable mode (for example Light/Dark) for a local collection.", risk: "low", destructive: false, batchable: true, requiresExplicitIntent: false },
 ] as const;
 
 export type FigmaCanvasOperation = (typeof FIGMA_CANVAS_COMMANDS)[number]["id"];

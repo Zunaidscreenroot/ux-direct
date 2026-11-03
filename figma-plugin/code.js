@@ -850,7 +850,10 @@ async function executeNativeApiHealthCheck() {
       "reparent-node", "group-nodes", "ungroup-node", "flatten-nodes", "boolean-operation",
       "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance",
       "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page",
-      "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill"
+      "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill",
+      "insert-image", "create-variables", "bind-variable", "wrap-in-auto-layout", "set-fills", "set-effects",
+      "set-layout-grids", "add-component-property", "set-instance-properties", "set-reactions", "set-flow-start",
+      "create-styles", "set-variable-mode"
     ];
     var writerSource = String(writeCanvasCommand);
     implementedCanvasActions.forEach(function (operation) {
@@ -1110,6 +1113,17 @@ function summarizeCanvasNode(node, depth, state) {
   if (typeof node.layoutMode === "string" && node.layoutMode !== "NONE") {
     out.layoutMode = node.layoutMode;
   }
+  if (node.type === "INSTANCE") {
+    try {
+      var instanceProps = node.componentProperties || {};
+      var compactProps = {};
+      Object.keys(instanceProps).slice(0, 20).forEach(function (key) {
+        var value = instanceProps[key] && instanceProps[key].value;
+        compactProps[key.split("#")[0]] = typeof value === "string" ? value.slice(0, 120) : value;
+      });
+      if (Object.keys(compactProps).length) out.componentProperties = compactProps;
+    } catch (_) {}
+  }
   if ("effects" in node && Array.isArray(node.effects) && node.effects.length) {
     out.effectTypes = node.effects.slice(0, 4).map(function (effect) { return effect.type; });
   }
@@ -1127,7 +1141,8 @@ function summarizeCanvasNode(node, depth, state) {
   }
   if ("children" in node) {
     out.childCount = node.children.length;
-    if (depth > 0) {
+    // Instance internals belong to the component; collapsed reads count them without expanding.
+    if (depth > 0 && !(state.collapseInstances && node.type === "INSTANCE")) {
       out.children = [];
       for (var i = 0; i < node.children.length; i++) {
         if (state.count >= state.maxNodes) { state.truncated = true; break; }
@@ -1160,7 +1175,7 @@ async function readCanvasCommand(payload) {
   } else {
     source = scope === "current-page" ? figma.currentPage.children : figma.currentPage.selection;
   }
-  var state = { count: 0, maxNodes: maxNodes, truncated: false };
+  var state = { count: 0, maxNodes: maxNodes, truncated: false, collapseInstances: payload.collapseInstances === true };
   var nodes = [];
   for (var i = 0; i < source.length; i++) {
     if (state.count >= state.maxNodes) { state.truncated = true; break; }
@@ -1192,6 +1207,9 @@ async function readCanvasCommand(payload) {
       grid: styles[3].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; })
     };
   }
+  if (payload.includeComponents === true) {
+    result.components = await collectComponentCatalogue();
+  }
   if (payload.includeVariables === true && figma.variables &&
       typeof figma.variables.getLocalVariablesAsync === "function" &&
       typeof figma.variables.getLocalVariableCollectionsAsync === "function") {
@@ -1213,6 +1231,58 @@ async function readCanvasCommand(payload) {
     });
   }
   return result;
+}
+function summarizeComponentDefinitions(component) {
+  var definitions = {};
+  try {
+    var raw = component.componentPropertyDefinitions || {};
+    Object.keys(raw).slice(0, 20).forEach(function (key) {
+      var def = raw[key];
+      var entry = { type: def.type };
+      if (def.type === "VARIANT" && Array.isArray(def.variantOptions)) entry.options = def.variantOptions.slice(0, 20);
+      else if (def.defaultValue !== undefined) entry.defaultValue = typeof def.defaultValue === "string" ? def.defaultValue.slice(0, 80) : def.defaultValue;
+      definitions[key.split("#")[0]] = entry;
+    });
+  } catch (_) {}
+  return definitions;
+}
+// Bounded catalogue of components the AI may instantiate: components used by instances on this
+// page (ranked by use, includes library components) plus local components and sets in the file.
+async function collectComponentCatalogue() {
+  var byId = new Map();
+  function record(component, uses, source) {
+    if (!component) return;
+    var owner = component.parent && component.parent.type === "COMPONENT_SET" ? component.parent : component;
+    var existing = byId.get(owner.id);
+    if (existing) { existing.uses += uses; return; }
+    var item = { id: owner.id, name: String(owner.name).slice(0, 120), type: owner.type, uses: uses, source: source,
+      width: Math.round(component.width), height: Math.round(component.height), properties: summarizeComponentDefinitions(owner) };
+    if (owner.remote === true) item.remote = true;
+    if (owner.type === "COMPONENT_SET" && owner.defaultVariant) item.defaultVariantId = owner.defaultVariant.id;
+    var page = owner; while (page && page.type !== "PAGE") page = page.parent;
+    if (page) item.pageName = page.name;
+    byId.set(owner.id, item);
+  }
+  try {
+    var instances = figma.currentPage.findAllWithCriteria({ types: ["INSTANCE"] }).slice(0, 300);
+    for (var i = 0; i < instances.length; i++) {
+      var main = null;
+      try { main = await instances[i].getMainComponentAsync(); } catch (_) {}
+      record(main, 1, "in-use");
+    }
+  } catch (_) {}
+  try {
+    var pages = figma.root.children;
+    for (var p = 0; p < pages.length && byId.size < 80; p++) {
+      if (pages[p].id !== figma.currentPage.id) await pages[p].loadAsync();
+      var found = pages[p].findAllWithCriteria({ types: ["COMPONENT_SET", "COMPONENT"] });
+      for (var c = 0; c < found.length && byId.size < 80; c++) {
+        if (found[c].type === "COMPONENT" && found[c].parent && found[c].parent.type === "COMPONENT_SET") continue;
+        record(found[c], 0, "local");
+      }
+    }
+  } catch (_) {}
+  return Array.from(byId.values()).sort(function (a, b) { return b.uses - a.uses; }).slice(0, 60);
 }
 function parseHexColor(hex) {
   if (typeof hex !== "string" || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
@@ -1314,6 +1384,160 @@ async function writeCanvasCommand(payload) {
   function setSolidPaint(node, property, hex) {
     if (!(property in node)) throw new Error("This node type does not support " + property + ".");
     node[property] = [{ type: "SOLID", color: colorValue(hex) }];
+  }
+  function clampUnit(value, fallback) {
+    return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback;
+  }
+  function gradientTransformForAngle(angle) {
+    // 0° runs left→right, 90° top→bottom. Rotates the gradient axis about the node centre.
+    var radians = (Number.isFinite(angle) ? angle : 90) * Math.PI / 180;
+    var cos = Math.cos(radians), sin = Math.sin(radians);
+    return [[cos, sin, 0.5 - 0.5 * cos - 0.5 * sin], [-sin, cos, 0.5 + 0.5 * sin - 0.5 * cos]];
+  }
+  function buildNativePaints(list) {
+    if (!Array.isArray(list) || list.length > 8) throw new Error("paints must be an array of up to 8 paints.");
+    return list.map(function (paint, index) {
+      if (!paint || typeof paint !== "object") throw new Error("Paint " + (index + 1) + " is invalid.");
+      var visible = paint.visible !== false;
+      if (paint.type === "SOLID") {
+        return { type: "SOLID", color: colorValue(paint.color), opacity: clampUnit(paint.opacity, 1), visible: visible };
+      }
+      if (["GRADIENT_LINEAR", "GRADIENT_RADIAL", "GRADIENT_ANGULAR", "GRADIENT_DIAMOND"].includes(paint.type)) {
+        if (!Array.isArray(paint.stops) || paint.stops.length < 2 || paint.stops.length > 8) {
+          throw new Error("Gradient paint " + (index + 1) + " needs 2–8 stops.");
+        }
+        var stops = paint.stops.map(function (stop) {
+          var rgb = colorValue(stop && stop.color);
+          return { position: clampUnit(stop.position, 0), color: { r: rgb.r, g: rgb.g, b: rgb.b, a: clampUnit(stop.opacity, 1) } };
+        }).sort(function (a, b) { return a.position - b.position; });
+        return {
+          type: paint.type, gradientStops: stops, visible: visible, opacity: clampUnit(paint.opacity, 1),
+          gradientTransform: paint.type === "GRADIENT_LINEAR" ? gradientTransformForAngle(paint.angle) : [[1, 0, 0], [0, 1, 0]]
+        };
+      }
+      throw new Error("Unsupported paint type: " + String(paint.type));
+    });
+  }
+  function buildNativeEffects(list) {
+    if (!Array.isArray(list) || list.length > 8) throw new Error("effects must be an array of up to 8 effects.");
+    return list.map(function (effect, index) {
+      if (!effect || typeof effect !== "object") throw new Error("Effect " + (index + 1) + " is invalid.");
+      var visible = effect.visible !== false;
+      if (effect.type === "DROP_SHADOW" || effect.type === "INNER_SHADOW") {
+        var rgb = colorValue(effect.color);
+        var shadow = {
+          type: effect.type, visible: visible, blendMode: "NORMAL",
+          color: { r: rgb.r, g: rgb.g, b: rgb.b, a: clampUnit(effect.opacity, 0.25) },
+          offset: { x: Number.isFinite(effect.x) ? effect.x : 0, y: Number.isFinite(effect.y) ? effect.y : 4 },
+          radius: Number.isFinite(effect.blur) ? Math.max(0, effect.blur) : 12,
+          spread: Number.isFinite(effect.spread) ? effect.spread : 0
+        };
+        if (effect.type === "DROP_SHADOW") shadow.showShadowBehindNode = false;
+        return shadow;
+      }
+      if (effect.type === "LAYER_BLUR" || effect.type === "BACKGROUND_BLUR") {
+        return { type: effect.type, visible: visible, radius: Math.max(0, Math.min(250, Number(effect.radius) || 0)), blurType: "NORMAL" };
+      }
+      throw new Error("Unsupported effect type: " + String(effect.type));
+    });
+  }
+  function assignNativeEffects(target, effects) {
+    try { target.effects = effects; }
+    catch (effectError) {
+      // Older runtimes reject the blurType field; retry once without it.
+      target.effects = effects.map(function (effect) {
+        if (effect.blurType === undefined) return effect;
+        var copy = Object.assign({}, effect); delete copy.blurType; return copy;
+      });
+    }
+  }
+  function buildNativeLayoutGrids(list) {
+    if (!Array.isArray(list) || list.length > 6) throw new Error("layoutGrids must be an array of up to 6 grids.");
+    return list.map(function (grid, index) {
+      var rgb = parseHexColor(grid && grid.color) || { r: 1, g: 0, b: 0 };
+      var color = { r: rgb.r, g: rgb.g, b: rgb.b, a: clampUnit(grid && grid.opacity, 0.1) };
+      if (grid && grid.pattern === "GRID") {
+        return { pattern: "GRID", sectionSize: Math.max(1, Number(grid.sectionSize) || 8), visible: true, color: color };
+      }
+      if (!grid || !["COLUMNS", "ROWS"].includes(grid.pattern) || !["MIN", "MAX", "CENTER", "STRETCH"].includes(grid.alignment)) {
+        throw new Error("Layout grid " + (index + 1) + " needs pattern COLUMNS/ROWS/GRID and a valid alignment.");
+      }
+      var out = { pattern: grid.pattern, alignment: grid.alignment, count: Math.max(1, Math.min(48, grid.count | 0)),
+        gutterSize: Math.max(0, Number(grid.gutterSize) || 0), visible: true, color: color };
+      if (grid.alignment !== "CENTER") out.offset = Math.max(0, Number(grid.offset) || 0);
+      if (grid.alignment !== "STRETCH") {
+        if (!Number.isFinite(grid.sectionSize)) throw new Error("Layout grid " + (index + 1) + " with " + grid.alignment + " alignment needs sectionSize.");
+        out.sectionSize = Math.max(1, grid.sectionSize);
+      }
+      return out;
+    });
+  }
+  async function resolveComponentForInstance(componentId, actionName) {
+    if (typeof componentId !== "string" || !componentId.trim()) throw new Error(actionName + " requires componentId.");
+    var componentNode = await figma.getNodeByIdAsync(componentId);
+    if (!componentNode) throw new Error(actionName + ": component " + componentId + " was not found in this file. Read the component catalogue first.");
+    if (componentNode.type === "COMPONENT_SET") componentNode = componentNode.defaultVariant || componentNode.children[0];
+    if (!componentNode || componentNode.type !== "COMPONENT") throw new Error(actionName + ": componentId must identify a COMPONENT or COMPONENT_SET.");
+    return componentNode;
+  }
+  function resolveInstancePropertyKey(definitions, requested) {
+    if (Object.prototype.hasOwnProperty.call(definitions, requested)) return requested;
+    var matches = Object.keys(definitions).filter(function (key) { return key.split("#")[0] === requested; });
+    if (matches.length === 1) return matches[0];
+    var available = Object.keys(definitions).map(function (key) { return key.split("#")[0]; }).join(", ");
+    throw new Error(matches.length ? "Property name " + requested + " is ambiguous; use its full key." :
+      "Instance has no property " + requested + ". Available: " + (available || "none") + ".");
+  }
+  function applyInstanceProperties(instance, requested) {
+    if (!requested || typeof requested !== "object" || Array.isArray(requested)) throw new Error("instanceProperties must be an object.");
+    var definitions = instance.componentProperties || {};
+    var resolved = {};
+    Object.keys(requested).slice(0, 30).forEach(function (name) {
+      var key = resolveInstancePropertyKey(definitions, name);
+      var definition = definitions[key];
+      var value = requested[name];
+      if (definition.type === "BOOLEAN" && typeof value !== "boolean") throw new Error("Property " + name + " expects true/false.");
+      if (definition.type !== "BOOLEAN" && typeof value !== "string") throw new Error("Property " + name + " expects a string value.");
+      resolved[key] = value;
+    });
+    instance.setProperties(resolved);
+    return Object.keys(resolved);
+  }
+  function buildNativeReaction(spec, index) {
+    if (!spec || typeof spec !== "object") throw new Error("Reaction " + (index + 1) + " is invalid.");
+    var trigger;
+    if (spec.trigger === "AFTER_TIMEOUT") trigger = { type: "AFTER_TIMEOUT", timeout: Math.max(0, Math.min(60, Number(spec.timeout) || 0.8)) };
+    else if (spec.trigger === "MOUSE_ENTER" || spec.trigger === "MOUSE_LEAVE") trigger = { type: spec.trigger, delay: Math.max(0, Math.min(60, Number(spec.timeout) || 0)) };
+    else if (["ON_CLICK", "ON_HOVER", "ON_PRESS", "ON_DRAG"].includes(spec.trigger)) trigger = { type: spec.trigger };
+    else throw new Error("Unsupported reaction trigger: " + String(spec.trigger));
+    var transition = null;
+    if (spec.transition && spec.transition.type && spec.transition.type !== "INSTANT") {
+      transition = { type: spec.transition.type,
+        easing: { type: spec.transition.easing || "EASE_OUT" },
+        duration: Number.isFinite(spec.transition.duration) ? Math.max(0, Math.min(10, spec.transition.duration)) : 0.3 };
+      if (["MOVE_IN", "MOVE_OUT", "PUSH", "SLIDE_IN", "SLIDE_OUT"].includes(spec.transition.type)) {
+        if (!spec.transition.direction) throw new Error("Directional transitions need direction.");
+        transition.direction = spec.transition.direction;
+        transition.matchLayers = false;
+      }
+    }
+    var action;
+    if (spec.action === "BACK" || spec.action === "CLOSE") action = { type: spec.action };
+    else if (spec.action === "URL") {
+      if (typeof spec.url !== "string" || !/^https?:\/\//i.test(spec.url)) throw new Error("URL reactions need an http(s) url.");
+      action = { type: "URL", url: spec.url.slice(0, 500) };
+    } else if (["NAVIGATE", "OVERLAY", "SWAP", "SCROLL_TO"].includes(spec.action)) {
+      var destination = findPageNode(spec.destinationId);
+      if (!destination) throw new Error("Reaction destination " + String(spec.destinationId) + " was not found on the current page.");
+      action = { type: "NODE", destinationId: destination.id, navigation: spec.action, transition: transition,
+        preserveScrollPosition: false };
+    } else throw new Error("Unsupported reaction action: " + String(spec.action));
+    return { trigger: trigger, actions: [action] };
+  }
+  function isDescendantOf(node, ancestor) {
+    var cursor = node && node.parent;
+    while (cursor) { if (cursor.id === ancestor.id) return true; cursor = cursor.parent; }
+    return false;
   }
   async function loadAndSetTextFont(node, spec) {
     if (node.type !== "TEXT") throw new Error("Typography and text edits can only be applied to TEXT nodes.");
@@ -1448,13 +1672,16 @@ async function writeCanvasCommand(payload) {
       else if (type === "STAR") node = figma.createStar();
       else if (type === "SLICE") node = figma.createSlice();
       else if (type === "VECTOR") node = figma.createVector();
+      else if (type === "INSTANCE") node = (await resolveComponentForInstance(spec.componentId, "create-elements INSTANCE")).createInstance();
       else throw new Error("Unsupported element type: " + String(type));
       node.name = spec.name.trim().slice(0, 80);
-      var width = Number.isFinite(spec.width) ? spec.width : (type === "TEXT" ? 280 : 160);
-      var height = Number.isFinite(spec.height) ? spec.height : (type === "TEXT" ? 40 : 100);
+      var width = Number.isFinite(spec.width) ? spec.width : (type === "TEXT" ? 280 : type === "INSTANCE" ? node.width : 160);
+      var height = Number.isFinite(spec.height) ? spec.height : (type === "TEXT" ? 40 : type === "INSTANCE" ? node.height : 100);
       width = Math.max(1, Math.min(4096, width));
       height = Math.max(1, Math.min(4096, height));
-      if (typeof node.resize === "function") node.resize(width, height);
+      // Instances keep their component's intrinsic size unless the plan sets one explicitly.
+      if (typeof node.resize === "function" && (type !== "INSTANCE" || Number.isFinite(spec.width) || Number.isFinite(spec.height))) node.resize(width, height);
+      if (type === "INSTANCE" && spec.instanceProperties) applyInstanceProperties(node, spec.instanceProperties);
       if (type === "VECTOR") {
         if (!Array.isArray(spec.vectorPaths) || spec.vectorPaths.length < 1 || spec.vectorPaths.length > 20) {
           throw new Error("VECTOR elements require 1–20 vectorPaths.");
@@ -1663,6 +1890,44 @@ async function writeCanvasCommand(payload) {
       if (patch.verticalConstraint !== undefined) constraints.vertical = patch.verticalConstraint;
       targetNode.constraints = constraints;
     }
+    function setSupported(property, value, label) {
+      if (value === undefined) return;
+      if (!(property in targetNode)) throw new Error("This node type does not support " + (label || property) + ".");
+      targetNode[property] = value;
+    }
+    setSupported("strokeAlign", patch.strokeAlign);
+    if (patch.dashPattern !== undefined) setSupported("dashPattern", patch.dashPattern.slice(0, 8));
+    ["strokeTopWeight", "strokeRightWeight", "strokeBottomWeight", "strokeLeftWeight"].forEach(function (key) {
+      if (Number.isFinite(patch[key])) setSupported(key, Math.max(0, Math.min(100, patch[key])));
+    });
+    ["topLeftRadius", "topRightRadius", "bottomLeftRadius", "bottomRightRadius"].forEach(function (key) {
+      if (Number.isFinite(patch[key])) setSupported(key, Math.max(0, Math.min(512, patch[key])));
+    });
+    if (Number.isFinite(patch.cornerSmoothing)) setSupported("cornerSmoothing", Math.max(0, Math.min(1, patch.cornerSmoothing)));
+    ["minWidth", "maxWidth", "minHeight", "maxHeight"].forEach(function (key) {
+      if (patch[key] === undefined) return;
+      var parentMode = targetNode.parent && targetNode.parent.layoutMode;
+      var ownMode = targetNode.layoutMode;
+      if (!["HORIZONTAL", "VERTICAL", "GRID"].includes(String(parentMode)) && !["HORIZONTAL", "VERTICAL", "GRID"].includes(String(ownMode))) {
+        throw new Error(key + " requires an Auto Layout frame or a child of one.");
+      }
+      setSupported(key, patch[key] === null ? null : Math.max(0, Math.min(4096, patch[key])));
+    });
+    if (patch.counterAxisSpacing !== undefined || patch.counterAxisAlignContent !== undefined) {
+      if (targetNode.layoutWrap !== "WRAP") throw new Error("counterAxisSpacing/counterAxisAlignContent require a wrapping Auto Layout frame (layoutWrap=WRAP).");
+      setSupported("counterAxisSpacing", patch.counterAxisSpacing);
+      setSupported("counterAxisAlignContent", patch.counterAxisAlignContent);
+    }
+    setSupported("strokesIncludedInLayout", patch.strokesIncludedInLayout);
+    setSupported("itemReverseZIndex", patch.itemReverseZIndex);
+    setSupported("isMask", patch.isMask);
+    setSupported("locked", patch.locked);
+    setSupported("blendMode", patch.blendMode);
+    if (patch.paragraphSpacing !== undefined) {
+      if (targetNode.type !== "TEXT") throw new Error("paragraphSpacing can only be used on TEXT nodes.");
+      if (!textPatch) await loadAndSetTextFont(targetNode, {});
+      targetNode.paragraphSpacing = Math.max(0, Math.min(1000, patch.paragraphSpacing));
+    }
     return { ok: true, operation: "update-node", fileKey: figma.fileKey,
       pageName: figma.currentPage.name, node: nodeSummary(targetNode) };
   }
@@ -1796,20 +2061,41 @@ async function writeCanvasCommand(payload) {
   }
 
   if (payload.operation === "create-instance") {
-    var componentSourceNode = requireCanvasNode(payload.nodeId, "create-instance");
-    if (componentSourceNode.type !== "COMPONENT") throw new Error("create-instance requires a COMPONENT node ID.");
+    var componentSourceNode = await resolveComponentForInstance(payload.nodeId, "create-instance");
     var instance = componentSourceNode.createInstance();
-    figma.currentPage.appendChild(instance);
-    instance.x = (componentSourceNode.x || 0) + (componentSourceNode.width || 0) + 24;
-    instance.y = componentSourceNode.y || 0;
-    return { ok: true, operation: "create-instance", fileKey: figma.fileKey, pageName: figma.currentPage.name, node: nodeSummary(instance) };
+    if (payload.parentNodeId) {
+      var instanceParent = findPageNode(payload.parentNodeId);
+      if (!instanceParent || typeof instanceParent.insertChild !== "function" || !Array.isArray(instanceParent.children)) {
+        instance.remove();
+        throw new Error("create-instance parentNodeId must identify a container on the current page.");
+      }
+      var instanceIndex = Number.isInteger(payload.index) ? Math.max(0, Math.min(instanceParent.children.length, payload.index)) : instanceParent.children.length;
+      instanceParent.insertChild(instanceIndex, instance);
+      var instanceParentMode = typeof instanceParent.layoutMode === "string" ? instanceParent.layoutMode : "NONE";
+      if (instanceParentMode !== "NONE") {
+        if (payload.layoutSizingHorizontal) instance.layoutSizingHorizontal = payload.layoutSizingHorizontal;
+        if (payload.layoutSizingVertical) instance.layoutSizingVertical = payload.layoutSizingVertical;
+      } else {
+        instance.x = Number.isFinite(payload.x) ? payload.x : 0;
+        instance.y = Number.isFinite(payload.y) ? payload.y : 0;
+      }
+    } else {
+      figma.currentPage.appendChild(instance);
+      var onPage = componentSourceNode.parent && componentSourceNode.parent.type === "PAGE" && componentSourceNode.parent.id === figma.currentPage.id;
+      instance.x = Number.isFinite(payload.x) ? payload.x : (onPage ? (componentSourceNode.x || 0) + (componentSourceNode.width || 0) + 24 : figma.viewport.center.x);
+      instance.y = Number.isFinite(payload.y) ? payload.y : (onPage ? componentSourceNode.y || 0 : figma.viewport.center.y);
+    }
+    if (typeof payload.name === "string" && payload.name.trim()) instance.name = payload.name.trim().slice(0, 100);
+    var appliedInstanceProperties = payload.instanceProperties ? applyInstanceProperties(instance, payload.instanceProperties) : [];
+    return { ok: true, operation: "create-instance", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(instance), componentId: componentSourceNode.id, componentName: componentSourceNode.name,
+      parentId: instance.parent ? instance.parent.id : null, appliedProperties: appliedInstanceProperties };
   }
 
   if (payload.operation === "swap-component") {
     var swapTarget = requireCanvasNode(payload.nodeId, "swap-component");
     if (swapTarget.type !== "INSTANCE") throw new Error("swap-component requires an INSTANCE node.");
-    var componentNode = requireCanvasNode(payload.componentId, "swap-component");
-    if (componentNode.type !== "COMPONENT") throw new Error("componentId must point to a COMPONENT node on the current page.");
+    var componentNode = await resolveComponentForInstance(payload.componentId, "swap-component");
     swapTarget.swapComponent(componentNode);
     return { ok: true, operation: "swap-component", fileKey: figma.fileKey, pageName: figma.currentPage.name,
       node: nodeSummary(swapTarget), componentId: componentNode.id, componentName: componentNode.name };
@@ -1871,6 +2157,9 @@ async function writeCanvasCommand(payload) {
         range.start < 0 || range.end <= range.start || range.end > rangeTarget.characters.length) {
       throw new Error("Text range must satisfy 0 <= start < end <= text length.");
     }
+    if (typeof rangeTarget.getRangeAllFontNames === "function") {
+      await Promise.all(rangeTarget.getRangeAllFontNames(range.start, range.end).map(function (font) { return figma.loadFontAsync(font); }));
+    }
     if (Number.isFinite(range.fontSize)) rangeTarget.setRangeFontSize(range.start, range.end, Math.max(8, Math.min(144, range.fontSize)));
     if (range.lineHeight) rangeTarget.setRangeLineHeight(range.start, range.end, {
       unit: range.lineHeight.unit, value: Math.max(1, Math.min(500, range.lineHeight.value))
@@ -1881,6 +2170,21 @@ async function writeCanvasCommand(payload) {
     if (typeof range.fillColor === "string") rangeTarget.setRangeFills(range.start, range.end, [{
       type: "SOLID", color: colorValue(range.fillColor)
     }]);
+    if (typeof range.fontFamily === "string" || typeof range.fontStyle === "string") {
+      var currentRangeFont = rangeTarget.getRangeFontName(range.start, range.start + 1);
+      var rangeFont = {
+        family: typeof range.fontFamily === "string" ? range.fontFamily : currentRangeFont.family,
+        style: typeof range.fontStyle === "string" ? range.fontStyle : currentRangeFont.style
+      };
+      await figma.loadFontAsync(rangeFont);
+      rangeTarget.setRangeFontName(range.start, range.end, rangeFont);
+    }
+    if (typeof range.textDecoration === "string") rangeTarget.setRangeTextDecoration(range.start, range.end, range.textDecoration);
+    if (typeof range.textCase === "string") rangeTarget.setRangeTextCase(range.start, range.end, range.textCase);
+    if (range.hyperlink !== undefined) {
+      if (range.hyperlink !== null && !/^https?:\/\//i.test(String(range.hyperlink))) throw new Error("hyperlink must be an http(s) URL or null.");
+      rangeTarget.setRangeHyperlink(range.start, range.end, range.hyperlink === null ? null : { type: "URL", value: String(range.hyperlink).slice(0, 500) });
+    }
     return { ok: true, operation: "set-text-range", fileKey: figma.fileKey, pageName: figma.currentPage.name,
       node: nodeSummary(rangeTarget), range: { start: range.start, end: range.end },
       applied: Object.keys(range).filter(function (key) { return !["start", "end"].includes(key); }) };
@@ -2016,10 +2320,21 @@ async function writeCanvasCommand(payload) {
       var boundPaint = figma.variables.setBoundVariableForPaint(solidPaint, "color", boundVariable);
       var otherPaints = existingPaints.filter(function (paint) { return paint !== solidPaint; });
       bindingTarget[paintProperty] = [boundPaint].concat(otherPaints);
+    } else if (payload.property === "characters") {
+      if (boundVariable.resolvedType !== "STRING") throw new Error("characters bindings require a STRING variable.");
+      if (bindingTarget.type !== "TEXT") throw new Error("characters bindings require a TEXT node.");
+      await Promise.all(bindingTarget.getRangeAllFontNames(0, Math.max(1, bindingTarget.characters.length)).map(function (font) { return figma.loadFontAsync(font); }));
+      bindingTarget.setBoundVariable("characters", boundVariable);
+    } else if (payload.property === "visible") {
+      if (boundVariable.resolvedType !== "BOOLEAN") throw new Error("visible bindings require a BOOLEAN variable.");
+      bindingTarget.setBoundVariable("visible", boundVariable);
     } else {
       if (boundVariable.resolvedType !== "FLOAT") throw new Error("Numeric layout/opacity bindings require a FLOAT variable.");
       var bindableProperties = { opacity: "opacity", cornerRadius: "cornerRadius", width: "width", height: "height",
-        itemSpacing: "itemSpacing", paddingLeft: "paddingLeft", paddingRight: "paddingRight", paddingTop: "paddingTop", paddingBottom: "paddingBottom" };
+        itemSpacing: "itemSpacing", paddingLeft: "paddingLeft", paddingRight: "paddingRight", paddingTop: "paddingTop", paddingBottom: "paddingBottom",
+        strokeWeight: "strokeWeight", topLeftRadius: "topLeftRadius", topRightRadius: "topRightRadius",
+        bottomLeftRadius: "bottomLeftRadius", bottomRightRadius: "bottomRightRadius", minWidth: "minWidth", maxWidth: "maxWidth",
+        minHeight: "minHeight", maxHeight: "maxHeight", counterAxisSpacing: "counterAxisSpacing" };
       var bindProperty = bindableProperties[payload.property];
       if (!bindProperty || typeof bindingTarget.setBoundVariable !== "function") throw new Error("This node does not support binding " + payload.property + ".");
       if (!(bindProperty in bindingTarget)) throw new Error("This node does not expose property " + bindProperty + ".");
@@ -2075,6 +2390,223 @@ async function writeCanvasCommand(payload) {
     styleTarget[styleProperty] = chosenStyle.id;
     return { ok: true, operation: "apply-style", fileKey: figma.fileKey, pageName: figma.currentPage.name,
       style: { id: chosenStyle.id, name: chosenStyle.name, type: styleKind }, node: nodeSummary(styleTarget) };
+  }
+
+  if (payload.operation === "wrap-in-auto-layout") {
+    var wrapSpec = payload.autoLayout;
+    if (!wrapSpec || !["HORIZONTAL", "VERTICAL"].includes(wrapSpec.layoutMode)) throw new Error("wrap-in-auto-layout requires autoLayout.layoutMode HORIZONTAL or VERTICAL.");
+    var wrapNodes = findPageNodes(payload.nodeIds || []);
+    if (!wrapNodes.length) throw new Error("wrap-in-auto-layout requires at least one node.");
+    var wrapParent = wrapNodes[0].parent;
+    if (!wrapParent || typeof wrapParent.insertChild !== "function" || !Array.isArray(wrapParent.children) ||
+        wrapNodes.some(function (node) { return node.parent !== wrapParent; })) {
+      throw new Error("wrap-in-auto-layout requires sibling nodes with the same parent.");
+    }
+    for (var wrapAncestor = wrapParent; wrapAncestor; wrapAncestor = wrapAncestor.parent) {
+      if (wrapAncestor.type === "INSTANCE") throw new Error("Cannot restructure layers inside an instance; edit its main component instead.");
+    }
+    var parentIsAutoLayout = ["HORIZONTAL", "VERTICAL", "GRID"].includes(String(wrapParent.layoutMode));
+    var horizontal = wrapSpec.layoutMode === "HORIZONTAL";
+    // Keep the visual reading order: Auto Layout parents keep layer order, free layouts sort by position.
+    var ordered = wrapNodes.slice().sort(function (a, b) {
+      if (parentIsAutoLayout) return wrapParent.children.indexOf(a) - wrapParent.children.indexOf(b);
+      return horizontal ? (a.x - b.x) || (a.y - b.y) : (a.y - b.y) || (a.x - b.x);
+    });
+    var minX = Math.min.apply(null, ordered.map(function (n) { return n.x; }));
+    var minY = Math.min.apply(null, ordered.map(function (n) { return n.y; }));
+    var maxX = Math.max.apply(null, ordered.map(function (n) { return n.x + n.width; }));
+    var maxY = Math.max.apply(null, ordered.map(function (n) { return n.y + n.height; }));
+    var inferredSpacing = null;
+    if (ordered.length > 1 && !parentIsAutoLayout) {
+      var gaps = [];
+      for (var gapIndex = 1; gapIndex < ordered.length; gapIndex++) {
+        var previous = ordered[gapIndex - 1], current = ordered[gapIndex];
+        gaps.push(horizontal ? current.x - (previous.x + previous.width) : current.y - (previous.y + previous.height));
+      }
+      gaps.sort(function (a, b) { return a - b; });
+      inferredSpacing = Math.max(0, Math.round(gaps[Math.floor((gaps.length - 1) / 2)]));
+    } else if (parentIsAutoLayout && typeof wrapParent.itemSpacing === "number") {
+      inferredSpacing = wrapParent.itemSpacing;
+    }
+    var insertIndex = Math.min.apply(null, ordered.map(function (n) { return wrapParent.children.indexOf(n); }));
+    var wrapper = figma.createFrame();
+    wrapper.name = (typeof payload.name === "string" && payload.name.trim() ? payload.name.trim() : (horizontal ? "Row" : "Stack")).slice(0, 100);
+    wrapper.clipsContent = false;
+    wrapper.fills = typeof wrapSpec.fillColor === "string" ? [{ type: "SOLID", color: colorValue(wrapSpec.fillColor) }] : [];
+    if (Number.isFinite(wrapSpec.cornerRadius)) wrapper.cornerRadius = wrapSpec.cornerRadius;
+    wrapParent.insertChild(insertIndex, wrapper);
+    if (!parentIsAutoLayout) {
+      wrapper.x = minX; wrapper.y = minY;
+      wrapper.resize(Math.max(1, maxX - minX), Math.max(1, maxY - minY));
+    }
+    wrapper.layoutMode = wrapSpec.layoutMode;
+    var basePadding = Number.isFinite(wrapSpec.padding) ? wrapSpec.padding : 0;
+    ["paddingLeft", "paddingRight", "paddingTop", "paddingBottom"].forEach(function (key) {
+      wrapper[key] = Number.isFinite(wrapSpec[key]) ? wrapSpec[key] : basePadding;
+    });
+    wrapper.itemSpacing = Number.isFinite(wrapSpec.itemSpacing) ? wrapSpec.itemSpacing : (inferredSpacing === null ? 0 : inferredSpacing);
+    if (wrapSpec.primaryAxisAlignItems) wrapper.primaryAxisAlignItems = wrapSpec.primaryAxisAlignItems;
+    if (wrapSpec.counterAxisAlignItems) wrapper.counterAxisAlignItems = wrapSpec.counterAxisAlignItems;
+    wrapper.primaryAxisSizingMode = "AUTO";
+    wrapper.counterAxisSizingMode = "AUTO";
+    ordered.forEach(function (node) { wrapper.appendChild(node); });
+    if (parentIsAutoLayout) {
+      try { wrapper.layoutSizingHorizontal = wrapParent.layoutMode === "VERTICAL" ? "FILL" : "HUG"; } catch (_) {}
+    }
+    return { ok: true, operation: "wrap-in-auto-layout", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(wrapper), childIds: wrapper.children.map(function (node) { return node.id; }),
+      childCount: wrapper.children.length, inferredItemSpacing: inferredSpacing };
+  }
+
+  if (payload.operation === "set-fills") {
+    var paintTarget = requireCanvasNode(payload.nodeId, "set-fills");
+    var paintKey = payload.paintProperty === "strokes" ? "strokes" : "fills";
+    if (!(paintKey in paintTarget)) throw new Error("This node type does not support " + paintKey + ".");
+    if (paintTarget.type === "TEXT" && paintKey === "fills" && Array.isArray(payload.paints) && payload.paints.length) {
+      await Promise.all(paintTarget.getRangeAllFontNames(0, Math.max(1, paintTarget.characters.length)).map(function (font) { return figma.loadFontAsync(font); }));
+    }
+    paintTarget[paintKey] = buildNativePaints(payload.paints || []);
+    return { ok: true, operation: "set-fills", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(paintTarget), paintProperty: paintKey,
+      paintTypes: paintTarget[paintKey].map(function (paint) { return paint.type; }) };
+  }
+
+  if (payload.operation === "set-effects") {
+    var effectTarget = requireCanvasNode(payload.nodeId, "set-effects");
+    if (!("effects" in effectTarget)) throw new Error("This node type does not support effects.");
+    assignNativeEffects(effectTarget, buildNativeEffects(payload.effects || []));
+    return { ok: true, operation: "set-effects", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(effectTarget), effectTypes: effectTarget.effects.map(function (effect) { return effect.type; }) };
+  }
+
+  if (payload.operation === "set-layout-grids") {
+    var gridTarget = requireCanvasNode(payload.nodeId, "set-layout-grids");
+    if (!("layoutGrids" in gridTarget)) throw new Error("Layout grids require a FRAME, COMPONENT or INSTANCE.");
+    gridTarget.layoutGrids = buildNativeLayoutGrids(payload.layoutGrids || []);
+    return { ok: true, operation: "set-layout-grids", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(gridTarget), gridCount: gridTarget.layoutGrids.length };
+  }
+
+  if (payload.operation === "add-component-property") {
+    var propertyOwner = requireCanvasNode(payload.nodeId, "add-component-property");
+    var propertySpec = payload.componentProperty;
+    if (!propertySpec || typeof propertySpec.name !== "string" || !propertySpec.name.trim()) throw new Error("componentProperty.name is required.");
+    if (!["COMPONENT", "COMPONENT_SET"].includes(propertyOwner.type)) throw new Error("add-component-property requires a COMPONENT or COMPONENT_SET.");
+    if (propertyOwner.type === "COMPONENT" && propertyOwner.parent && propertyOwner.parent.type === "COMPONENT_SET") {
+      throw new Error("This component is a variant; add the property to its parent COMPONENT_SET (" + propertyOwner.parent.id + ").");
+    }
+    if (propertySpec.type === "VARIANT" && propertyOwner.type !== "COMPONENT_SET") throw new Error("VARIANT properties can only be added to a COMPONENT_SET.");
+    var linkedNode = null;
+    if (propertySpec.linkedNodeId) {
+      linkedNode = findPageNode(propertySpec.linkedNodeId);
+      if (!linkedNode || !isDescendantOf(linkedNode, propertyOwner)) throw new Error("linkedNodeId must be a layer inside the component.");
+      if (propertySpec.type === "TEXT" && linkedNode.type !== "TEXT") throw new Error("TEXT properties link only to TEXT layers.");
+      if (propertySpec.type === "INSTANCE_SWAP" && linkedNode.type !== "INSTANCE") throw new Error("INSTANCE_SWAP properties link only to nested instances.");
+    }
+    var defaultValue = propertySpec.defaultValue;
+    // Preserve source content: a linked text property defaults to the layer's current text.
+    if (defaultValue === undefined && propertySpec.type === "TEXT") defaultValue = linkedNode ? linkedNode.characters : propertySpec.name;
+    if (defaultValue === undefined && propertySpec.type === "BOOLEAN") defaultValue = linkedNode ? linkedNode.visible !== false : true;
+    if (propertySpec.type === "INSTANCE_SWAP") defaultValue = (await resolveComponentForInstance(String(defaultValue), "add-component-property")).id;
+    var propertyKey = propertyOwner.addComponentProperty(propertySpec.name.trim().slice(0, 80), propertySpec.type, defaultValue);
+    if (linkedNode) {
+      var referenceField = propertySpec.type === "TEXT" ? "characters" : propertySpec.type === "BOOLEAN" ? "visible" : "mainComponent";
+      var references = Object.assign({}, linkedNode.componentPropertyReferences || {});
+      references[referenceField] = propertyKey;
+      linkedNode.componentPropertyReferences = references;
+    }
+    return { ok: true, operation: "add-component-property", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(propertyOwner), propertyKey: propertyKey, propertyType: propertySpec.type,
+      linkedNodeId: linkedNode ? linkedNode.id : null };
+  }
+
+  if (payload.operation === "set-instance-properties") {
+    var propertyInstance = requireCanvasNode(payload.nodeId, "set-instance-properties");
+    if (propertyInstance.type !== "INSTANCE") throw new Error("set-instance-properties requires an INSTANCE node.");
+    var appliedKeys = applyInstanceProperties(propertyInstance, payload.instanceProperties);
+    var currentProps = {};
+    appliedKeys.forEach(function (key) {
+      var entry = propertyInstance.componentProperties[key];
+      if (entry) currentProps[key] = entry.value;
+    });
+    return { ok: true, operation: "set-instance-properties", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(propertyInstance), properties: currentProps };
+  }
+
+  if (payload.operation === "set-reactions") {
+    var reactionTarget = requireCanvasNode(payload.nodeId, "set-reactions");
+    if (!("reactions" in reactionTarget) || typeof reactionTarget.setReactionsAsync !== "function") {
+      throw new Error("This node or runtime does not support prototype reactions.");
+    }
+    if (!Array.isArray(payload.reactions) || payload.reactions.length < 1 || payload.reactions.length > 10) throw new Error("set-reactions requires 1–10 reactions.");
+    var newReactions = payload.reactions.map(buildNativeReaction);
+    var existingReactions = payload.reactionMode === "replace" ? [] : (reactionTarget.reactions || []);
+    await reactionTarget.setReactionsAsync(existingReactions.concat(newReactions));
+    return { ok: true, operation: "set-reactions", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(reactionTarget), reactionCount: reactionTarget.reactions.length,
+      mode: payload.reactionMode === "replace" ? "replace" : "append" };
+  }
+
+  if (payload.operation === "set-flow-start") {
+    var flowNode = requireCanvasNode(payload.nodeId, "set-flow-start");
+    if (!flowNode.parent || flowNode.parent.type !== "PAGE") throw new Error("Flow starting points must be top-level frames on the page.");
+    var flowName = String(payload.flowName || flowNode.name).trim().slice(0, 120);
+    var flows = (figma.currentPage.flowStartingPoints || []).filter(function (flow) { return flow.nodeId !== flowNode.id; });
+    figma.currentPage.flowStartingPoints = flows.concat([{ nodeId: flowNode.id, name: flowName }]);
+    return { ok: true, operation: "set-flow-start", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(flowNode), flowName: flowName, flowCount: figma.currentPage.flowStartingPoints.length };
+  }
+
+  if (payload.operation === "create-styles") {
+    if (!Array.isArray(payload.styles) || payload.styles.length < 1 || payload.styles.length > 30) throw new Error("create-styles requires 1–30 style specs.");
+    var localStyleLists = await Promise.all([figma.getLocalPaintStylesAsync(), figma.getLocalTextStylesAsync(), figma.getLocalEffectStylesAsync()]);
+    var styleResults = [];
+    for (var styleIndex = 0; styleIndex < payload.styles.length; styleIndex++) {
+      var styleSpec = payload.styles[styleIndex];
+      var styleName = String(styleSpec && styleSpec.name || "").trim().slice(0, 120);
+      if (!styleName) throw new Error("Style " + (styleIndex + 1) + " needs a name.");
+      var listIndex = styleSpec.kind === "paint" ? 0 : styleSpec.kind === "text" ? 1 : styleSpec.kind === "effect" ? 2 : -1;
+      if (listIndex < 0) throw new Error("Style kind must be paint, text or effect.");
+      var styleRecord = localStyleLists[listIndex].find(function (item) { return item.name === styleName; }) || null;
+      var createdStyle = !styleRecord;
+      if (styleSpec.kind === "paint") {
+        var stylePaints = buildNativePaints(styleSpec.paints || []);
+        if (!styleRecord) { styleRecord = figma.createPaintStyle(); styleRecord.name = styleName; localStyleLists[0].push(styleRecord); }
+        styleRecord.paints = stylePaints;
+      } else if (styleSpec.kind === "effect") {
+        var styleEffects = buildNativeEffects(styleSpec.effects || []);
+        if (!styleRecord) { styleRecord = figma.createEffectStyle(); styleRecord.name = styleName; localStyleLists[2].push(styleRecord); }
+        assignNativeEffects(styleRecord, styleEffects);
+      } else {
+        var styleFont = { family: String(styleSpec.fontFamily || "Inter"), style: String(styleSpec.fontStyle || "Regular") };
+        await figma.loadFontAsync(styleFont);
+        if (!styleRecord) { styleRecord = figma.createTextStyle(); styleRecord.name = styleName; localStyleLists[1].push(styleRecord); }
+        styleRecord.fontName = styleFont;
+        styleRecord.fontSize = Math.max(1, Math.min(400, Number(styleSpec.fontSize) || 14));
+        if (styleSpec.lineHeight) styleRecord.lineHeight = { unit: styleSpec.lineHeight.unit, value: styleSpec.lineHeight.value };
+        if (styleSpec.letterSpacing) styleRecord.letterSpacing = { unit: styleSpec.letterSpacing.unit, value: styleSpec.letterSpacing.value };
+        if (styleSpec.textCase) styleRecord.textCase = styleSpec.textCase;
+        if (styleSpec.textDecoration) styleRecord.textDecoration = styleSpec.textDecoration;
+      }
+      styleResults.push({ id: styleRecord.id, name: styleRecord.name, kind: styleSpec.kind, created: createdStyle });
+    }
+    return { ok: true, operation: "create-styles", fileKey: figma.fileKey, styles: styleResults,
+      createdCount: styleResults.filter(function (item) { return item.created; }).length,
+      updatedCount: styleResults.filter(function (item) { return !item.created; }).length };
+  }
+
+  if (payload.operation === "set-variable-mode") {
+    var modeTarget = requireCanvasNode(payload.nodeId, "set-variable-mode");
+    if (typeof modeTarget.setExplicitVariableModeForCollection !== "function") throw new Error("This node does not support explicit variable modes.");
+    var modeCollections = await figma.variables.getLocalVariableCollectionsAsync();
+    var modeCollection = modeCollections.find(function (item) { return item.name === payload.collectionName; }) || null;
+    if (!modeCollection) throw new Error("Local variable collection not found: " + String(payload.collectionName));
+    var chosenMode = modeCollection.modes.find(function (mode) { return mode.name === payload.modeName; }) || null;
+    if (!chosenMode) throw new Error("Mode " + String(payload.modeName) + " not found. Available: " + modeCollection.modes.map(function (mode) { return mode.name; }).join(", "));
+    try { modeTarget.setExplicitVariableModeForCollection(modeCollection, chosenMode.modeId); }
+    catch (_) { modeTarget.setExplicitVariableModeForCollection(modeCollection.id, chosenMode.modeId); }
+    return { ok: true, operation: "set-variable-mode", fileKey: figma.fileKey, pageName: figma.currentPage.name,
+      node: nodeSummary(modeTarget), collection: modeCollection.name, mode: chosenMode.name };
   }
 
   if (payload.operation === "export-node") {

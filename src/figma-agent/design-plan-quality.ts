@@ -36,6 +36,12 @@ function collectText(nodes: RecordLike[], output: string[] = [], depth = 0): str
     if (node.type === "TEXT" && typeof node.text === "string" && node.text.trim()) {
       output.push(node.text.trim().slice(0, 240));
     }
+    // Instance text overrides carry real content (e.g. a button label) and count toward preservation.
+    if (node.type === "INSTANCE" && node.instanceProperties && typeof node.instanceProperties === "object" && !Array.isArray(node.instanceProperties)) {
+      for (const value of Object.values(node.instanceProperties as Record<string, unknown>)) {
+        if (typeof value === "string" && value.trim()) output.push(value.trim().slice(0, 240));
+      }
+    }
     collectText(childrenOf(node), output, depth + 1);
   }
   return output;

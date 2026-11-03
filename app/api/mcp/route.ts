@@ -4,6 +4,12 @@ import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatG
 import { NextResponse } from "next/server";
 import { addBrainKnowledgeDocument, listBrainFeedback, listBrainKnowledgeDocuments, reviewBrainEvalCase, reviewBrainFeedback, reviewBrainKnowledgeDocument, retrieveBrainContext, runBrainRetrievalEvals, saveBrainEvalCase, saveBrainFeedback } from "@/src/memory/shared-brain";
 import { FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS, FIGMA_CANVAS_COMMANDS, FIGMA_CANVAS_OPERATION_IDS, isFigmaCanvasNonBatchableStepOperation } from "@/src/figma-agent/command-registry";
+import { BIND_VARIABLE_PROPERTIES, NATIVE_ACTION_EXTENDED_FIELDS, NATIVE_ACTION_EXTENDED_FIELD_KEYS, NATIVE_INSTANCE_ELEMENT_FIELDS, NATIVE_PATCH_EXTENDED_FIELDS, NATIVE_TEXT_RANGE_EXTENDED_FIELDS, extendedActionIssues, nativeJsonSchemaProperties } from "@/src/figma-agent/native-action-schema";
+
+const EXTENDED_ACTION_JSON_PROPERTIES = nativeJsonSchemaProperties(NATIVE_ACTION_EXTENDED_FIELDS);
+const EXTENDED_PATCH_JSON_PROPERTIES = nativeJsonSchemaProperties(NATIVE_PATCH_EXTENDED_FIELDS);
+const EXTENDED_TEXT_RANGE_JSON_PROPERTIES = nativeJsonSchemaProperties(NATIVE_TEXT_RANGE_EXTENDED_FIELDS);
+const INSTANCE_ELEMENT_JSON_PROPERTIES = nativeJsonSchemaProperties(NATIVE_INSTANCE_ELEMENT_FIELDS);
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -473,7 +479,8 @@ const TOOLS = [
         queryType: { type: "string", minLength: 1, maxLength: 80, description: "Optional Figma node type filter, for example COMPONENT, INSTANCE, TEXT, or FRAME." },
         includePages: { type: "boolean", description: "Include page IDs and names." },
         includeStyles: { type: "boolean", description: "Include compact IDs/names for local paint, text, effect, and grid styles." },
-        includeVariables: { type: "boolean", description: "Include bounded local variable names, types, collection names and mode names." }
+        includeVariables: { type: "boolean", description: "Include bounded local variable names, types, collection names and mode names." },
+        includeComponents: { type: "boolean", description: "Include a bounded catalogue of local and in-use components/component sets (IDs, variant and property definitions, use counts) for instance-based edits." }
       },
       additionalProperties: false
     },
@@ -481,7 +488,7 @@ const TOOLS = [
   },
   {
     name: "ux_direct_figma_canvas_write",
-    description: "Run explicit, validated native Figma canvas actions through the allowlisted UX Direct plugin. Supports ordered batches of up to 40 actions, frames/shapes/text/vectors, geometry/typography/fills/strokes/auto-layout/effects/image fills, grouping/flattening/boolean operations, component variants and swapping, local styles, selection/viewport control, cycle-safe reparenting within the active page, page creation/rename/switching, SVG/PNG/PDF export. Every write requires confirm=true and is audited; deletion is limited to a node on the current page. No arbitrary code execution, unrestricted document traversal, library publishing, or bulk replacement. Retrieve verified results with ux_direct_figma_canvas_command_status.",
+    description: "Run explicit, validated native Figma canvas actions through the allowlisted UX Direct plugin. Supports ordered batches of up to 40 actions, frames/shapes/text/vectors/component instances, geometry/typography/solid and gradient fills/strokes/auto-layout (including wrapping existing siblings in Auto Layout)/effects/layout grids/image fills, grouping/flattening/boolean operations, component variants, component properties, instance property overrides and swapping, local style creation and application, variable binding and modes, prototype reactions and flow starts, selection/viewport control, cycle-safe reparenting within the active page, page creation/rename/switching, SVG/PNG/PDF export. Every write requires confirm=true and is audited; deletion is limited to a node on the current page. No arbitrary code execution, unrestricted document traversal, library publishing, or bulk replacement. Retrieve verified results with ux_direct_figma_canvas_command_status.",
     inputSchema: {
       type: "object",
       properties: {
@@ -493,7 +500,8 @@ const TOOLS = [
           items: {
             type: "object",
             properties: {
-              type: { type: "string", enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR"] },
+              type: { type: "string", enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR", "INSTANCE"] },
+              ...INSTANCE_ELEMENT_JSON_PROPERTIES,
               name: { type: "string", minLength: 1, maxLength: 80 },
               x: { type: "number", minimum: -10000, maximum: 10000 },
               y: { type: "number", minimum: -10000, maximum: 10000 },
@@ -598,7 +606,8 @@ const TOOLS = [
                   fontSize: { type: "number", minimum: 8, maximum: 144 },
                   lineHeight: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: 1, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
                   letterSpacing: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: -100, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
-                  fillColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }
+                  fillColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+                  ...EXTENDED_TEXT_RANGE_JSON_PROPERTIES
                 },
                 required: ["start", "end"],
                 additionalProperties: false
@@ -606,7 +615,12 @@ const TOOLS = [
               imageBase64: { type: "string", maxLength: 250000 },
               scaleMode: { type: "string", enum: ["FILL", "FIT", "CROP", "TILE"] },
               elements: { type: "array", minItems: 1, maxItems: 20, items: { type: "object", additionalProperties: true } },
-              patch: { type: "object", additionalProperties: true }
+              patch: { type: "object", additionalProperties: true },
+              collectionName: { type: "string", minLength: 1, maxLength: 100 },
+              modeName: { type: "string", minLength: 1, maxLength: 100 },
+              variableName: { type: "string", minLength: 1, maxLength: 100 },
+              property: { type: "string", enum: BIND_VARIABLE_PROPERTIES },
+              ...EXTENDED_ACTION_JSON_PROPERTIES
             },
             required: ["operation"],
             additionalProperties: false
@@ -653,7 +667,8 @@ const TOOLS = [
             shadowBlur: { type: "number", minimum: 0, maximum: 200 },
             shadowX: { type: "number", minimum: -200, maximum: 200 },
             shadowY: { type: "number", minimum: -200, maximum: 200 },
-            shadowSpread: { type: "number", minimum: -200, maximum: 200 }
+            shadowSpread: { type: "number", minimum: -200, maximum: 200 },
+            ...EXTENDED_PATCH_JSON_PROPERTIES
           },
           additionalProperties: false
         },
@@ -674,7 +689,8 @@ const TOOLS = [
             fontSize: { type: "number", minimum: 8, maximum: 144 },
             lineHeight: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: 1, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
             letterSpacing: { type: "object", properties: { unit: { type: "string", enum: ["PIXELS", "PERCENT"] }, value: { type: "number", minimum: -100, maximum: 500 } }, required: ["unit", "value"], additionalProperties: false },
-            fillColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }
+            fillColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+            ...EXTENDED_TEXT_RANGE_JSON_PROPERTIES
           },
           required: ["start", "end"],
           additionalProperties: false
@@ -698,7 +714,8 @@ const TOOLS = [
           value: { oneOf: [{ type: "string", maxLength: 300 }, { type: "number" }, { type: "boolean" }] }
         }, required: ["name", "type", "value"], additionalProperties: false } },
         variableName: { type: "string", minLength: 1, maxLength: 100 },
-        property: { type: "string", enum: ["fill", "stroke", "opacity", "cornerRadius", "width", "height", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom"] }
+        property: { type: "string", enum: BIND_VARIABLE_PROPERTIES },
+        ...EXTENDED_ACTION_JSON_PROPERTIES
       },
       required: ["operation", "confirm"],
       additionalProperties: false
@@ -1029,6 +1046,7 @@ async function callTool(name: string, args: unknown, request: Request) {
     const includePages = input.includePages === true;
     const includeStyles = input.includeStyles === true;
     const includeVariables = input.includeVariables === true;
+    const includeComponents = input.includeComponents === true;
     if (scope !== "selection" && scope !== "current-page") return toolText({ error: "scope must be selection or current-page." }, true);
     if (!Number.isInteger(maxDepth) || (maxDepth as number) < 0 || (maxDepth as number) > 5) return toolText({ error: "maxDepth must be an integer from 0 to 5." }, true);
     if (!Number.isInteger(maxNodes) || (maxNodes as number) < 1 || (maxNodes as number) > 100) return toolText({ error: "maxNodes must be an integer from 1 to 100." }, true);
@@ -1037,12 +1055,13 @@ async function callTool(name: string, args: unknown, request: Request) {
     if (input.includePages !== undefined && typeof input.includePages !== "boolean") return toolText({ error: "includePages must be boolean." }, true);
     if (input.includeStyles !== undefined && typeof input.includeStyles !== "boolean") return toolText({ error: "includeStyles must be boolean." }, true);
     if (input.includeVariables !== undefined && typeof input.includeVariables !== "boolean") return toolText({ error: "includeVariables must be boolean." }, true);
+    if (input.includeComponents !== undefined && typeof input.includeComponents !== "boolean") return toolText({ error: "includeComponents must be boolean." }, true);
     try {
       return toolText(await queueFigmaCanvasCommand(request, "read-canvas", {
         scope, maxDepth, maxNodes,
         ...(queryName === undefined ? {} : { queryName }),
         ...(queryType === undefined ? {} : { queryType }),
-        includePages, includeStyles, includeVariables,
+        includePages, includeStyles, includeVariables, includeComponents,
       }));
     } catch (error) {
       return toolText({ status: "error", error: error instanceof Error ? error.message : "Could not queue Figma canvas read." }, true);
@@ -1093,7 +1112,10 @@ async function callTool(name: string, args: unknown, request: Request) {
       ...(input.property === undefined ? {} : { property: input.property }),
       ...(input.patch === undefined ? {} : { patch: input.patch }),
       ...(input.actions === undefined ? {} : { actions: input.actions }),
+      ...Object.fromEntries(NATIVE_ACTION_EXTENDED_FIELD_KEYS.filter((key) => input[key] !== undefined).map((key) => [key, input[key]])),
     };
+    const extendedIssue = extendedActionIssues(input as Parameters<typeof extendedActionIssues>[0])[0];
+    if (extendedIssue) return toolText({ error: extendedIssue.message }, true);
     if (input.target !== undefined && !["current-page", "selection", "node", "test-lab"].includes(String(input.target))) {
       return toolText({ error: "target must be current-page, selection, node, or test-lab." }, true);
     }
@@ -1112,7 +1134,7 @@ async function callTool(name: string, args: unknown, request: Request) {
       if (!Array.isArray(input.elements) || input.elements.length < 1 || input.elements.length > 20) {
         return toolText({ error: "create-elements requires 1–20 elements." }, true);
       }
-      const allowedTypes = new Set(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR"]);
+      const allowedTypes = new Set(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR", "INSTANCE"]);
       for (const item of input.elements) {
         if (!item || typeof item !== "object" || Array.isArray(item)) return toolText({ error: "Each element must be an object." }, true);
         const element = item as Record<string, unknown>;
@@ -1120,6 +1142,7 @@ async function callTool(name: string, args: unknown, request: Request) {
           return toolText({ error: "Each element requires a supported type and non-empty name." }, true);
         }
         if (element.type === "TEXT" && typeof element.text !== "string") return toolText({ error: "TEXT elements require text content." }, true);
+        if (element.type === "INSTANCE" && typeof element.componentId !== "string") return toolText({ error: "INSTANCE elements require componentId." }, true);
         if (element.type === "VECTOR" && (!Array.isArray(element.vectorPaths) || element.vectorPaths.length < 1)) return toolText({ error: "VECTOR elements require vectorPaths." }, true);
       }
     }
