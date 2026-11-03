@@ -6,6 +6,7 @@ import { saveBrainFeedback } from "@/src/memory/shared-brain";
 import { buildFigmaFailureLesson } from "@/src/memory/task-learning";
 import { ALLOWED_FIGMA_FILE_KEY, isAllowedFigmaFileKey } from "@/src/security/figma-access";
 import { FIGMA_CANVAS_BATCHABLE_STEP_OPERATION_IDS, FIGMA_CANVAS_NON_BATCHABLE_STEP_OPERATIONS, FIGMA_CANVAS_OPERATION_IDS } from "@/src/figma-agent/command-registry";
+import { BIND_VARIABLE_PROPERTIES, NATIVE_ACTION_EXTENDED_FIELDS, NATIVE_INSTANCE_ELEMENT_FIELDS, NATIVE_PATCH_EXTENDED_FIELDS, NATIVE_TEXT_RANGE_EXTENDED_FIELDS, NATIVE_TEXT_RANGE_EXTENDED_KEYS, extendedActionIssues } from "@/src/figma-agent/native-action-schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,8 +31,9 @@ const REPORT = z.object({
 });
 
 const CANVAS_ELEMENT = z.object({
-  type: z.enum(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR"]),
+  type: z.enum(["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR", "INSTANCE"]),
   name: z.string().trim().min(1).max(80),
+  ...NATIVE_INSTANCE_ELEMENT_FIELDS,
   x: z.number().finite().min(-10000).max(10000).optional(),
   y: z.number().finite().min(-10000).max(10000).optional(),
   width: z.number().finite().min(1).max(4096).optional(),
@@ -87,6 +89,12 @@ const CANVAS_ELEMENT = z.object({
   if (value.type === "TEXT" && typeof value.text !== "string") {
     ctx.addIssue({ code: "custom", path: ["text"], message: "TEXT elements require text content." });
   }
+  if (value.type === "INSTANCE" && !value.componentId) {
+    ctx.addIssue({ code: "custom", path: ["componentId"], message: "INSTANCE elements require componentId of a local or in-use component." });
+  }
+  if (value.type !== "INSTANCE" && (value.componentId !== undefined || value.instanceProperties !== undefined)) {
+    ctx.addIssue({ code: "custom", path: ["componentId"], message: "componentId/instanceProperties are supported only on INSTANCE elements." });
+  }
   if (value.type === "VECTOR" && (!value.vectorPaths || value.vectorPaths.length < 1)) {
     ctx.addIssue({ code: "custom", path: ["vectorPaths"], message: "VECTOR elements require vectorPaths." });
   }
@@ -109,6 +117,8 @@ const CANVAS_READ_PAYLOAD = z.object({
   includePages: z.boolean().optional(),
   includeStyles: z.boolean().optional(),
   includeVariables: z.boolean().optional(),
+  includeComponents: z.boolean().optional(),
+  collapseInstances: z.boolean().optional(),
 }).strict();
 const CANVAS_PATCH = z.object({
   name: z.string().trim().min(1).max(120).optional(),
@@ -162,6 +172,7 @@ const CANVAS_PATCH = z.object({
   shadowX: z.number().finite().min(-200).max(200).optional(),
   shadowY: z.number().finite().min(-200).max(200).optional(),
   shadowSpread: z.number().finite().min(-200).max(200).optional(),
+  ...NATIVE_PATCH_EXTENDED_FIELDS,
 }).strict().refine((value) => Object.values(value).some((item) => item !== undefined), {
   message: "Provide at least one supported property to update.",
 });
@@ -178,12 +189,14 @@ const CANVAS_TEXT_RANGE = z.object({
     value: z.number().finite().min(-100).max(500),
   }).strict().optional(),
   fillColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  ...NATIVE_TEXT_RANGE_EXTENDED_FIELDS,
 }).strict().superRefine((value, ctx) => {
   if (value.end <= value.start) {
     ctx.addIssue({ code: "custom", path: ["end"], message: "Text range end must be greater than start." });
   }
   if (value.fontSize === undefined && value.lineHeight === undefined &&
-      value.letterSpacing === undefined && value.fillColor === undefined) {
+      value.letterSpacing === undefined && value.fillColor === undefined &&
+      NATIVE_TEXT_RANGE_EXTENDED_KEYS.every((key) => value[key as keyof typeof value] === undefined)) {
     ctx.addIssue({ code: "custom", path: [], message: "Provide at least one text-range property to set." });
   }
 });
@@ -223,9 +236,12 @@ const CANVAS_WRITE_STEP = z.object({
     value: z.union([z.string().max(300), z.number().finite(), z.boolean()]),
   }).strict()).max(80).optional(),
   variableName: z.string().trim().min(1).max(100).optional(),
-  property: z.enum(["fill", "stroke", "opacity", "cornerRadius", "width", "height", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom"]).optional(),
+  property: z.enum(BIND_VARIABLE_PROPERTIES).optional(),
   patch: CANVAS_PATCH.optional(),
-}).strict();
+  ...NATIVE_ACTION_EXTENDED_FIELDS,
+}).strict().superRefine((value, ctx) => {
+  for (const issue of extendedActionIssues(value)) ctx.addIssue({ code: "custom", path: [issue.path], message: issue.message });
+});
 const CANVAS_WRITE_PAYLOAD = z.object({
   operation: z.enum(FIGMA_CANVAS_OPERATION_IDS),
   confirm: z.literal(true),
@@ -263,10 +279,12 @@ const CANVAS_WRITE_PAYLOAD = z.object({
     value: z.union([z.string().max(300), z.number().finite(), z.boolean()]),
   }).strict()).max(80).optional(),
   variableName: z.string().trim().min(1).max(100).optional(),
-  property: z.enum(["fill", "stroke", "opacity", "cornerRadius", "width", "height", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom"]).optional(),
+  property: z.enum(BIND_VARIABLE_PROPERTIES).optional(),
   patch: CANVAS_PATCH.optional(),
+  ...NATIVE_ACTION_EXTENDED_FIELDS,
   actions: z.array(CANVAS_WRITE_STEP).min(1).max(40).optional(),
 }).strict().superRefine((value, ctx) => {
+  for (const issue of extendedActionIssues(value)) ctx.addIssue({ code: "custom", path: [issue.path], message: issue.message });
   const requiresNode = ["update-node", "clone-node", "delete-node", "reorder-node", "ungroup-node",
     "create-component", "create-instance", "swap-component", "detach-instance", "export-svg", "export-node", "apply-style", "set-text-range", "create-image-fill", "bind-variable", "reparent-node"].includes(value.operation);
   if (requiresNode && !value.nodeId) {

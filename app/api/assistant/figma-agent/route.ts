@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/task-learning";
@@ -33,8 +34,9 @@ function cors(request: Request): HeadersInit {
 }
 
 const ElementFieldsSchema = z.object({
-  type: z.enum(["RECTANGLE", "ELLIPSE", "TEXT", "LINE", "FRAME", "POLYGON", "STAR"]),
+  type: z.enum(["RECTANGLE", "ELLIPSE", "TEXT", "LINE", "FRAME", "POLYGON", "STAR", "INSTANCE"]),
   name: z.string().trim().min(1).max(80),
+  ...NATIVE_INSTANCE_ELEMENT_FIELDS,
   x: z.number().finite().min(-1000).max(5000),
   y: z.number().finite().min(-1000).max(5000),
   width: z.number().finite().min(1).max(4096),
@@ -95,6 +97,12 @@ const ElementSchema: z.ZodTypeAny = z.lazy(() =>
     .superRefine((item, ctx) => {
       if (item.type === "TEXT" && typeof item.text !== "string") {
         ctx.addIssue({ code: "custom", path: ["text"], message: "TEXT elements require text." });
+      }
+      if (item.type === "INSTANCE" && !item.componentId) {
+        ctx.addIssue({ code: "custom", path: ["componentId"], message: "INSTANCE elements require componentId from the component catalogue." });
+      }
+      if (item.type !== "INSTANCE" && (item.componentId !== undefined || item.instanceProperties !== undefined)) {
+        ctx.addIssue({ code: "custom", path: ["componentId"], message: "componentId/instanceProperties are only valid on INSTANCE elements." });
       }
       if (Array.isArray(item.children) && item.children.length && item.type !== "FRAME") {
         ctx.addIssue({ code: "custom", path: ["children"], message: "Only FRAME elements may contain nested children." });
@@ -174,6 +182,12 @@ const PlanSchema = z.object({
         textNodes.push(node);
         if (text) repeatedText.set(text.toLowerCase(), (repeatedText.get(text.toLowerCase()) || 0) + 1);
       }
+      // Text overrides on design-system instances are real content, not decoration.
+      if (node.type === "INSTANCE" && node.instanceProperties && typeof node.instanceProperties === "object") {
+        for (const value of Object.values(node.instanceProperties as Record<string, unknown>)) {
+          if (typeof value === "string" && value.trim() && !/^(true|false)$/i.test(value.trim())) textNodes.push({ type: "TEXT", text: value });
+        }
+      }
       visitQuality(Array.isArray(node.children) ? node.children : []);
     }
   };
@@ -205,6 +219,7 @@ type CanvasNode = {
   paddingLeft?: number; paddingRight?: number; paddingTop?: number; paddingBottom?: number;
   primaryAxisAlignItems?: string; counterAxisAlignItems?: string; textAutoResize?: string;
   horizontalConstraint?: string; verticalConstraint?: string;
+  componentProperties?: Record<string, string | boolean>;
   childCount?: number; children?: CanvasNode[];
 };
 function compactNode(value: unknown, state: { count: number }, depth = 0): CanvasNode | null {
@@ -228,6 +243,11 @@ function compactNode(value: unknown, state: { count: number }, depth = 0): Canva
     if (["layoutMode", "layoutWrap", "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "primaryAxisSizingMode", "counterAxisSizingMode", "primaryAxisAlignItems", "counterAxisAlignItems", "textAutoResize", "horizontalConstraint", "verticalConstraint"].includes(key) && typeof valueAtKey === "string") (out as unknown as Record<string, unknown>)[key] = valueAtKey.slice(0, 20);
   }
   if (Array.isArray(node.fillColors)) out.fillColors = node.fillColors.filter((color): color is string => typeof color === "string").slice(0, 4);
+  if (node.componentProperties && typeof node.componentProperties === "object" && !Array.isArray(node.componentProperties)) {
+    out.componentProperties = Object.fromEntries(Object.entries(node.componentProperties as Record<string, unknown>).slice(0, 16)
+      .filter((entry): entry is [string, string | boolean] => typeof entry[1] === "string" || typeof entry[1] === "boolean")
+      .map(([key, entryValue]) => [key.slice(0, 80), typeof entryValue === "string" ? entryValue.slice(0, 120) : entryValue]));
+  }
   if (depth < 4 && Array.isArray(node.children)) {
     out.children = [];
     for (const child of node.children.slice(0, 50)) {
@@ -344,7 +364,35 @@ function compactCanvas(value: unknown): Record<string, unknown> {
     scope: typeof canvas.scope === "string" ? canvas.scope.slice(0, 40) : "selection",
     nodeCount: state.count, truncated: canvas.truncated === true || state.count >= 100, nodes,
     viewport: canvas.viewport && typeof canvas.viewport === "object" ? canvas.viewport : undefined,
-    styles, variableCollections, variables: compactResourceList(canvas.variables, 120) };
+    styles, variableCollections, variables: compactResourceList(canvas.variables, 120),
+    components: compactComponentCatalogue(canvas.components) };
+}
+
+/** Bounded design-system catalogue so plans can place real component instances. */
+function compactComponentCatalogue(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 40).flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const item = entry as Record<string, unknown>;
+    if (typeof item.id !== "string" || typeof item.name !== "string") return [];
+    const rawProps = item.properties && typeof item.properties === "object" && !Array.isArray(item.properties)
+      ? item.properties as Record<string, unknown> : {};
+    const properties = Object.fromEntries(Object.entries(rawProps).slice(0, 16).flatMap(([key, def]) => {
+      if (!def || typeof def !== "object" || Array.isArray(def)) return [];
+      const data = def as Record<string, unknown>;
+      if (typeof data.type !== "string") return [];
+      return [[key.slice(0, 80), {
+        type: data.type.slice(0, 20),
+        ...(Array.isArray(data.options) ? { options: data.options.filter((o): o is string => typeof o === "string").slice(0, 16).map((o) => o.slice(0, 60)) } : {}),
+      }]];
+    }));
+    return [{ id: item.id.slice(0, 100), name: item.name.slice(0, 120),
+      ...(typeof item.type === "string" ? { type: item.type.slice(0, 20) } : {}),
+      ...(typeof item.uses === "number" ? { uses: item.uses } : {}),
+      ...(typeof item.width === "number" ? { width: item.width } : {}),
+      ...(typeof item.height === "number" ? { height: item.height } : {}),
+      properties }];
+  });
 }
 
 const SYSTEM = [
@@ -355,7 +403,7 @@ const SYSTEM = [
   "A short prompt must be mapped to a concrete design objective. Keep everything else stable: product context, information architecture, content, interaction meaning and source visual language. Make deliberate, restrained improvements; do not simplify away meaningful content merely to make the canvas look cleaner.",
   "You are UX Direct's native Figma design agent. The user explicitly requested a design action.",
   "CONTENT DENSITY AND PAINT CONTRACT: at least 30% of all native nodes must be TEXT, with at least 6 meaningful task-specific text layers (or every meaningful source text item if the selection has fewer). Put actual labels, values, dates, statuses and action copy in TEXT nodes; never use rectangles as substitutes for readable copy. Every FRAME must declare color for an intentional visible surface or noFill:true for a transparent structural wrapper. Keep normal Auto Layout child widths compatible with parent content padding; use FILL when the parent should determine the effective width.",
-  "Return ONLY one JSON object. Required root keys: summary (string), frame ({name,width,height,backgroundColor}), elements (3–8 meaningful top-level FRAME section containers and 18–80 native nodes total). Optional root key learningCandidate: null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}; include it only if this task produced one durable reusable design or execution lesson, never as a task summary. Do not include client-specific names in cross-user or domain-wide rules, raw requirements, screen text, node IDs, screenshots or private facts. Use the narrowest safe scope; the backend validates, scopes, deduplicates and applies the existing 50% relevance threshold. Each node MUST include type, name, x, y, width, height. Allowed type values: RECTANGLE, ELLIPSE, TEXT, LINE, FRAME, POLYGON, STAR. ELLIPSE may use arcData:{startingAngle,endingAngle,innerRadius} with radian angles and endingAngle > startingAngle for native progress arcs/rings. Use color: \"#RRGGBB\" for fill, NOT a fill key. TEXT layers must include text. FRAME nodes may include a children array recursively; only FRAME can contain children. Use noFill:true for transparent structural wrappers, but use visibly styled FRAMEs for cards/surfaces. Do not flatten everything into direct layers. Do not use markdown fences.",
+  "Return ONLY one JSON object. Required root keys: summary (string), frame ({name,width,height,backgroundColor}), elements (3–8 meaningful top-level FRAME section containers and 18–80 native nodes total). Optional root key learningCandidate: null or {activate:true,title,normalizedRule,rationale,scopeKey,feedbackKind,keywords,originalLanguage}; include it only if this task produced one durable reusable design or execution lesson, never as a task summary. Do not include client-specific names in cross-user or domain-wide rules, raw requirements, screen text, node IDs, screenshots or private facts. Use the narrowest safe scope; the backend validates, scopes, deduplicates and applies the existing 50% relevance threshold. Each node MUST include type, name, x, y, width, height. Allowed type values: RECTANGLE, ELLIPSE, TEXT, LINE, FRAME, POLYGON, STAR, INSTANCE. INSTANCE places a real design-system component: it needs componentId (an exact id from canvas.components) and optional instanceProperties ({propertyName: value}) to pick variants and override text/booleans using the property names listed for that component; it cannot have children. ELLIPSE may use arcData:{startingAngle,endingAngle,innerRadius} with radian angles and endingAngle > startingAngle for native progress arcs/rings. Use color: \"#RRGGBB\" for fill, NOT a fill key. TEXT layers must include text. FRAME nodes may include a children array recursively; only FRAME can contain children. Use noFill:true for transparent structural wrappers, but use visibly styled FRAMEs for cards/surfaces. Do not flatten everything into direct layers. Do not use markdown fences.",
   "Analyse BOTH the attached rendered screen image and native layer tree before planning. Use the image to understand visual hierarchy, alignment, density, spacing, contrast, components, states and design language; use the layer tree for exact text, names, geometry, typography and paint values.",
   "Do not replace an existing task-specific screen with a generic dashboard, generic landing page, or repeated stack of similar cards. Preserve the selected screen's purpose, key content, taxonomy and useful visual patterns. Reuse its components when possible, then improve professional craft, consistency, readability, alignment, action priority and visual rhythm.",
   "Prefer evidence-grounded product content and component patterns. If values are unknown, label financial amounts as sample. Never claim visual analysis when no image was supplied.",
@@ -434,6 +482,7 @@ export async function POST(request: Request) {
       "Build editable semantic FRAME containers with logically nested layers. Use native Auto Layout and modern HUG/FILL/FIXED sizing on content stacks, card internals, tabs, repeated information rows and actions. A normal child in an Auto Layout parent should not rely on x/y; reserve layoutPositioning=ABSOLUTE for true overlays and intentionally layered indicators.",
       "When the local style catalogue contains a suitable style, reuse exact paintStyleId/textStyleId/effectStyleId/gridStyleId rather than recreating equivalent colors or typography. Use text styles only on TEXT nodes and reference only IDs from the supplied catalogue.",
       "When local variables/collections are supplied, use semantic names to guide consistent design. Never invent variable IDs or claim that a token was bound unless a native binding operation is verified.",
+      "DESIGN SYSTEM FIRST: canvas.components lists the file's components ranked by use. When a planned element is a button, input, tab, chip, badge, list row, icon, avatar, nav bar or other control that a listed component provides, emit {type:'INSTANCE', componentId:'<exact id>', name, x, y, width, height, instanceProperties:{...}} instead of drawing it from FRAME/RECTANGLE/TEXT. Choose variants and override labels through instanceProperties using only the property names and options listed for that component. If the source already uses an instance of a component, keep using that component.",
       "After native-layer creation, the plugin runs one rendered screenshot + native layer review, may perform one bounded schema-validated surgical repair, then reads and reviews the result once more. Preserve the source frame."
     ],
     visualCapture: renderedScreen ? "Rendered selected-node image is attached." :
@@ -504,7 +553,7 @@ export async function POST(request: Request) {
     "CONTENT DENSITY AND PAINT CONTRACT: at least 30% of all native nodes must be TEXT, with at least 6 meaningful task-specific text layers (or every meaningful source text item if the selection has fewer). Put actual labels, values, dates, statuses and action copy in TEXT nodes. Every FRAME must declare color for a visible surface or noFill:true when transparent. Make Auto Layout widths and paddings compatible; use FILL only when parent content width should determine the effective width.",
     "Return one complete JSON object only with root keys summary (string), frame ({name,width,height,backgroundColor}), elements (an array of 3–6 meaningful populated FRAME section containers), and learningCandidate:null. Every element must use supported native Figma fields. This is a schema contract, not text to copy. No markdown, explanation or reasoning.",
     "OUTPUT BUDGET: use 3–6 meaningful top-level FRAME groups based on the actual screen; target 28–42 native nodes total INCLUDING nested children. Do not create a separate top-level group for a badge that belongs inside a card. Preserve every source label, amount, value, status, date and action. Keep every layer purposeful; do not add decorative placeholders to hit a count. Finish every string, array, object and the final closing brace.",
-    "Every node must have type, name, x, y, width and height. Types: FRAME, RECTANGLE, ELLIPSE, TEXT, LINE, POLYGON, STAR. ELLIPSE may include arcData:{startingAngle,endingAngle,innerRadius} with radian angles and endingAngle greater than startingAngle. TEXT must have text. Only FRAME can contain children. Coordinates must be relative to the immediate parent. Use color:'#RRGGBB' and noFill:true only for transparent structural frames.",
+    "Every node must have type, name, x, y, width and height. Types: FRAME, RECTANGLE, ELLIPSE, TEXT, LINE, POLYGON, STAR, INSTANCE (componentId from canvas.components plus optional instanceProperties; no children). ELLIPSE may include arcData:{startingAngle,endingAngle,innerRadius} with radian angles and endingAngle greater than startingAngle. TEXT must have text. Only FRAME can contain children. Coordinates must be relative to the immediate parent. Use color:'#RRGGBB' and noFill:true only for transparent structural frames.",
     "Do not include a learningCandidate unless there is a durable reusable lesson. If none, set learningCandidate:null.",
   ].join("\n");
   const generationStartedAt = Date.now();
@@ -690,6 +739,25 @@ export async function POST(request: Request) {
           validationFeedback = "The plan failed deterministic pre-write quality checks (score " + qualityReport.score +
             "/100): " + issues + ". Fix the actual content/layout/surface defects. Never omit source labels, values, statuses or actions to simplify layout.";
           errors.push(model + (isRecovery ? " compact retry" : "") + ": quality preflight rejected plan (" + issues + ")");
+          if (!isRecovery) continue;
+          break;
+        }
+        const catalogueComponentIds = new Set((Array.isArray(canvas.components) ? canvas.components as Array<Record<string, unknown>> : [])
+          .map((component) => component.id).filter((id): id is string => typeof id === "string"));
+        const unknownComponentId = (function findUnknown(nodes: unknown[]): string | null {
+          for (const entry of nodes) {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+            const node = entry as Record<string, unknown>;
+            if (node.type === "INSTANCE" && typeof node.componentId === "string" && !catalogueComponentIds.has(node.componentId)) return node.componentId;
+            const nested = Array.isArray(node.children) ? findUnknown(node.children) : null;
+            if (nested) return nested;
+          }
+          return null;
+        })(parsedPlan.data.elements as unknown[]);
+        if (unknownComponentId) {
+          validationFeedback = "The previous plan used INSTANCE componentId " + unknownComponentId +
+            " which is not in canvas.components. Use an exact listed component id or build that element from native layers.";
+          errors.push(model + (isRecovery ? " compact retry" : "") + ": INSTANCE references an unknown component ID.");
           if (!isRecovery) continue;
           break;
         }

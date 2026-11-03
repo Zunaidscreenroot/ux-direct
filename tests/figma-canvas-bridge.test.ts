@@ -64,7 +64,7 @@ test("canvas write tool requires explicit confirmation and uses the canonical co
   assert.ok(commandRegistry.includes('id: "reparent-node"'));
   assert.ok(commandRegistry.includes("requiresExplicitIntent: true"));
   assert.ok(commandRegistry.includes("batchable: false"));
-  assert.ok(mcp.includes('enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR"]'));
+  assert.ok(mcp.includes('enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT", "LINE", "POLYGON", "STAR", "SLICE", "VECTOR", "INSTANCE"]'));
   assert.ok(mcp.includes('textAlignHorizontal: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] }'));
   assert.ok(mcp.includes('paddingLeft: { type: "number", minimum: 0, maximum: 1000 }'));
   assert.ok(mcp.includes('shadowBlur: { type: "number", minimum: 0, maximum: 200 }'));

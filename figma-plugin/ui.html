@@ -1225,7 +1225,8 @@
       function stage(state, message) { setProcessState(state, message); notify(message); }
       stage("scanning", "Inspecting selected Figma layers, text, layout and styles…");
       const canvas = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true, includePages: true
+        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true, includePages: true,
+        includeComponents: true
       }, 90000);
       if (!canvas || !Array.isArray(canvas.nodes) || !canvas.nodes.length) {
         throw new Error("Select the frame, text layer, shape, or component you want to edit first.");
@@ -1335,7 +1336,9 @@
           const keys = ["nodeId", "parentNodeId", "nodeIds", "index", "componentId", "styleKind", "styleId", "styleName",
             "patch", "range", "target", "pageName", "pageId", "format", "scale", "booleanOperation", "collectionName", "modeName",
             "variables", "variableName", "property", "name", "x", "y", "width", "height", "cornerRadius", "scaleMode",
-            "layoutPositioning", "layoutSizingHorizontal", "layoutSizingVertical"];
+            "layoutPositioning", "layoutSizingHorizontal", "layoutSizingVertical",
+            "paintProperty", "paints", "effects", "layoutGrids", "autoLayout", "componentProperty", "instanceProperties",
+            "reactions", "reactionMode", "flowName", "styles"];
           const body = Object.assign({}, base);
           keys.forEach(function (key) { if (action[key] !== undefined) body[key] = action[key]; });
           const result = await runNativeCanvasCommand("write-canvas", body, 90000);
@@ -1344,8 +1347,8 @@
             const file = downloadNativeExport(result, action, root);
             stage("creating", "Exported " + file + " from the native Figma node.");
           } else {
-            changed += action.operation === "create-variables" || action.operation === "create-page" ||
-              action.operation === "rename-page" || action.operation === "set-current-page" ? 0 : 1;
+            changed += ["create-variables", "create-page", "rename-page", "set-current-page", "create-styles",
+              "set-reactions", "set-flow-start"].includes(action.operation) ? 0 : 1;
           }
         }
         stage("creating", "Applied " + (index + 1) + "/" + actions.length + " · " + action.operation);
@@ -1365,7 +1368,9 @@
           "create-elements", "insert-image", "create-image-fill", "clone-node", "reorder-node",
           "reparent-node", "group-nodes", "ungroup-node", "flatten-nodes", "boolean-operation",
           "create-component", "create-component-set", "create-instance", "swap-component",
-          "detach-instance", "set-text-range", "apply-style", "bind-variable"
+          "detach-instance", "set-text-range", "apply-style", "bind-variable", "wrap-in-auto-layout",
+          "set-fills", "set-effects", "set-layout-grids", "add-component-property", "set-instance-properties",
+          "set-variable-mode"
         ].includes(action.operation)) return true;
         // Deleting a child changes the rendered result. Deleting the selected
         // root is handled by the native read-back failure path instead.
@@ -1457,7 +1462,7 @@
 
       stage("scanning", "Scanning selected screen, nested layers, text and styles…");
       const canvas = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 4, maxNodes: 100, includeStyles: true, includeVariables: true
+        scope: "selection", maxDepth: 4, maxNodes: 100, includeStyles: true, includeVariables: true, includeComponents: true
       }, 90000);
       const selectedNodes = Array.isArray(canvas && canvas.nodes) ? canvas.nodes : [];
       const expectsSelection = /\b(selected|selection|this frame|this screen|current frame|variation|variant|duplicate|redesign this|improve this)\b/i.test(prompt);
@@ -1594,7 +1599,7 @@
       // Read to the maximum supported depth so nested native FRAMEs are included.
       // The previous depth-2 read made otherwise-valid nested designs look incomplete.
       const verified = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true
+        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true, collapseInstances: true
       }, 90000);
       const verifiedNode = verified && Array.isArray(verified.nodes)
         ? verified.nodes.find(function (node) { return node.id === createdFrameId; })
