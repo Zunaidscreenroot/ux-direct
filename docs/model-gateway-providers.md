@@ -51,7 +51,7 @@ A provider connection check reads `/v1/models` with the configured Bearer token.
 
 ### Figma tasks on FreeLLMAPI
 
-- **Fallback chain.** Figma generation, native actions, visual QA and refinement try `FREELLMAPI_FIGMA_MODELS` in order for text-only requests (default `auto:smart,auto`) and `FREELLMAPI_FIGMA_VISION_MODELS` for requests with screenshots (default `auto:vision`). To use specific strong free models, list their exact ids from `GET /v1/models` first and keep an `auto:*` alias last. FreeLLMAPI already fails over on 429/5xx inside one request; this chain covers the cases it returns to us.
+- **Fallback chain.** Figma generation, native actions, visual QA and refinement try `FREELLMAPI_FIGMA_MODELS` in order for text-only requests (default `auto:smart`) and `FREELLMAPI_FIGMA_VISION_MODELS` for requests with screenshots (default `auto:vision`). FreeLLMAPI already fails over on 429/5xx inside one request; this chain covers the cases it returns to us.
 - **JSON mode.** If a free model rejects `response_format` with 400/404/415/422, the same model is retried once without JSON mode. The output is still validated by the existing JSON extraction and schemas.
 - **Cold starts.** The first FreeLLMAPI attempt gets 100s because a sleeping host (Render Free) can take about a minute to wake. The plugin also calls `GET /api/assistant/provider?warm=1` when it opens, which wakes the host and reports key or model problems.
 - **Routed model.** Responses include `routedVia` (FreeLLMAPI's `X-Routed-Via` header), so you can see which upstream model actually answered.

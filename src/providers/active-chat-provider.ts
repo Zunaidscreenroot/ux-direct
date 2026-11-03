@@ -86,8 +86,8 @@ export function getActiveChatProvider(
       baseUrl,
       model,
       visionModel,
-      // Pin the strongest free models enabled in FreeLLMAPI first; the auto aliases stay as the safety net.
-      figmaModels: modelList(env.FREELLMAPI_FIGMA_MODELS, [model, "auto"]),
+      // Defaults to the auto:smart / auto:vision aliases; FreeLLMAPI fails over between upstream models itself.
+      figmaModels: modelList(env.FREELLMAPI_FIGMA_MODELS, [model]),
       figmaVisionModels: modelList(env.FREELLMAPI_FIGMA_VISION_MODELS, [visionModel]),
       configured: !configurationError,
       ...(configurationError ? { configurationError } : {}),

@@ -34,7 +34,7 @@
     "FREELLMAPI_CHAT_MODEL": "auto:smart",
     "FREELLMAPI_VISION_MODEL": "auto:vision",
     // Figma fallback chains: put exact ids of your strongest enabled free models first (see GET /v1/models).
-    "FREELLMAPI_FIGMA_MODELS": "auto:smart,auto",
+    "FREELLMAPI_FIGMA_MODELS": "auto:smart",
     "FREELLMAPI_FIGMA_VISION_MODELS": "auto:vision"
   }
 }
