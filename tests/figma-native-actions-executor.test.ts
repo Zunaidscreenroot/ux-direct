@@ -276,3 +276,19 @@ test("read-canvas reports text style ids and the main component of instances", a
   assert.equal(headerOut.mainComponentId, set.id, "variants report their component set so it matches the catalogue");
   assert.equal(textOut.textStyleId, "S:lib,1:1");
 });
+
+test("create-elements keeps going when a component is missing or a sizing mode is impossible", async () => {
+  const { page, write } = createRuntime();
+  const screen = makeNode("FRAME", { name: "Screen", layoutMode: "VERTICAL" });
+  page.appendChild(screen);
+  const result = await write({ operation: "create-elements", target: "node", parentNodeId: screen.id, elements: [
+    { type: "INSTANCE", name: "Screen header", componentId: "9:404", width: 360, height: 64,
+      instanceProperties: { "Property 1": "Inner" }, textOverrides: { Title: "Personal Loan" } },
+    { type: "TEXT", name: "Note", text: "Full amount", layoutSizingHorizontal: "FILL" },
+  ] });
+  assert.equal(result.ok, true);
+  const fallback = screen.children[0];
+  assert.equal(fallback.type, "FRAME", "a missing component becomes a native frame");
+  assert.deepEqual(fallback.children.map((n: MockNode) => n.characters), ["Personal Loan"], "its text content is kept");
+  assert.equal(screen.children[1].characters, "Full amount");
+});
