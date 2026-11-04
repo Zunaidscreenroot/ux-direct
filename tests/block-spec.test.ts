@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-  BLOCK_NODE_BUDGET, BLOCK_SPEC_EXAMPLE, contrast, ensureContrast, expandBlockSpec, isBlockSpec, resolveTheme,
+  BLOCK_NODE_BUDGET, BLOCK_SPEC_EXAMPLE, contrast, ensureContrast, expandBlockSpec, isBlockSpec, resolveTheme, sourceFallbackSpec,
 } from "../src/figma-agent/block-spec";
 import { normalizePlan } from "../src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality } from "../src/figma-agent/design-plan-quality";
@@ -112,9 +112,9 @@ test("block spec rejects over-budget and too-thin specs with actionable feedback
   const big = expandBlockSpec({ sections: [{ name: "A", blocks: rows }, { name: "B", blocks: rows }, { name: "C", blocks: rows }] }, lightCanvas);
   assert.equal(big.plan, null);
   assert.match(big.errors.join(" "), /layer budget/);
-  const thin = expandBlockSpec({ sections: [{ name: "Only", blocks: [{ type: "text", text: "Hello" }] }] }, lightCanvas);
-  assert.equal(thin.plan, null);
-  assert.match(thin.errors.join(" "), /3–8 sections/);
+  const empty = expandBlockSpec({ sections: [{ name: "Only", blocks: [{ type: "sparkle_widget" }] }] }, lightCanvas);
+  assert.equal(empty.plan, null);
+  assert.match(empty.errors.join(" "), /No section produced layers/);
   assert.match(expandBlockSpec({ summary: "x" }, lightCanvas).errors.join(" "), /sections must be a non-empty array/);
 });
 
@@ -258,4 +258,52 @@ test("primary buttons keep a light label by darkening the fill just enough", () 
   const yellow = resolveTheme({ background: "#FFFFFF", primary: "#FFC107" }, null);
   assert.equal(yellow.primaryFill, "#FFC107", "a light primary is not muddied; the label goes dark instead");
   assert.ok(contrast(yellow.onPrimary, yellow.primaryFill) >= 4.6);
+});
+
+test("thin or loosely typed specs render instead of failing the whole run", () => {
+  const thin = expandBlockSpec({ sections: [{ name: "Details", blocks: [
+    { type: "header", title: "Personal Loan" }, { type: "key_value_pair", label: "Credit limit", value: "₹50,000" },
+    "Full amount for both loans", { type: "cta_button", label: "Pay ₹10,000", variant: "primary" },
+  ] }] }, lightCanvas);
+  assert.deepEqual(thin.errors, []);
+  const plan = thin.plan!;
+  assert.ok(plan.elements.length >= 2, "a single plain section is split into framed sections");
+  const texts: string[] = [];
+  walk(plan.elements as N[], (node) => { if (node.type === "TEXT") texts.push(String(node.text)); });
+  for (const expected of ["Personal Loan", "Credit limit", "₹50,000", "Full amount for both loans", "Pay ₹10,000"]) assert.ok(texts.includes(expected), expected);
+  const normalized = normalizePlan(plan, lightCanvas, { trustedSections: true }) as { elements: N[] };
+  assert.equal(normalized.elements.length, plan.elements.length, "trusted block sections are not re-bucketed");
+});
+
+test("source fallback rebuilds the screen natively with every source text", () => {
+  const canvas = {
+    nodes: [{ name: "Loan", type: "FRAME", width: 360, height: 800, fillColors: ["#121212"], children: [
+      { name: "Screen header", type: "INSTANCE", width: 360, height: 64, y: 0, children: [{ name: "Title", type: "TEXT", text: "Personal Loan" }] },
+      { name: "Screen body", type: "FRAME", width: 360, height: 700, children: [
+        { name: "Card", type: "FRAME", fillColors: ["#1C1A24"], children: [
+          { name: "Heading", type: "TEXT", text: "Loan details" },
+          { name: "Row", type: "FRAME", children: [{ name: "L", type: "TEXT", text: "Credit limit" }, { name: "V", type: "TEXT", text: "₹50,000" }] },
+          { name: "Row", type: "FRAME", children: [{ name: "L", type: "TEXT", text: "Due date" }, { name: "V", type: "TEXT", text: "5 Oct" }] },
+        ] },
+        { name: "Footer", type: "FRAME", children: [
+          { name: "CTA", type: "FRAME", height: 48, cornerRadius: 12, fillColors: ["#3892F6"], children: [{ name: "Label", type: "TEXT", text: "Pay ₹10,000" }] },
+          { name: "Note", type: "TEXT", text: "Full amount for both loans" },
+        ] },
+      ] },
+    ] }],
+    components: [],
+  };
+  const spec = sourceFallbackSpec(canvas)!;
+  assert.ok(spec);
+  const result = expandBlockSpec(spec, canvas);
+  assert.deepEqual(result.errors, []);
+  const texts: string[] = [];
+  walk(result.plan!.elements as N[], (node) => { if (node.type === "TEXT") texts.push(String(node.text)); });
+  for (const expected of ["Personal Loan", "Loan details", "Credit limit", "₹50,000", "Due date", "5 Oct", "Pay ₹10,000", "Full amount for both loans"]) {
+    assert.ok(texts.includes(expected), expected);
+  }
+  const sections = (spec.sections as Array<Record<string, unknown>>);
+  assert.equal(sections[1].surface, "card");
+  const normalized = normalizePlan(result.plan, canvas, { trustedSections: true });
+  assert.equal(auditDesignPlanQuality(normalized as never, canvas, "improve this screen").passed, true);
 });

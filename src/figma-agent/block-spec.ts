@@ -390,6 +390,28 @@ function blockType(block: Rec): string {
   return TYPE_ALIASES[raw] ?? "";
 }
 
+/** Free models often invent block names; infer the closest block from the fields they filled in. */
+function inferBlockType(block: Rec): string {
+  const has = (key: string) => clean(block[key], 400) !== "";
+  if (Array.isArray(block.items) || Array.isArray(block.rows)) return "list";
+  if (Array.isArray(block.blocks) || Array.isArray(block.children)) return "card";
+  if ((has("label") || has("title") || has("name")) && (has("value") || has("amount"))) return "row";
+  if (has("label") && (block.action !== undefined || has("variant") || has("onPress") || has("onClick"))) return "button";
+  if (has("text") || has("content") || has("body") || has("label") || has("value") || has("description")) return "text";
+  if (has("title") || has("heading")) return "heading";
+  return "";
+}
+
+/** Blocks may arrive as plain strings or under other keys; normalize them to block records. */
+function sectionBlocks(section: Rec): Rec[] {
+  const raw = section.blocks ?? section.children ?? section.items ?? section.content ?? section.rows ?? section.elements;
+  if (Array.isArray(raw)) {
+    return raw.map((item) => typeof item === "string" ? { type: "text", text: item } : asRec(item)).filter((x): x is Rec => !!x);
+  }
+  // A "section" that is really a single block.
+  return blockType(section) && blockType(section) !== "card" ? [section] : [];
+}
+
 function asRec(value: unknown): Rec | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Rec : null;
 }
@@ -471,7 +493,7 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       return b.vstack(label(title, "Heading"), W, [titleNode, b.text("Heading support", subtitle, W, { size: 13, color: t.muted, bg })], { gap: 4 });
     }
     case "text": {
-      const value = clean(block.text ?? block.value ?? block.content ?? block.title, 1200);
+      const value = clean(block.text ?? block.value ?? block.content ?? block.body ?? block.label ?? block.description ?? block.title, 1200);
       if (!value) return null;
       const kind = clean(block.tone ?? block.style ?? block.variant, 20).toLowerCase();
       const muted = /muted|caption|secondary|note|disclaimer|helper/.test(kind) || /caption|disclaimer|note/.test(clean(block.type, 30).toLowerCase());
@@ -832,13 +854,10 @@ function expandCard(ctx: Ctx, block: Rec, width: number, depth: number, nameFall
 }
 
 function expandBlock(ctx: Ctx, block: Rec, width: number, depth: number): NativeNode[] {
-  let type = blockType(block);
+  const type = blockType(block) || inferBlockType(block);
   if (!type) {
-    if (typeof block.text === "string" || typeof block.title === "string") type = "text";
-    else {
-      ctx.b.warnings.push("Dropped a block with unknown type " + JSON.stringify(clean(block.type, 30)) + ".");
-      return [];
-    }
+    ctx.b.warnings.push("Dropped a block with unknown type " + JSON.stringify(clean(block.type, 30)) + ".");
+    return [];
   }
   if (type === "card") {
     const card = expandCard(ctx, block, width, depth, "Card");
@@ -907,6 +926,67 @@ function assignPositions(parent: Rec, children: NativeNode[]) {
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * Last-resort spec rebuilt from the source layer tree when no model answer could be rendered:
+ * every source text is kept in its original order and grouping, so the user gets a native,
+ * auto-layout copy of the screen instead of an error.
+ */
+export function sourceFallbackSpec(canvas: Record<string, unknown>): Rec | null {
+  const root = asRec(arr(canvas.nodes)[0]);
+  if (!root) return null;
+  const rootFill = Array.isArray(root.fillColors) ? hex(root.fillColors[0]) : null;
+  const visible = (node: Rec | null): node is Rec => !!node && node.visible !== false;
+  const kids = (node: Rec) => arr(node.children).map(asRec).filter(visible);
+  const textOf = (node: Rec) => (node.type === "TEXT" ? clean(node.text, 1200) : "");
+  // Flatten structural wrappers (e.g. "Screen body") so each real group becomes a section.
+  const groups: Rec[] = [];
+  const addGroups = (nodes: Rec[], depth: number) => {
+    for (const node of nodes) {
+      const children = kids(node);
+      if (depth < 2 && node.type !== "INSTANCE" && children.length >= 2 && children.every((c) => c.type !== "TEXT") && !node.fillColors && !node.strokeColors) {
+        addGroups(children, depth + 1);
+      } else {
+        groups.push(node);
+      }
+    }
+  };
+  addGroups(kids(root), 0);
+
+  const blocksOf = (node: Rec, depth: number, out: Rec[]) => {
+    if (depth > 6 || out.length >= 24) return;
+    if (node.type === "TEXT") { const text = textOf(node); if (text) out.push({ type: "text", text }); return; }
+    const children = kids(node);
+    const texts = children.filter((c) => c.type === "TEXT").map(textOf).filter(Boolean);
+    const filled = Array.isArray(node.fillColors) && node.fillColors.length > 0;
+    if (texts.length === 1 && children.length <= 2 && filled && typeof node.height === "number" && node.height <= 64 && typeof node.cornerRadius === "number") {
+      out.push({ type: "button", label: texts[0] });
+      return;
+    }
+    if (texts.length === 2 && children.length === 2) { out.push({ type: "row", label: texts[0], value: texts[1] }); return; }
+    for (const child of children) blocksOf(child, depth + 1, out);
+  };
+
+  const sections: Rec[] = [];
+  for (const [index, group] of groups.entries()) {
+    if (sections.length >= 8) break;
+    const name = clean(group.name, 60) || "Section " + (index + 1);
+    if (index === 0 && group.type === "INSTANCE") {
+      // The renderer swaps this for the source header component when it is in the catalogue.
+      const title = kids(group).map(textOf).find(Boolean) || clean(group.name, 60);
+      sections.push({ name, blocks: [{ type: "app_bar", title }] });
+      continue;
+    }
+    const blocks: Rec[] = [];
+    blocksOf(group, 0, blocks);
+    if (!blocks.length) continue;
+    const fill = Array.isArray(group.fillColors) ? hex(group.fillColors[0]) : null;
+    const card = (fill && fill !== rootFill) || Array.isArray(group.strokeColors);
+    sections.push({ name, surface: card ? "card" : "plain", blocks });
+  }
+  if (sections.length > 8) sections.length = 8;
+  return sections.length ? { summary: "Source-preserving layout: the model response could not be used, so UX Direct rebuilt the screen natively from its own layers.", sections, learningCandidate: null } : null;
+}
+
 export function isBlockSpec(value: unknown): boolean {
   const rec = asRec(value);
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
@@ -936,7 +1016,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   const sections = arr(spec.sections).map(asRec).filter((x): x is Rec => !!x);
   if (!sections.length) errors.push("sections must be a non-empty array of {name, blocks:[...]}.");
   for (const [index, section] of sections.slice(0, 8).entries()) {
-    const blocks = arr(section.blocks ?? section.children ?? section.items).map(asRec).filter((x): x is Rec => !!x);
+    const blocks = sectionBlocks(section);
     blockCount += blocks.length;
     const name = clean(section.name ?? section.title, 80) || "Section " + (index + 1);
     const surface = clean(section.surface ?? section.style, 20).toLowerCase();
@@ -957,8 +1037,16 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     elements.push(b.vstack(name, content, kids, { gap: 12 }));
   }
   if (sections.length > 8) errors.push("Use at most 8 sections; merge related ones.");
-  if (sections.length && elements.length < 3) {
-    errors.push("Only " + elements.length + " section(s) produced layers; return 3–8 sections with real blocks (split header, main content and actions into their own sections).");
+  // Too few sections: split plain multi-block sections rather than rejecting a usable spec.
+  while (elements.length > 0 && elements.length < 3) {
+    const index = elements.findIndex((node) => node.noFill === true && node.layoutMode === "VERTICAL" && (node.children?.length ?? 0) >= 2);
+    if (index < 0) break;
+    const node = elements[index];
+    const [head, ...rest] = node.children!;
+    elements.splice(index, 1, b.vstack(node.name, content, [head], { gap: 12 }), b.vstack(node.name + " (cont.)", content, rest, { gap: 12 }));
+  }
+  if (sections.length && elements.length === 0) {
+    errors.push("No section produced layers; return 3–8 sections whose blocks use the listed block types (row, text, stat, list, button...).");
   }
   // A reused source header sits full-bleed at the top like the source; the other sections keep
   // their 16px side margins through their own padding, so the plan still has 3–8 framed sections.

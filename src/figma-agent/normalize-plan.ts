@@ -191,7 +191,11 @@ export function repairPlanGeometry(value: unknown): unknown {
   return plan;
 }
 
-export function normalizePlan(value: unknown, canvas: Record<string, unknown>): unknown {
+/**
+ * trustedSections: the plan came from the deterministic block renderer, so its top-level
+ * framed sections are kept as they are (1–8) instead of being re-bucketed by position.
+ */
+export function normalizePlan(value: unknown, canvas: Record<string, unknown>, options: { trustedSections?: boolean } = {}): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const root = value as Record<string, unknown>;
   const rawFrameValue = root.frame ?? root.screen ?? root.container ?? root.canvas;
@@ -467,9 +471,10 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
     return count + (node.type === "FRAME" && children.length > 0 ? 1 : 0) + countFrameGroups(children);
   }, 0);
   const namedFrameGroups = countFrameGroups(normalized);
-  const alreadyStructured = normalized.length >= 3 && normalized.length <= 8 &&
-    normalized.every((node) => node.type === "FRAME" && Array.isArray(node.children) && node.children.length > 0) &&
-    namedFrameGroups >= 4 && countTree(normalized) <= 80;
+  const framedSections = normalized.every((node) => node.type === "FRAME" && Array.isArray(node.children) && node.children.length > 0);
+  const alreadyStructured = options.trustedSections === true
+    ? normalized.length >= 1 && normalized.length <= 8 && framedSections
+    : normalized.length >= 3 && normalized.length <= 8 && framedSections && namedFrameGroups >= 4 && countTree(normalized) <= 80;
 
   if (!alreadyStructured) {
     const allLeaves: Array<Record<string, unknown>> = [];

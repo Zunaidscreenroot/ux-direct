@@ -203,7 +203,7 @@ test("Figma agent normalizes provider-native design fields and uses the requeste
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "Model requests must not be provider filtered.");
 
   assert.ok(agent.includes("planInput = expansion.plan;"), "Block specs must be rendered before normalization and validation.");
-  assert.ok(agent.includes('PlanSchema.safeParse(normalizePlan(planInput, canvas))'), "Native plan schema validation must remain mandatory.");
+  assert.ok(agent.includes('PlanSchema.safeParse(normalizePlan(planInput, canvas, { trustedSections: blockSpec !== null }))'), "Native plan schema validation must remain mandatory.");
 });
 
 test("connection panel exposes an expandable native Figma health-check report", () => {
@@ -461,4 +461,11 @@ test("visual QA exits without model calls when rendered evidence is missing", ()
   assert.ok(qualityLoop.includes("if (!sourceImage)"));
   assert.ok(qualityLoop.includes("if (!capture || !capture.dataUrl)"));
   assert.ok(qualityLoop.includes("Visual QA blocked because the repaired output screenshot could not be captured"));
+});
+
+test("Figma agent retries a transient provider error once and falls back to the source layout", () => {
+  const agent = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
+  assert.ok(agent.includes("transientRetried = true;") && agent.includes("recoveryAttempt -= 1;"), "A 5xx must get one same-mode retry before the compact prompt.");
+  assert.ok(agent.includes("sourceFallbackSpec(canvas)") && agent.includes("sourceFallback: true"), "A total model failure must fall back to the source layout.");
+  assert.ok(agent.includes("candidate.blockSpec && !success.sourceFallback ? success.spec : null"), "Fallback specs must never become verified examples.");
 });
