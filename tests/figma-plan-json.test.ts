@@ -94,7 +94,7 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("if (!isRecovery) continue;"), "Missing content and invalid schemas must cause a compact retry.");
   assert.ok(route.includes("compactRecoveryCanvas(canvas)"), "The retry should send a bounded source layer tree.");
   assert.ok(route.includes("28–42 native nodes total INCLUDING nested children"), "The retry must explicitly cap output complexity.");
-  assert.ok(route.includes("max_tokens: isRecovery ? 6000 : (isFreeLlmApi ? 8000 : 9000)"), "Keep generation output bounded to a complete native plan.");
+  assert.ok(route.includes("...figmaMaxTokens(activeProvider, isRecovery ? 6000 : 9000)"), "FreeLLMAPI is uncapped; other providers keep a bounded plan.");
   assert.ok(route.includes("modelIndex === 0 ? firstAttemptMs : 70000") && route.includes("isFreeLlmApi ? FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS : 80000"), "The primary and fallback get useful completion windows.");
   assert.ok(route.includes('model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}'), "GPT-6 Luna prefers throughput and low reasoning effort for stability.");
   assert.ok(route.includes("isRecovery ? (isFreeLlmApi ? 90000 : 45000)"), "Compact retries have a bounded but useful completion window.");
@@ -153,8 +153,8 @@ test("Figma agent routes report body-read timeouts instead of empty bodies and b
 test("visual refinement receives the source and output images and exposes why a repair failed", () => {
   const refine = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/refine/route.ts"), "utf8");
   const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
-  assert.ok(refine.includes("sourceImage: z.string().max(52000).nullable().optional()"));
-  assert.ok(refine.includes("outputImage: z.string().max(52000).nullable().optional()"));
+  assert.ok(refine.includes("sourceImage: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional()"));
+  assert.ok(refine.includes("outputImage: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional()"));
   assert.ok(refine.includes('type: "image_url"'), "The refiner should visually inspect source and output screenshots.");
   assert.ok(ui.includes("sourceImage: sourceImage, outputImage: capture.dataUrl || null"));
   assert.ok(ui.includes("Remaining issues: "));

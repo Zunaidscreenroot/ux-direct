@@ -9,7 +9,7 @@ import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { deferTaskWork, finishTaskRun, startTaskRun, type RetrievalRecord } from "@/src/memory/task-run-log";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
-import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode } from "@/src/providers/active-chat-provider";
+import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
 import { appendMissingSourceText, MAX_REPAIRED_TEXTS, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
@@ -474,7 +474,7 @@ export async function POST(request: Request) {
     prompt: z.string().trim().min(2).max(5000),
     model: z.string().trim().min(1).max(100).optional(),
     canvas: z.unknown(),
-    renderedScreen: z.string().max(52000).nullable().optional(),
+    renderedScreen: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional(),
     referenceImage: z.string().max(250000).nullable().optional(),
     visualCaptureWarning: z.string().max(400).optional(),
   }).strict();
@@ -483,7 +483,7 @@ export async function POST(request: Request) {
   // Ignore a model override from older plugin UI builds. Figma generation is intentionally
   // locked to OpenRouter Auto's LOW cost tier to prevent app-level model fan-out.
   const renderedScreen = typeof parsedInput.data.renderedScreen === "string" &&
-    parsedInput.data.renderedScreen.length <= 52000 &&
+    parsedInput.data.renderedScreen.length <= RENDERED_IMAGE_MAX_CHARS &&
     new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.renderedScreen)
     ? parsedInput.data.renderedScreen : null;
   const referenceImage = typeof parsedInput.data.referenceImage === "string" &&
@@ -529,12 +529,16 @@ export async function POST(request: Request) {
     referenceImage: referenceImage ? "A user-attached reference image is included separately from the source screenshot." : null,
     figmaCanvas: canvas,
   });
-  if (userContext.length > 52000) return NextResponse.json({ error: "Selection context is too large. Select a smaller frame or reduce the number of layers." }, { status: 413, headers });
+  if (userContext.length > 200000) return NextResponse.json({ error: "Selection context is too large. Select a smaller frame or reduce the number of layers." }, { status: 413, headers });
 
   const taskRunId = randomUUID();
   const taskProject = resolveFigmaTaskProject(parsedInput.data.prompt);
   const taskScope = resolveFigmaTaskScope(taskProject, parsedInput.data.prompt);
 
+  // Independent of brain retrieval, so both lookups run at the same time.
+  const verifiedExamplePromise = blockMode
+    ? loadVerifiedExample(taskScope, designScope).catch(() => "")
+    : Promise.resolve("");
   let brain: BrainContextPromptInput = { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
   let taskRetrieval: RetrievalRecord = { status: "degraded", memoryIds: [], chunkIds: [], chars: 0 };
   const brainStarted = Date.now();
@@ -542,12 +546,12 @@ export async function POST(request: Request) {
     const retrieved = await retrieveBrainContext({
       query: (parsedInput.data.prompt + "\n" + JSON.stringify(canvas).slice(0, 1800)).slice(0, 3000),
       scopeKeys: resolveBrainScopes(parsedInput.data.prompt + "\n" + JSON.stringify(canvas.nodes).slice(0, 1500)),
-      limit: 3,
-      maxChars: 2600,
+      limit: 6,
+      maxChars: 6000,
       includeKnowledge: true,
     });
     brain = {
-      contextText: retrieved.contextText.slice(0, 3200),
+      contextText: retrieved.contextText.slice(0, 7000),
       status: retrieved.retrieval.status,
       memoryCount: Math.max(0, retrieved.retrieval.memoryCount || 0),
       knowledgeChunkCount: Math.max(0, retrieved.retrieval.knowledgeChunkCount || 0),
@@ -566,7 +570,7 @@ export async function POST(request: Request) {
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   // A verified spec from this project (structure only) steers whichever model `auto` picks
   // toward the same block choices that already passed the Figma quality gate.
-  const verifiedExample = blockMode ? await loadVerifiedExample(taskScope, designScope) : "";
+  const verifiedExample = await verifiedExamplePromise;
   const exampleInstructions = verifiedExample
     ? "\nVERIFIED TEAM EXAMPLE — the block structure of an earlier output that passed UX Direct's quality gate. Texts are replaced by <source text>. Follow its way of choosing sections and blocks for similar content; never copy it, and use only this screen's real content: " + verifiedExample
     : "";
@@ -779,6 +783,7 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "application/json",
+            ...figmaRoutingHeaders(activeProvider),
             ...(activeProvider.id === "openrouter" ? {
               "HTTP-Referer": new URL(request.url).origin,
               "X-OpenRouter-Title": "UX Direct Figma Agent",
@@ -798,7 +803,7 @@ export async function POST(request: Request) {
             // Qwen 3.5 thinks by default; unbounded reasoning spends the attempt before any JSON is written.
             ...(model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}),
             // Many free upstream models cap output near 8k tokens and reject larger requests.
-            max_tokens: isRecovery ? 6000 : (isFreeLlmApi ? 8000 : 9000),
+            ...figmaMaxTokens(activeProvider, isRecovery ? 6000 : 9000),
             // JSON mode is enabled for the first attempt. Compact retries use normal text mode
             // because some provider/model routes have returned successful but empty choices.
             ...(!isRecovery ? { response_format: { type: "json_object" } } : {}),

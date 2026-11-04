@@ -251,7 +251,7 @@ test("normal conversational chat supports the selected provider and keeps OpenRo
 
 test("Figma visual analysis uses a compact rendered JPEG and native layer data", () => {
   assert.ok(pluginUi.includes("async function captureRenderedNodePreview(nodeId)"));
-  assert.ok(pluginUi.includes("const scales = [0.6, 0.45, 0.3, 0.2, 0.12, 0.08]"));
+  assert.ok(pluginUi.includes("const maxSides = [1400, 900]"));
   assert.ok(pluginUi.includes('operation: "export-node"'));
   assert.ok(pluginUi.includes('format: "JPG"'));
   assert.ok(pluginUi.includes('data:image/jpeg;base64,'));
@@ -262,7 +262,7 @@ test("Figma visual analysis uses a compact rendered JPEG and native layer data",
   assert.ok(plugin.includes('exportOptions.constraint = { type: "SCALE"'));
   const writeSchema = bridge.slice(bridge.indexOf("const CANVAS_WRITE_PAYLOAD"), bridge.indexOf("type HealthReport"));
   assert.ok(writeSchema.includes('scale: z.number().finite().min(0.2).max(1).optional()'));
-  assert.ok(agent.includes('renderedScreen: z.string().max(52000).nullable().optional()'));
+  assert.ok(agent.includes('renderedScreen: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional()'));
   assert.ok(agent.includes('type: "image_url"'));
   assert.ok(agent.includes("Analyse BOTH the attached rendered screen image and native layer tree"));
 });
@@ -280,8 +280,8 @@ test("native visual QA can trigger one bounded repair and a final re-check witho
   assert.ok(refine.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
   assert.ok(refine.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'));
   assert.ok(review.includes('type: "image_url"'));
-  assert.ok(review.includes('sourceImage: z.string().max(52000).nullable().optional()'));
-  assert.ok(review.includes('outputImage: z.string().max(52000).nullable().optional()'));
+  assert.ok(review.includes('sourceImage: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional()'));
+  assert.ok(review.includes('outputImage: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional()'));
   assert.ok(review.includes("evaluateVisualQualityGate"));
   assert.ok(review.includes("hasSourceImage: !!sourceImage"));
   assert.ok(review.includes("hasOutputImage: !!outputImage"));
@@ -310,20 +310,22 @@ test("Figma source visual capture failures block unverified design generation", 
   assert.ok(refinementRoute.includes("FIGMA_AGENT_MODELS.map((entry) => entry.id)"));
   assert.equal(reviewRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
   assert.equal(refinementRoute.includes("ANTHROPIC_OPENROUTER_PROVIDER"), false);
-  assert.ok(agent.includes("renderedScreen: z.string().max(52000).nullable().optional()"));
+  assert.ok(agent.includes("renderedScreen: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional()"));
   assert.ok(agent.includes('error: "Invalid Figma agent request."'));
   assert.ok(agent.includes('issue.path.join(".")'));
-  assert.ok(reviewRoute.includes('sourceImage: z.string().max(52000).nullable().optional()'));
-  assert.ok(reviewRoute.includes('outputImage: z.string().max(52000).nullable().optional()'));
+  assert.ok(reviewRoute.includes('sourceImage: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional()'));
+  assert.ok(reviewRoute.includes('outputImage: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional()'));
   assert.ok(pluginUi.includes('detail.message || "Invalid input"'));
   assert.ok(pluginUi.includes('stage("error", "Source screenshot unavailable · design generation blocked")'));
   assert.ok(pluginUi.includes("will not create a variation without a rendered source screenshot"));
   assert.ok(reviewRoute.includes("evaluateVisualQualityGate"));
 });
 
-test("source screenshot export retries smaller scales and variation completion uses native read-back only", () => {
-  assert.ok(pluginUi.includes("const scales = [0.6, 0.45, 0.3, 0.2, 0.12, 0.08]"));
-  assert.ok(pluginUi.includes("JPEG preview export failed at all attempted scales (60%, 45%, 30%, 20%, 12%, 8%)."));
+test("source screenshot is exported once at vision resolution and variation completion uses native read-back only", () => {
+  assert.ok(pluginUi.includes("const maxSides = [1400, 900]"));
+  assert.ok(pluginUi.includes("JPEG preview export failed (1400px, 900px)."));
+  assert.ok(plugin.includes("exportScale = Math.max(0.05, Math.min(2, Math.min(2000, payload.maxSide) / longestSide))"));
+  assert.ok(plugin.includes("var maxExportBytes = isLocal ? LOCAL_EXPORT_MAX_BYTES : 35000;"), "Bridge-sourced exports keep the 35 KB envelope.");
   assert.ok(pluginUi.includes("const renderedCapture = sourceNode && sourceNode.id"));
   assert.ok(pluginUi.includes('const verified = await runNativeCanvasCommand("read-canvas"'));
   assert.ok(pluginUi.includes("const verifiedChildCount = verifiedNode"));
@@ -358,8 +360,10 @@ test("short Figma prompts inherit the complete design-variation workflow", () =>
   assert.ok(agent.includes("operatingContract"));
   assert.ok(pluginUi.includes("nativeCanvasCommandTail.then"));
   assert.ok(pluginUi.includes("runNativeCanvasCommandOnce"));
-  assert.ok(pluginUi.includes("canvas action is already running"));
-  assert.ok(pluginUi.includes('setProcessState("waiting"'));
+  // UI-started commands go straight to the plugin sandbox instead of a Worker round trip.
+  assert.ok(pluginUi.includes('command: { commandId: commandId, action: action, payload: payload, local: true }'));
+  assert.ok(pluginUi.includes("if (promiseEntry && promiseEntry.local)"));
+  assert.ok(plugin.includes("writeCanvasCommand(command.payload, { local: command.local === true })"));
   assert.ok(pluginUi.includes('waiting: "Waiting for the previous Figma action to finish"'));
 });
 

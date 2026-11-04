@@ -1230,7 +1230,7 @@ async function readCanvasCommand(payload) {
     };
   }
   if (payload.includeComponents === true) {
-    result.components = await collectComponentCatalogue();
+    result.components = await cachedComponentCatalogue();
   }
   if (payload.includeVariables === true && figma.variables &&
       typeof figma.variables.getLocalVariablesAsync === "function" &&
@@ -1272,6 +1272,19 @@ function summarizeComponentDefinitions(component) {
 // page (ranked by use, includes library components) plus local components and sets in the file.
 var COMPONENT_CATALOGUE_BUDGET_MS = 8000;
 var COMPONENT_CATALOGUE_MAX_CHARS = 18000;
+// The catalogue scan can take seconds on large files (page loads + main-component lookups) and
+// barely changes within a session, so repeat reads reuse it for a few minutes.
+var COMPONENT_CATALOGUE_CACHE_MS = 5 * 60 * 1000;
+var componentCatalogueCache = null;
+function cachedComponentCatalogue() {
+  var now = Date.now();
+  if (componentCatalogueCache && componentCatalogueCache.pageId === figma.currentPage.id &&
+      now - componentCatalogueCache.at < COMPONENT_CATALOGUE_CACHE_MS) return componentCatalogueCache.promise;
+  var promise = collectComponentCatalogue();
+  componentCatalogueCache = { at: now, pageId: figma.currentPage.id, promise: promise };
+  promise.catch(function () { componentCatalogueCache = null; });
+  return promise;
+}
 async function collectComponentCatalogue() {
   var byId = new Map();
   function record(component, uses, source) {
@@ -1380,7 +1393,11 @@ async function resolveCanvasWriteParent(target, parentNodeId) {
   }
   throw new Error("Unsupported write target. Use current-page, selection, or test-lab.");
 }
-async function writeCanvasCommand(payload) {
+// Commands started by this plugin's own UI never pass through the Worker bridge, so their
+// results are not bound by its 60k-char envelope (used for full-resolution screen exports).
+var LOCAL_EXPORT_MAX_BYTES = 1100000;
+async function writeCanvasCommand(payload, options) {
+  var isLocal = !!(options && options.local === true);
   assertUxDirectFileScope("write canvas");
   payload = payload || {};
   if (payload.confirm !== true) throw new Error("Write blocked: confirm must be true after an explicit user request.");
@@ -2702,18 +2719,30 @@ async function writeCanvasCommand(payload) {
         node: nodeSummary(genericExportTarget), format: exportFormat, byteLength: svgOutput.length, data: svgOutput };
     }
     var exportOptions = { format: exportFormat };
-    if ((exportFormat === "PNG" || exportFormat === "JPG") && Number.isFinite(payload.scale)) {
-      exportOptions.constraint = { type: "SCALE", value: Math.max(0.05, Math.min(1, payload.scale)) };
+    var exportScale = 1;
+    if ((exportFormat === "PNG" || exportFormat === "JPG") && isLocal && Number.isFinite(payload.maxSide) && payload.maxSide > 0) {
+      // Local screen capture: size the export by its longest side instead of a fixed scale.
+      var longestSide = Math.max(1, Number(genericExportTarget.width) || 1, Number(genericExportTarget.height) || 1);
+      exportScale = Math.max(0.05, Math.min(2, Math.min(2000, payload.maxSide) / longestSide));
+      exportOptions.constraint = { type: "SCALE", value: exportScale };
+    } else if ((exportFormat === "PNG" || exportFormat === "JPG") && Number.isFinite(payload.scale)) {
+      exportScale = Math.max(0.05, Math.min(1, payload.scale));
+      exportOptions.constraint = { type: "SCALE", value: exportScale };
     }
     var exportBytes = await genericExportTarget.exportAsync(exportOptions);
     if (!(exportBytes instanceof Uint8Array)) throw new Error("Figma did not return encoded bytes for " + exportFormat + ".");
-    if (exportBytes.length > 35000) throw new Error(exportFormat + " export exceeds the safe 35 KB binary response limit; export a smaller node.");
-    var exportBinary = "";
-    for (var exportIndex = 0; exportIndex < exportBytes.length; exportIndex += 1) exportBinary += String.fromCharCode(exportBytes[exportIndex]);
-    var exportBase64 = btoa(exportBinary);
-    if (exportBase64.length > 48000) throw new Error("Encoded export exceeds the safe result envelope.");
+    var maxExportBytes = isLocal ? LOCAL_EXPORT_MAX_BYTES : 35000;
+    if (exportBytes.length > maxExportBytes) throw new Error(exportFormat + " export exceeds the safe " + Math.round(maxExportBytes / 1000) + " KB binary response limit; export a smaller node.");
+    var exportBase64;
+    if (typeof figma.base64Encode === "function") exportBase64 = figma.base64Encode(exportBytes);
+    else {
+      var exportBinary = "";
+      for (var exportIndex = 0; exportIndex < exportBytes.length; exportIndex += 1) exportBinary += String.fromCharCode(exportBytes[exportIndex]);
+      exportBase64 = btoa(exportBinary);
+    }
+    if (!isLocal && exportBase64.length > 48000) throw new Error("Encoded export exceeds the safe result envelope.");
     return { ok: true, operation: "export-node", fileKey: figma.fileKey, pageName: figma.currentPage.name,
-      node: nodeSummary(genericExportTarget), format: exportFormat, byteLength: exportBytes.length, base64: exportBase64 };
+      node: nodeSummary(genericExportTarget), format: exportFormat, scale: exportScale, byteLength: exportBytes.length, base64: exportBase64 };
   }
 
   if (payload.operation === "export-svg") {
@@ -2735,7 +2764,7 @@ async function runCanvasCommand(command) {
   try {
     if (!command || typeof command.commandId !== "string") throw new Error("Invalid canvas command envelope.");
     if (command.action === "read-canvas") result = await readCanvasCommand(command.payload);
-    else if (command.action === "write-canvas") result = await writeCanvasCommand(command.payload);
+    else if (command.action === "write-canvas") result = await writeCanvasCommand(command.payload, { local: command.local === true });
     else throw new Error("Unsupported canvas command action.");
   } catch (error) {
     errorText = error && error.message ? String(error.message).slice(0, 1000) : "Canvas command failed.";

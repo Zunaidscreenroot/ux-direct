@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
-import { figmaAttemptTimeoutMs, figmaModelChain, routedVia, shouldRetryWithoutJsonMode } from "@/src/providers/active-chat-provider";
+import { figmaAttemptTimeoutMs, figmaModelChain, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 
 export const runtime = "nodejs";
@@ -69,7 +69,7 @@ const PatchSchema = z.object({
 }).strict().refine((value) => Object.values(value).some((entry) => entry !== undefined), { message: "Empty patch." });
 
 function safeImage(value: unknown): string | null {
-  if (typeof value !== "string" || value.length > 52000) return null;
+  if (typeof value !== "string" || value.length > RENDERED_IMAGE_MAX_CHARS) return null;
   return /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value) ? value : null;
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -119,8 +119,8 @@ export async function POST(request: Request) {
       summary: z.string().optional(),
     }).passthrough(),
     outputCanvas: z.unknown(),
-    sourceImage: z.string().max(52000).nullable().optional(),
-    outputImage: z.string().max(52000).nullable().optional(),
+    sourceImage: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional(),
+    outputImage: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional(),
     iteration: z.number().int().min(1).max(2),
   }).strict().safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Refinement input is invalid.", details: parsed.error.issues }, { status: 400, headers });
@@ -148,6 +148,7 @@ export async function POST(request: Request) {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", Accept: "application/json",
+            ...figmaRoutingHeaders(activeProvider),
           ...(activeProvider.id === "openrouter" ? { "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Design Refiner" } : {}) },
         body: JSON.stringify({
           model,
@@ -176,7 +177,7 @@ export async function POST(request: Request) {
           temperature: 0.1,
           // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
           ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
-          max_tokens: 3200,
+          ...figmaMaxTokens(activeProvider, 3200),
           ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
         }),
         cache: "no-store",
