@@ -74,3 +74,13 @@ These projects are research references. This implementation uses the existing Ty
 - Shared memory is used through retrieval on later tasks, so this is persistent product memory/RAG—not fine-tuning model weights. Current task requirements and live Figma evidence always override stored lessons. Mock-mode plans do not create task-derived lessons because no learning-capable model inference ran.
 
 - Main UX Direct chat can emit a bounded private learning marker in the same assistant response. The server validates the compact candidate, strips the marker from the SSE stream before it reaches the user, and persists only the normalized rule. Explicit coaching continues to use the existing coaching path; duplicates are skipped.
+
+## Model-agnostic Figma output
+
+FreeLLMAPI `auto` may route a Figma task to any free model. To keep output the same whichever model answers:
+
+- **Theme lock** (`src/figma-agent/spec-consistency.ts`): the palette comes from the selected source frame; model-chosen colours/radius are ignored unless the prompt asks for a restyle (colour, theme, dark mode, brand, रंग…).
+- **Low temperature** for every FreeLLMAPI request (0.2, retry 0.1); dropped automatically if the upstream rejects optional params.
+- **Content repair**: if a spec only fails because it dropped source text, the missing strings are restored in a "More details" card (≤3 immediately; 4–10 kept as a fallback after one retry).
+- **Verified examples**: each run stores its block spec in `uxd_task_runs.plan`. Specs from runs that passed structural lint (`outcome=verified`) are reduced to structure only (all text → `<source text>`) and added to the prompt as a team example.
+- **Model per run**: `uxd_task_runs.metadata.model` is the upstream model `auto` used, with per-attempt results. `GET /api/brain/model-stats` (brain auth) shows runs/verified/failed/avg quality per model.
