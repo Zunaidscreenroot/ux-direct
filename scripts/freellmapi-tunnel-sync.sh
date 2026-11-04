@@ -9,6 +9,15 @@ LOG="${TUNNEL_LOG:-$HOME/Library/Logs/cloudflared-freellmapi.log}"
 STATE="${STATE_FILE:-$HOME/.freellmapi-tunnel-url}"
 WORKER="${WORKER_NAME:-ux-direct}"
 
+# Watchdog: Cloudflare deletes a quick tunnel while the Mac sleeps, and cloudflared then
+# retries "Tunnel not found" forever without exiting. Restart it to get a fresh URL;
+# the next run syncs that URL.
+if tail -n 20 "$LOG" 2>/dev/null | grep -q "Tunnel not found"; then
+  launchctl kickstart -k "gui/$(id -u)/${TUNNEL_AGENT:-com.freellmapi.cloudflared}" || true
+  echo "$(date) tunnel not found; restarted cloudflared"
+  exit 0
+fi
+
 url=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$LOG" 2>/dev/null | tail -1 || true)
 [ -n "$url" ] || exit 0
 base="$url/v1"
