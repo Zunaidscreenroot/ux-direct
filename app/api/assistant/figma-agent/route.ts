@@ -132,7 +132,7 @@ const ElementSchema: z.ZodTypeAny = z.lazy(() =>
       }
     })
 );
-const PlanSchema = z.object({
+const PlanObjectSchema = z.object({
   summary: z.string().trim().min(8).max(700),
   frame: z.object({
     name: z.string().trim().min(1).max(80),
@@ -150,8 +150,14 @@ const PlanSchema = z.object({
     primaryAxisSizingMode: z.enum(["AUTO", "FIXED"]),
     counterAxisSizingMode: z.enum(["AUTO", "FIXED"]),
   }).strict(),
-  elements: z.array(ElementSchema).min(3).max(8),
-}).strict().superRefine((plan, ctx) => {
+  elements: z.array(ElementSchema).min(1).max(8),
+}).strict();
+/**
+ * rich: the richness floor (3+ sections, 18+ nodes, 6+ texts) for model-authored layer trees.
+ * Block-rendered plans get their structure from code and their content check from the quality
+ * audit, so a small source screen must not be rejected for being small.
+ */
+function checkPlanShape(plan: z.infer<typeof PlanObjectSchema>, ctx: z.RefinementCtx, rich: boolean) {
   let totalNodes = 0;
   let namedContainers = 0;
   let invalidChildType = false;
@@ -167,13 +173,16 @@ const PlanSchema = z.object({
     }
   };
   count(plan.elements as unknown[]);
+  if (rich && plan.elements.length < 3) {
+    ctx.addIssue({ code: "custom", path: ["elements"], message: "Use 3–8 top-level FRAME sections." });
+  }
   if (plan.elements.some((element) => (element as Record<string, unknown>).type !== "FRAME")) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Top-level design sections must be named FRAME containers." });
   }
-  if (namedContainers < 4) {
+  if (rich && namedContainers < 4) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Use at least four meaningful FRAME containers with nested native layers." });
   }
-  if (totalNodes < 18) {
+  if (rich && totalNodes < 18) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Design hierarchy is too sparse; include enough native components and content layers." });
   }
   const textNodes: Record<string, unknown>[] = [];
@@ -205,10 +214,10 @@ const PlanSchema = z.object({
   const meaningfulText = textNodes.filter(node => typeof node.text === "string" &&
     String(node.text).trim().length >= 2 &&
     !/^(rectangle|frame|text|ellipse|line|container|section|placeholder|sample text)$/i.test(String(node.text).trim()));
-  if (textNodes.length < 6 || meaningfulText.length < 5) {
+  if (rich ? textNodes.length < 6 || meaningfulText.length < 5 : meaningfulText.length < 1) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Design needs more meaningful native text content; placeholders or mostly decorative shapes are not sufficient." });
   }
-  const decorativeDominance = totalNodes > 0 && textNodes.length / totalNodes < 0.22;
+  const decorativeDominance = rich && totalNodes > 0 && textNodes.length / totalNodes < 0.22;
   if (decorativeDominance) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Design is too shape-heavy relative to its meaningful content. Add labels, values, and task-specific detail." });
   }
@@ -218,7 +227,9 @@ const PlanSchema = z.object({
   if (invalidChildType) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Nested children must belong to FRAME containers." });
   }
-});
+}
+const PlanSchema = PlanObjectSchema.superRefine((plan, ctx) => checkPlanShape(plan, ctx, true));
+const BlockPlanSchema = PlanObjectSchema.superRefine((plan, ctx) => checkPlanShape(plan, ctx, false));
 
 type CanvasNode = {
   id?: string; name?: string; type?: string; x?: number; y?: number;
@@ -652,7 +663,7 @@ export async function POST(request: Request) {
       }
       planInput = expansion.plan;
     }
-    const parsedPlan = PlanSchema.safeParse(normalizePlan(planInput, canvas, { trustedSections: blockSpec !== null }));
+    const parsedPlan = (blockSpec ? BlockPlanSchema : PlanSchema).safeParse(normalizePlan(planInput, canvas, { trustedSections: blockSpec !== null }));
     if (!parsedPlan.success) {
       const issues = parsedPlan.error.issues.slice(0, 4)
         .map((issue) => issue.path.join(".") + " " + issue.message).join("; ");
@@ -996,7 +1007,8 @@ export async function POST(request: Request) {
     if (sourceSpec) {
       const stabilized = stabilizeBlockSpec(sourceSpec, canvas, parsedInput.data.prompt);
       const candidate = renderCandidate(stabilized.spec);
-      if (candidate.stage === "ok") {
+      // The fallback is the source's own content, so a subjective quality finding must not block it.
+      if (candidate.plan && (candidate.stage === "ok" || candidate.stage === "quality")) {
         attemptLog.push({ model: "source-fallback", result: "passed" });
         return respond({ candidate, spec: stabilized.spec, learningCandidate: null, servedModel: "source-fallback",
           isRecovery: true, finishReason: "fallback", modelIndex: models.length - 1, themeLocked: stabilized.themeLocked,

@@ -307,3 +307,18 @@ test("source fallback rebuilds the screen natively with every source text", () =
   const normalized = normalizePlan(result.plan, canvas, { trustedSections: true });
   assert.equal(auditDesignPlanQuality(normalized as never, canvas, "improve this screen").passed, true);
 });
+
+test("source fallback still renders a tiny source screen", () => {
+  const canvas = { nodes: [{ name: "Tiny", type: "FRAME", width: 360, height: 400, fillColors: ["#FFFFFF"], children: [
+    { name: "Title", type: "TEXT", text: "Upcoming EMI" },
+    { name: "Amount", type: "TEXT", text: "₹10,000" },
+  ] }], components: [] };
+  const spec = sourceFallbackSpec(canvas)!;
+  const result = expandBlockSpec(spec, canvas);
+  assert.deepEqual(result.errors, []);
+  const normalized = normalizePlan(result.plan, canvas, { trustedSections: true }) as { elements: N[] };
+  assert.ok(normalized.elements.length >= 1);
+  const texts: string[] = [];
+  walk(normalized.elements, (node) => { if (node.type === "TEXT") texts.push(String(node.text)); });
+  assert.deepEqual(texts.sort(), ["Upcoming EMI", "₹10,000"].sort());
+});
