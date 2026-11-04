@@ -1633,6 +1633,33 @@ async function writeCanvasCommand(payload, options) {
       return false;
     }
   }
+  async function createInstanceFallbackFrame(spec) {
+    var frame = figma.createFrame();
+    frame.layoutMode = "HORIZONTAL";
+    frame.itemSpacing = 12;
+    frame.paddingTop = 12; frame.paddingBottom = 12; frame.paddingLeft = 16; frame.paddingRight = 16;
+    frame.counterAxisAlignItems = "CENTER";
+    frame.fills = [];
+    var values = [];
+    [spec.textOverrides, spec.instanceProperties].forEach(function (source) {
+      if (!source || typeof source !== "object") return;
+      Object.keys(source).forEach(function (key) {
+        var value = source[key];
+        if (typeof value === "string" && value.trim() && !/^(true|false)$/i.test(value) && values.indexOf(value) < 0 &&
+            !/^(default|inner|primary|secondary|on|off|small|medium|large|property \d+)$/i.test(value.trim())) values.push(value);
+      });
+    });
+    var font = { family: "Inter", style: "Semi Bold" };
+    try { await figma.loadFontAsync(font); } catch (_) { font = { family: "Inter", style: "Regular" }; await figma.loadFontAsync(font); }
+    for (var v = 0; v < values.length && v < 6; v++) {
+      var text = figma.createText();
+      text.fontName = font;
+      text.fontSize = 16;
+      text.characters = values[v].slice(0, 500);
+      frame.appendChild(text);
+    }
+    return frame;
+  }
   async function applyInstanceTextOverrides(instance, overrides) {
     if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) return 0;
     var applied = 0;
@@ -1769,7 +1796,16 @@ async function writeCanvasCommand(payload, options) {
       else if (type === "STAR") node = figma.createStar();
       else if (type === "SLICE") node = figma.createSlice();
       else if (type === "VECTOR") node = figma.createVector();
-      else if (type === "INSTANCE") node = (await resolveComponentForInstance(spec.componentId, "create-elements INSTANCE")).createInstance();
+      else if (type === "INSTANCE") {
+        try {
+          node = (await resolveComponentForInstance(spec.componentId, "create-elements INSTANCE")).createInstance();
+        } catch (instanceError) {
+          // A missing/unpublished component must not abort the design: keep its text as native layers.
+          node = await createInstanceFallbackFrame(spec);
+          type = "FRAME";
+          spec = Object.assign({}, spec, { type: "FRAME", instanceProperties: undefined, textOverrides: undefined });
+        }
+      }
       else throw new Error("Unsupported element type: " + String(type));
       node.name = spec.name.trim().slice(0, 80);
       // Marks layers UX Direct created so "revert" may delete them and nothing else.
@@ -1835,8 +1871,8 @@ async function writeCanvasCommand(payload, options) {
           if (value === undefined || !(property in node)) return;
           try { node[property] = value; }
           catch (layoutError) {
-            throw new Error("Figma rejected " + property + "=" + value + " for " + node.name +
-              " inside Auto Layout " + parent.name + ": " + String(layoutError && layoutError.message || layoutError).slice(0, 180));
+            // An impossible FILL/HUG must not abort the design; keep the node at its planned fixed size.
+            if (value !== "FIXED") { try { node[property] = "FIXED"; } catch (_) {} }
           }
         });
       }

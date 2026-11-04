@@ -1583,8 +1583,12 @@
       taskRetrieval = payload.retrieval && typeof payload.retrieval === "object" ? payload.retrieval : null;
       learningCandidate = payload.learningCandidate || null;
       const planNodeCount = countPlanNodes(plan.elements);
-      if (plan.elements.length < 3 || plan.elements.length > 8 || planNodeCount < 18 || planNodeCount > 80) {
-        throw new Error("The proposed design plan must contain 3–8 meaningful top-level sections and 18–80 native layers. No canvas changes were made.");
+      // Block-rendered plans are built by the backend renderer, so a small source screen may need
+      // fewer sections/layers; model-authored layer trees keep the richness floor.
+      const blockRendered = payload.planFormat === "blocks";
+      const minSections = blockRendered ? 1 : 3, minNodes = blockRendered ? 2 : 18;
+      if (plan.elements.length < minSections || plan.elements.length > 8 || planNodeCount < minNodes || planNodeCount > 80) {
+        throw new Error("The proposed design plan must contain " + minSections + "–8 top-level sections and " + minNodes + "–80 native layers. No canvas changes were made.");
       }
       const memory = payload.brain && payload.brain.status === "complete"
         ? String(payload.brain.memories || 0) + " memories and " + String(payload.brain.knowledgeChunks || 0) + " Knowledge Base chunks retrieved"

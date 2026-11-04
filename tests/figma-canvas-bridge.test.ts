@@ -162,8 +162,8 @@ test("in-Figma design agent retrieves approved brain context and validates nativ
   assert.equal(modelPolicy.includes("only:"), false);
   assert.equal(modelPolicy.includes("allow_fallbacks"), false);
   assert.ok(agent.includes('response_format: { type: "json_object" }'), "The design agent must request structured output.");
-  assert.ok(agent.includes('PlanSchema.safeParse('), "The provider plan must be schema-validated before canvas execution.");
-  assert.ok(agent.includes('elements: z.array(ElementSchema).min(3).max(8)'), "Top-level design sections must be bounded without forcing filler groups.");
+  assert.ok(agent.includes('PlanSchema).safeParse('), "The provider plan must be schema-validated before canvas execution.");
+  assert.ok(agent.includes('elements: z.array(ElementSchema).min(1).max(8)') && agent.includes('if (rich && plan.elements.length < 3)'), "Top-level design sections must be bounded (3–8 for model trees) without forcing filler groups.");
   assert.ok(agent.includes("Progress indicators must preserve their meaning"), "First-pass generation must preserve progress-ring semantics.");
   assert.ok(agent.includes("innerRadius about 0.68–0.8"), "Generation must support editable native progress arcs.");
   assert.ok(agent.includes("Top-level design sections must be named FRAME containers"), "Design plans must include semantic frame groups.");
@@ -203,7 +203,7 @@ test("Figma agent normalizes provider-native design fields and uses the requeste
   assert.equal(agent.includes("provider: ANTHROPIC_OPENROUTER_PROVIDER"), false, "Model requests must not be provider filtered.");
 
   assert.ok(agent.includes("planInput = expansion.plan;"), "Block specs must be rendered before normalization and validation.");
-  assert.ok(agent.includes('PlanSchema.safeParse(normalizePlan(planInput, canvas, { trustedSections: blockSpec !== null }))'), "Native plan schema validation must remain mandatory.");
+  assert.ok(agent.includes('(blockSpec ? BlockPlanSchema : PlanSchema).safeParse(normalizePlan(planInput, canvas, { trustedSections: blockSpec !== null }))'), "Native plan schema validation must remain mandatory.");
 });
 
 test("connection panel exposes an expandable native Figma health-check report", () => {
@@ -468,4 +468,12 @@ test("Figma agent retries a transient provider error once and falls back to the 
   assert.ok(agent.includes("transientRetried = true;") && agent.includes("recoveryAttempt -= 1;"), "A 5xx must get one same-mode retry before the compact prompt.");
   assert.ok(agent.includes("sourceFallbackSpec(canvas)") && agent.includes("sourceFallback: true"), "A total model failure must fall back to the source layout.");
   assert.ok(agent.includes("candidate.blockSpec && !success.sourceFallback ? success.spec : null"), "Fallback specs must never become verified examples.");
+});
+
+test("block-rendered plans skip the model richness floor in the route and the plugin", () => {
+  const agent = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
+  const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
+  assert.ok(agent.includes("(blockSpec ? BlockPlanSchema : PlanSchema).safeParse("), "Block plans must use the relaxed schema.");
+  assert.ok(agent.includes('candidate.plan && (candidate.stage === "ok" || candidate.stage === "quality")'), "The source fallback must not be blocked by subjective quality findings.");
+  assert.ok(ui.includes('const minSections = blockRendered ? 1 : 3, minNodes = blockRendered ? 2 : 18;'), "The plugin must accept small block-rendered plans.");
 });
