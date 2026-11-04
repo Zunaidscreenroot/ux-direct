@@ -127,6 +127,63 @@ export function resolveTheme(raw: unknown, sourceBackground: string | null): Blo
 }
 
 // ---------------------------------------------------------------------------
+// Source design-system tokens
+// ---------------------------------------------------------------------------
+
+type SourceText = { size: number; weight: string; color: string | null; textStyleId: string | null };
+type SourceHeader = { componentId: string; name: string; height: number; instanceProperties?: Record<string, string | boolean>; textOverrides?: Record<string, string> };
+/** What the selected source screen already uses: its type scale, text styles and header component. */
+export type SourceTokens = { sizes: number[]; texts: SourceText[]; header: SourceHeader | null };
+
+function isBoldWeight(weight: string): boolean {
+  return /semi|bold|black|heavy|extra/i.test(weight);
+}
+
+export function collectSourceTokens(canvas: Record<string, unknown>, componentIds: Set<string>): SourceTokens {
+  const texts: SourceText[] = [];
+  const seen = new Set<string>();
+  const root = asRec(arr(canvas.nodes)[0]);
+  const walk = (node: Rec, insideInstance: boolean, depth: number) => {
+    if (depth > 8 || texts.length >= 60) return;
+    // Text inside instances belongs to the component, not the screen's own type scale.
+    if (node.type === "TEXT" && !insideInstance && typeof node.fontSize === "number" && Number.isFinite(node.fontSize)) {
+      const weight = clean(node.fontStyle, 40) || "Regular";
+      const color = Array.isArray(node.fillColors) ? hex(node.fillColors[0]) : null;
+      const textStyleId = typeof node.textStyleId === "string" && node.textStyleId ? node.textStyleId : null;
+      const key = [node.fontSize, weight, color, textStyleId].join("|");
+      if (!seen.has(key)) { seen.add(key); texts.push({ size: Math.round(node.fontSize), weight, color, textStyleId }); }
+    }
+    for (const child of arr(node.children)) {
+      const rec = asRec(child);
+      if (rec) walk(rec, insideInstance || node.type === "INSTANCE", depth + 1);
+    }
+  };
+  if (root) walk(root, false, 0);
+
+  let header: SourceHeader | null = null;
+  const first = root ? asRec(arr(root.children)[0]) : null;
+  const rootWidth = root && typeof root.width === "number" ? root.width : 0;
+  if (first && first.type === "INSTANCE" && typeof first.mainComponentId === "string" && componentIds.has(first.mainComponentId) &&
+      typeof first.width === "number" && rootWidth > 0 && first.width >= rootWidth * 0.9 &&
+      (typeof first.y !== "number" || first.y <= 8) && typeof first.height === "number" && first.height <= 140) {
+    const props = asRec(first.componentProperties);
+    const instanceProperties = props ? Object.fromEntries(Object.entries(props)
+      .filter((e): e is [string, string | boolean] => typeof e[1] === "string" || typeof e[1] === "boolean").slice(0, 20)) : {};
+    const textOverrides: Record<string, string> = {};
+    const collect = (node: Rec, depth: number) => {
+      if (depth > 6) return;
+      if (node.type === "TEXT" && typeof node.name === "string" && typeof node.text === "string" && node.text.trim()) textOverrides[node.name.slice(0, 120)] = node.text.slice(0, 500);
+      for (const child of arr(node.children)) { const rec = asRec(child); if (rec) collect(rec, depth + 1); }
+    };
+    collect(first, 0);
+    header = { componentId: first.mainComponentId, name: clean(first.name, 80) || "Screen header", height: Math.max(24, Math.round(first.height)),
+      ...(Object.keys(instanceProperties).length ? { instanceProperties } : {}),
+      ...(Object.keys(textOverrides).length ? { textOverrides } : {}) };
+  }
+  return { sizes: [...new Set(texts.map((t) => t.size))].sort((a, b) => a - b), texts, header };
+}
+
+// ---------------------------------------------------------------------------
 // Native node builders
 // ---------------------------------------------------------------------------
 
@@ -158,18 +215,44 @@ function label(value: string, fallback: string): string {
 class Builder {
   count = 0;
   warnings: string[] = [];
-  constructor(readonly theme: BlockTheme) {}
+  /** The reused source header instance, so expandBlockSpec can place it full-bleed. */
+  headerNode: NativeNode | null = null;
+  constructor(readonly theme: BlockTheme, readonly source: SourceTokens | null = null) {}
+
+  /**
+   * Snap a requested size to the source type scale (within 2px) and adopt the matching source
+   * text's weight, colour and text style, so variations reuse the screen's typography.
+   */
+  private sourceType(name: string, size: number, weight: string, color: string) {
+    const src = this.source;
+    if (!src || !src.texts.length) return { size, weight, color, textStyleId: null as string | null };
+    const nearest = src.sizes.reduce((best, s) => Math.abs(s - size) < Math.abs(best - size) ? s : best, src.sizes[0]);
+    const snapped = Math.abs(nearest - size) <= 2 ? nearest : size;
+    const same = src.texts.filter((t) => t.size === snapped);
+    const bold = isBoldWeight(weight);
+    const exact = (styled: boolean) => same.find((t) => t.weight === weight && (!styled || !!t.textStyleId));
+    const sameClass = (styled: boolean) => same.find((t) => isBoldWeight(t.weight) === bold && (!styled || !!t.textStyleId));
+    const titleLike = /title|heading/i.test(name);
+    const match = titleLike
+      ? exact(true) ?? sameClass(true) ?? exact(false) ?? sameClass(false)
+      : exact(true) ?? exact(false) ?? sameClass(true) ?? sameClass(false);
+    if (!match) return { size: snapped, weight, color, textStyleId: null };
+    const neutral = color === this.theme.text || color === this.theme.muted;
+    return { size: snapped, weight: match.weight, color: neutral && match.color ? match.color : color, textStyleId: match.textStyleId };
+  }
 
   text(name: string, value: string, width: number, opts: TextOpts): NativeNode {
     this.count += 1;
-    const size = opts.size ?? 14;
+    const type = this.sourceType(name, opts.size ?? 14, opts.weight ?? "Regular", opts.color);
+    const size = type.size;
     const natural = textWidth(value, size);
     const hug = opts.hug === true && natural <= width;
     const w = hug ? natural : Math.max(1, Math.floor(width));
     return {
       type: "TEXT", name: label(value, name), x: 0, y: 0, width: w, height: textHeight(value, size, w),
-      text: value, fontSize: size, fontFamily: FONT, fontStyle: opts.weight ?? "Regular",
-      color: ensureContrast(opts.color, opts.bg),
+      text: value, fontSize: size, fontFamily: FONT, fontStyle: type.weight,
+      color: ensureContrast(type.color, opts.bg),
+      ...(type.textStyleId ? { textStyleId: type.textStyleId } : {}),
       textAlignHorizontal: opts.align ?? "LEFT",
       textAutoResize: hug ? "WIDTH_AND_HEIGHT" : "HEIGHT",
       layoutSizingHorizontal: hug ? "HUG" : "FILL",
@@ -336,6 +419,17 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
   const W = Math.max(40, Math.floor(width));
   switch (type) {
     case "app_bar": {
+      // The source screen's own header component wins over a hand-drawn app bar.
+      const header = b.source?.header;
+      if (header && !b.headerNode && depth <= 1) {
+        b.count += 1;
+        const node: NativeNode = { type: "INSTANCE", name: header.name, componentId: header.componentId, x: 0, y: 0, width: W, height: header.height,
+          layoutSizingHorizontal: "FILL",
+          ...(header.instanceProperties ? { instanceProperties: { ...header.instanceProperties } } : {}),
+          ...(header.textOverrides ? { textOverrides: { ...header.textOverrides } } : {}) };
+        b.headerNode = node;
+        return node;
+      }
       const title = clean(block.title ?? block.text, 120);
       if (!title) return null;
       const left: NativeNode[] = [];
@@ -809,7 +903,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   const rawFrame = asRec(spec.frame) ?? {};
   const theme = resolveTheme(spec.theme ?? rawFrame.theme, hex(rawFrame.backgroundColor) ?? sourceFill);
   const componentIds = new Set(arr(canvas.components).map((c) => asRec(c)?.id).filter((id): id is string => typeof id === "string"));
-  const b = new Builder(theme);
+  const b = new Builder(theme, collectSourceTokens(canvas, componentIds));
   const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds };
 
   const sourceWidth = typeof source.width === "number" ? source.width : 0;
@@ -849,6 +943,26 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   if (sections.length && elements.length < 3) {
     errors.push("Only " + elements.length + " section(s) produced layers; return 3–8 sections with real blocks (split header, main content and actions into their own sections).");
   }
+  // A reused source header sits full-bleed at the top like the source; the other sections keep
+  // their 16px side margins through their own padding, so the plan still has 3–8 framed sections.
+  let rootPad: [number, number, number, number] = [pad, pad, pad, pad];
+  const headerHost = b.headerNode ? elements.findIndex((node) => node === b.headerNode || (node.children?.length === 1 && node.children[0] === b.headerNode)) : -1;
+  if (headerHost === 0 && b.headerNode) {
+    const header = b.headerNode;
+    header.width = frameWidth;
+    const host = elements[0] === header ? b.vstack(header.name + " section", frameWidth, [header]) : elements[0];
+    host.width = frameWidth;
+    elements[0] = host;
+    for (let i = 1; i < elements.length; i += 1) {
+      const node = elements[i];
+      if (node.type === "FRAME" && node.noFill === true && node.layoutMode === "VERTICAL") {
+        node.paddingLeft = pad; node.paddingRight = pad; node.width = frameWidth;
+      } else {
+        elements[i] = b.vstack(node.name + " section", frameWidth, [node], { pad: [0, pad, 0, pad] });
+      }
+    }
+    rootPad = [0, 0, pad, 0];
+  }
   const fitted = fitDepth(elements, 0, b.warnings);
   elements.splice(0, elements.length, ...fitted);
   const nodeCount = countNodes(elements);
@@ -856,7 +970,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     errors.push("The spec expands to " + nodeCount + " native layers, over the " + BLOCK_NODE_BUDGET + "-layer budget. Merge rows into lists, drop decorative blocks, and keep every source text.");
   }
 
-  const contentHeight = pad * 2 + elements.reduce((sum, node) => sum + node.height, 0) + Math.max(0, elements.length - 1) * gap;
+  const contentHeight = rootPad[0] + rootPad[2] + elements.reduce((sum, node) => sum + node.height, 0) + Math.max(0, elements.length - 1) * gap;
   const requestedHeight = typeof rawFrame.height === "number" ? rawFrame.height : sourceHeight || 800;
   const fits = contentHeight <= requestedHeight;
   const frame: Rec = {
@@ -865,7 +979,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     height: Math.round(Math.max(360, Math.min(4096, fits ? requestedHeight : contentHeight))),
     backgroundColor: theme.background,
     layoutMode: "VERTICAL", itemSpacing: gap,
-    paddingLeft: pad, paddingRight: pad, paddingTop: pad, paddingBottom: pad,
+    paddingTop: rootPad[0], paddingRight: rootPad[1], paddingBottom: rootPad[2], paddingLeft: rootPad[3],
     primaryAxisAlignItems: "MIN", counterAxisAlignItems: "MIN",
     primaryAxisSizingMode: fits ? "FIXED" : "AUTO", counterAxisSizingMode: "FIXED",
   };

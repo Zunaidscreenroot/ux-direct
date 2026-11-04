@@ -42,6 +42,11 @@ function collectText(nodes: RecordLike[], output: string[] = [], depth = 0): str
         if (typeof value === "string" && value.trim()) output.push(value.trim().slice(0, 240));
       }
     }
+    if (node.type === "INSTANCE" && node.textOverrides && typeof node.textOverrides === "object" && !Array.isArray(node.textOverrides)) {
+      for (const value of Object.values(node.textOverrides as Record<string, unknown>)) {
+        if (typeof value === "string" && value.trim()) output.push(value.trim().slice(0, 240));
+      }
+    }
     collectText(childrenOf(node), output, depth + 1);
   }
   return output;

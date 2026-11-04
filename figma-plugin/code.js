@@ -1127,7 +1127,10 @@ function summarizeCanvasNode(node, depth, state) {
   if ("effects" in node && Array.isArray(node.effects) && node.effects.length) {
     out.effectTypes = node.effects.slice(0, 4).map(function (effect) { return effect.type; });
   }
+  if (node.type === "INSTANCE" && Array.isArray(state.instances) && state.instances.length < 40) state.instances.push([node, out]);
   if (node.type === "TEXT" && typeof node.characters === "string") {
+    // Source text styles (often library styles) let generated variations reuse the design system.
+    try { if (typeof node.textStyleId === "string" && node.textStyleId) out.textStyleId = node.textStyleId; } catch (_) {}
     out.text = node.characters.slice(0, 700);
     out.textTruncated = node.characters.length > 700;
     if (typeof node.fontSize === "number") out.fontSize = node.fontSize;
@@ -1175,12 +1178,23 @@ async function readCanvasCommand(payload) {
   } else {
     source = scope === "current-page" ? figma.currentPage.children : figma.currentPage.selection;
   }
-  var state = { count: 0, maxNodes: maxNodes, truncated: false, collapseInstances: payload.collapseInstances === true };
+  var state = { count: 0, maxNodes: maxNodes, truncated: false, collapseInstances: payload.collapseInstances === true, instances: [] };
   var nodes = [];
   for (var i = 0; i < source.length; i++) {
     if (state.count >= state.maxNodes) { state.truncated = true; break; }
     var item = summarizeCanvasNode(source[i], isSearch ? 0 : maxDepth, state);
     if (item) nodes.push(item);
+  }
+  // dynamic-page access forbids the sync mainComponent getter; resolve instance sources async.
+  for (var k = 0; k < state.instances.length; k++) {
+    try {
+      var main = await state.instances[k][0].getMainComponentAsync();
+      if (main) {
+        var owner = main.parent && main.parent.type === "COMPONENT_SET" ? main.parent : main;
+        state.instances[k][1].mainComponentId = owner.id;
+        state.instances[k][1].mainComponentName = String(owner.name).slice(0, 120);
+      }
+    } catch (_) {}
   }
   var result = {
     ok: true, operation: "read-canvas", fileKey: figma.fileKey,
@@ -1580,6 +1594,36 @@ async function writeCanvasCommand(payload) {
     node.fontName = font;
     return font;
   }
+  async function applyTextStyleAsync(node, styleId) {
+    if (node.type !== "TEXT" || typeof styleId !== "string" || !styleId) return false;
+    try {
+      var style = await figma.getStyleByIdAsync(styleId);
+      if (!style || style.type !== "TEXT") return false;
+      await figma.loadFontAsync(style.fontName);
+      if (typeof node.setTextStyleIdAsync === "function") await node.setTextStyleIdAsync(styleId);
+      else node.textStyleId = styleId;
+      return true;
+    } catch (_) {
+      // The literal font/size already match the style; a missing style must not abort the design.
+      return false;
+    }
+  }
+  async function applyInstanceTextOverrides(instance, overrides) {
+    if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) return 0;
+    var applied = 0;
+    var texts = instance.findAll(function (child) { return child.type === "TEXT"; });
+    for (var t = 0; t < texts.length; t++) {
+      var textNode = texts[t];
+      if (!Object.prototype.hasOwnProperty.call(overrides, textNode.name)) continue;
+      var value = overrides[textNode.name];
+      if (typeof value !== "string" || textNode.characters === value) continue;
+      var fonts = textNode.fontName === figma.mixed ? textNode.getRangeAllFontNames(0, textNode.characters.length) : [textNode.fontName];
+      for (var f = 0; f < fonts.length; f++) await figma.loadFontAsync(fonts[f]);
+      textNode.characters = value.slice(0, 5000);
+      applied += 1;
+    }
+    return applied;
+  }
   function applyCreateProperties(node, spec) {
     if (Number.isFinite(spec.opacity) && "opacity" in node) node.opacity = Math.max(0, Math.min(1, spec.opacity));
     if (Number.isFinite(spec.rotation) && "rotation" in node) node.rotation = Math.max(-360, Math.min(360, spec.rotation));
@@ -1606,7 +1650,7 @@ async function writeCanvasCommand(payload) {
     if (Number.isFinite(spec.cornerRadius) && "cornerRadius" in node) node.cornerRadius = Math.max(0, Math.min(512, spec.cornerRadius));
     if (typeof spec.clipsContent === "boolean" && "clipsContent" in node) node.clipsContent = spec.clipsContent;
     if (typeof spec.paintStyleId === "string" && "fillStyleId" in node) node.fillStyleId = spec.paintStyleId;
-    if (typeof spec.textStyleId === "string" && node.type === "TEXT" && "textStyleId" in node) node.textStyleId = spec.textStyleId;
+    // TEXT styles are applied asynchronously by applyTextStyleAsync (dynamic-page safe).
     if (typeof spec.effectStyleId === "string" && "effectStyleId" in node) node.effectStyleId = spec.effectStyleId;
     if (typeof spec.gridStyleId === "string" && "gridStyleId" in node) node.gridStyleId = spec.gridStyleId;
     if (typeof spec.layoutMode === "string" && "layoutMode" in node) node.layoutMode = spec.layoutMode;
@@ -1710,6 +1754,7 @@ async function writeCanvasCommand(payload) {
       // Instances keep their component's intrinsic size unless the plan sets one explicitly.
       if (typeof node.resize === "function" && (type !== "INSTANCE" || Number.isFinite(spec.width) || Number.isFinite(spec.height))) node.resize(width, height);
       if (type === "INSTANCE" && spec.instanceProperties) applyInstanceProperties(node, spec.instanceProperties);
+      if (type === "INSTANCE" && spec.textOverrides) await applyInstanceTextOverrides(node, spec.textOverrides);
       if (type === "VECTOR") {
         if (!Array.isArray(spec.vectorPaths) || spec.vectorPaths.length < 1 || spec.vectorPaths.length > 20) {
           throw new Error("VECTOR elements require 1–20 vectorPaths.");
@@ -1748,6 +1793,7 @@ async function writeCanvasCommand(payload) {
         if (typeof spec.textDecoration === "string") node.textDecoration = spec.textDecoration;
       }
       applyCreateProperties(node, spec);
+      if (type === "TEXT" && typeof spec.textStyleId === "string") await applyTextStyleAsync(node, spec.textStyleId);
       parent.appendChild(node);
 
       var parentLayoutMode = parent && typeof parent.layoutMode === "string" ? parent.layoutMode : "NONE";

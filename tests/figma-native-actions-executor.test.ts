@@ -105,7 +105,14 @@ function createRuntime() {
     if (message.error) throw new Error(message.error);
     return message.result;
   }
-  return { figma, page, write };
+  async function read(payload: Record<string, unknown>) {
+    posted.length = 0;
+    await ui.onmessage({ type: "run-canvas-command", command: { commandId: "cmd-" + nextId, action: "read-canvas", payload } });
+    const message = posted.find((m) => m && m.type === "canvas-command-result");
+    if (message.error) throw new Error(message.error);
+    return message.result;
+  }
+  return { figma, page, write, read };
 }
 
 test("every registry command has a native executor branch", () => {
@@ -225,4 +232,47 @@ test("shared schema enforces required fields for extended actions", () => {
   assert.equal(extendedActionIssues({ operation: "set-fills", nodeId: "1:2", paints: [] }).length, 0);
   assert.equal(NATIVE_REACTION.safeParse({ trigger: "ON_CLICK", action: "NAVIGATE" }).success, false);
   assert.equal(NATIVE_REACTION.safeParse({ trigger: "ON_CLICK", action: "URL", url: "javascript:alert(1)" }).success, false);
+});
+
+test("created TEXT applies source text styles async and INSTANCE applies nested text overrides", async () => {
+  const { figma, page, write } = createRuntime();
+  const style = { id: "S:lib,1:1", type: "TEXT", name: "Body/Base/Regular", fontName: { family: "Inter", style: "Regular" } };
+  figma.getStyleByIdAsync = async (id: string) => (id === style.id ? style : null);
+  const header = makeNode("COMPONENT", { name: "App bar", width: 360, height: 64 });
+  const title = makeNode("TEXT", { name: "Bank statements", characters: "Manage Loan", fontName: { family: "Inter", style: "Bold" } });
+  header.createInstance = () => {
+    const instance = makeNode("INSTANCE", { name: "App bar", width: 360, height: 64 });
+    const copy = makeNode("TEXT", { name: title.name, characters: title.characters, fontName: title.fontName });
+    instance.appendChild(copy);
+    instance.findAll = (predicate: (n: MockNode) => boolean) => { const out: MockNode[] = []; walk(instance, (n) => { if (n !== instance && predicate(n)) out.push(n); }); return out; };
+    return instance;
+  };
+  const screen = makeNode("FRAME", { name: "Screen", layoutMode: "VERTICAL" });
+  page.appendChild(header); page.appendChild(screen);
+  await write({ operation: "create-elements", target: "node", parentNodeId: screen.id, elements: [
+    { type: "INSTANCE", name: "Screen header", componentId: header.id, textOverrides: { "Bank statements": "Personal Loan" } },
+    { type: "TEXT", name: "Row label", text: "Loan product", fontSize: 14, textStyleId: style.id },
+    { type: "TEXT", name: "Other", text: "Credit limit", fontSize: 14, textStyleId: "S:missing" },
+  ] });
+  assert.equal(screen.children[0].children[0].characters, "Personal Loan");
+  assert.equal(screen.children[1].textStyleId, style.id, "the source library text style is applied");
+  assert.equal(screen.children[2].characters, "Credit limit", "an unknown style does not abort the render");
+});
+
+test("read-canvas reports text style ids and the main component of instances", async () => {
+  const { page, read } = createRuntime();
+  const set = makeNode("COMPONENT_SET", { name: "App bar" });
+  const variant = makeNode("COMPONENT", { name: "Property 1=Inner" });
+  set.appendChild(variant);
+  const instance = makeNode("INSTANCE", { name: "Screen header" });
+  instance.getMainComponentAsync = async () => variant;
+  const text = makeNode("TEXT", { name: "Label", characters: "Loan product", fontSize: 14, fontName: { family: "Inter", style: "Regular" }, textStyleId: "S:lib,1:1" });
+  const screen = makeNode("FRAME", { name: "Screen" });
+  screen.appendChild(instance); screen.appendChild(text);
+  page.appendChild(set); page.appendChild(screen);
+  page.selection = [screen];
+  const result = await read({ scope: "selection", maxDepth: 3 });
+  const [headerOut, textOut] = result.nodes[0].children;
+  assert.equal(headerOut.mainComponentId, set.id, "variants report their component set so it matches the catalogue");
+  assert.equal(textOut.textStyleId, "S:lib,1:1");
 });
