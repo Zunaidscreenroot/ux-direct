@@ -5,7 +5,7 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runHygieneCheck, contrastRatio, formatHygieneReport } from "../src/figma-agent/hygiene-check";
-import { normalizeTextEdits } from "../src/figma-agent/text-tasks";
+import { deterministicLayerNames, normalizeTextEdits } from "../src/figma-agent/text-tasks";
 import { normalizeUxAudit } from "../src/figma-agent/ux-audit-review";
 import { enrichImagePrompt, targetImageSize } from "../src/figma-agent/image-services";
 
@@ -36,6 +36,9 @@ test("quick-task classifier routes Figma-agent style requests", () => {
   assert.equal(classify("rewrite the copy in this card to sound friendlier", frame).kind, "rewrite-text");
   assert.equal(classify("translate this screen to Hindi", frame).kind, "rewrite-text");
   assert.equal(classify("change the text colour to blue", texts), null, "style edits stay on the native action path");
+  assert.equal(classify("make text white", { selectionTypes: ["TEXT"] }), null, "colour edits are not copy rewrites");
+  assert.equal(classify("make this bold and bigger", { selectionTypes: ["TEXT"] }), null);
+  assert.equal(classify("make this shorter", { selectionTypes: ["TEXT"] }).kind, "rewrite-text");
   assert.equal(classify("rename layers", frame).kind, "rename-layers");
   assert.equal(classify("do a UX audit of this flow", { selectionTypes: ["FRAME", "FRAME", "FRAME"] }).kind, "ux-audit");
   assert.equal(classify("run a hygiene check: auto layout, padding, consistency", frame).kind, "hygiene");
@@ -102,6 +105,34 @@ test("hygiene check finds manual stacks, spacing drift, naming, contrast and tou
   assert.equal(clean.issues.length, 0);
   assert.equal(clean.score, 100);
   assert.ok(Math.abs(contrastRatio("#000000", "#FFFFFF")! - 21) < 0.01);
+});
+
+test("make text white routes to the native action path", () => {
+  const match = /function isDirectCanvasActionPrompt\(prompt\) \{[\s\S]*?\n    \}\n/.exec(ui);
+  assert.ok(match);
+  const sandbox: Record<string, any> = {};
+  runInNewContext(match[0] + "\nthis.f = isDirectCanvasActionPrompt;", sandbox);
+  assert.equal(sandbox.f("make text white"), true);
+  assert.equal(sandbox.f("turn the button blue"), true);
+  assert.equal(sandbox.f("make a dark mode version of this screen"), false);
+});
+
+test("text edits accept refs, bare arrays, maps and single answers", () => {
+  const items = [{ id: "123:4567;89:10", type: "TEXT", name: "Title", text: "Hi" }, { id: "2:2", type: "TEXT", name: "Body", text: "Old" }];
+  assert.deepEqual(normalizeTextEdits("rewrite", { updates: [{ ref: "t1", text: "Hello" }] }, items).map((e) => e.id), ["123:4567;89:10"]);
+  assert.deepEqual(normalizeTextEdits("rewrite", {}, items, '```json\n[{"ref":"t2","text":"New"}]\n```').map((e) => e.value), ["New"]);
+  assert.deepEqual(normalizeTextEdits("rewrite", { t1: "Hey", t2: { text: "Body copy" } }, items).map((e) => e.value), ["Hey", "Body copy"]);
+  assert.deepEqual(normalizeTextEdits("rewrite", { result: [{ layer: "Body", new_text: "Fresh" }] }, items).map((e) => e.value), ["Fresh"]);
+  assert.deepEqual(normalizeTextEdits("rewrite", { text: "Only one" }, [items[0]]).map((e) => e.value), ["Only one"]);
+});
+
+test("rename falls back to rule-based names for default-named layers", () => {
+  const names = deterministicLayerNames([
+    { id: "1", type: "FRAME", name: "Frame 12", hint: "text: Pay ₹10,000 size: 340x48" },
+    { id: "2", type: "VECTOR", name: "Vector", hint: "size: 24x24" },
+    { id: "3", type: "FRAME", name: "Header", hint: "text: Hi" },
+  ]);
+  assert.deepEqual(names.map((e) => e.value), ["Pay ₹10,000 Button", "Icon"]);
 });
 
 test("text edits keep only real changes to known layers", () => {

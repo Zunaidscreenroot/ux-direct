@@ -974,6 +974,11 @@
         !/\b(?:the|this|selected|existing)\s+(?:text|label|title|copy|value|fill|color|stroke|font|size|position|spacing|padding|layout|alignment|background|corner radius|shadow|constraint|variable|icon|button|image|layer|node|component|page|style|token)\b/i.test(text) &&
         !/\b(?:rename|recolor|resize|move|align|reposition|replace|rewrite|set|apply|insert|attach|delete|remove|clone|duplicate|group|ungroup|reorder|wrap|bind|swap|detach|flatten|export|create page|rename page|switch to page|make component|create component|create variant|create variables?|bind variable|apply style|auto.?layout|hug|fill|stroke|padding|letter.?spacing|line.?height)\b/i.test(text);
       if (broadDesignIntent) return false;
+      // "make text white", "turn the button blue", "make the title bold": one property change on the selection.
+      const visualPropertyEdit = /\b(make|turn|change|set|give|colou?r)\b/i.test(text) &&
+        /\b(white|black|gr[ae]y|red|green|blue|yellow|orange|purple|pink|bold|semi-?bold|italic|underlined?|bigger|smaller|larger|upper ?case|lower ?case|transparent|rounded|#[0-9a-f]{3,8})\b/i.test(text) &&
+        !/\b(screen|screens|flow|page|variation|version|mode|theme|wireframe)\b/i.test(text);
+      if (visualPropertyEdit) return true;
 
       const explicitNativeOperation = /\b(edit|update|rewrite|replace|rename|recolor|restyle|resize|move|align|reposition|set|apply|insert|attach|delete|remove|clone|duplicate|group|ungroup|reorder|wrap|bind|swap|detach|flatten|export|switch|open)\b/i.test(text);
       const directTarget = /\b(text|label|title|copy|value|fill|color|stroke|font|size|position|spacing|padding|layout|alignment|background|corner radius|shadow|constraint|variable|icon|button|image|photo|logo|layer|node|component|variant|page|frame|selection|canvas|style|token|auto.?layout|hug|fill|text range|line height|letter spacing)\b/i.test(text);
@@ -1811,7 +1816,8 @@
       const frames = types.filter(function (type) { return containerTypes.includes(type); }).length;
       if (variationWord && frames >= 2 && frames === count) return { kind: "flow-variations", count: 1 };
       if (variationWord && frames === 1 && count === 1 && requested >= 2) return { kind: "screen-variations", count: Math.min(4, requested) };
-      const styleWords = /\b(colou?r|font size|font weight|font family|bold|italic|align|alignment|position|style|size)\b/i.test(text);
+      // Visual property edits ("make text white", "bigger", "bold") belong to the native action path.
+      const styleWords = /\b(colou?rs?|white|black|gr[ae]y|red|green|blue|yellow|orange|purple|pink|brown|dark(er)?|light(er)?|#[0-9a-f]{3,8}|font|fonts|size|bigger|smaller|larger|bold|semi-?bold|medium|regular|italic|underline|strikethrough|upper ?case|lower ?case|capitali[sz]e|align|alignment|cent(er|re)|left|right|position|move|style|opacity|transparent|shadow|line height|letter spacing|spacing|padding|wrap|truncate|weight)\b/i.test(text);
       const anyTextVerb = /\b(rewrite|re-write|improve|better|shorten|shorter|expand|extend|elaborate|longer|add|append|translate|rephrase|paraphrase|fix|correct|make|replace|fill|update|change|write|polish|simplify|tone|likh|likho)\b/i.test(text);
       if (allText && anyTextVerb && !styleWords) return { kind: "rewrite-text" };
       if (count === 0 || styleWords) return null;
