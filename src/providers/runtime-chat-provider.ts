@@ -9,7 +9,16 @@ type ProviderPreference = {
 };
 
 const PROVIDER_PREFERENCE_KEY = "ux-direct-settings/active-chat-provider.json";
-const SUPPORTED_PROVIDERS: RuntimeChatProviderId[] = ["openrouter", "freellmapi"];
+/**
+ * Providers the plugin and routes may use right now. OpenRouter stays in the code but is
+ * inactive: it is not offered in the plugin, not connection-checked, and a saved OpenRouter
+ * preference is ignored. Add "openrouter" back here to re-enable it.
+ */
+const ENABLED_PROVIDERS: RuntimeChatProviderId[] = ["freellmapi"];
+
+function isEnabledProvider(value: unknown): value is RuntimeChatProviderId {
+  return isRuntimeChatProviderId(value) && ENABLED_PROVIDERS.includes(value);
+}
 
 function isRuntimeChatProviderId(value: unknown): value is RuntimeChatProviderId {
   return value === "openrouter" || value === "freellmapi";
@@ -34,19 +43,21 @@ async function readProviderPreference(): Promise<ProviderPreference | null> {
   }
 }
 
+function resolveEnabledProvider(preference: ProviderPreference | null): ActiveChatProvider {
+  if (preference && isEnabledProvider(preference.provider)) return configuredProvider(preference.provider);
+  const fromEnv = getActiveChatProvider();
+  return isEnabledProvider(fromEnv.id) ? fromEnv : configuredProvider(ENABLED_PROVIDERS[0]);
+}
+
 /** Resolve the provider for every chat/design request, keeping secrets server-side. */
 export async function getResolvedActiveChatProvider(): Promise<ActiveChatProvider> {
-  const preference = await readProviderPreference();
-  return preference ? configuredProvider(preference.provider) : getActiveChatProvider();
+  return resolveEnabledProvider(await readProviderPreference());
 }
 
 export async function getProviderSwitcherState() {
-  const [preference, defaultProvider] = await Promise.all([
-    readProviderPreference(),
-    Promise.resolve(getActiveChatProvider()),
-  ]);
-  const active = preference ? configuredProvider(preference.provider) : defaultProvider;
-  const providers = SUPPORTED_PROVIDERS.map((id) => {
+  const preference = await readProviderPreference();
+  const active = resolveEnabledProvider(preference);
+  const providers = ENABLED_PROVIDERS.map((id) => {
     const provider = configuredProvider(id);
     return {
       id,
@@ -58,10 +69,10 @@ export async function getProviderSwitcherState() {
   });
 
   return {
-    activeProvider: active.id === "invalid" ? "openrouter" : active.id,
+    activeProvider: active.id === "invalid" ? ENABLED_PROVIDERS[0] : active.id,
     activeProviderLabel: active.label,
     activeModel: active.model,
-    preferenceSource: preference ? "saved" : "environment",
+    preferenceSource: preference && isEnabledProvider(preference.provider) ? "saved" : "environment",
     providers,
   };
 }
@@ -74,7 +85,7 @@ export async function setActiveChatProviderPreference(provider: RuntimeChatProvi
 }
 
 export function isSupportedRuntimeChatProvider(value: unknown): value is RuntimeChatProviderId {
-  return isRuntimeChatProviderId(value);
+  return isEnabledProvider(value);
 }
 
 export function getConfiguredProvider(id: RuntimeChatProviderId): ActiveChatProvider {

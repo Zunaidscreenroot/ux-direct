@@ -167,10 +167,9 @@
       <div class="provider-card-head">
         <div class="provider-card-copy">
           <div class="provider-card-title">Model provider</div>
-          <div class="provider-card-subtitle">Switch chat and Figma AI between available providers</div>
+          <div class="provider-card-subtitle">Chat and Figma AI run on FreeLLMAPI</div>
         </div>
         <select id="providerSelect" class="provider-select" aria-label="Select model provider" disabled>
-          <option value="openrouter">OpenRouter</option>
           <option value="freellmapi">FreeLLMAPI</option>
         </select>
       </div>
@@ -228,7 +227,7 @@
     <div id="selectionChip" class="context-chip" hidden><span aria-hidden="true">▣</span><span id="selectionName" class="context-name"></span></div>
     <form id="chatForm" class="composer">
       <div id="beamRoot" aria-hidden="true"></div>
-      <div id="routingNote" class="routing-note" role="note">Design model: OpenRouter · openrouter/auto</div>
+      <div id="routingNote" class="routing-note" role="note">Design model: FreeLLMAPI · auto</div>
       <div id="attachmentChip" class="attachment-chip" hidden>
         <span aria-hidden="true">▧</span><span id="attachmentName" class="attachment-name"></span>
         <button id="removeAttachment" class="attachment-remove" type="button" aria-label="Remove attached image" title="Remove image">×</button>
@@ -271,8 +270,8 @@
     let connectionError = "";
     let providerSwitcherState = null;
     let providerOptions = [];
-    let activeProviderId = "openrouter";
-    let activeProviderLabel = "OpenRouter";
+    let activeProviderId = "freellmapi";
+    let activeProviderLabel = "FreeLLMAPI";
     let providerSwitching = false;
     const chatHistory = [];
     const processLabels = {
@@ -593,7 +592,7 @@
       if (state && Array.isArray(state.providers)) {
         providerSwitcherState = state;
         providerOptions = state.providers;
-        activeProviderId = state.activeProvider || "openrouter";
+        activeProviderId = state.activeProvider || "freellmapi";
         const selectedProvider = providerOptions.find(function (provider) { return provider.id === activeProviderId; });
         activeProviderLabel = selectedProvider ? selectedProvider.label : (state.activeProviderLabel || "Model provider");
       }
@@ -616,7 +615,7 @@
         select.appendChild(option);
       });
       select.value = activeProviderId;
-      select.disabled = providerSwitching || !verifiedFileKey;
+      select.disabled = providerSwitching || !verifiedFileKey || providerOptions.length < 2;
       const active = providerOptions.find(function (provider) { return provider.id === activeProviderId; });
       if (!active) {
         hint.className = "provider-hint error";
@@ -628,12 +627,8 @@
         hint.className = "provider-hint";
         hint.textContent = "Active: FreeLLMAPI · " + active.model + ". The API endpoint must be hosted separately and reachable over HTTPS.";
       } else {
-        const freeLlm = providerOptions.find(function (provider) { return provider.id === "freellmapi"; });
         hint.className = "provider-hint";
-        hint.textContent = "Active: OpenRouter · " + active.model + ". " +
-          (freeLlm && !freeLlm.configured
-            ? "FreeLLMAPI is disabled until FREELLMAPI_BASE_URL and FREELLMAPI_API_KEY are set on the Worker."
-            : "Provider keys remain on the backend.");
+        hint.textContent = "Active: " + active.label + " · " + active.model + ". Provider keys remain on the backend.";
       }
       const routingNote = $("routingNote");
       if (routingNote && active) {
