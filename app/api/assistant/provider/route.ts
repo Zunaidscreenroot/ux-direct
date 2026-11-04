@@ -144,7 +144,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "A valid Figma plugin session token is required." }, { status: 400, headers });
   }
   if (!isSupportedRuntimeChatProvider(providerId)) {
-    return NextResponse.json({ error: "Provider must be openrouter or freellmapi." }, { status: 400, headers });
+    return NextResponse.json({ error: "Only FreeLLMAPI is active right now; OpenRouter is disabled." }, { status: 400, headers });
   }
 
   try {
