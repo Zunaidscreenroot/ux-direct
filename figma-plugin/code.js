@@ -2782,7 +2782,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -2899,6 +2899,539 @@ async function localDeleteCreated(payload) {
   if (typeof figma.commitUndo === "function") figma.commitUndo();
   return { ok: true, deleted: deleted, missing: missing };
 }
+// Direct edits: deterministic property changes parsed in the UI ("make text white", "padding 24",
+// "add shadow", "duplicate this"). No model is involved, so these never fail on a model answer.
+// Every op names a target ("text" = text layers in the selection, "self" = the selected layers,
+// "bg" = the selected layers, or the parent of a selected text layer) and an optional noun
+// ("button", "title") that narrows the target to matching layers inside the selection.
+var UXD_DIRECT_NOUNS = {
+  button: /\b(button|btn|cta)\b/i, icon: /\b(icon|ic|glyph|chevron|arrow)\b/i, card: /\bcard\b/i,
+  header: /\b(header|top ?bar|app ?bar|nav ?bar|navbar|navigation|toolbar)\b/i, footer: /\b(footer|bottom ?bar|tab ?bar)\b/i,
+  image: /\b(image|img|photo|picture|thumbnail|banner|illustration)\b/i, avatar: /\b(avatar|profile pic|profile photo)\b/i,
+  divider: /\b(divider|separator|line|rule)\b/i, input: /\b(input|field|text ?field|search ?bar|textbox|dropdown)\b/i,
+  tab: /\btabs?\b/i, chip: /\b(chip|badge|tag|pill)\b/i, list: /\b(list ?item|row|cell)\b/i, modal: /\b(modal|dialog|sheet|popup)\b/i,
+  title: /\b(title|heading|headline|h1|h2)\b/i, subtitle: /\b(subtitle|sub ?title|subheading|sub ?heading)\b/i,
+  label: /\blabel\b/i, caption: /\b(caption|helper|hint)\b/i, body: /\b(body|description|paragraph|desc)\b/i,
+  link: /\blink\b/i, price: /\b(price|amount|value|total)\b/i
+};
+var UXD_TEXT_NOUNS = ["title", "subtitle", "label", "caption", "body", "link", "price"];
+var UXD_FONT_LIST = null;
+var UXD_WEIGHT_STYLES = {
+  thin: ["Thin", "Hairline", "ExtraLight", "Extra Light", "UltraLight", "Light"],
+  light: ["Light", "ExtraLight", "Extra Light", "Thin"],
+  regular: ["Regular", "Book", "Normal", "Roman", "Text"],
+  medium: ["Medium", "Regular"],
+  semibold: ["SemiBold", "Semi Bold", "Semibold", "DemiBold", "Demi Bold", "Medium", "Bold"],
+  bold: ["Bold", "SemiBold", "Semi Bold", "ExtraBold", "Extra Bold", "Heavy", "Black"],
+  extrabold: ["ExtraBold", "Extra Bold", "Heavy", "Black", "Bold"],
+  black: ["Black", "Heavy", "ExtraBold", "Extra Bold", "Bold"]
+};
+function uxdHexToRgb(hex) {
+  var clean = String(hex || "").replace("#", "");
+  if (clean.length === 3 || clean.length === 4) clean = clean.split("").map(function (c) { return c + c; }).join("");
+  if (!/^[0-9a-f]{6}([0-9a-f]{2})?$/i.test(clean)) throw new Error("Unknown colour " + hex + ".");
+  return { r: parseInt(clean.slice(0, 2), 16) / 255, g: parseInt(clean.slice(2, 4), 16) / 255, b: parseInt(clean.slice(4, 6), 16) / 255,
+    a: clean.length === 8 ? parseInt(clean.slice(6, 8), 16) / 255 : 1 };
+}
+function uxdSolid(hex) {
+  var c = uxdHexToRgb(hex);
+  return { type: "SOLID", color: { r: c.r, g: c.g, b: c.b }, opacity: c.a, visible: true };
+}
+function uxdShiftColor(color, amount) {
+  // amount > 0 lightens towards white, < 0 darkens towards black.
+  function ch(v) { return amount >= 0 ? v + (1 - v) * amount : v * (1 + amount); }
+  return { r: ch(color.r), g: ch(color.g), b: ch(color.b) };
+}
+function uxdIsContainer(node) { return node && ["FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE", "SECTION", "GROUP"].indexOf(node.type) >= 0; }
+function uxdHasAutoLayout(node) { return node && ["HORIZONTAL", "VERTICAL", "GRID"].indexOf(String(node.layoutMode)) >= 0; }
+function uxdDescendants(node, test) {
+  if (typeof node.findAll === "function") return node.findAll(test);
+  var out = [];
+  (function walk(n) { (n.children || []).forEach(function (c) { if (test(c)) out.push(c); walk(c); }); })(node);
+  return out;
+}
+function uxdTextNodes(node) {
+  if (node.type === "TEXT") return [node];
+  return uxdDescendants(node, function (c) { return c.type === "TEXT" && c.visible !== false; });
+}
+function uxdResolveTargets(roots, op) {
+  var nodes = roots.slice();
+  if (op.noun) {
+    var pattern = UXD_DIRECT_NOUNS[op.noun];
+    if (!pattern) return { error: "unknown target " + op.noun };
+    var textNoun = UXD_TEXT_NOUNS.indexOf(op.noun) >= 0;
+    var matched = [];
+    roots.forEach(function (root) {
+      var pool = [root].concat(uxdDescendants(root, function () { return true; }));
+      pool.forEach(function (n) {
+        if (!pattern.test(String(n.name || ""))) return;
+        if (textNoun && n.type !== "TEXT" && !uxdIsContainer(n)) return;
+        // Skip layers nested inside another match ("Button" > "Button label" counts once).
+        var p = n.parent, nested = false;
+        while (p && p !== root.parent) { if (matched.indexOf(p) >= 0) { nested = true; break; } p = p.parent; }
+        if (!nested && matched.indexOf(n) < 0) matched.push(n);
+      });
+      if (!matched.length && (op.noun === "title")) {
+        var texts = uxdTextNodes(root).filter(function (t) { return typeof t.fontSize === "number"; });
+        texts.sort(function (a, b) { return b.fontSize - a.fontSize; });
+        if (texts[0]) matched.push(texts[0]);
+      }
+    });
+    // A selected component part ("the button" with the button itself selected) is the target.
+    if (!matched.length && roots.every(function (r) { return r.parent && r.parent.type !== "PAGE"; })) matched = roots.slice();
+    if (!matched.length) return { needsModel: true, reason: "no layer named like \"" + op.noun + "\" in the selection" };
+    nodes = matched;
+  }
+  if (op.target === "text") {
+    var texts = [];
+    nodes.forEach(function (n) { uxdTextNodes(n).forEach(function (t) { if (texts.indexOf(t) < 0) texts.push(t); }); });
+    if (!texts.length) return { error: "There is no text layer in the selection." };
+    return { nodes: texts };
+  }
+  if (op.target === "bg") {
+    return { nodes: nodes.map(function (n) { return n.type === "TEXT" && n.parent && n.parent.type !== "PAGE" ? n.parent : n; }) };
+  }
+  return { nodes: nodes };
+}
+async function uxdFontList() {
+  if (UXD_FONT_LIST) return UXD_FONT_LIST;
+  UXD_FONT_LIST = new Map();
+  try {
+    var fonts = typeof figma.listAvailableFontsAsync === "function" ? await figma.listAvailableFontsAsync() : [];
+    fonts.forEach(function (f) {
+      var key = f.fontName.family.toLowerCase();
+      if (!UXD_FONT_LIST.has(key)) UXD_FONT_LIST.set(key, { family: f.fontName.family, styles: [] });
+      UXD_FONT_LIST.get(key).styles.push(f.fontName.style);
+    });
+  } catch (_) { /* fall back to trying loadFontAsync directly */ }
+  return UXD_FONT_LIST;
+}
+async function uxdTryFont(family, styles) {
+  var list = await uxdFontList();
+  var known = list.get(String(family).toLowerCase());
+  var realFamily = known ? known.family : family;
+  for (var i = 0; i < styles.length; i++) {
+    if (known && known.styles.indexOf(styles[i]) < 0) continue;
+    try { await figma.loadFontAsync({ family: realFamily, style: styles[i] }); return { family: realFamily, style: styles[i] }; } catch (_) {}
+  }
+  return null;
+}
+function uxdWeightOf(style) {
+  var s = String(style || "").toLowerCase().replace(/italic|oblique/g, "").replace(/\s+/g, "");
+  if (/extrabold|ultrabold/.test(s)) return "extrabold";
+  if (/semibold|demibold/.test(s)) return "semibold";
+  if (/black|heavy/.test(s)) return "black";
+  if (/bold/.test(s)) return "bold";
+  if (/medium/.test(s)) return "medium";
+  if (/extralight|ultralight|thin|hairline/.test(s)) return "thin";
+  if (/light/.test(s)) return "light";
+  return "regular";
+}
+function uxdStyleCandidates(weight, italic) {
+  var base = UXD_WEIGHT_STYLES[weight] || UXD_WEIGHT_STYLES.regular;
+  if (!italic) return base;
+  var out = [];
+  base.forEach(function (b) { out.push(b + " Italic", b + "Italic"); });
+  if (weight === "regular") out.unshift("Italic");
+  return out;
+}
+async function uxdLoadTextFonts(node) {
+  var length = typeof node.characters === "string" ? node.characters.length : 0;
+  var fonts = length && typeof node.getRangeAllFontNames === "function" ? node.getRangeAllFontNames(0, length)
+    : (node.fontName && typeof node.fontName === "object" ? [node.fontName] : []);
+  for (var i = 0; i < fonts.length; i++) await figma.loadFontAsync(fonts[i]);
+}
+function uxdFontSegments(node) {
+  var length = typeof node.characters === "string" ? node.characters.length : 0;
+  if (length && typeof node.getStyledTextSegments === "function") return node.getStyledTextSegments(["fontName", "fontSize"]);
+  return [{ start: 0, end: length, fontName: node.fontName, fontSize: node.fontSize }];
+}
+async function uxdSetFonts(node, pick) {
+  var segments = uxdFontSegments(node);
+  for (var i = 0; i < segments.length; i++) {
+    var seg = segments[i];
+    var current = seg.fontName && typeof seg.fontName === "object" ? seg.fontName : { family: "Inter", style: "Regular" };
+    var next = await pick(current);
+    if (!next) continue;
+    if (segments.length === 1 || typeof node.setRangeFontName !== "function" || seg.end <= seg.start) node.fontName = next;
+    else node.setRangeFontName(seg.start, seg.end, next);
+  }
+}
+function uxdSetFontSize(node, compute) {
+  var segments = uxdFontSegments(node);
+  segments.forEach(function (seg) {
+    var size = Math.max(6, Math.min(400, Math.round(compute(typeof seg.fontSize === "number" ? seg.fontSize : 14))));
+    if (segments.length === 1 || typeof node.setRangeFontSize !== "function" || seg.end <= seg.start) node.fontSize = size;
+    else node.setRangeFontSize(seg.start, seg.end, size);
+  });
+}
+function uxdInferLayout(node) {
+  var kids = (node.children || []).filter(function (c) { return c.visible !== false; });
+  if (kids.length < 2) return { mode: "VERTICAL", gap: 0, ordered: kids };
+  var byY = kids.slice().sort(function (a, b) { return a.y - b.y || a.x - b.x; });
+  var byX = kids.slice().sort(function (a, b) { return a.x - b.x || a.y - b.y; });
+  function stacks(list, horizontal) {
+    for (var i = 1; i < list.length; i++) {
+      var prev = list[i - 1], cur = list[i];
+      if (horizontal ? cur.x < prev.x + prev.width - 1 : cur.y < prev.y + prev.height - 1) return false;
+    }
+    return true;
+  }
+  var vertical = stacks(byY, false), horizontal = stacks(byX, true);
+  var mode = vertical ? "VERTICAL" : horizontal ? "HORIZONTAL" : null;
+  if (!mode) return null;
+  var ordered = mode === "VERTICAL" ? byY : byX;
+  var gaps = [];
+  for (var g = 1; g < ordered.length; g++) {
+    gaps.push(mode === "VERTICAL" ? ordered[g].y - (ordered[g - 1].y + ordered[g - 1].height) : ordered[g].x - (ordered[g - 1].x + ordered[g - 1].width));
+  }
+  gaps.sort(function (a, b) { return a - b; });
+  return { mode: mode, gap: Math.max(0, Math.round(gaps[Math.floor((gaps.length - 1) / 2)])), ordered: ordered };
+}
+function uxdEnableAutoLayout(node, direction) {
+  if (uxdHasAutoLayout(node)) {
+    if (direction && node.layoutMode !== direction) node.layoutMode = direction;
+    return "";
+  }
+  if (!("layoutMode" in node) || node.type === "GROUP") throw new Error("\"" + node.name + "\" is a " + node.type.toLowerCase() + "; say \"wrap in auto layout\" to put it in an auto layout frame.");
+  var inferred = uxdInferLayout(node);
+  if (!inferred && !direction) throw new Error("The layers inside \"" + node.name + "\" overlap, so auto layout would move them. Say \"add vertical auto layout\" or \"add horizontal auto layout\" to force a direction.");
+  var mode = direction || inferred.mode;
+  var kids = inferred && inferred.mode === mode ? inferred.ordered : (node.children || []).slice().sort(function (a, b) { return mode === "VERTICAL" ? a.y - b.y : a.x - b.x; });
+  var minX = Math.min.apply(null, kids.map(function (c) { return c.x; }).concat([0]));
+  var minY = Math.min.apply(null, kids.map(function (c) { return c.y; }).concat([0]));
+  kids.forEach(function (child, index) { if (typeof node.insertChild === "function") node.insertChild(index, child); });
+  node.layoutMode = mode;
+  node.itemSpacing = inferred && inferred.mode === mode ? inferred.gap : 0;
+  if (kids.length) {
+    node.paddingLeft = Math.max(0, Math.round(minX)); node.paddingRight = Math.max(0, Math.round(minX));
+    node.paddingTop = Math.max(0, Math.round(minY)); node.paddingBottom = Math.max(0, Math.round(minY));
+  }
+  return "added " + mode.toLowerCase() + " auto layout to \"" + node.name + "\"";
+}
+var UXD_SHADOWS = {
+  soft: { type: "DROP_SHADOW", y: 4, blur: 12, a: 0.12 }, small: { type: "DROP_SHADOW", y: 1, blur: 3, a: 0.14 },
+  strong: { type: "DROP_SHADOW", y: 8, blur: 24, a: 0.24 }, inner: { type: "INNER_SHADOW", y: 2, blur: 4, a: 0.12 }
+};
+function uxdSetEffects(node, effects) {
+  try { node.effects = effects; }
+  catch (_) {
+    node.effects = effects.map(function (e) { if (e.blurType === undefined) return e; var c = Object.assign({}, e); delete c.blurType; return c; });
+  }
+}
+async function uxdApplySet(node, set, notes) {
+  var key = Object.keys(set)[0];
+  var value = set[key];
+  function need(prop, label) { if (!(prop in node)) throw new Error("\"" + node.name + "\" (" + node.type.toLowerCase() + ") has no " + label + "."); }
+  function needText() { if (node.type !== "TEXT") throw new Error("\"" + node.name + "\" is not a text layer."); }
+  function needLayout(label) {
+    var note = uxdEnableAutoLayout(node, null);
+    if (note) notes.push(note + " so " + label + " could be applied");
+  }
+  switch (key) {
+    case "fill":
+      need("fills", "fill");
+      if (node.type === "TEXT") await uxdLoadTextFonts(node);
+      node.fills = [uxdSolid(value)]; return;
+    case "fillNone": need("fills", "fill"); node.fills = []; return;
+    case "gradient": {
+      need("fills", "fill");
+      var a = uxdHexToRgb(value[0]), b = uxdHexToRgb(value[1]);
+      node.fills = [{ type: "GRADIENT_LINEAR", gradientTransform: [[1, 0, 0], [0, 1, 0]], visible: true, opacity: 1,
+        gradientStops: [{ position: 0, color: { r: a.r, g: a.g, b: a.b, a: a.a } }, { position: 1, color: { r: b.r, g: b.g, b: b.b, a: b.a } }] }];
+      return;
+    }
+    case "colorShift": {
+      need("fills", "fill");
+      var fills = Array.isArray(node.fills) ? node.fills : [];
+      var solid = fills.filter(function (p) { return p.type === "SOLID" && p.visible !== false; }).pop();
+      if (!solid) throw new Error("\"" + node.name + "\" has no solid colour to make " + (value > 0 ? "lighter" : "darker") + ".");
+      if (node.type === "TEXT") await uxdLoadTextFonts(node);
+      node.fills = fills.map(function (p) { return p === solid ? Object.assign({}, p, { color: uxdShiftColor(p.color, value) }) : p; });
+      return;
+    }
+    case "stroke": {
+      need("strokes", "border");
+      var current = Array.isArray(node.strokes) ? node.strokes.filter(function (p) { return p.type === "SOLID"; })[0] : null;
+      if (value.color) node.strokes = [uxdSolid(value.color)];
+      else if (!current) node.strokes = [uxdSolid("#D0D5DD")];
+      if (Number.isFinite(value.weight)) node.strokeWeight = Math.max(0, Math.min(100, value.weight));
+      else if (!current && !(node.strokeWeight > 0)) node.strokeWeight = 1;
+      if (value.dash && "dashPattern" in node) node.dashPattern = value.dash === "dashed" ? [6, 4] : value.dash === "dotted" ? [2, 2] : [];
+      return;
+    }
+    case "strokeNone": need("strokes", "border"); node.strokes = []; return;
+    case "strokeWeightDelta": need("strokes", "border"); node.strokeWeight = Math.max(0, (Number(node.strokeWeight) || 0) + value); return;
+    case "radius": need("cornerRadius", "corner radius"); node.cornerRadius = Math.max(0, value); return;
+    case "radiusPill": need("cornerRadius", "corner radius"); node.cornerRadius = Math.round(Math.min(node.width, node.height) / 2); return;
+    case "radiusDelta": {
+      need("cornerRadius", "corner radius");
+      var r = typeof node.cornerRadius === "number" ? node.cornerRadius : Number(node.topLeftRadius) || 0;
+      node.cornerRadius = Math.max(0, r + value); return;
+    }
+    case "opacity": need("opacity", "opacity"); node.opacity = Math.max(0, Math.min(1, value)); return;
+    case "shadow": {
+      need("effects", "effects");
+      var preset = UXD_SHADOWS[value] || UXD_SHADOWS.soft;
+      var keep = (node.effects || []).filter(function (e) { return e.type !== preset.type; });
+      var shadow = { type: preset.type, visible: true, blendMode: "NORMAL", color: { r: 0.06, g: 0.09, b: 0.16, a: preset.a },
+        offset: { x: 0, y: preset.y }, radius: preset.blur, spread: 0 };
+      if (preset.type === "DROP_SHADOW") shadow.showShadowBehindNode = false;
+      uxdSetEffects(node, keep.concat([shadow])); return;
+    }
+    case "shadowNone": need("effects", "effects"); uxdSetEffects(node, (node.effects || []).filter(function (e) { return !/SHADOW/.test(e.type); })); return;
+    case "blur": {
+      need("effects", "effects");
+      var others = (node.effects || []).filter(function (e) { return e.type !== value.type; });
+      uxdSetEffects(node, others.concat([{ type: value.type, visible: true, radius: value.radius, blurType: "NORMAL" }])); return;
+    }
+    case "blurNone": need("effects", "effects"); uxdSetEffects(node, (node.effects || []).filter(function (e) { return !/BLUR/.test(e.type); })); return;
+    case "effectsNone": need("effects", "effects"); uxdSetEffects(node, []); return;
+    case "padding":
+      need("layoutMode", "padding"); needLayout("padding");
+      ["Top", "Right", "Bottom", "Left"].forEach(function (side) {
+        var v = value[side.toLowerCase()];
+        if (Number.isFinite(v)) node["padding" + side] = Math.max(0, v);
+      });
+      return;
+    case "paddingDelta":
+      need("layoutMode", "padding"); needLayout("padding");
+      ["Top", "Right", "Bottom", "Left"].forEach(function (side) { node["padding" + side] = Math.max(0, (Number(node["padding" + side]) || 0) + value); });
+      return;
+    case "gap": need("layoutMode", "spacing"); needLayout("spacing"); node.itemSpacing = Math.max(0, value); return;
+    case "gapDelta": need("layoutMode", "spacing"); needLayout("spacing"); node.itemSpacing = Math.max(0, (Number(node.itemSpacing) || 0) + value); return;
+    case "layout": {
+      if (value === "AUTO") {
+        var note = uxdEnableAutoLayout(node, null);
+        if (!note) notes.push("\"" + node.name + "\" already uses auto layout");
+        return;
+      }
+      need("layoutMode", "auto layout");
+      if (!uxdHasAutoLayout(node)) uxdEnableAutoLayout(node, value);
+      else node.layoutMode = value;
+      return;
+    }
+    case "layoutNone": need("layoutMode", "auto layout"); node.layoutMode = "NONE"; return;
+    case "layoutWrap": need("layoutMode", "auto layout"); needLayout("wrap"); node.layoutMode = "HORIZONTAL"; node.layoutWrap = value ? "WRAP" : "NO_WRAP"; return;
+    case "align": {
+      var v = value.value;
+      if (node.type === "TEXT") {
+        if (v === "top" || v === "bottom" || v === "middle") { node.textAlignVertical = v === "middle" ? "CENTER" : v.toUpperCase(); return; }
+        await uxdLoadTextFonts(node);
+        node.textAlignHorizontal = v === "justify" ? "JUSTIFIED" : v === "center" ? "CENTER" : v.toUpperCase();
+        return;
+      }
+      if (uxdHasAutoLayout(node)) {
+        var mode = node.layoutMode;
+        var map = { left: "MIN", top: "MIN", center: "CENTER", middle: "CENTER", right: "MAX", bottom: "MAX" };
+        if (v === "space-between") { node.primaryAxisAlignItems = "SPACE_BETWEEN"; return; }
+        var horizontalValue = ["left", "right"].indexOf(v) >= 0 || (v === "center" && value.axis !== "v");
+        var verticalValue = ["top", "bottom", "middle"].indexOf(v) >= 0 || (v === "center" && value.axis !== "h");
+        if (horizontalValue) { if (mode === "HORIZONTAL") node.primaryAxisAlignItems = map[v]; else node.counterAxisAlignItems = map[v]; }
+        if (verticalValue) { if (mode === "VERTICAL") node.primaryAxisAlignItems = map[v]; else node.counterAxisAlignItems = map[v]; }
+        return;
+      }
+      var parent = node.parent;
+      if (!parent || parent.type === "PAGE" || typeof parent.width !== "number") throw new Error("\"" + node.name + "\" has no parent frame to align inside.");
+      if (uxdHasAutoLayout(parent) && node.layoutPositioning !== "ABSOLUTE") throw new Error("\"" + node.name + "\" sits in auto layout; select its parent \"" + parent.name + "\" and ask to align items instead.");
+      if (v === "left") node.x = 0; else if (v === "right") node.x = parent.width - node.width;
+      else if (v === "top") node.y = 0; else if (v === "bottom") node.y = parent.height - node.height;
+      else {
+        if (value.axis !== "v") node.x = Math.round((parent.width - node.width) / 2);
+        if (value.axis !== "h") node.y = Math.round((parent.height - node.height) / 2);
+      }
+      return;
+    }
+    case "width": case "height": case "scale": {
+      if (typeof node.resize !== "function") throw new Error("\"" + node.name + "\" cannot be resized.");
+      var w = key === "width" ? value : key === "scale" ? node.width * value : node.width;
+      var h = key === "height" ? value : key === "scale" ? node.height * value : node.height;
+      if (node.type === "TEXT") { await uxdLoadTextFonts(node); if (key !== "scale") node.textAutoResize = key === "width" ? "HEIGHT" : "NONE"; }
+      node.resize(Math.max(1, Math.round(w)), Math.max(1, Math.round(h)));
+      return;
+    }
+    case "sizingH": case "sizingV": {
+      var prop = key === "sizingH" ? "layoutSizingHorizontal" : "layoutSizingVertical";
+      if (!(prop in node)) throw new Error("\"" + node.name + "\" does not support " + (value === "FILL" ? "fill container" : value.toLowerCase()) + ".");
+      if (value === "FILL" && !uxdHasAutoLayout(node.parent)) {
+        if (key === "sizingH" && node.parent && typeof node.parent.width === "number" && typeof node.resize === "function") {
+          node.x = 0; node.resize(node.parent.width, node.height); return;
+        }
+        throw new Error("Fill container needs \"" + node.name + "\" to sit inside an auto layout frame.");
+      }
+      if (value === "HUG" && !uxdHasAutoLayout(node) && node.type !== "TEXT") throw new Error("Hug contents needs auto layout on \"" + node.name + "\". Say \"add auto layout\" first.");
+      if (node.type === "TEXT") await uxdLoadTextFonts(node);
+      node[prop] = value; return;
+    }
+    case "move": {
+      if (uxdHasAutoLayout(node.parent) && node.layoutPositioning !== "ABSOLUTE") throw new Error("\"" + node.name + "\" is placed by auto layout, so it cannot be moved freely. Change the order or spacing instead.");
+      node.x += value.dx || 0; node.y += value.dy || 0; return;
+    }
+    case "rotate": need("rotation", "rotation"); node.rotation = ((Number(node.rotation) || 0) + value) % 360; return;
+    case "flip": {
+      need("relativeTransform", "transform");
+      var t = node.relativeTransform;
+      var cx = node.width, cy = node.height;
+      node.relativeTransform = value === "h"
+        ? [[-t[0][0], t[0][1], t[0][2] + t[0][0] * cx], [-t[1][0], t[1][1], t[1][2] + t[1][0] * cx]]
+        : [[t[0][0], -t[0][1], t[0][2] + t[0][1] * cy], [t[1][0], -t[1][1], t[1][2] + t[1][1] * cy]];
+      return;
+    }
+    case "clip": need("clipsContent", "clip content"); node.clipsContent = value; return;
+    case "visible": node.visible = value; return;
+    case "showHidden": {
+      var hidden = uxdDescendants(node, function (c) { return c.visible === false; });
+      hidden.forEach(function (c) { c.visible = true; });
+      if (node.visible === false) node.visible = true;
+      notes.push("showed " + hidden.length + " hidden layer(s) in \"" + node.name + "\"");
+      return;
+    }
+    case "locked": node.locked = value; return;
+    case "name": node.name = String(value).slice(0, 120); return;
+    case "text": needText(); await uxdLoadTextFonts(node); node.characters = String(value); return;
+    case "replace": {
+      needText();
+      var from = String(value.from);
+      if (node.characters.toLowerCase().indexOf(from.toLowerCase()) < 0) throw new Error("\"" + from + "\" is not in \"" + node.name + "\".");
+      await uxdLoadTextFonts(node);
+      var source = node.characters, out = "", index = 0, lower = source.toLowerCase(), needle = from.toLowerCase();
+      while (true) {
+        var at = lower.indexOf(needle, index);
+        if (at < 0) { out += source.slice(index); break; }
+        out += source.slice(index, at) + value.to; index = at + from.length;
+      }
+      node.characters = out; return;
+    }
+    case "fontSize": needText(); await uxdLoadTextFonts(node); uxdSetFontSize(node, function () { return value; }); return;
+    case "fontSizeDelta": needText(); await uxdLoadTextFonts(node); uxdSetFontSize(node, function (s) { return s + value; }); return;
+    case "fontWeight": case "italic": {
+      needText(); await uxdLoadTextFonts(node);
+      var failed = "";
+      await uxdSetFonts(node, async function (current) {
+        var italicNow = /italic|oblique/i.test(current.style);
+        var weight = key === "fontWeight" ? value : uxdWeightOf(current.style);
+        var italic = key === "italic" ? value : italicNow;
+        var font = await uxdTryFont(current.family, uxdStyleCandidates(weight, italic));
+        if (!font) failed = current.family;
+        return font;
+      });
+      if (failed) throw new Error(failed + " has no " + (key === "italic" ? "italic" : value) + " style in this file.");
+      return;
+    }
+    case "fontFamily": {
+      needText(); await uxdLoadTextFonts(node);
+      var list = await uxdFontList();
+      if (list.size && !list.get(String(value).toLowerCase())) throw new Error("The font \"" + value + "\" is not available in this Figma file.");
+      var missing = false;
+      await uxdSetFonts(node, async function (current) {
+        var weight = uxdWeightOf(current.style);
+        var italic = /italic|oblique/i.test(current.style);
+        var font = await uxdTryFont(value, [current.style].concat(uxdStyleCandidates(weight, italic), ["Regular"]));
+        if (!font) missing = true;
+        return font;
+      });
+      if (missing) throw new Error("The font \"" + value + "\" could not be loaded.");
+      return;
+    }
+    case "decoration": needText(); await uxdLoadTextFonts(node); node.textDecoration = value; return;
+    case "textCase": {
+      needText(); await uxdLoadTextFonts(node);
+      if (value === "SENTENCE") {
+        node.textCase = "ORIGINAL";
+        node.characters = node.characters.toLowerCase().replace(/(^\s*|[.!?]\s+)([a-z])/g, function (m, p, l) { return p + l.toUpperCase(); });
+      } else node.textCase = value;
+      return;
+    }
+    case "lineHeight": needText(); await uxdLoadTextFonts(node); node.lineHeight = value === "auto" ? { unit: "AUTO" } : value; return;
+    case "letterSpacing": needText(); await uxdLoadTextFonts(node); node.letterSpacing = value; return;
+    case "textAutoResize": needText(); await uxdLoadTextFonts(node); node.textAutoResize = value; return;
+    case "truncate": needText(); await uxdLoadTextFonts(node); node.textTruncation = value ? "ENDING" : "DISABLED"; return;
+  }
+  throw new Error("Unknown direct edit " + key + ".");
+}
+async function uxdRunStructural(action, nodes, op, notes) {
+  var ids = nodes.map(function (n) { return n.id; });
+  async function write(payload) { return writeCanvasCommand(Object.assign({ confirm: true }, payload), { local: true }); }
+  if (action === "duplicate") {
+    var times = Math.max(1, Math.min(10, op.count || 1));
+    for (var i = 0; i < nodes.length; i++) for (var t = 0; t < times; t++) await write({ operation: "clone-node", nodeId: nodes[i].id });
+    return nodes.length * times + " cop" + (nodes.length * times === 1 ? "y" : "ies") + " created";
+  }
+  if (action === "delete") { for (var d = 0; d < nodes.length; d++) await write({ operation: "delete-node", nodeId: nodes[d].id }); return nodes.length + " layer(s) deleted"; }
+  if (action === "deleteHidden") {
+    var removed = 0;
+    nodes.forEach(function (n) { uxdDescendants(n, function (c) { return c.visible === false; }).forEach(function (c) { if (!c.removed) { c.remove(); removed++; } }); });
+    return removed + " hidden layer(s) deleted";
+  }
+  if (action === "group") { await write({ operation: "group-nodes", nodeIds: ids }); return "grouped " + ids.length + " layers"; }
+  if (action === "ungroup") {
+    var groups = nodes.filter(function (n) { return n.type === "GROUP"; });
+    if (!groups.length) throw new Error("The selection has no group to ungroup.");
+    for (var g = 0; g < groups.length; g++) await write({ operation: "ungroup-node", nodeId: groups[g].id });
+    return groups.length + " group(s) ungrouped";
+  }
+  if (action === "component") { for (var c = 0; c < nodes.length; c++) await write({ operation: "create-component", nodeId: nodes[c].id }); return nodes.length + " component(s) created"; }
+  if (action === "detach") {
+    var instances = nodes.filter(function (n) { return n.type === "INSTANCE"; });
+    if (!instances.length) throw new Error("The selection has no component instance to detach.");
+    for (var k = 0; k < instances.length; k++) await write({ operation: "detach-instance", nodeId: instances[k].id });
+    return instances.length + " instance(s) detached";
+  }
+  if (action === "flatten") { await write({ operation: "flatten-nodes", nodeIds: ids }); return "flattened"; }
+  if (action === "front" || action === "back") {
+    for (var f = 0; f < nodes.length; f++) {
+      var parent = nodes[f].parent;
+      await write({ operation: "reorder-node", nodeId: nodes[f].id, index: action === "front" ? parent.children.length - 1 : 0 });
+    }
+    return action === "front" ? "brought to front" : "sent to back";
+  }
+  if (action === "wrap") {
+    var horizontal = op.direction === "HORIZONTAL";
+    if (!op.direction && nodes.length > 1) {
+      var xs = nodes.slice().sort(function (a, b) { return a.x - b.x; });
+      horizontal = xs.every(function (n, i) { return i === 0 || n.x >= xs[i - 1].x + xs[i - 1].width - 1; });
+    }
+    await write({ operation: "wrap-in-auto-layout", nodeIds: ids, autoLayout: { layoutMode: horizontal ? "HORIZONTAL" : "VERTICAL" } });
+    return "wrapped in " + (horizontal ? "a horizontal" : "a vertical") + " auto layout frame";
+  }
+  throw new Error("Unknown action " + action + ".");
+}
+async function localApplyDirectEdits(payload) {
+  var ops = Array.isArray(payload.ops) ? payload.ops.slice(0, 30) : [];
+  if (!ops.length) throw new Error("No edits to apply.");
+  var roots = figma.currentPage.selection.slice();
+  if (!roots.length) throw new Error("Select the layer you want to change first.");
+  // Resolve every target before changing anything, so an unknown target hands over to the model untouched.
+  var plan = [];
+  for (var i = 0; i < ops.length; i++) {
+    var resolved = uxdResolveTargets(roots, ops[i]);
+    if (resolved.needsModel) return { ok: false, needsModel: true, reason: resolved.reason };
+    if (resolved.error) throw new Error(resolved.error);
+    plan.push({ op: ops[i], nodes: resolved.nodes });
+  }
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  var applied = [], notes = [], errors = [];
+  for (var p = 0; p < plan.length; p++) {
+    var step = plan[p];
+    if (step.op.action) {
+      try { applied.push({ label: step.op.label || step.op.action, count: step.nodes.length, note: await uxdRunStructural(step.op.action, step.nodes, step.op, notes) }); }
+      catch (error) { errors.push((step.op.label || step.op.action) + ": " + (error && error.message ? error.message : String(error))); }
+      continue;
+    }
+    var done = 0;
+    for (var n = 0; n < step.nodes.length; n++) {
+      try { await uxdApplySet(step.nodes[n], step.op.set, notes); done++; }
+      catch (error) {
+        var message = error && error.message ? error.message : String(error);
+        if (errors.indexOf(message) < 0) errors.push(message);
+      }
+    }
+    if (done) applied.push({ label: step.op.label || Object.keys(step.op.set)[0], count: done });
+  }
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  if (!applied.length) throw new Error(errors.slice(0, 3).join(" ") || "Nothing could be changed.");
+  return { ok: true, applied: applied, notes: notes.slice(0, 6), errors: errors.slice(0, 6) };
+}
 async function runLocalTask(message) {
   var result = null;
   var errorText = null;
@@ -2911,6 +3444,7 @@ async function runLocalTask(message) {
     else if (message.op === "apply-image") result = await localApplyImage(payload);
     else if (message.op === "restore-fills") result = await localRestoreFills(payload);
     else if (message.op === "delete-created") result = await localDeleteCreated(payload);
+    else if (message.op === "apply-direct-edits") result = await localApplyDirectEdits(payload);
     else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
     else if (message.op === "trigger-undo") {
       if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");
