@@ -15,6 +15,18 @@ Production backend: https://ux-direct.zunaid-cb7.workers.dev
 - Reuse supplied local paint/text/effect/grid styles and inspect local variables/collections when available.
 - Review the created canvas against the source screenshot, read back native properties, and perform up to two bounded visual repair passes when the quality gate still fails.
 
+### Quick tasks (Figma-agent style)
+Select layers and type the request in the chat. These run on free services only.
+- **Generate an image into a shape:** select a rectangle/frame and type "insert image of …". The image is generated for the shape's exact aspect ratio (2x pixels, longest side ≤ 2048) and applied as a native image fill. Cloudflare Workers AI (FLUX.1 schnell, free daily allocation) with Pollinations as a no-key fallback.
+- **Remove background:** select a layer with a photo and type "remove background". Cloudflare Images subject segmentation replaces the image fill in place; a local flat-colour remover is the fallback.
+- **Rewrite / extend text:** select text layers (or a frame) and type "make this copy shorter", "add …", "translate to Hindi", "fill realistic content".
+- **Rename layers** by purpose.
+- **Variations:** "make 3 variations of this screen", or select several screens of a flow and type "create variations of this flow".
+- **UX audit** of a screen or a multi-screen flow (heuristics, flow gaps, accessibility), from screenshots + layers.
+- **UI hygiene check:** deterministic lint of auto layout, padding/gap grid and consistency, repeated-item drift, layer names, hidden/empty layers, type scale, style/variable usage, contrast, touch targets.
+
+Image bytes and large selection trees travel over a local plugin channel (`uxd-local-task`: read-tree, read-image, apply-image only) instead of the backend bridge.
+
 ### Direct native editing
 For explicit, targeted requests, the agent can propose and apply a small sequence of native operations, including:
 - Text content and typography updates, line height, letter spacing, fills, strokes, opacity, dimensions, effects, corner radius, and Auto Layout properties.

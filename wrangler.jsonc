@@ -26,6 +26,10 @@
   "images": {
     "binding": "IMAGES"
   },
+  // Workers AI (free daily allocation) generates images for the Figma "insert image" quick task.
+  "ai": {
+    "binding": "AI"
+  },
   "observability": {
     "enabled": true
   },

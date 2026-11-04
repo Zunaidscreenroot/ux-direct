@@ -1124,6 +1124,14 @@ function summarizeCanvasNode(node, depth, state) {
       if (Object.keys(compactProps).length) out.componentProperties = compactProps;
     } catch (_) {}
   }
+  // Design-system usage flags for hygiene checks (style/variable bound vs hard-coded).
+  try { if (typeof node.fillStyleId === "string" && node.fillStyleId) out.fillStyled = true; } catch (_) {}
+  try { if (typeof node.textStyleId === "string" && node.textStyleId) out.textStyled = true; } catch (_) {}
+  try { if (node.boundVariables && Object.keys(node.boundVariables).length) out.variableBound = true; } catch (_) {}
+  try {
+    if ("fills" in node && Array.isArray(node.fills) &&
+        node.fills.some(function (paint) { return paint && paint.type === "IMAGE" && paint.visible !== false; })) out.imageFill = true;
+  } catch (_) {}
   if ("effects" in node && Array.isArray(node.effects) && node.effects.length) {
     out.effectTypes = node.effects.slice(0, 4).map(function (effect) { return effect.type; });
   }
@@ -2740,6 +2748,110 @@ async function runCanvasCommand(command) {
   });
 }
 
+// Local quick-task channel: image bytes and large selection trees go straight between the plugin
+// UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
+// Only these named operations exist; every one checks the approved-file scope first.
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image"];
+var UXD_LOCAL_IMAGE_MAX_BYTES = 12 * 1024 * 1024;
+async function localReadTree(payload) {
+  var maxDepth = Math.max(0, Math.min(8, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 6));
+  var maxNodes = Math.max(1, Math.min(800, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 500));
+  var source = figma.currentPage.selection;
+  if (Array.isArray(payload.nodeIds) && payload.nodeIds.length) {
+    source = [];
+    for (var n = 0; n < payload.nodeIds.length && n < 12; n++) {
+      var picked = await figma.getNodeByIdAsync(String(payload.nodeIds[n]));
+      if (picked && picked.type !== "PAGE" && picked.type !== "DOCUMENT") source.push(picked);
+    }
+  }
+  var state = { count: 0, maxNodes: maxNodes, truncated: false, collapseInstances: payload.collapseInstances === true };
+  var nodes = [];
+  for (var i = 0; i < source.length; i++) {
+    if (state.count >= maxNodes) { state.truncated = true; break; }
+    var item = summarizeCanvasNode(source[i], maxDepth, state);
+    if (item) nodes.push(item);
+  }
+  var counts = { paint: 0, text: 0, variables: 0 };
+  try { counts.paint = (await figma.getLocalPaintStylesAsync()).length; } catch (_) {}
+  try { counts.text = (await figma.getLocalTextStylesAsync()).length; } catch (_) {}
+  try {
+    if (figma.variables && typeof figma.variables.getLocalVariablesAsync === "function") {
+      counts.variables = (await figma.variables.getLocalVariablesAsync()).length;
+    }
+  } catch (_) {}
+  return { ok: true, pageName: figma.currentPage.name, nodeCount: state.count, truncated: state.truncated, nodes: nodes, styleCounts: counts };
+}
+async function localTaskNode(nodeId) {
+  var node = typeof nodeId === "string" && nodeId ? await figma.getNodeByIdAsync(nodeId) : null;
+  if (!node || node.type === "PAGE" || node.type === "DOCUMENT") throw new Error("The selected layer is no longer on this page.");
+  var page = node;
+  while (page && page.type !== "PAGE") page = page.parent;
+  if (!page || page.id !== figma.currentPage.id) throw new Error("The target layer must be on the current page.");
+  return node;
+}
+async function localReadImage(payload) {
+  var node = await localTaskNode(payload.nodeId);
+  var paints = "fills" in node && Array.isArray(node.fills) ? node.fills : [];
+  var imagePaint = null;
+  for (var i = paints.length - 1; i >= 0; i--) {
+    if (paints[i] && paints[i].type === "IMAGE" && paints[i].visible !== false && paints[i].imageHash) { imagePaint = paints[i]; break; }
+  }
+  var bytes = null;
+  var source = "export";
+  if (imagePaint) {
+    var image = figma.getImageByHash(imagePaint.imageHash);
+    if (image) { bytes = await image.getBytesAsync(); source = "image-fill"; }
+  }
+  if (!bytes) {
+    if (typeof node.exportAsync !== "function") throw new Error("This layer has no image and cannot be exported.");
+    bytes = await node.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 2 } });
+  }
+  if (!bytes || !bytes.length) throw new Error("Figma returned no image bytes.");
+  if (bytes.length > UXD_LOCAL_IMAGE_MAX_BYTES) throw new Error("The image is larger than 12 MB.");
+  return { ok: true, nodeId: node.id, name: node.name, source: source, bytes: bytes,
+    width: node.width, height: node.height, scaleMode: imagePaint ? imagePaint.scaleMode : null };
+}
+async function localApplyImage(payload) {
+  var node = await localTaskNode(payload.nodeId);
+  if (node.type === "TEXT") throw new Error("Select a shape or frame, not a text layer, to place an image.");
+  if (!("fills" in node)) throw new Error(node.type + " layers cannot hold an image fill.");
+  var bytes = payload.bytes;
+  if (!(bytes instanceof Uint8Array) || bytes.length < 16 || bytes.length > UXD_LOCAL_IMAGE_MAX_BYTES) throw new Error("Image data is missing or larger than 12 MB.");
+  var image = figma.createImage(bytes);
+  var scaleMode = ["FILL", "FIT", "CROP", "TILE"].indexOf(payload.scaleMode) >= 0 ? payload.scaleMode : "FILL";
+  var current = Array.isArray(node.fills) ? node.fills.slice() : [];
+  var replaced = false;
+  if (payload.mode === "replace-image") {
+    for (var i = current.length - 1; i >= 0; i--) {
+      if (current[i] && current[i].type === "IMAGE") {
+        current[i] = Object.assign({}, current[i], { imageHash: image.hash });
+        replaced = true;
+        break;
+      }
+    }
+  }
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  node.fills = replaced ? current : [{ type: "IMAGE", imageHash: image.hash, scaleMode: scaleMode }];
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  return { ok: true, nodeId: node.id, name: node.name, imageHash: image.hash, replaced: replaced,
+    width: node.width, height: node.height, bytes: bytes.length };
+}
+async function runLocalTask(message) {
+  var result = null;
+  var errorText = null;
+  try {
+    if (typeof message.requestId !== "string" || UXD_LOCAL_TASK_OPS.indexOf(message.op) < 0) throw new Error("Unsupported local task operation.");
+    assertUxDirectFileScope("local task " + message.op);
+    var payload = message.payload && typeof message.payload === "object" ? message.payload : {};
+    if (message.op === "read-tree") result = await localReadTree(payload);
+    else if (message.op === "read-image") result = await localReadImage(payload);
+    else if (message.op === "apply-image") result = await localApplyImage(payload);
+  } catch (error) {
+    errorText = error && error.message ? String(error.message).slice(0, 600) : "Local task failed.";
+  }
+  figma.ui.postMessage({ type: "uxd-local-result", requestId: message.requestId, result: result, error: errorText });
+}
+
 figma.ui.onmessage = async function (message) {
   if (!message) return;
   if (message.type === "native-api-probe-ack" && message.probeId && UXD_NATIVE_API_PROBE_WAITERS[message.probeId]) {
@@ -2751,6 +2863,7 @@ figma.ui.onmessage = async function (message) {
   if (message.type === "get-selection") { assertUxDirectFileScope("refresh selection"); sendSelection(); }
   if (message.type === "run-native-health-check") { assertUxDirectFileScope("start health-check command"); await runNativeApiHealthCheck(message.commandId); }
   if (message.type === "run-canvas-command") { assertUxDirectFileScope("start canvas command"); await runCanvasCommand(message.command); }
+  if (message.type === "uxd-local-task") { await runLocalTask(message); }
   if (message.type === "close") { assertUxDirectFileScope("close plugin"); figma.closePlugin(); }
 };
 sendSelection();
