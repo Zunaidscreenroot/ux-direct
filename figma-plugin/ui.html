@@ -1490,7 +1490,9 @@
         (captured.warning ? "\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
     }
 
-    async function createFigmaDesign(prompt, reportProgress) {
+    async function createFigmaDesign(prompt, reportProgress, designOptions) {
+      const placement = designOptions && designOptions.placement &&
+        Number.isFinite(designOptions.placement.x) && Number.isFinite(designOptions.placement.y) ? designOptions.placement : null;
       const selectedModel = "openai/gpt-6-luna";
       const taskStartedAt = Date.now();
       let taskRunId = "";
@@ -1591,10 +1593,10 @@
       stage("planning", "Plan validated · " + memory + (renderedScreen ? " · rendered screenshot analysed" : " · layer-only analysis"));
 
       const viewport = canvas && canvas.viewport && canvas.viewport.bounds ? canvas.viewport.bounds : {};
-      const rootX = sourceNode && Number.isFinite(sourceNode.x)
+      const rootX = placement ? Math.max(-10000, Math.min(9000, placement.x)) : sourceNode && Number.isFinite(sourceNode.x)
         ? Math.max(-10000, Math.min(9000, sourceNode.x + (Number(sourceNode.width) || Number(plan.frame.width) || 393) + 100))
         : Math.max(40, Math.min(9000, Number(viewport.x) + 80 || 80));
-      const rootY = sourceNode && Number.isFinite(sourceNode.y)
+      const rootY = placement ? Math.max(-10000, Math.min(9000, placement.y)) : sourceNode && Number.isFinite(sourceNode.y)
         ? Math.max(-10000, Math.min(9000, sourceNode.y))
         : Math.max(40, Math.min(9000, Number(viewport.y) + 80 || 80));
       stage("creating", "Creating a separate editable variation; the original stays untouched…");
@@ -1768,6 +1770,367 @@
       return { pageName: result && result.pageName || "", nodes: frame ? [frame] : nodes };
     }
 
+    // ---- Quick tasks (Figma-agent style small tasks) -------------------------------------
+    // uxd-quick-task-classifier:start
+    function classifyQuickTask(prompt, context) {
+      const text = String(prompt || "").trim();
+      const ctx = context || {};
+      const types = Array.isArray(ctx.selectionTypes) ? ctx.selectionTypes : [];
+      const count = types.length;
+      const containerTypes = ["FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE", "SECTION", "GROUP"];
+      const allText = count > 0 && types.every(function (type) { return type === "TEXT"; });
+      const imageNoun = "(?:image|images|photo|photos|picture|pictures|pic|illustration|artwork|graphic|tasveer|foto)";
+      if (/\b(remove|erase|delete|cut ?out|clear|hatao|hata do|nikal)\b[^.]{0,25}\b(background|bg)\b|\bbackground\s*(removal|remover|remove)\b|\b(background|bg)\b[^.]{0,15}\b(hatao|hata do|remove)\b/i.test(text)) {
+        return { kind: "remove-background" };
+      }
+      if (!ctx.hasAttachment && (
+        new RegExp("\\b(generate|create|insert|add|put|place|make|draw|fill|render)\\b[^.]{0,40}\\b" + imageNoun + "\\b", "i").test(text) ||
+        new RegExp("\\b" + imageNoun + "\\b[^.]{0,30}\\b(daal|dal do|daalo|lagao|laga do|bana do|banao|generate)\\b", "i").test(text) ||
+        new RegExp("^\\s*" + imageNoun + "\\s*(of|:|-)\\s*\\S", "i").test(text)
+      )) {
+        return { kind: "generate-image", description: imageDescriptionFrom(text) };
+      }
+      if (/\brename\b[^.]{0,25}\blayers?\b|\b(layer names?|name (the |all |these )?layers)\b/i.test(text)) return { kind: "rename-layers" };
+      const hygieneWords = /\b(hygiene|design lint|lint|ui (review|audit|check|qa)|design qa|check (the |for )?(padding|spacing|auto ?layout|alignment|colou?rs?|typography|fonts?|contrast|consistency)|spacing check|padding check|auto ?layout check|consistency check)\b/i.test(text);
+      if (hygieneWords || (/\bconsisten(t|cy)\b/i.test(text) && !/\b(make|fix|apply|set|change)\b/i.test(text))) {
+        return { kind: "hygiene" };
+      }
+      if (/\b(ux (audit|review|critique)|usability (review|audit|check)|heuristic|audit|critique|review (this|these|the|my)\b|give (me )?feedback|what('s| is) wrong|kahan (pe |par )?galat)/i.test(text)) {
+        return { kind: "ux-audit" };
+      }
+      const variationWord = /\b(variations?|variants?|versions?|alternatives?|options|explorations?|directions?)\b/i.test(text);
+      const countMatch = /\b([2-4]|two|three|four)\s+(?:different\s+|more\s+|new\s+)?(variations?|variants?|versions?|alternatives?|options|directions?)\b/i.exec(text);
+      const wordCounts = { two: 2, three: 3, four: 4 };
+      const requested = countMatch ? (wordCounts[countMatch[1].toLowerCase()] || Number(countMatch[1])) : 1;
+      const frames = types.filter(function (type) { return containerTypes.includes(type); }).length;
+      if (variationWord && frames >= 2 && frames === count) return { kind: "flow-variations", count: 1 };
+      if (variationWord && frames === 1 && count === 1 && requested >= 2) return { kind: "screen-variations", count: Math.min(4, requested) };
+      const styleWords = /\b(colou?r|font size|font weight|font family|bold|italic|align|alignment|position|style|size)\b/i.test(text);
+      const anyTextVerb = /\b(rewrite|re-write|improve|better|shorten|shorter|expand|extend|elaborate|longer|add|append|translate|rephrase|paraphrase|fix|correct|make|replace|fill|update|change|write|polish|simplify|tone|likh|likho)\b/i.test(text);
+      if (allText && anyTextVerb && !styleWords) return { kind: "rewrite-text" };
+      if (count === 0 || styleWords) return null;
+      if (/\btranslate\b/i.test(text)) return { kind: "rewrite-text" };
+      const copyWords = /\b(text|texts|copy|microcopy|content|wording|labels|headlines|lorem|placeholder|grammar|typos?|spelling|button text|cta text)\b/i.test(text);
+      const rewriteVerbs = /\b(rewrite|re-write|improve|better|shorten|shorter|expand|extend|elaborate|rephrase|paraphrase|fix|correct|polish|simplify|tone|replace|fill|realistic)\b/i.test(text);
+      if (copyWords && rewriteVerbs) return { kind: "rewrite-text" };
+      return null;
+    }
+    function imageDescriptionFrom(text) {
+      const stripped = String(text || "")
+        .replace(/^[^]*?\b(?:image|images|photo|photos|picture|pictures|pic|illustration|artwork|graphic|tasveer|foto)\b\s*(?:of|showing|with|for|:|-)?\s*/i, "")
+        .replace(/\b(here|in (this|the|it|that)( shape| rectangle| frame| box| selection)?|into (this|the) (shape|rectangle|frame|box))\b/gi, "")
+        .trim();
+      return stripped.length >= 3 ? stripped : String(text || "").trim();
+    }
+    // uxd-quick-task-classifier:end
+
+    const pendingLocalTasks = new Map();
+    function localTask(op, payload, timeoutMs) {
+      return new Promise(function (resolve, reject) {
+        const requestId = "local-" + makeId();
+        const timer = window.setTimeout(function () {
+          pendingLocalTasks.delete(requestId);
+          reject(new Error("Figma did not answer the " + op + " request in time."));
+        }, timeoutMs || 60000);
+        pendingLocalTasks.set(requestId, { resolve: resolve, reject: reject, timer: timer });
+        parent.postMessage({ pluginMessage: { type: "uxd-local-task", requestId: requestId, op: op, payload: payload || {} } }, "*");
+      });
+    }
+    function bytesToBase64(bytes) {
+      let binary = "";
+      for (let index = 0; index < bytes.length; index += 0x8000) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(index, index + 0x8000));
+      }
+      return btoa(binary);
+    }
+    function base64ToBytes(value) {
+      const binary = atob(String(value || "").replace(/^data:[^,]*;base64,/, ""));
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return bytes;
+    }
+    async function postQuickTask(path, body) {
+      const response = await fetch(API + path, {
+        method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        cache: "no-store", body: JSON.stringify(body)
+      });
+      const payload = await response.json().catch(function () { return {}; });
+      if (!response.ok || payload.ok !== true) {
+        const details = Array.isArray(payload.details)
+          ? " " + payload.details.slice(0, 3).map(function (item) { return typeof item === "string" ? item : (item && item.message) || JSON.stringify(item); }).join(" | ")
+          : "";
+        throw new Error((payload.error || "UX Direct returned HTTP " + response.status + ".") + details);
+      }
+      return payload;
+    }
+    function flattenTree(nodes, visit, parent, insideInstance) {
+      (Array.isArray(nodes) ? nodes : []).forEach(function (node) {
+        if (!node) return;
+        visit(node, parent || null, Boolean(insideInstance));
+        flattenTree(node.children, visit, node, insideInstance || node.type === "INSTANCE");
+      });
+    }
+    function firstTexts(node, max) {
+      const found = [];
+      flattenTree([node], function (item) { if (item.type === "TEXT" && item.text && found.length < max) found.push(String(item.text).slice(0, 60)); });
+      return found;
+    }
+    function selectedIds() {
+      return (currentSelection.selection || []).map(function (node) { return node.id; });
+    }
+
+    // Local fallback when the cloud background remover is unavailable: clears a flat
+    // background that is connected to the image border (works for product shots on plain colour).
+    async function removeFlatBackgroundLocally(bytes) {
+      const bitmap = await createImageBitmap(new Blob([bytes]));
+      const scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      const context = canvas.getContext("2d");
+      context.drawImage(bitmap, 0, 0, width, height);
+      const image = context.getImageData(0, 0, width, height);
+      const data = image.data;
+      const corners = [[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]].map(function (point) {
+        const offset = (point[1] * width + point[0]) * 4;
+        return [data[offset], data[offset + 1], data[offset + 2]];
+      });
+      const reference = corners[0];
+      const distance = function (a, b) { return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]); };
+      if (corners.some(function (corner) { return distance(corner, reference) > 60; })) {
+        throw new Error("the background is not a flat colour, so the local fallback cannot separate it");
+      }
+      const visited = new Uint8Array(width * height);
+      const queue = [];
+      for (let x = 0; x < width; x += 1) { queue.push(x, (height - 1) * width + x); }
+      for (let y = 0; y < height; y += 1) { queue.push(y * width, y * width + width - 1); }
+      let cleared = 0;
+      while (queue.length) {
+        const index = queue.pop();
+        if (visited[index]) continue;
+        visited[index] = 1;
+        const offset = index * 4;
+        if (distance([data[offset], data[offset + 1], data[offset + 2]], reference) > 48) continue;
+        data[offset + 3] = 0; cleared += 1;
+        const x = index % width;
+        if (x > 0) queue.push(index - 1);
+        if (x < width - 1) queue.push(index + 1);
+        if (index >= width) queue.push(index - width);
+        if (index < width * (height - 1)) queue.push(index + width);
+      }
+      if (cleared < width * height * 0.03) throw new Error("no flat background was found around the subject");
+      context.putImageData(image, 0, 0);
+      const blob = await new Promise(function (resolve) { canvas.toBlob(resolve, "image/png"); });
+      return new Uint8Array(await blob.arrayBuffer());
+    }
+
+    async function runGenerateImageTask(task, prompt, stage) {
+      const ids = selectedIds();
+      if (!ids.length) throw new Error("Select the rectangle or frame where the image should go, then ask again.");
+      if (ids.length > 6) throw new Error("Select up to 6 shapes at a time for image generation.");
+      stage("scanning", "Reading the selected shape size…");
+      const tree = await localTask("read-tree", { nodeIds: ids, maxDepth: 0, maxNodes: 12 });
+      const targets = (tree.nodes || []).filter(function (node) { return node.type !== "TEXT"; });
+      if (!targets.length) throw new Error("Select a shape or frame (not a text layer) to fill with an image.");
+      const lines = [];
+      for (let index = 0; index < targets.length; index += 1) {
+        const node = targets[index];
+        const width = Math.round(Number(node.width) || 0);
+        const height = Math.round(Number(node.height) || 0);
+        stage("creating", "Generating image " + (index + 1) + "/" + targets.length + " for \"" + node.name + "\" (" + width + "×" + height + ")…");
+        const description = task.description + (targets.length > 1 ? " (variation " + (index + 1) + ", different from the others)" : "");
+        const generated = await postQuickTask("/api/assistant/figma-agent/image", { action: "generate", prompt: description, width: Math.max(8, width), height: Math.max(8, height) });
+        stage("creating", "Placing the image into \"" + node.name + "\"…");
+        await localTask("apply-image", { nodeId: node.id, bytes: base64ToBytes(generated.imageBase64), mode: "fill", scaleMode: "FILL" }, 60000);
+        lines.push("- **" + node.name + "** " + width + "×" + height + " → " +
+          (generated.width ? generated.width + "×" + generated.height + " px image (same aspect ratio, 2x for sharpness)" : "image placed with Fill") +
+          " via " + generated.provider + (generated.notes && generated.notes.length ? " · note: " + String(generated.notes[generated.notes.length - 1]).slice(0, 140) : ""));
+      }
+      stage("done", "Image placed · undo with Cmd/Ctrl+Z");
+      return "Generated and placed " + lines.length + " image(s) for: \"" + task.description + "\"\n" + lines.join("\n") +
+        "\nThe image is a native image fill on your shape, so corner radius, effects and auto layout stay as they were.";
+    }
+
+    async function runRemoveBackgroundTask(stage) {
+      const ids = selectedIds();
+      if (!ids.length) throw new Error("Select the image layer whose background should be removed.");
+      if (ids.length > 4) throw new Error("Select up to 4 images at a time.");
+      const lines = [];
+      for (let index = 0; index < ids.length; index += 1) {
+        stage("scanning", "Reading image " + (index + 1) + "/" + ids.length + "…");
+        const source = await localTask("read-image", { nodeId: ids[index] }, 60000);
+        if (source.source !== "image-fill") throw new Error("\"" + source.name + "\" has no image fill. Select a layer that contains a photo.");
+        stage("creating", "Removing the background from \"" + source.name + "\"…");
+        let output = null;
+        let method = "";
+        try {
+          const removed = await postQuickTask("/api/assistant/figma-agent/image", { action: "remove-background", imageBase64: bytesToBase64(source.bytes) });
+          output = base64ToBytes(removed.imageBase64);
+          method = "AI subject segmentation (Cloudflare Images)";
+        } catch (error) {
+          stage("creating", "Cloud remover unavailable, trying the local flat-background remover…");
+          try {
+            output = await removeFlatBackgroundLocally(source.bytes);
+            method = "local flat-colour remover (cloud remover failed: " + String(error && error.message || error).slice(0, 120) + ")";
+          } catch (fallbackError) {
+            throw new Error("Background removal failed. Cloud: " + String(error && error.message || error).slice(0, 200) +
+              ". Local fallback: " + String(fallbackError && fallbackError.message || fallbackError).slice(0, 160) + ".");
+          }
+        }
+        await localTask("apply-image", { nodeId: source.nodeId, bytes: output, mode: "replace-image", scaleMode: source.scaleMode || "FILL" }, 60000);
+        lines.push("- **" + source.name + "**: background removed with " + method + ".");
+      }
+      stage("done", "Background removed · undo with Cmd/Ctrl+Z");
+      return "Removed the background in place (the image fill now has transparency).\n" + lines.join("\n");
+    }
+
+    async function applyNodePatches(edits, key, stage) {
+      let applied = 0;
+      for (let index = 0; index < edits.length; index += 20) {
+        const chunk = edits.slice(index, index + 20);
+        const patchOf = function (edit) { const patch = {}; patch[key] = edit.value; return patch; };
+        const result = await runNativeCanvasCommand("write-canvas", {
+          confirm: true, operation: "batch",
+          actions: chunk.map(function (edit) { return { operation: "update-node", nodeId: edit.id, patch: patchOf(edit) }; })
+        }, 120000);
+        applied += Number(result && result.completedCount) || 0;
+        if (!result || result.ok === false) {
+          throw new Error("Figma stopped after " + applied + " change(s): " + String(result && result.error || "batch failed").slice(0, 200));
+        }
+        stage("creating", "Applied " + applied + "/" + edits.length + " change(s)…");
+      }
+      return applied;
+    }
+
+    async function runTextTask(mode, prompt, stage) {
+      if (!selectedIds().length) throw new Error(mode === "rewrite"
+        ? "Select the text layer(s), or the frame that contains them, then ask again."
+        : "Select the frame whose layers should be renamed.");
+      stage("scanning", "Reading the selected layers…");
+      const tree = await localTask("read-tree", { maxDepth: 8, maxNodes: 500 });
+      const items = [];
+      flattenTree(tree.nodes, function (node, parentNode, insideInstance) {
+        if (node.visible === false) return;
+        if (mode === "rewrite") {
+          if (node.type !== "TEXT" || typeof node.text !== "string" || !node.text.trim()) return;
+          items.push({ id: node.id, type: "TEXT", name: String(node.name || "").slice(0, 200), text: node.text,
+            fontSize: Number(node.fontSize) || undefined, parent: parentNode ? String(parentNode.name || "").slice(0, 200) : undefined });
+        } else {
+          if (insideInstance || node.type === "TEXT") return;
+          const texts = firstTexts(node, 3);
+          const kids = Array.isArray(node.children) ? node.children.map(function (child) { return child.type; }).slice(0, 8).join(",") : "";
+          items.push({ id: node.id, type: String(node.type), name: String(node.name || "").slice(0, 200),
+            parent: parentNode ? String(parentNode.name || "").slice(0, 200) : undefined,
+            hint: ((texts.length ? "text: " + texts.join(" | ") : "") + (kids ? " children: " + kids : "") +
+              " size: " + Math.round(Number(node.width) || 0) + "x" + Math.round(Number(node.height) || 0)).slice(0, 300) });
+        }
+      });
+      if (!items.length) throw new Error(mode === "rewrite" ? "No text layers were found in the selection." : "No renamable layers were found in the selection.");
+      if (mode === "rewrite" && items.length > 60) throw new Error("The selection has " + items.length + " text layers. Select up to 60 at a time.");
+      const limited = items.slice(0, 150);
+      stage("planning", mode === "rewrite" ? "Rewriting " + limited.length + " text layer(s) with the free model…" : "Naming " + limited.length + " layer(s) by purpose…");
+      const screen = (tree.nodes || [])[0];
+      const result = await postQuickTask("/api/assistant/figma-agent/text", {
+        mode: mode, prompt: prompt, items: limited, screenName: screen ? String(screen.name || "").slice(0, 200) : ""
+      });
+      const edits = Array.isArray(result.edits) ? result.edits : [];
+      if (!edits.length) return "No changes were needed for that request.";
+      stage("creating", "Applying " + edits.length + " change(s)…");
+      const applied = await applyNodePatches(edits, mode === "rewrite" ? "text" : "name", stage);
+      stage("done", (mode === "rewrite" ? "Text updated" : "Layers renamed") + " · " + applied + " change(s)");
+      const preview = edits.slice(0, 8).map(function (edit) {
+        return "- " + String(edit.before).replace(/\s+/g, " ").slice(0, 60) + " → **" + String(edit.value).replace(/\s+/g, " ").slice(0, 80) + "**";
+      });
+      return (result.summary ? result.summary + "\n" : "") +
+        (mode === "rewrite" ? "Updated " : "Renamed ") + applied + " layer(s)" + (items.length > limited.length ? " (first 150 only)" : "") + ":\n" +
+        preview.join("\n") + (edits.length > 8 ? "\n- …and " + (edits.length - 8) + " more" : "") +
+        "\nFonts and styles were kept. Undo with Cmd/Ctrl+Z if you don't like a change.";
+    }
+
+    async function runAuditTask(kind, prompt, stage) {
+      if (!selectedIds().length) throw new Error("Select the screen (or several screens of a flow) to review.");
+      stage("scanning", "Reading every layer in the selection…");
+      const tree = await localTask("read-tree", { maxDepth: 8, maxNodes: kind === "hygiene" ? 800 : 400 });
+      const roots = (tree.nodes || []).slice(0, 6);
+      const screens = [];
+      if (kind === "ux-audit") {
+        for (let index = 0; index < roots.length; index += 1) {
+          stage("capturing", "Capturing screen " + (index + 1) + "/" + roots.length + " for the visual review…");
+          const capture = index < 4 ? await captureRenderedNodePreview(roots[index].id) : { dataUrl: null };
+          screens.push({ id: roots[index].id, name: String(roots[index].name || "Screen").slice(0, 200), image: capture.dataUrl || null });
+        }
+      }
+      stage(kind === "hygiene" ? "verifying" : "planning", kind === "hygiene"
+        ? "Checking auto layout, padding, spacing, naming, typography, colours, contrast…"
+        : "Auditing usability and flow with the free model…");
+      const result = await postQuickTask("/api/assistant/figma-agent/audit", {
+        kind: kind === "hygiene" ? "hygiene" : "ux", prompt: prompt, canvas: { nodes: tree.nodes, truncated: tree.truncated },
+        screens: kind === "hygiene" ? undefined : screens, styleCounts: tree.styleCounts || undefined
+      });
+      stage("done", kind === "hygiene" ? "Hygiene check complete" : "UX audit complete");
+      return String(result.text || "Review complete.");
+    }
+
+    async function runVariationsTask(task, prompt, stage) {
+      const ids = selectedIds();
+      const tree = await localTask("read-tree", { nodeIds: ids, maxDepth: 0, maxNodes: 12 });
+      const frames = (tree.nodes || []).slice().sort(function (a, b) { return (Number(a.x) - Number(b.x)) || (Number(a.y) - Number(b.y)); });
+      const results = [];
+      const failures = [];
+      const directions = ["a different layout and hierarchy", "a different visual style and colour treatment",
+        "a different content density and grouping", "a different interaction pattern"];
+      const jobs = [];
+      if (task.kind === "flow-variations") {
+        const bottom = Math.max.apply(null, frames.map(function (frame) { return Number(frame.y) + Number(frame.height); }));
+        const names = frames.map(function (frame) { return frame.name; }).join(" → ");
+        frames.forEach(function (frame, index) {
+          jobs.push({ frame: frame, placement: { x: Number(frame.x), y: bottom + 160 },
+            prompt: prompt + "\n\nFlow context: this is screen " + (index + 1) + " of " + frames.length + " in one user flow (" + names +
+              "). Create the variation of this screen only, using one consistent visual direction, navigation and colour system shared by every screen of the flow." });
+        });
+      } else {
+        const frame = frames[0];
+        for (let index = 0; index < task.count; index += 1) {
+          jobs.push({ frame: frame, placement: { x: Number(frame.x) + (index + 1) * (Number(frame.width) + 120), y: Number(frame.y) },
+            prompt: prompt + "\n\nThis is variation " + (index + 1) + " of " + task.count + ": explore " + directions[index % directions.length] +
+              " so it is clearly distinct from the other variations, while keeping all source content." });
+        }
+      }
+      for (let index = 0; index < jobs.length; index += 1) {
+        const job = jobs[index];
+        stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + job.frame.name + "…");
+        try {
+          await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [job.frame.id] }, 90000);
+          const answer = await createFigmaDesign(job.prompt, function (status) {
+            stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + status);
+          }, { placement: job.placement });
+          results.push("**" + (index + 1) + ". " + job.frame.name + "**: " + String(answer).split("\n")[0]);
+        } catch (error) {
+          failures.push("**" + (index + 1) + ". " + job.frame.name + "**: " + String(error && error.message || error).slice(0, 240));
+        }
+      }
+      stage(failures.length ? "error" : "done", results.length + "/" + jobs.length + " variation(s) created");
+      return (task.kind === "flow-variations"
+        ? "Flow variation: " + results.length + " of " + jobs.length + " screens created in a new row below the original flow."
+        : results.length + " of " + jobs.length + " variations created to the right of the source screen.") +
+        (results.length ? "\n" + results.join("\n") : "") +
+        (failures.length ? "\n\nNot created:\n" + failures.join("\n") : "") +
+        "\nThe original screens were not changed.";
+    }
+
+    async function runQuickTask(task, prompt, reportProgress) {
+      const notify = typeof reportProgress === "function" ? reportProgress : function () {};
+      function stage(state, message) { setProcessState(state, message); notify(message); }
+      if (task.kind === "generate-image") return runGenerateImageTask(task, prompt, stage);
+      if (task.kind === "remove-background") return runRemoveBackgroundTask(stage);
+      if (task.kind === "rewrite-text") return runTextTask("rewrite", prompt, stage);
+      if (task.kind === "rename-layers") return runTextTask("rename", prompt, stage);
+      if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);
+      if (task.kind === "flow-variations" || task.kind === "screen-variations") return runVariationsTask(task, prompt, stage);
+      throw new Error("Unknown quick task.");
+    }
+
     async function submitPrompt(rawPrompt) {
       const prompt = String(rawPrompt || "").trim();
       if (!prompt || isSending) return;
@@ -1787,6 +2150,23 @@
       $("send").disabled = true;
       await sendTelemetry("Cockpit chat request started", "info", "The in-Figma UX Direct conversation received a user prompt.", { selectedCount: (currentSelection.selection || []).length });
       try {
+        const quickTask = classifyQuickTask(prompt, {
+          selectionTypes: (currentSelection.selection || []).map(function (node) { return node.type; }),
+          hasAttachment: Boolean(attachedImageData)
+        });
+        if (quickTask) {
+          typingRow.remove();
+          assistantMessage = appendMessage("assistant", "Starting " + quickTask.kind.replace(/-/g, " ") + "…");
+          const answer = await runQuickTask(quickTask, prompt, function (status) {
+            if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
+          });
+          assistantMessage.bubble.innerHTML = renderMarkdownHtml(answer);
+          chatHistory.push({ role: "assistant", content: answer });
+          await sendTelemetry("Quick task completed", "success", "UX Direct completed a Figma quick task: " + quickTask.kind + ".", {
+            durationMs: Date.now() - startedAt, selectedCount: (currentSelection.selection || []).length, model: "quick-task:" + quickTask.kind
+          });
+          return;
+        }
         if (isDirectCanvasActionPrompt(prompt)) {
           typingRow.remove();
           assistantMessage = appendMessage("assistant", "Inspecting selected layers and planning native edits…");
@@ -2014,6 +2394,16 @@
         }).then(function () {
           void sendTelemetry("Native plugin API check completed", failures ? "warning" : "success", "Native Figma plugin API check report saved for supervision.", { passed: Number(message.passed || 0), failed: failures });
         }).catch(function () {});
+        return;
+      }
+      if (message.type === "uxd-local-result") {
+        const localEntry = pendingLocalTasks.get(message.requestId);
+        if (localEntry) {
+          pendingLocalTasks.delete(message.requestId);
+          window.clearTimeout(localEntry.timer);
+          if (message.error) localEntry.reject(new Error(message.error));
+          else localEntry.resolve(message.result);
+        }
         return;
       }
       if (message.type === "canvas-command-result") {
