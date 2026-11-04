@@ -6,7 +6,7 @@ import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 export type JsonModelContent = string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
 
 export type JsonModelResult =
-  | { ok: true; data: Record<string, unknown>; model: string; routedVia?: string }
+  | { ok: true; data: Record<string, unknown>; raw: string; model: string; routedVia?: string }
   | { ok: false; status: number; error: string; errors: string[] };
 
 /**
@@ -22,7 +22,7 @@ export async function callFigmaJsonModel(options: {
   temperature?: number;
   title: string;
   origin: string;
-  accept: (data: Record<string, unknown>) => string | null;
+  accept: (data: Record<string, unknown>, raw: string) => string | null;
 }): Promise<JsonModelResult> {
   const provider = await getResolvedActiveChatProvider();
   if (!provider.configured || !provider.apiKey) {
@@ -74,17 +74,19 @@ export async function callFigmaJsonModel(options: {
       const choices = Array.isArray(record.choices) ? record.choices : [];
       const choice = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : {};
       const message = choice.message && typeof choice.message === "object" ? choice.message as Record<string, unknown> : {};
-      const decoded = extractJsonObject(message.content) ?? extractJsonObject(message.parsed) ?? extractJsonObject(message.tool_calls);
+      const raw = typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? "");
+      const decoded = extractJsonObject(message.content) ?? extractJsonObject(message.parsed) ?? extractJsonObject(message.tool_calls)
+        ?? (/^\s*(```(json)?\s*)?\[/i.test(raw) ? {} : null);
       if (!decoded) {
         errors.push(model + ": response contained no JSON object.");
         continue;
       }
-      const rejection = options.accept(decoded);
+      const rejection = options.accept(decoded, raw);
       if (rejection) {
         errors.push(model + ": " + rejection.slice(0, 200));
         continue;
       }
-      return { ok: true, data: decoded, model: (typeof record.model === "string" && record.model) || model, routedVia: routedVia(response) };
+      return { ok: true, data: decoded, raw, model: (typeof record.model === "string" && record.model) || model, routedVia: routedVia(response) };
     } catch (error) {
       errors.push(model + ": " + (controller.signal.aborted ? "timed out" : String(error instanceof Error ? error.message : error).slice(0, 160)));
     } finally {

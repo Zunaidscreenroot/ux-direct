@@ -974,6 +974,11 @@
         !/\b(?:the|this|selected|existing)\s+(?:text|label|title|copy|value|fill|color|stroke|font|size|position|spacing|padding|layout|alignment|background|corner radius|shadow|constraint|variable|icon|button|image|layer|node|component|page|style|token)\b/i.test(text) &&
         !/\b(?:rename|recolor|resize|move|align|reposition|replace|rewrite|set|apply|insert|attach|delete|remove|clone|duplicate|group|ungroup|reorder|wrap|bind|swap|detach|flatten|export|create page|rename page|switch to page|make component|create component|create variant|create variables?|bind variable|apply style|auto.?layout|hug|fill|stroke|padding|letter.?spacing|line.?height)\b/i.test(text);
       if (broadDesignIntent) return false;
+      // "make text white", "turn the button blue", "make the title bold": one property change on the selection.
+      const visualPropertyEdit = /\b(make|turn|change|set|give|colou?r)\b/i.test(text) &&
+        /\b(white|black|gr[ae]y|red|green|blue|yellow|orange|purple|pink|bold|semi-?bold|italic|underlined?|bigger|smaller|larger|upper ?case|lower ?case|transparent|rounded|#[0-9a-f]{3,8})\b/i.test(text) &&
+        !/\b(screen|screens|flow|page|variation|version|mode|theme|wireframe)\b/i.test(text);
+      if (visualPropertyEdit) return true;
 
       const explicitNativeOperation = /\b(edit|update|rewrite|replace|rename|recolor|restyle|resize|move|align|reposition|set|apply|insert|attach|delete|remove|clone|duplicate|group|ungroup|reorder|wrap|bind|swap|detach|flatten|export|switch|open)\b/i.test(text);
       const directTarget = /\b(text|label|title|copy|value|fill|color|stroke|font|size|position|spacing|padding|layout|alignment|background|corner radius|shadow|constraint|variable|icon|button|image|photo|logo|layer|node|component|variant|page|frame|selection|canvas|style|token|auto.?layout|hug|fill|text range|line height|letter spacing)\b/i.test(text);
@@ -1773,6 +1778,335 @@
     }
 
     // ---- Quick tasks (Figma-agent style small tasks) -------------------------------------
+    // uxd-direct-edit-parser:start
+    // Deterministic parser for everyday Figma edits ("make text white", "padding 24", "add shadow",
+    // "button ko blue kar do"). It returns ops only when every word of the prompt is understood;
+    // anything else returns null and goes to the model-planned native path.
+    const DIRECT_EDIT_COLORS = {
+      white: "#FFFFFF", "off white": "#FAFAF9", "off-white": "#FAFAF9", black: "#000000", grey: "#6B7280", gray: "#6B7280",
+      red: "#EF4444", green: "#22C55E", blue: "#2563EB", yellow: "#FACC15", orange: "#F97316", purple: "#8B5CF6",
+      violet: "#7C3AED", pink: "#EC4899", brown: "#92400E", navy: "#1E3A8A", teal: "#14B8A6", cyan: "#06B6D4",
+      indigo: "#4F46E5", maroon: "#7F1D1D", beige: "#F5F5DC", gold: "#D4A017", golden: "#D4A017", silver: "#C0C0C0",
+      lime: "#84CC16", magenta: "#D946EF", cream: "#FFFDD0", sky: "#38BDF8",
+      safed: "#FFFFFF", safaid: "#FFFFFF", kala: "#000000", kaala: "#000000", kali: "#000000", kaali: "#000000",
+      laal: "#EF4444", lal: "#EF4444", neela: "#2563EB", nila: "#2563EB", neeli: "#2563EB", hara: "#22C55E", hari: "#22C55E",
+      peela: "#FACC15", pila: "#FACC15", peeli: "#FACC15", gulabi: "#EC4899", narangi: "#F97316", santri: "#F97316",
+      baingani: "#8B5CF6", jamuni: "#8B5CF6", bhura: "#92400E", sleti: "#6B7280", aasmani: "#38BDF8", asmani: "#38BDF8"
+    };
+    const DIRECT_EDIT_NOUNS = [
+      ["button", "buttons?|btns?|ctas?"], ["icon", "icons?"], ["card", "cards?"], ["header", "headers?|nav ?bars?|top ?bars?|app ?bars?|navigation"],
+      ["footer", "footers?|tab ?bars?|bottom ?bars?"], ["image", "images?|photos?|pictures?|banners?|thumbnails?"], ["avatar", "avatars?"],
+      ["divider", "dividers?|separators?"], ["input", "inputs?|input fields?|text ?fields?|fields?|search ?bars?|dropdowns?"],
+      ["tab", "tabs?"], ["chip", "chips?|badges?|tags?"], ["list", "list items?|rows?|cells?"], ["modal", "modals?|dialogs?|bottom ?sheets?|popups?"],
+      ["subtitle", "sub ?titles?|sub ?headings?"], ["title", "titles?|headings?|headlines?"], ["label", "labels?"],
+      ["caption", "captions?|helper text"], ["body", "body text|body|descriptions?|paragraphs?"], ["link", "links?"], ["price", "prices?|amounts?"]
+    ];
+    const DIRECT_KNOWN_FONTS = /^(inter|roboto|poppins|montserrat|lato|open sans|sf pro|sf pro text|sf pro display|helvetica|arial|nunito|manrope|dm sans|playfair display|source sans pro|noto sans|ibm plex sans|work sans|raleway|rubik|outfit|plus jakarta sans|georgia|times new roman|mulish|barlow|karla|figtree|geist|urbanist|lexend|sora|space grotesk|oswald|merriweather|ubuntu|quicksand|josefin sans|pt sans|cabin|hind|mukta|noto sans devanagari)$/i;
+    const DIRECT_TEXT_NOUNS = ["title", "subtitle", "label", "caption", "body", "link", "price"];
+    const DIRECT_EDIT_FILLER = new Set(("make it its this that these those them they the a an to please pls plz kindly set change apply add use give turn " +
+      "update put layer layers selected selection frame frames node nodes element elements object of in into with by for on onto " +
+      "kar karo kardo karke do de dijiye dena karna kijiye karein banao bana banado banana ko ka ki ke isko isse ise iska iski iske ye yeh " +
+      "is mein me se hai hain all every each sab sabhi saare sare now also just little bit slightly thoda thodi colour color colours colors " +
+      "rang should be i want can you could would need everything item items content contents here there yahan wahan ab abhi ek current so " +
+      "style value as are our my your me us chahiye hona hone wala wali wale jo aur and then phir too bhi same px pt dp " +
+      "text texts font fonts typography copy words letters background bg backdrop fill layout").split(/\s+/));
+    function directColorPattern() {
+      const names = Object.keys(DIRECT_EDIT_COLORS).sort(function (a, b) { return b.length - a.length; }).map(function (n) { return n.replace(/[- ]/g, "[- ]"); });
+      return "(#[0-9a-f]{3,8}\\b|\\b(?:(?:light|dark|pale|deep|bright|halka|halki|gehra|gehri)\\s+)?(?:" + names.join("|") + ")\\b)";
+    }
+    function directColorHex(word) {
+      const text = String(word || "").trim().toLowerCase();
+      if (/^#[0-9a-f]{3,8}$/.test(text)) {
+        const hex = text.length === 4 ? "#" + text.slice(1).split("").map(function (c) { return c + c; }).join("") : text;
+        return hex.length === 7 || hex.length === 9 ? hex.toUpperCase() : null;
+      }
+      const tone = /^(light|pale|halka|halki|bright|dark|deep|gehra|gehri)\s+(.+)$/.exec(text);
+      const base = DIRECT_EDIT_COLORS[(tone ? tone[2] : text).replace(/-/g, " ")] || DIRECT_EDIT_COLORS[tone ? tone[2] : text];
+      if (!base) return null;
+      if (!tone || tone[1] === "bright") return base;
+      const mix = /light|pale|halk/.test(tone[1]) ? 0.6 : -0.35;
+      const channels = [1, 3, 5].map(function (i) { return parseInt(base.slice(i, i + 2), 16); }).map(function (v) {
+        return Math.round(mix > 0 ? v + (255 - v) * mix : v * (1 + mix));
+      });
+      return "#" + channels.map(function (v) { return v.toString(16).padStart(2, "0"); }).join("").toUpperCase();
+    }
+    function parseDirectEdit(prompt, context) {
+      const original = String(prompt || "").replace(/[“”]/g, "\"").replace(/[‘’]/g, "'").trim();
+      const ctx = context || {};
+      const types = Array.isArray(ctx.selectionTypes) ? ctx.selectionTypes : [];
+      if (!original || !types.length || original.length > 300) return null;
+      if (/\b(screens?|flows?|variations?|versions?|dark mode|light mode|themes?|wireframes?|redesign|improve|better|modern|cleaner|premium|similar|inspired|like the|look like|consistent|hygiene|audit|review|generate|image of|photo of|picture of|translate|rewrite|shorter|longer|tone)\b/i.test(original)) return null;
+      const allText = types.every(function (t) { return t === "TEXT"; });
+      const ops = [];
+      let rest = original;
+      function eat(regex, handler) {
+        rest = rest.replace(regex, function () {
+          const out = handler.apply(null, arguments);
+          if (out === false) return arguments[0];
+          (Array.isArray(out) ? out : out ? [out] : []).forEach(function (op) { ops.push(op); });
+          return " ¦ ";
+        });
+      }
+      // Whole-prompt edits with free text values (quotes may contain "and").
+      eat(/\breplace\s+"([^"]+)"\s+(?:with|by|to)\s+"([^"]*)"/gi, function (_m, from, to) { return { kind: "text", set: { replace: { from: from, to: to } }, label: "Replaced \"" + from + "\"" }; });
+      eat(/"([^"]+)"\s+(?:ko|को)\s+"([^"]*)"\s+(?:se\s+)?(?:replace|badal|badlo|kar)\w*(?:\s+(?:do|de|dijiye|karo))?/gi, function (_m, from, to) { return { kind: "text", set: { replace: { from: from, to: to } }, label: "Replaced \"" + from + "\"" }; });
+      eat(/\b(?:change|set|update|edit|make)\s+(?:the\s+|this\s+)?(?:text|label|title|heading|copy|button text|cta text|cta)(?:\s+text)?\s+(?:to|as|into|=|:)\s+"([^"]+)"/gi, function (_m, value) { return { kind: "text", set: { text: value }, label: "Text set" }; });
+      eat(/\b(?:text|label|title|heading|copy)\s+(?:should\s+(?:say|read|be)|says?|=|:)\s+"([^"]+)"/gi, function (_m, value) { return { kind: "text", set: { text: value }, label: "Text set" }; });
+      eat(/\b(?:rename|name)\s+(?:this|it|the layer|this layer|the frame|layer|frame)?\s*(?:to|as)\s+"?([^"]+?)"?\s*$/i, function (_m, value) { return { kind: "self", set: { name: value.trim() }, label: "Renamed to \"" + value.trim() + "\"" }; });
+      eat(/^\s*(?:is\s*ko|isko|ise)?\s*"?([^"]+?)"?\s+naam\s+(?:do|de|dijiye|rakho|rakh do)\s*$/i, function (_m, value) { return { kind: "self", set: { name: value.trim() }, label: "Renamed to \"" + value.trim() + "\"" }; });
+      const colorWords = new RegExp("^\\s*" + directColorPattern() + "\\s*$", "i");
+      eat(/\b(?:change|set|update)\s+(?:the\s+|this\s+)?(?:text|label|title|heading|copy)\s+to\s+(?!")([^,;]+?)\s*$/i, function (m, value) {
+        if (colorWords.test(value) || /\b(bold|italic|bigger|smaller|size|\d+\s*(px|pt)?|upper ?case|lower ?case|cent(er|re)|left|right)\b/i.test(value)) return false;
+        return { kind: "text", set: { text: value.trim() }, label: "Text set" };
+      });
+      if (/"/.test(rest)) return null;
+
+      const COLOR = directColorPattern();
+      const N = "(-?\\d+(?:\\.\\d+)?)";
+      const SEP = "(?:\\s*[=:]\\s*|\\s+(?:(?:to|of|ko|is|as|at|by|ka|ki|ke|kar|karke|ke\\s+liye)\\s+)*)";
+      const clauses = rest.split(/\s*(?:,|;|\n|&|\+|\band\b|\baur\b|\bthen\b|\bphir\b|\balso\b)\s*/i);
+      let inherited = { noun: null, text: false };
+      const finalRest = [];
+      clauses.forEach(function (clause) {
+        const before = ops.length;
+        rest = " " + clause + " ";
+        let noun = null;
+        DIRECT_EDIT_NOUNS.forEach(function (entry) {
+          if (!noun && new RegExp("\\b(?:" + entry[1] + ")\\b", "i").test(clause)) noun = entry[0];
+        });
+        const textHint = /\b(text|texts|font|fonts|typography|copy|words|letters|likha\w*)\b/i.test(clause) || (noun && DIRECT_TEXT_NOUNS.includes(noun));
+        const bgHint = /\b(background|bg|backdrop|fill)\b/i.test(clause);
+        if (noun && DIRECT_TEXT_NOUNS.includes(noun) && allText) noun = null;
+        if (!noun && !textHint && !bgHint && clause.trim() && !/\b(this|it|isko|ise|selection|selected)\b/i.test(clause)) { noun = inherited.noun; }
+        const clauseText = textHint || (!bgHint && !noun && inherited.text);
+        const colorKind = bgHint ? "bg" : clauseText || allText ? "text" : "self";
+        const kindFor = function (base) { return base === "color" ? colorKind : base; };
+        const pushNoun = function (op) { if (noun) op.noun = noun; op.kind = kindFor(op.kind); return op; };
+        const add = function (kind, set, label) { return pushNoun({ kind: kind, set: set, label: label }); };
+        const act = function (action, label, extra) { return pushNoun(Object.assign({ kind: "self", action: action, label: label }, extra || {})); };
+        const times = function (word) { const map = { two: 2, three: 3, four: 4, five: 5, do: 2, teen: 3, char: 4 }; return map[String(word || "").toLowerCase()] || Number(word) || 1; };
+
+        // Structure and visibility.
+        eat(/\b(?:delete|remove|hata\s*do|hatao|clean ?up)\s+(?:all\s+)?(?:the\s+)?hidden\s+layers?\b|\bhidden\s+layers?\s+(?:delete|hatao|hata do|remove)\b/gi, function () { return act("deleteHidden", "Deleted hidden layers"); });
+        eat(/\b(?:show|unhide|reveal|dikhao|dikha do)\s+(?:all\s+)?(?:the\s+)?hidden\s+layers?\b/gi, function () { return add("self", { showHidden: true }, "Showed hidden layers"); });
+        eat(/\b(?:duplicate|clone)(?:\s+(?:it|this|that|these|them|layer|frame|isko))?(?:\s+(\d+|two|three|four|five)\s*(?:times|x|baar))?\b/gi, function (_m, n) { return act("duplicate", "Duplicated", { count: times(n) }); });
+        eat(/\b(?:make|create)\s+(?:a\s+|an\s+|one\s+more\s+|another\s+)?cop(?:y|ies)(?:\s+of\s+(?:it|this|that))?\b|\b(?:ek\s+aur\s+)?copy\s+(?:bana\w*|kar\w*)\b/gi, function () { return act("duplicate", "Duplicated", { count: 1 }); });
+        eat(/\b(?:ungroup)\b/gi, function () { return act("ungroup", "Ungrouped"); });
+        eat(/\b(?:group)(?:\s+(?:these|them|this|it|together|selection|layers))?\b|\bgroup\s+bana\w*/gi, function () { return act("group", "Grouped"); });
+        eat(/\b(?:make|create|convert|turn)\s+(?:this\s+|it\s+|these\s+|them\s+)?(?:into\s+|to\s+|as\s+)?(?:an?\s+)?(?:main\s+)?component\b|\bcomponent\s+bana\w*/gi, function () { return act("component", "Made a component"); });
+        eat(/\bdetach(?:\s+(?:the\s+|this\s+)?instances?)?\b/gi, function () { return act("detach", "Detached instance"); });
+        eat(/\bflatten\b/gi, function () { return act("flatten", "Flattened"); });
+        eat(/\b(?:bring\s+(?:it\s+|this\s+)?(?:to\s+(?:the\s+)?)?front|bring\s+forward|move\s+(?:it\s+|this\s+)?to\s+(?:the\s+)?(?:front|top))\b/gi, function () { return act("front", "Brought to front"); });
+        eat(/\b(?:send\s+(?:it\s+|this\s+)?(?:to\s+(?:the\s+)?)?back|send\s+backward|move\s+(?:it\s+|this\s+)?to\s+(?:the\s+)?(?:back|bottom))\b/gi, function () { return act("back", "Sent to back"); });
+        eat(/\bwrap\s+(?:it\s+|this\s+|these\s+|them\s+|selection\s+)?in(?:to)?\s+(?:an?\s+)?(?:(vertical|horizontal)\s+)?(?:auto ?layout\s+)?(?:frame|auto ?layout|stack|container)\b|\bframe\s+selection\b/gi, function (_m, dir) { return act("wrap", "Wrapped in auto layout", dir ? { direction: dir.toUpperCase() } : {}); });
+        eat(/\b(?:delete|remove|hata\s*do|hatao|mita\s*do)\s+(?:it|this|that|these|them|isko|ise|layer|this\s+layer|the\s+layer|selected|selection|the\s+selection|the\s+selected\s+layers?)\b|\b(?:isko|ise|ye|yeh)\s+(?:delete|hata|mita)\w*(?:\s+(?:do|de|karo|kar\s+do))?\b|^\s*(?:delete|del)\s*$/gi, function () { return act("delete", "Deleted"); });
+        eat(/\b(?:unhide|make\s+(?:it\s+)?visible|dikhao|dikha\s+do)\b|\bshow\s+(?:it|this|them|the\s+layer)\b/gi, function () { return add("self", { visible: true }, "Shown"); });
+        eat(/\b(?:hide|chh?upa\w*|invisible)\b/gi, function () { return add("self", { visible: false }, "Hidden"); });
+        eat(/\bunlock\b/gi, function () { return add("self", { locked: false }, "Unlocked"); });
+        eat(/\block\b/gi, function () { return add("self", { locked: true }, "Locked"); });
+
+        // Auto layout.
+        eat(/\b(?:remove|delete|turn\s+off|disable|hatao|hata\s+do)\s+(?:the\s+)?auto ?layout\b|\bauto ?layout\s+(?:off|hatao|hata\s+do|remove)\b|\bno\s+auto ?layout\b/gi, function () { return add("self", { layoutNone: true }, "Auto layout removed"); });
+        eat(/\b(?:add|apply|use|enable|turn\s+on|set|lagao|laga\s+do|put|make\s+(?:it\s+|this\s+)?)?\s*(?:an?\s+)?(vertical|horizontal)?\s*auto ?layout(?:\s+(vertical|horizontal))?(?:\s+(?:lagao|laga\s+do|on|add))?\b/gi, function (_m, a, b) {
+          const dir = a || b;
+          return add("self", { layout: dir ? dir.toUpperCase() : "AUTO" }, dir ? "Auto layout " + dir.toLowerCase() : "Auto layout added");
+        });
+        eat(/\b(?:stack|arrange|layout|direction|make\s+(?:it\s+|this\s+|them\s+)?|set\s+(?:the\s+)?direction\s+(?:to\s+)?)\s*(vertical(?:ly)?|horizontal(?:ly)?|in\s+a\s+row|in\s+a\s+column|as\s+a\s+row|as\s+a\s+column)\b|\b(vertical|horizontal)\s+(?:layout|stack|direction)\b|\b(row|column)\s+(?:mein|me)\b/gi, function (m) {
+          const vertical = /vertical|column/i.test(m);
+          return add("self", { layout: vertical ? "VERTICAL" : "HORIZONTAL" }, vertical ? "Stacked vertically" : "Stacked horizontally");
+        });
+        eat(/\bwrap\s+(?:the\s+)?(?:items|children|content|elements)\b|\b(?:turn\s+on|enable)\s+wrap\b|\bwrap\s+on\b/gi, function () { return add("self", { layoutWrap: true }, "Wrap on"); });
+
+        // Removing properties.
+        eat(/\b(?:remove|no|delete|hatao|hata\s+do|without)\s+(?:the\s+|all\s+)?(?:border|stroke|outline)s?\b|\b(?:border|stroke|outline)s?\s+(?:hatao|hata\s+do|remove|off|none|nahi)\b/gi, function () { return add("self", { strokeNone: true }, "Border removed"); });
+        eat(/\b(?:remove|no|delete|hatao|hata\s+do|without)\s+(?:the\s+|all\s+)?(?:drop\s+|inner\s+)?shadows?\b|\bshadows?\s+(?:hatao|hata\s+do|remove|off|none|nahi)\b/gi, function () { return add("self", { shadowNone: true }, "Shadow removed"); });
+        eat(/\b(?:remove|no|delete|hatao|hata\s+do)\s+(?:the\s+|all\s+)?(?:layer\s+|background\s+)?blur\b|\bblur\s+(?:hatao|hata\s+do|remove|off)\b/gi, function () { return add("self", { blurNone: true }, "Blur removed"); });
+        eat(/\b(?:remove|clear|delete|hatao|hata\s+do)\s+(?:all\s+)?(?:the\s+)?effects\b|\bno\s+effects\b/gi, function () { return add("self", { effectsNone: true }, "Effects removed"); });
+        eat(/\b(?:remove|no|delete|clear|hatao|hata\s+do)\s+(?:the\s+)?(?:background|bg|fill)\s*(?:colou?r|fill)?\b|\b(?:transparent|clear)\s+(?:background|bg|fill)\b|\b(?:background|bg|fill)\s+(?:to\s+|ko\s+)?(?:transparent|none|clear)\b/gi, function () { return add("bg", { fillNone: true }, "Fill removed"); });
+        eat(/\b(?:remove|no|delete|hatao|hata\s+do)\s+(?:the\s+)?(?:corner\s+)?(?:radius|rounding|rounded\s+corners)\b|\b(?:sharp|square|straight)\s+corners\b/gi, function () { return add("self", { radius: 0 }, "Corners squared"); });
+        eat(/\b(?:remove|no|delete|zero|hatao|hata\s+do)\s+(?:the\s+|all\s+)?padding\b|\bpadding\s+(?:hatao|hata\s+do|remove|zero|none)\b/gi, function () { return add("self", { padding: { top: 0, right: 0, bottom: 0, left: 0 } }, "Padding removed"); });
+        eat(/\b(?:remove|no|delete|zero|hatao|hata\s+do)\s+(?:the\s+)?(?:gap|spacing|item\s+spacing)\b/gi, function () { return add("self", { gap: 0 }, "Spacing removed"); });
+
+        // Paint.
+        eat(new RegExp("\\b(?:a\\s+)?" + COLOR + "\\s*(?:to|-|→|aur|and)\\s*" + COLOR + "\\s+gradient\\b|\\bgradient\\s+(?:from\\s+)?" + COLOR + "\\s*(?:to|-|→)\\s*" + COLOR, "gi"), function (_m, a, b, c, d) {
+          const from = directColorHex(a || c), to = directColorHex(b || d);
+          return from && to ? add("bg", { gradient: [from, to] }, "Gradient fill") : false;
+        });
+        eat(new RegExp("\\b(?:add\\s+(?:an?\\s+)?)?(?:" + N + "(?:\\s*px)?\\s+)?(?:" + COLOR + "\\s+)?(dashed\\s+|dotted\\s+|solid\\s+)?(?:border|stroke|outline)(?!\\s*radius)(?:\\s+(?:colou?r|width|weight|of|to|ko|=|:))*(?:\\s+" + N + "(?:\\s*px)?)?(?:\\s+" + COLOR + ")?(?:\\s+(?:lagao|laga\\s+do|add))?", "gi"), function (_m, w1, c1, dash, w2, c2) {
+          const color = c1 || c2 ? directColorHex(c1 || c2) : null;
+          if ((c1 || c2) && !color) return false;
+          const value = {};
+          if (color) value.color = color;
+          if (w1 || w2) value.weight = Number(w1 || w2);
+          if (dash) value.dash = dash.trim().toLowerCase();
+          return add("self", { stroke: value }, "Border");
+        });
+        eat(/\b(thicker|thinner)\s+(?:border|stroke|outline)\b/gi, function (_m, w) { return add("self", { strokeWeightDelta: /thick/i.test(w) ? 1 : -1 }, "Border weight"); });
+        eat(new RegExp("\\b(?:inner\\s+shadow)\\b", "gi"), function () { return add("self", { shadow: "inner" }, "Inner shadow"); });
+        eat(/\b(?:add\s+(?:an?\s+)?)?(?:(soft|subtle|light|strong|heavy|big|large|small|medium|deep|halki|halka)\s+)?(?:drop\s+)?(?:shadow|elevation)(?:\s+(?:lagao|laga\s+do|daal\s+do|daalo|add))?\b/gi, function (_m, strength) {
+          const s = String(strength || "").toLowerCase();
+          return add("self", { shadow: /strong|heavy|big|large|deep/.test(s) ? "strong" : /small|subtle|halk|light/.test(s) ? "small" : "soft" }, "Shadow");
+        });
+        eat(new RegExp("\\b(?:add\\s+(?:an?\\s+)?)?(?:(background|bg|backdrop|layer)\\s+)?blur(?:" + SEP + N + ")?\\b", "gi"), function (_m, which, radius) {
+          return add("self", { blur: { type: which && !/layer/i.test(which) ? "BACKGROUND_BLUR" : "LAYER_BLUR", radius: Math.max(0, Number(radius) || 8) } }, "Blur");
+        });
+        const target = "(text|font|label|title|heading|copy|background|bg|fill|backdrop)";
+        eat(new RegExp("\\b" + target + "(?:\\s+(?:ka|ki|ke|ko|colou?r|rang|fill|to|=|:|as|in|into|is|should\\s+be))*\\s+" + COLOR + "|\\b" + COLOR + "\\s+" + target + "\\b", "gi"), function (_m, t1, c1, c2, t2) {
+          const hex = directColorHex(c1 || c2);
+          if (!hex) return false;
+          const bg = /background|bg|fill|backdrop/i.test(t1 || t2);
+          return add(bg ? "bg" : "text", { fill: hex }, bg ? "Fill " + hex : "Text colour " + hex);
+        });
+        eat(new RegExp("(?:\\bcolou?r(?:\\s+(?:to|ko|=|:|as))?\\s+)?" + COLOR, "gi"), function (_m, c) {
+          const hex = directColorHex(c);
+          return hex ? add("color", { fill: hex }, "Colour " + hex) : false;
+        });
+
+        eat(/\b(darker|lighter|dark|light|gehra|halka)\b(?!\s+mode)/gi, function (_m, w) {
+          if (/^(dark|light)$/i.test(w) && !/\b(make|kar|karo|thoda|slightly|a bit)\b/i.test(clause)) return false;
+          return add("color", { colorShift: /dark|gehra/i.test(w) ? -0.2 : 0.25 }, /dark|gehra/i.test(w) ? "Darker" : "Lighter");
+        });
+        eat(new RegExp("\\bline[- ]?height" + SEP + "(?:" + N + "\\s*(%|px)?|(auto))", "gi"), function (_m, n, unit, auto) {
+          if (auto) return add("text", { lineHeight: "auto" }, "Line height auto");
+          return add("text", { lineHeight: { unit: unit === "%" ? "PERCENT" : "PIXELS", value: Number(n) } }, "Line height");
+        });
+        eat(new RegExp("\\b(?:letter[- ]?spacing|tracking|character\\s+spacing)" + SEP + N + "\\s*(%|px)?", "gi"), function (_m, n, unit) {
+          return add("text", { letterSpacing: { unit: unit === "%" ? "PERCENT" : "PIXELS", value: Number(n) } }, "Letter spacing");
+        });
+        // Spacing.
+        const sides = { horizontal: ["left", "right"], x: ["left", "right"], sides: ["left", "right"], side: ["left", "right"], vertical: ["top", "bottom"], y: ["top", "bottom"],
+          left: ["left"], right: ["right"], top: ["top"], bottom: ["bottom"] };
+        eat(/\b(more|increase|add\s+more|badha\w*|zyada|jyada|less|decrease|reduce|kam)\s+(?:the\s+)?padding\b|\bpadding\s+(badha\w*|zyada|jyada|increase|more|kam|less|reduce)\b/gi, function (_m, a, b) {
+          return add("self", { paddingDelta: /less|decrease|reduce|kam/i.test(a || b) ? -8 : 8 }, "Padding");
+        });
+        eat(new RegExp("\\b(?:(horizontal|vertical|left|right|top|bottom|x|y|side|sides)\\s+)?padding(?:\\s+(horizontal|vertical|left|right|top|bottom|x|y))?" + SEP + N + "(?:\\s*px)?(?:\\s+" + N + "(?:\\s*px)?)?(?:\\s+" + N + "(?:\\s*px)?\\s+" + N + "(?:\\s*px)?)?|\\b" + N + "(?:\\s*px)?\\s+(?:(horizontal|vertical|left|right|top|bottom|side|sides)\\s+)?padding\\b", "gi"), function (_m, s1, s2, a, b, c, d, n2, s3) {
+          const side = (s1 || s2 || s3 || "").toLowerCase();
+          const first = Number(a !== undefined ? a : n2);
+          let value;
+          if (c !== undefined) value = { top: first, right: Number(b), bottom: Number(c), left: Number(d) };
+          else if (b !== undefined) value = { top: first, bottom: first, left: Number(b), right: Number(b) };
+          else if (side) { value = {}; sides[side].forEach(function (s) { value[s] = first; }); }
+          else value = { top: first, right: first, bottom: first, left: first };
+          return add("self", { padding: value }, "Padding");
+        });
+        eat(/\b(more|increase|add\s+more|badha\w*|zyada|jyada|less|decrease|reduce|kam)\s+(?:the\s+)?(?:gap|spacing|space)(?:\s+between\s+(?:items|elements|them|children|rows|cards))?\b|\b(?:gap|spacing)\s+(badha\w*|zyada|jyada|increase|more|kam|less|reduce)\b/gi, function (_m, a, b) {
+          return add("self", { gapDelta: /less|decrease|reduce|kam/i.test(a || b) ? -4 : 8 }, "Spacing");
+        });
+        eat(new RegExp("\\b(?:gap|item\\s+spacing|spacing|space)(?:\\s+between\\s+(?:items|elements|children|them|rows|cards|columns))?" + SEP + N + "(?:\\s*px)?|\\b" + N + "(?:\\s*px)?\\s+(?:gap|spacing|space\\s+between)\\b", "gi"), function (_m, a, b) {
+          return add("self", { gap: Number(a !== undefined ? a : b) }, "Spacing");
+        });
+        eat(/\b(?:justify\s+|distribute\s+)?space[- ]between\b|\bdistribute\s+(?:evenly|items)\b/gi, function () { return add("self", { align: { value: "space-between" } }, "Space between"); });
+
+        // Size.
+        eat(new RegExp("\\b(?:resize|size|make\\s+(?:it\\s+|this\\s+)?)?\\s*(?:to\\s+)?" + N + "(?:\\s*px)?\\s*[x×*]\\s*" + N + "(?:\\s*px)?\\b", "gi"), function (_m, w, h) {
+          return [add("self", { width: Number(w) }, "Width"), add("self", { height: Number(h) }, "Height")];
+        });
+        eat(new RegExp("\\b(?:width|w)" + SEP + N + "(?:\\s*px)?|\\b" + N + "(?:\\s*px)?\\s+(?:wide|width|chauda)\\b", "gi"), function (_m, a, b) { return add("self", { width: Number(a !== undefined ? a : b) }, "Width"); });
+        eat(new RegExp("\\b(?:height|h)" + SEP + N + "(?:\\s*px)?|\\b" + N + "(?:\\s*px)?\\s+(?:tall|high|height|lamba|unchai)\\b", "gi"), function (_m, a, b) { return add("self", { height: Number(a !== undefined ? a : b) }, "Height"); });
+        eat(/\b(?:resize|scale)\s+(?:it\s+|this\s+)?(?:to\s+|by\s+)?(\d+)\s*%/gi, function (_m, pct) { return add("self", { scale: Number(pct) / 100 }, "Scaled"); });
+        eat(/\b(?:full[- ]width|fill\s+(?:the\s+)?(?:width|container|parent)|stretch(?:\s+(?:it|to\s+fill))?|poori\s+width)\b/gi, function () { return add("self", { sizingH: "FILL" }, "Fill width"); });
+        eat(/\bfill\s+(?:the\s+)?height\b/gi, function () { return add("self", { sizingV: "FILL" }, "Fill height"); });
+        eat(/\bhug(?:\s+(?:the\s+)?(contents?|width|height))?\b/gi, function (_m, axis) {
+          if (/width/i.test(axis || "")) return add("self", { sizingH: "HUG" }, "Hug width");
+          if (/height/i.test(axis || "")) return add("self", { sizingV: "HUG" }, "Hug height");
+          return [add("self", { sizingH: "HUG" }, "Hug width"), add("self", { sizingV: "HUG" }, "Hug height")];
+        });
+        eat(/\bfixed\s+(width|height|size)\b/gi, function (_m, axis) {
+          const out = [];
+          if (!/height/i.test(axis)) out.push(add("self", { sizingH: "FIXED" }, "Fixed width"));
+          if (!/width/i.test(axis)) out.push(add("self", { sizingV: "FIXED" }, "Fixed height"));
+          return out;
+        });
+
+        // Corners and opacity.
+        eat(/\b(?:pill(?:[- ]shaped)?|capsule|fully\s+rounded|full\s+radius)\b/gi, function () { return add("self", { radiusPill: true }, "Pill corners"); });
+        eat(/\b(more|less)\s+rounded\b|\bradius\s+(badha\w*|kam)\b/gi, function (_m, a, b) { return add("self", { radiusDelta: /less|kam/i.test(a || b) ? -4 : 4 }, "Corner radius"); });
+        eat(new RegExp("\\b(?:corner\\s+|border\\s+)?radius" + SEP + N + "(?:\\s*px)?|\\b" + N + "(?:\\s*px)?\\s+(?:corner\\s+)?radius\\b|\\b(?:the\\s+)?corners?\\s+(?:rounded|round|gol)(?:" + SEP + N + "(?:\\s*px)?)?|\\bround(?:ed)?\\s+(?:the\\s+)?corners?(?:" + SEP + N + "(?:\\s*px)?)?|\\b(?:make\\s+(?:it\\s+)?)?(?:rounded|round|gol)(?:" + SEP + N + "(?:\\s*px)?)?\\b", "gi"), function (_m, a, b, c, d, e) {
+          const value = [a, b, c, d, e].find(function (v) { return v !== undefined; });
+          return add("self", { radius: value !== undefined ? Number(value) : 12 }, "Corner radius");
+        });
+        eat(new RegExp("\\bopacity" + SEP + N + "\\s*%?|\\b" + N + "\\s*%\\s*(?:opacity|opaque|transparent)\\b", "gi"), function (_m, a, b) {
+          const raw = Number(a !== undefined ? a : b);
+          return add("self", { opacity: raw > 1 ? raw / 100 : raw }, "Opacity");
+        });
+        eat(/\b(?:semi[- ]?transparent|translucent|see[- ]through)\b/gi, function () { return add("self", { opacity: 0.5 }, "Opacity"); });
+        eat(/\b(?:fully\s+opaque|opaque|full\s+opacity)\b/gi, function () { return add("self", { opacity: 1 }, "Opacity"); });
+
+        // Typography.
+        eat(/\b(?:[Cc]hange\s+(?:the\s+)?)?(?:[Ff]ont(?:\s+family)?|[Tt]ypeface)\s*(?:to|=|:|ko|as)?\s+([A-Za-z][A-Za-z0-9]*(?:\s+(?!kar|karo|do|and|aur|in|to|please|bold|italic|size)[A-Z][A-Za-z0-9]*){0,2})\b|\b[Uu]se\s+([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)?)\s+font\b/g, function (_m, a, b) {
+          const name = (a || b || "").trim();
+          if (/^(size|weight|bold|italic|regular|medium|light|bigger|smaller|larger|colou?r|style|family|black|white)$/i.test(name) || /^\d/.test(name)) return false;
+          if (!/^[A-Z]/.test(name) && !DIRECT_KNOWN_FONTS.test(name)) return false;
+          return add("text", { fontFamily: name }, "Font " + name);
+        });
+        eat(new RegExp("\\b(?:font[- ]?size|text\\s+size|size)" + SEP + N + "(?:\\s*(?:px|pt))?|\\b" + N + "\\s*(?:px|pt)\\s+(?:font|text|size)\\b", "gi"), function (_m, a, b) {
+          if (!textHint && !allText && !/font|text/i.test(_m)) return false;
+          return add("text", { fontSize: Number(a !== undefined ? a : b) }, "Font size");
+        });
+        eat(new RegExp("\\b(?:title|heading|headline|text|label|font|subtitle|caption|price)s?\\s+(?:to\\s+|ko\\s+)?" + N + "(?:\\s*(?:px|pt))?\\b", "gi"), function (_m, a) { return add("text", { fontSize: Number(a) }, "Font size"); });
+        eat(/\b(bigger|larger|smaller|increase\s+(?:the\s+)?(?:font|text)(?:\s+size)?|decrease\s+(?:the\s+)?(?:font|text)(?:\s+size)?|(?:font|text)\s+size\s+(?:up|down|badha\w*|kam)|bada|badi|bade|chhota|chhoti|chota|choti)\b(?:\s+by\s+(\d+))?/gi, function (m, w, by) {
+          if (!textHint && !allText) return false;
+          const down = /smaller|decrease|down|kam|chh?ot/i.test(w);
+          return add("text", { fontSizeDelta: (down ? -1 : 1) * (Number(by) || 2) }, down ? "Smaller text" : "Bigger text");
+        });
+        eat(/\b(?:font[- ]?weight\s+)?(extra[- ]?bold|semi[- ]?bold|bold|medium|regular|normal|light|thin|black|heavy|mota|unbold|not\s+bold|remove\s+(?:the\s+)?bold)\b(?:\s+(?:weight|font))?/gi, function (m, w) {
+          const word = w.toLowerCase().replace(/[- ]/g, "");
+          if (word === "black" && !/weight/i.test(m)) return false;
+          if (word === "light" && !/weight|font/i.test(m) && !textHint && !allText) return false;
+          const map = { extrabold: "extrabold", semibold: "semibold", bold: "bold", mota: "bold", medium: "medium", regular: "regular", normal: "regular",
+            unbold: "regular", notbold: "regular", light: "light", thin: "thin", black: "black", heavy: "black" };
+          const weight = map[word] || (/remove/.test(word) ? "regular" : null);
+          return weight ? add("text", { fontWeight: weight }, "Weight " + weight) : false;
+        });
+        eat(/\b(?:remove\s+(?:the\s+)?italic|not\s+italic|no\s+italic|unitalic)\b/gi, function () { return add("text", { italic: false }, "Not italic"); });
+        eat(/\b(?:italic|italics|tircha|tirchha)\b/gi, function () { return add("text", { italic: true }, "Italic"); });
+        eat(/\b(?:remove\s+(?:the\s+)?(?:underline|strike ?through)|no\s+underline|not\s+underlined)\b/gi, function () { return add("text", { decoration: "NONE" }, "No underline"); });
+        eat(/\b(?:underline[sd]?)\b/gi, function () { return add("text", { decoration: "UNDERLINE" }, "Underline"); });
+        eat(/\b(?:strike ?through|strike[sd]?\s+out|cross\s+out|line[- ]through)\b/gi, function () { return add("text", { decoration: "STRIKETHROUGH" }, "Strikethrough"); });
+        eat(/\b(upper ?case|all\s+caps|caps|capital\s+letters|capitals|lower ?case|small\s+letters|title\s+case|capitali[sz]e(?:\s+each\s+word)?|sentence\s+case|original\s+case)\b/gi, function (_m, w) {
+          const v = /upper|caps|capital\s+letters|capitals/i.test(w) ? "UPPER" : /lower|small/i.test(w) ? "LOWER" : /title|capitali/i.test(w) ? "TITLE" : /sentence/i.test(w) ? "SENTENCE" : "ORIGINAL";
+          return add("text", { textCase: v }, "Case " + v.toLowerCase());
+        });
+        eat(/\b(auto[- ]width|auto[- ]height|fixed\s+size\s+text)\b/gi, function (_m, w) {
+          return add("text", { textAutoResize: /width/i.test(w) ? "WIDTH_AND_HEIGHT" : /height/i.test(w) ? "HEIGHT" : "NONE" }, "Text resizing");
+        });
+        eat(/\b(?:truncate|ellipsis|add\s+ellipsis)\b/gi, function () { return add("text", { truncate: true }, "Truncate"); });
+
+        // Alignment.
+        eat(/\b(?:align(?:ed|ment)?\s+(?:it\s+|this\s+|the\s+\w+\s+|text\s+|items\s+|everything\s+|content\s+|children\s+)?(?:to\s+(?:the\s+)?)?(left|right|cent(?:er|re)|top|bottom|middle|justif(?:y|ied))(?:\s+(horizontally|vertically))?|(left|right|cent(?:er|re)|justif(?:y|ied))[- ]?(?:align(?:ed|ment)?)|(?:make\s+(?:it\s+)?)?(cent(?:er|re))(?:ed)?(?:\s+(?:it|this|them))?\s*(horizontally|vertically)?|beech\s+(?:mein|me))\b/gi, function (m, a, axisA, b, c, axisC) {
+          const raw = String(a || b || c || "center").toLowerCase();
+          const value = /cent/.test(raw) ? "center" : /justif/.test(raw) ? "justify" : raw;
+          const axis = /horizont/i.test(axisA || axisC || "") ? "h" : /vertic/i.test(axisA || axisC || "") ? "v" : null;
+          return add(textHint || allText ? "text" : "self", { align: { value: value, axis: axis } }, "Align " + value);
+        });
+
+        // Position and transform.
+        eat(/\bmove\s+(?:it\s+|this\s+|them\s+)?(?:(\d+)\s*(?:px)?\s+(left|right|up|down)|(left|right|up|down)\s+(?:by\s+)?(\d+)\s*(?:px)?)\b/gi, function (_m, n1, d1, d2, n2) {
+          const n = Number(n1 || n2), dir = (d1 || d2).toLowerCase();
+          return add("self", { move: { dx: dir === "left" ? -n : dir === "right" ? n : 0, dy: dir === "up" ? -n : dir === "down" ? n : 0 } }, "Moved " + dir);
+        });
+        eat(/\brotate\s+(?:it\s+|this\s+)?(?:by\s+)?(-?\d+)\s*(?:deg(?:rees?)?|°)?|\brotate\s+(?:it\s+)?(left|right|clockwise|anti-?clockwise|counter-?clockwise)\b/gi, function (_m, deg, dir) {
+          return add("self", { rotate: deg !== undefined ? Number(deg) : /left|anti|counter/i.test(dir) ? 90 : -90 }, "Rotated");
+        });
+        eat(/\bflip\s+(?:it\s+)?(horizontal(?:ly)?|vertical(?:ly)?)\b/gi, function (_m, d) { return add("self", { flip: /horizontal/i.test(d) ? "h" : "v" }, "Flipped"); });
+        eat(/\b(?:unclip|don'?t\s+clip|no\s+clip(?:ping)?|remove\s+clip(?:ping)?|clip\s+content\s+off)\b/gi, function () { return add("self", { clip: false }, "Clip off"); });
+        eat(/\bclip(?:\s+(?:the\s+)?content)?\b/gi, function () { return add("self", { clip: true }, "Clip content"); });
+
+        const leftover = rest.toLowerCase().replace(/¦/g, " ").split(/[^a-z0-9#%ऀ-ॿ]+/).filter(Boolean);
+        const nounWords = /^(buttons?|btns?|ctas?|icons?|cards?|headers?|navbar|nav|bars?|top|app|navigation|footers?|tab|tabs|bottom|images?|photos?|pictures?|banners?|thumbnails?|avatars?|dividers?|separators?|inputs?|fields?|search|dropdowns?|chips?|badges?|tags?|list|rows?|cells?|modals?|dialogs?|sheets?|popups?|titles?|headings?|headlines?|sub|subtitles?|subheadings?|labels?|captions?|helper|body|descriptions?|paragraphs?|links?|prices?|amounts?)$/;
+        const unknown = leftover.filter(function (word) { return !DIRECT_EDIT_FILLER.has(word) && !nounWords.test(word); });
+        if (unknown.length) finalRest.push.apply(finalRest, unknown);
+        if (ops.length > before) inherited = { noun: noun, text: clauseText };
+      });
+      if (finalRest.length || !ops.length) return null;
+      ops.forEach(function (op) {
+        if (op.kind === "color") op.kind = allText ? "text" : "self";
+        op.target = op.kind;
+        delete op.kind;
+      });
+      return { ops: ops };
+    }
+    // uxd-direct-edit-parser:end
     // uxd-quick-task-classifier:start
     function classifyQuickTask(prompt, context) {
       const text = String(prompt || "").trim();
@@ -1786,7 +2120,7 @@
       if (/\b(revert|undo|roll ?back|reverse (it|this|that|the (last )?change))\b|\bgo back to (the )?(previous|original|old|earlier)\b|\brestore (it|this|that|the (previous|original|old)|previous|original)\b|\b(wapas|vapas|waapas)\b|pehle (jaisa|jaise|wala)|purana (wala|jaisa)|\bcancel (the |this |that |my )?(last )?(change|edit)s?\b/i.test(text)) {
         return { kind: "revert", all: /\b(all|everything|sab|saare|sare)\b/i.test(text) };
       }
-      if (/\b(remove|erase|delete|cut ?out|clear|hatao|hata do|nikal)\b[^.]{0,25}\b(background|bg)\b|\bbackground\s*(removal|remover|remove)\b|\b(background|bg)\b[^.]{0,15}\b(hatao|hata do|remove)\b/i.test(text)) {
+      if (!/\b(background|bg)\s*(colou?r|fill|ka colou?r|ka rang)\b|\b(colou?r|fill)\b/i.test(text) && /\b(remove|erase|delete|cut ?out|clear|hatao|hata do|nikal)\b[^.]{0,25}\b(background|bg)\b|\bbackground\s*(removal|remover|remove)\b|\b(background|bg)\b[^.]{0,15}\b(hatao|hata do|remove)\b/i.test(text)) {
         return { kind: "remove-background" };
       }
       if (!ctx.hasAttachment && (
@@ -1811,7 +2145,8 @@
       const frames = types.filter(function (type) { return containerTypes.includes(type); }).length;
       if (variationWord && frames >= 2 && frames === count) return { kind: "flow-variations", count: 1 };
       if (variationWord && frames === 1 && count === 1 && requested >= 2) return { kind: "screen-variations", count: Math.min(4, requested) };
-      const styleWords = /\b(colou?r|font size|font weight|font family|bold|italic|align|alignment|position|style|size)\b/i.test(text);
+      // Visual property edits ("make text white", "bigger", "bold") belong to the native action path.
+      const styleWords = /\b(colou?rs?|white|black|gr[ae]y|red|green|blue|yellow|orange|purple|pink|brown|dark(er)?|light(er)?|#[0-9a-f]{3,8}|font|fonts|size|bigger|smaller|larger|bold|semi-?bold|medium|regular|italic|underline|strikethrough|upper ?case|lower ?case|capitali[sz]e|align|alignment|cent(er|re)|left|right|position|move|style|opacity|transparent|shadow|line height|letter spacing|spacing|padding|wrap|truncate|weight)\b/i.test(text);
       const anyTextVerb = /\b(rewrite|re-write|improve|better|shorten|shorter|expand|extend|elaborate|longer|add|append|translate|rephrase|paraphrase|fix|correct|make|replace|fill|update|change|write|polish|simplify|tone|likh|likho)\b/i.test(text);
       if (allText && anyTextVerb && !styleWords) return { kind: "rewrite-text" };
       if (count === 0 || styleWords) return null;
@@ -2195,6 +2530,26 @@
       message.row.appendChild(button);
     }
 
+    async function runDirectEditTask(edit, prompt, reportProgress) {
+      const notify = typeof reportProgress === "function" ? reportProgress : function () {};
+      setProcessState("creating", "Applying " + edit.ops.length + " direct edit(s)…");
+      notify("Applying " + edit.ops.length + " direct edit(s)…");
+      const result = await localTask("apply-direct-edits", { ops: edit.ops }, 60000);
+      if (!result || result.needsModel) return null;
+      recordChange("Edit: " + prompt.slice(0, 80), function () {
+        return localTask("commit-undo", {}).catch(function () {})
+          .then(function () { return localTask("trigger-undo", {}); })
+          .then(function () { return "undone with Figma undo"; });
+      }, { mustBeLatest: true });
+      setProcessState("done", "Edit applied directly · no model needed");
+      const lines = (result.applied || []).map(function (item) {
+        return "- " + item.label + (item.note ? " (" + item.note + ")" : " on " + item.count + " layer" + (item.count === 1 ? "" : "s"));
+      });
+      (result.notes || []).forEach(function (note) { lines.push("- Note: " + note); });
+      const skipped = (result.errors || []).map(function (error) { return "- Skipped: " + error; });
+      return "Done.\n\n" + lines.concat(skipped).join("\n");
+    }
+
     async function runQuickTask(task, prompt, reportProgress) {
       const notify = typeof reportProgress === "function" ? reportProgress : function () {};
       function stage(state, message) { setProcessState(state, message); notify(message); }
@@ -2232,6 +2587,31 @@
           selectionTypes: (currentSelection.selection || []).map(function (node) { return node.type; }),
           hasAttachment: Boolean(attachedImageData)
         });
+        const directEdit = parseDirectEdit(prompt, {
+          selectionTypes: (currentSelection.selection || []).map(function (node) { return node.type; })
+        });
+        if (directEdit && (!quickTask || quickTask.kind === "rewrite-text" || quickTask.kind === "generate-image")) {
+          typingRow.remove();
+          assistantMessage = appendMessage("assistant", "Applying the edit…");
+          const answer = await runDirectEditTask(directEdit, prompt, function (status) {
+            if (assistantMessage) { assistantMessage.bubble.textContent = status; }
+          });
+          if (answer) {
+            assistantMessage.bubble.innerHTML = renderMarkdownHtml(answer);
+            chatHistory.push({ role: "assistant", content: answer });
+            await sendTelemetry("Direct edit completed", "success", "UX Direct applied a deterministic Figma edit without a model.", {
+              durationMs: Date.now() - startedAt, selectedCount: (currentSelection.selection || []).length, model: "direct-edit"
+            });
+            return;
+          }
+          // A named target ("the button") was not found: let the model plan it on the native path.
+          const planned = await executeNativeActionPlan(prompt, function (status) {
+            if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
+          });
+          assistantMessage.bubble.innerHTML = renderMarkdownHtml(planned);
+          chatHistory.push({ role: "assistant", content: planned });
+          return;
+        }
         if (quickTask) {
           typingRow.remove();
           assistantMessage = appendMessage("assistant", "Starting " + quickTask.kind.replace(/-/g, " ") + "…");

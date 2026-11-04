@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { callFigmaJsonModel } from "@/src/figma-agent/json-model-call";
-import { normalizeTextEdits } from "@/src/figma-agent/text-tasks";
+import { deterministicLayerNames, modelLayers, normalizeTextEdits } from "@/src/figma-agent/text-tasks";
 import { isAllowedPluginOrigin, pluginCorsHeaders, pluginOptions } from "@/src/figma-agent/route-cors";
 
 export const runtime = "nodejs";
@@ -49,13 +49,14 @@ export async function POST(request: Request) {
       "Apply the user's request to the given text layers. Keep each layer's role: a button stays a short action label, a title stays a title, a price or number stays exact unless the request asks to change it.",
       "Keep roughly the same length unless the request asks to shorten, expand or add content. Preserve the language unless asked to translate. Preserve line breaks that structure lists.",
       "Do not invent facts (prices, dates, names) that the request did not give. Realistic sample content is allowed only when the request asks for it.",
-      "Only return layers you actually change.",
-      'Return JSON only: {"summary": string, "updates": [{"id": string, "text": string}]}.',
+      "Only return layers you actually change. Refer to each layer by its ref (t1, t2, …) exactly as given.",
+      'Return JSON only: {"summary": string, "updates": [{"ref": "t1", "text": "the new full text"}]}.',
     ].join("\n")
     : [
       "You name Figma layers the way a senior product designer would: short, purpose-based, Title Case, no numbering suffixes (e.g. Header, Price Row, Primary CTA, Avatar, Card / Loan Summary).",
       "Use the layer's type, its text and its children to infer its purpose. Keep names under 40 characters. Keep names that are already meaningful.",
-      'Return JSON only: {"summary": string, "names": [{"id": string, "name": string}]}.',
+      "Refer to each layer by its ref (t1, t2, …) exactly as given.",
+      'Return JSON only: {"summary": string, "names": [{"ref": "t1", "name": "Primary CTA"}]}.',
     ].join("\n");
 
   const result = await callFigmaJsonModel({
@@ -65,11 +66,23 @@ export async function POST(request: Request) {
     maxTokens: mode === "rewrite" ? 3000 : 2500,
     temperature: mode === "rewrite" ? 0.5 : 0.2,
     system,
-    user: JSON.stringify({ request: prompt, screen: parsed.data.screenName || "", layers: items }),
-    accept: (data) => normalizeTextEdits(mode, data, items).length ? null : "returned no valid edits for the selected layers",
+    user: JSON.stringify({ request: prompt, screen: parsed.data.screenName || "", layers: modelLayers(mode, items) }),
+    accept: (data, raw) => normalizeTextEdits(mode, data, items, raw).length ? null : "returned no usable edits for the selected layers",
   });
-  if (!result.ok) return NextResponse.json({ error: result.error, details: result.errors }, { status: result.status, headers });
-  const edits = normalizeTextEdits(mode, result.data, items);
+  if (!result.ok) {
+    // Renaming has a model-free fallback; rewriting copy does not.
+    const fallback = mode === "rename" ? deterministicLayerNames(items) : [];
+    if (fallback.length) {
+      return NextResponse.json({ ok: true, mode, edits: fallback, model: "rule-based", summary: "The free model was unavailable, so default-named layers were named from their content and shape." }, { headers });
+    }
+    return NextResponse.json({
+      error: mode === "rewrite"
+        ? "The free model did not return a usable rewrite for these " + items.length + " text layer(s). Try again, or say exactly what the new text should be."
+        : result.error,
+      details: result.errors,
+    }, { status: result.status, headers });
+  }
+  const edits = normalizeTextEdits(mode, result.data, items, result.raw);
   return NextResponse.json({
     ok: true, mode, edits, model: result.model,
     summary: typeof result.data.summary === "string" ? result.data.summary.slice(0, 400) : "",
