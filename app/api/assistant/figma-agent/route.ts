@@ -15,7 +15,7 @@ import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/de
 import { appendMissingSourceText, MAX_REPAIRED_TEXTS, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
 import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
-import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, expandBlockSpec, isBlockSpec } from "@/src/figma-agent/block-spec";
+import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, expandBlockSpec, isBlockSpec, sourceFallbackSpec } from "@/src/figma-agent/block-spec";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -630,6 +630,8 @@ export async function POST(request: Request) {
   type SuccessCandidate = {
     candidate: Candidate; spec: unknown; learningCandidate: unknown; servedModel: string; routed?: string;
     isRecovery: boolean; finishReason: string; modelIndex: number; themeLocked?: boolean; repairedTexts: number;
+    /** Rebuilt from the source layers after every model answer failed; never a verified example. */
+    sourceFallback?: boolean;
   };
   const catalogueComponentIds = new Set((Array.isArray(canvas.components) ? canvas.components as Array<Record<string, unknown>> : [])
     .map((component) => component.id).filter((id): id is string => typeof id === "string"));
@@ -650,7 +652,7 @@ export async function POST(request: Request) {
       }
       planInput = expansion.plan;
     }
-    const parsedPlan = PlanSchema.safeParse(normalizePlan(planInput, canvas));
+    const parsedPlan = PlanSchema.safeParse(normalizePlan(planInput, canvas, { trustedSections: blockSpec !== null }));
     if (!parsedPlan.success) {
       const issues = parsedPlan.error.issues.slice(0, 4)
         .map((issue) => issue.path.join(".") + " " + issue.message).join("; ");
@@ -727,7 +729,7 @@ export async function POST(request: Request) {
       planFormat: candidate.blockSpec ? "blocks" : "elements", designScope,
       qualityScore: candidate.quality?.score, themeLocked: success.themeLocked,
       repairedTexts: success.repairedTexts, attempts: attemptLog,
-    }, candidate.blockSpec ? success.spec : null));
+    }, candidate.blockSpec && !success.sourceFallback ? success.spec : null));
     return NextResponse.json({
       ok: true,
       taskRunId,
@@ -740,6 +742,7 @@ export async function POST(request: Request) {
       learning: "awaiting-verification",
       model: success.servedModel,
       routedVia: success.routed,
+      sourceFallback: success.sourceFallback === true,
       consistency: { themeLocked: success.themeLocked ?? false, restoredSourceTexts: success.repairedTexts, verifiedExample: Boolean(verifiedExample) },
       brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
       visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
@@ -750,6 +753,9 @@ export async function POST(request: Request) {
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
     const attemptsForModel = 2;
+    // One extra same-mode retry for a transient upstream failure (FreeLLMAPI `auto` 502s while it
+    // rotates keys or the tunnel blips), so a hiccup doesn't drop us straight to the compact prompt.
+    let transientRetried = false;
     for (let recoveryAttempt = 0; recoveryAttempt < attemptsForModel; recoveryAttempt += 1) {
       const isRecovery = recoveryAttempt === 1;
       const remainingMs = generationDeadlineMs - (Date.now() - generationStartedAt);
@@ -839,6 +845,13 @@ export async function POST(request: Request) {
           attemptLog.push({ model: model + (isRecovery ? " compact retry" : ""), result: "HTTP " + response.status });
           const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
           errors.push(model + (isRecovery ? " compact retry" : "") + ": " + detail);
+          if (!transientRetried && [408, 429, 500, 502, 503, 504].includes(response.status) &&
+            generationDeadlineMs - (Date.now() - generationStartedAt) > 45000) {
+            transientRetried = true;
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            recoveryAttempt -= 1;
+            continue;
+          }
           // The compact retry runs without JSON mode, which covers free models that reject response_format.
           if (!isRecovery && ([408, 429, 500, 502, 503, 504].includes(response.status) ||
             shouldRetryWithoutJsonMode(activeProvider, response.status))) continue;
@@ -977,6 +990,21 @@ export async function POST(request: Request) {
   }
   // Every attempt missed the gate, but one only dropped source text that was restored.
   if (fallback) return respond(fallback);
+  // No model answer was usable: rebuild the screen from its own layers rather than failing.
+  if (blockMode) {
+    const sourceSpec = sourceFallbackSpec(canvas);
+    if (sourceSpec) {
+      const stabilized = stabilizeBlockSpec(sourceSpec, canvas, parsedInput.data.prompt);
+      const candidate = renderCandidate(stabilized.spec);
+      if (candidate.stage === "ok") {
+        attemptLog.push({ model: "source-fallback", result: "passed" });
+        return respond({ candidate, spec: stabilized.spec, learningCandidate: null, servedModel: "source-fallback",
+          isRecovery: true, finishReason: "fallback", modelIndex: models.length - 1, themeLocked: stabilized.themeLocked,
+          repairedTexts: 0, sourceFallback: true });
+      }
+      errors.push("source-fallback: " + candidate.error);
+    }
+  }
   deferTaskWork(recordGeneration(taskRunId, { model: lastServedModel || models[0] || "unknown", planFormat: "none", designScope,
     attempts: errors.map((entry) => ({ model: entry.split(":")[0] || "unknown", result: entry })) }, null));
   deferTaskWork(finishTaskRun({ id: taskRunId, outcome: "failed", durationMs: Date.now() - requestStartedAt,
