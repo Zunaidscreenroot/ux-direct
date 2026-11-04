@@ -246,3 +246,16 @@ test("without a source header instance the app bar is still drawn natively", () 
   assert.notEqual(first.type, "INSTANCE");
   assert.equal(result.plan!.frame.paddingTop, 16);
 });
+
+test("primary buttons keep a light label by darkening the fill just enough", () => {
+  const blue = resolveTheme({ background: "#121212", primary: "#3892F6", onPrimary: "#FFFFFF" }, null);
+  assert.equal(blue.onPrimary, "#FFFFFF");
+  assert.notEqual(blue.primaryFill, "#3892F6");
+  assert.ok(contrast(blue.onPrimary, blue.primaryFill) >= 4.6);
+  assert.equal(blue.primary, "#3892F6", "accent text keeps the source primary");
+  const defaulted = resolveTheme({ background: "#121212", primary: "#3892F6" }, null);
+  assert.equal(defaulted.onPrimary, "#FFFFFF");
+  const yellow = resolveTheme({ background: "#FFFFFF", primary: "#FFC107" }, null);
+  assert.equal(yellow.primaryFill, "#FFC107", "a light primary is not muddied; the label goes dark instead");
+  assert.ok(contrast(yellow.onPrimary, yellow.primaryFill) >= 4.6);
+});

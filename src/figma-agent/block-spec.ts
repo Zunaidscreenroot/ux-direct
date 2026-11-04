@@ -20,6 +20,8 @@ export type NativeNode = Rec & { type: string; name: string; width: number; heig
 export type BlockTheme = {
   background: string; surface: string; surfaceAlt: string; text: string; muted: string;
   primary: string; onPrimary: string; border: string;
+  /** Fill behind onPrimary content (buttons, checks): primary, darkened just enough for a light label. */
+  primaryFill: string;
   success: string; warning: string; danger: string; info: string;
   radius: number; dark: boolean;
 };
@@ -91,16 +93,31 @@ export function ensureContrast(fg: string, bg: string, min = 4.6): string {
   return target;
 }
 
-const LIGHT: Omit<BlockTheme, "background" | "dark"> = {
+const LIGHT: Omit<BlockTheme, "background" | "dark" | "primaryFill"> = {
   surface: "#FFFFFF", surfaceAlt: "#F1F3F6", text: "#111827", muted: "#5B6472",
   primary: "#1F5EFF", onPrimary: "#FFFFFF", border: "#E2E6EC",
   success: "#137333", warning: "#9A5800", danger: "#C5221F", info: "#1F5EFF", radius: 12,
 };
-const DARK: Omit<BlockTheme, "background" | "dark"> = {
+const DARK: Omit<BlockTheme, "background" | "dark" | "primaryFill"> = {
   surface: "#1C1F24", surfaceAlt: "#262A31", text: "#F5F7FA", muted: "#A8B0BC",
   primary: "#6EA8FF", onPrimary: "#0B1220", border: "#343A44",
   success: "#5BD08A", warning: "#F2B84B", danger: "#FF7A70", info: "#6EA8FF", radius: 12,
 };
+
+/**
+ * Keep a light (source-style) label on primary buttons: darken the button fill up to 30% until the
+ * label reaches 4.6:1. Only when that would change the colour too much fall back to a dark label.
+ */
+function primaryPair(primary: string, requested: string | null, fallback: string): { primaryFill: string; onPrimary: string } {
+  const light = requested && luminance(requested) > 0.5 ? requested : requested ? null : "#FFFFFF";
+  if (light) {
+    for (let step = 0; step <= 6; step += 1) {
+      const fill = step ? mix(primary, "#000000", step * 0.05) : primary;
+      if (contrast(light, fill) >= 4.6) return { primaryFill: fill, onPrimary: light };
+    }
+  }
+  return { primaryFill: primary, onPrimary: ensureContrast(requested && !light ? requested : fallback, primary) };
+}
 
 export function resolveTheme(raw: unknown, sourceBackground: string | null): BlockTheme {
   const input = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Rec : {};
@@ -118,7 +135,7 @@ export function resolveTheme(raw: unknown, sourceBackground: string | null): Blo
     text,
     muted: ensureContrast(pick("muted"), surface),
     primary,
-    onPrimary: ensureContrast(pick("onPrimary"), primary),
+    ...primaryPair(primary, hex(input.onPrimary), pick("onPrimary")),
     border: pick("border"),
     success: pick("success"), warning: pick("warning"), danger: pick("danger"), info: pick("info"),
     radius: Math.max(0, Math.min(28, Math.round(radiusInput))),
@@ -587,7 +604,7 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       const variant = clean(block.variant ?? block.style ?? block.kind, 20).toLowerCase();
       const isText = /text|link|ghost|tertiary/.test(variant);
       const isSecondary = !isText && /secondary|outline|outlined/.test(variant);
-      const fill = isText ? null : isSecondary ? t.surface : t.primary;
+      const fill = isText ? null : isSecondary ? t.surface : t.primaryFill;
       const fg = isText || isSecondary ? t.primary : t.onPrimary;
       const textNode = b.text("Button label", text, W - 32, { size: 15, weight: "Semi Bold", color: fg, bg: fill ?? bg, align: "CENTER", hug: true });
       const btn = b.hstack(label(text, isText ? "Text button" : isSecondary ? "Secondary button" : "Primary button"), W, [textNode], {
@@ -682,7 +699,7 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       const lbl = clean(block.label ?? block.text, 400);
       if (!lbl) return null;
       const checked = block.checked === true || block.value === true || block.on === true;
-      const boxFill = checked ? t.primary : t.surface;
+      const boxFill = checked ? t.primaryFill : t.surface;
       const boxKids = checked && depth + 2 <= MAX_DEPTH ? [b.text("Check", "✓", 20, { size: 13, weight: "Bold", color: t.onPrimary, bg: boxFill, align: "CENTER", hug: true })] : [];
       const box = b.hstack(checked ? "Checkbox (checked)" : "Checkbox", 20, boxKids, { fill: boxFill, radius: 4, stroke: checked ? t.primary : t.muted, justify: "CENTER", align: "CENTER", fixedHeight: 20 });
       box.layoutSizingHorizontal = "FIXED";
@@ -717,7 +734,7 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       const rows = items.map((item, i) => {
         const done = i < current || item.done === true;
         const on = i === current;
-        const dotFill = done || on ? t.primary : t.surfaceAlt;
+        const dotFill = done || on ? t.primaryFill : t.surfaceAlt;
         const dot = b.hstack("Step marker", 24, [b.text("Step number", done ? "✓" : String(i + 1), 24, { size: 12, weight: "Semi Bold", color: done || on ? t.onPrimary : t.muted, bg: dotFill, align: "CENTER", hug: true })], { fill: dotFill, radius: 100, justify: "CENTER", align: "CENTER", fixedHeight: 24 });
         dot.layoutSizingHorizontal = "FIXED";
         const lbl = b.text("Step label", clean(item.label ?? item.title, 160), W - 36, { size: 14, weight: on ? "Semi Bold" : "Regular", color: done || on ? t.text : t.muted, bg });
