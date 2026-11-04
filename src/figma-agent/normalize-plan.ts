@@ -282,6 +282,14 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>): 
           .map(([key, value]) => [key.trim().slice(0, 120), typeof value === "string" ? value.slice(0, 500) : value]);
         if (entries.length) normalized.instanceProperties = Object.fromEntries(entries);
       }
+      const overrides = item.textOverrides;
+      if (overrides && typeof overrides === "object" && !Array.isArray(overrides)) {
+        const entries = Object.entries(overrides as Record<string, unknown>)
+          .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+          .slice(0, 20)
+          .map(([key, value]) => [key.slice(0, 120), value.slice(0, 500)]);
+        if (entries.length) normalized.textOverrides = Object.fromEntries(entries);
+      }
     }
     const fontSizeValue = item.fontSize ?? item.textSize;
     if (typeof fontSizeValue === "number" && Number.isFinite(fontSizeValue)) normalized.fontSize = Math.max(8, Math.min(96, fontSizeValue));

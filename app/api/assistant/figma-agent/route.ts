@@ -52,6 +52,7 @@ const ElementFieldsSchema = z.object({
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   paintStyleId: z.string().trim().min(1).max(300).optional(),
   textStyleId: z.string().trim().min(1).max(300).optional(),
+  textOverrides: z.record(z.string().max(120), z.string().max(500)).optional(),
   effectStyleId: z.string().trim().min(1).max(300).optional(),
   gridStyleId: z.string().trim().min(1).max(300).optional(),
   noFill: z.boolean().optional(),
@@ -105,7 +106,7 @@ const ElementSchema: z.ZodTypeAny = z.lazy(() =>
       if (item.type === "INSTANCE" && !item.componentId) {
         ctx.addIssue({ code: "custom", path: ["componentId"], message: "INSTANCE elements require componentId from the component catalogue." });
       }
-      if (item.type !== "INSTANCE" && (item.componentId !== undefined || item.instanceProperties !== undefined)) {
+      if (item.type !== "INSTANCE" && (item.componentId !== undefined || item.instanceProperties !== undefined || item.textOverrides !== undefined)) {
         ctx.addIssue({ code: "custom", path: ["componentId"], message: "componentId/instanceProperties are only valid on INSTANCE elements." });
       }
       if (Array.isArray(item.children) && item.children.length && item.type !== "FRAME") {
@@ -192,6 +193,11 @@ const PlanSchema = z.object({
           if (typeof value === "string" && value.trim() && !/^(true|false)$/i.test(value.trim())) textNodes.push({ type: "TEXT", text: value });
         }
       }
+      if (node.type === "INSTANCE" && node.textOverrides && typeof node.textOverrides === "object") {
+        for (const value of Object.values(node.textOverrides as Record<string, unknown>)) {
+          if (typeof value === "string" && value.trim()) textNodes.push({ type: "TEXT", text: value });
+        }
+      }
       visitQuality(Array.isArray(node.children) ? node.children : []);
     }
   };
@@ -237,13 +243,14 @@ function compactNode(value: unknown, state: { count: number }, depth = 0): Canva
     "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "primaryAxisSizingMode",
     "counterAxisSizingMode", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom",
     "primaryAxisAlignItems", "counterAxisAlignItems", "textAutoResize", "horizontalConstraint", "verticalConstraint",
-    "childCount",
+    "childCount", "fontStyle", "textStyleId", "mainComponentId",
   ] as const) {
     const valueAtKey = node[key];
     if (key === "id" && typeof valueAtKey === "string") out.id = valueAtKey.slice(0, 100);
     if (["x", "y", "width", "height", "fontSize", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "childCount"].includes(key) && typeof valueAtKey === "number" && Number.isFinite(valueAtKey)) (out as unknown as Record<string, unknown>)[key] = valueAtKey;
     if (key === "text" && typeof valueAtKey === "string") out.text = valueAtKey.slice(0, 350);
     if (key === "visible" && typeof valueAtKey === "boolean") out.visible = valueAtKey;
+    if (["fontStyle", "textStyleId", "mainComponentId"].includes(key) && typeof valueAtKey === "string" && valueAtKey) (out as unknown as Record<string, unknown>)[key] = valueAtKey.slice(0, 300);
     if (["layoutMode", "layoutWrap", "layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "primaryAxisSizingMode", "counterAxisSizingMode", "primaryAxisAlignItems", "counterAxisAlignItems", "textAutoResize", "horizontalConstraint", "verticalConstraint"].includes(key) && typeof valueAtKey === "string") (out as unknown as Record<string, unknown>)[key] = valueAtKey.slice(0, 20);
   }
   if (Array.isArray(node.fillColors)) out.fillColors = node.fillColors.filter((color): color is string => typeof color === "string").slice(0, 4);
@@ -681,7 +688,18 @@ export async function POST(request: Request) {
       }
     };
     collectStyleReferences(parsedPlan.data.elements as unknown[]);
+    // Text styles already applied in the source selection (often library styles) are valid too.
+    const sourceTextStyleIds = new Set<string>();
+    (function collectSourceStyles(nodes: unknown[]) {
+      for (const entry of nodes) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+        const node = entry as Record<string, unknown>;
+        if (typeof node.textStyleId === "string") sourceTextStyleIds.add(node.textStyleId);
+        if (Array.isArray(node.children)) collectSourceStyles(node.children);
+      }
+    })(Array.isArray(canvas.nodes) ? canvas.nodes : []);
     const invalidStyle = styleReferences.find(({ key, group, node }) => {
+      if (key === "textStyleId" && sourceTextStyleIds.has(String(node[key]))) return false;
       const catalogue = Array.isArray(styleSets[group]) ? styleSets[group] as Array<Record<string, unknown>> : [];
       return !catalogue.some((style) => style.id === node[key]);
     });

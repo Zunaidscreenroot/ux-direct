@@ -171,3 +171,91 @@ test("plan extraction accepts block specs from fenced or prefixed model output",
   assert.equal(isBlockSpec(extractPlanJson(envelope)), true, "block spec inside an OpenAI envelope is extracted");
   assert.equal(extractPlanJson('{"sections":"nope"}'), null);
 });
+
+test("block renderer reuses the source header component, library text styles and type scale", () => {
+  const BODY = "S:lib-body,175:871";
+  const HEADING = "S:lib-heading,1763:5";
+  const canvas = {
+    nodes: [{ name: "Personal loan", type: "FRAME", width: 360, height: 800, fillColors: ["#121212"], children: [
+      { name: "Screen header", type: "INSTANCE", x: 0, y: 0, width: 360, height: 64, mainComponentId: "507:418929",
+        componentProperties: { "Property 1": "Inner" },
+        children: [{ name: "Bank statements", type: "TEXT", text: "Personal Loan", fontSize: 16, fontStyle: "Semi Bold" }] },
+      { name: "Screen body", type: "FRAME", y: 64, width: 360, height: 736, children: [
+        { name: "Title", type: "TEXT", text: "Loan details", fontSize: 14, fontStyle: "Bold", fillColors: ["#FBFBFB"], textStyleId: HEADING },
+        { name: "Label", type: "TEXT", text: "Loan product", fontSize: 14, fontStyle: "Regular", fillColors: ["#C4C4C4"], textStyleId: BODY },
+        { name: "Value", type: "TEXT", text: "Consumption Loan", fontSize: 14, fontStyle: "Semi Bold", fillColors: ["#FFFFFF"] },
+        { name: "Caption", type: "TEXT", text: "Loan amount", fontSize: 12, fontStyle: "Regular", fillColors: ["#C4C4C4"] },
+      ] },
+    ] }],
+    components: [{ id: "507:418929", name: "App bar", type: "COMPONENT_SET" }],
+  };
+  const spec = {
+    summary: "Personal loan details with EMI breakup.",
+    sections: [
+      { name: "Navigation", blocks: [{ type: "app_bar", title: "Personal Loan" }] },
+      { name: "Loan summary", surface: "card", title: "Loan details", blocks: [
+        { type: "row", label: "Loan product", value: "Consumption Loan" },
+        { type: "row", label: "Flipkart loan", caption: "Loan amount: ₹30,000", value: "₹6,000" },
+      ] },
+      { name: "Payment action", blocks: [{ type: "button", label: "Pay ₹10,000" }] },
+    ],
+  };
+  const result = expandBlockSpec(spec, canvas);
+  assert.deepEqual(result.errors, []);
+  const plan = result.plan!;
+  assert.equal(plan.frame.paddingTop, 0, "the reused header sits full-bleed like the source");
+  assert.equal(plan.frame.paddingLeft, 0);
+  const sections = plan.elements as N[];
+  assert.ok(sections.length >= 3 && sections.every((node) => node.type === "FRAME"), "sections stay framed for the normalizer");
+  const header = sections[0].children![0];
+  assert.equal(sections[0].width, 360);
+  assert.equal(header.type, "INSTANCE");
+  assert.equal(header.componentId, "507:418929");
+  assert.equal(header.width, 360);
+  assert.deepEqual(header.textOverrides, { "Bank statements": "Personal Loan" });
+  assert.deepEqual(header.instanceProperties, { "Property 1": "Inner" });
+  for (const section of sections.slice(1)) {
+    assert.equal(section.width, 360);
+    assert.equal(section.paddingLeft, 16, "body sections keep the 16px side margin");
+  }
+
+  const texts: N[] = [];
+  walk(plan.elements as N[], (node) => { if (node.type === "TEXT") texts.push(node); });
+  const byText = (value: string) => texts.find((node) => node.text === value)!;
+  assert.equal(byText("Loan product").textStyleId, BODY);
+  assert.equal(byText("Loan product").color, "#C4C4C4", "labels keep the source's label colour");
+  assert.equal(byText("Loan details").textStyleId, HEADING, "card titles reuse the source heading style");
+  assert.equal(byText("Loan details").fontSize, 14, "16px card titles snap to the source's 14px scale");
+  assert.equal(byText("Consumption Loan").textStyleId, undefined);
+  assert.equal(byText("Loan amount: ₹30,000").fontSize, 12);
+
+  const normalized = normalizePlan(plan, canvas) as { elements: N[] };
+  assert.equal(normalized.elements.length, sections.length, "the normalizer keeps the rendered sections");
+  assert.deepEqual(normalized.elements[0].children![0].textOverrides, { "Bank statements": "Personal Loan" });
+  walk(normalized.elements, (node) => assert.notEqual(node.layoutPositioning, "ABSOLUTE", node.name + " became absolute"));
+  const report = auditDesignPlanQuality(normalized, canvas, "improve this screen");
+  assert.equal(report.passed, true, JSON.stringify(report.findings));
+  const normalizedTexts: N[] = [];
+  walk(normalized.elements, (node) => { if (node.type === "TEXT") normalizedTexts.push(node); });
+  assert.equal(normalizedTexts.find((node) => node.text === "Loan product")!.textStyleId, BODY);
+});
+
+test("without a source header instance the app bar is still drawn natively", () => {
+  const result = expandBlockSpec(kycSpec, lightCanvas);
+  const first = (result.plan!.elements as N[])[0];
+  assert.notEqual(first.type, "INSTANCE");
+  assert.equal(result.plan!.frame.paddingTop, 16);
+});
+
+test("primary buttons keep a light label by darkening the fill just enough", () => {
+  const blue = resolveTheme({ background: "#121212", primary: "#3892F6", onPrimary: "#FFFFFF" }, null);
+  assert.equal(blue.onPrimary, "#FFFFFF");
+  assert.notEqual(blue.primaryFill, "#3892F6");
+  assert.ok(contrast(blue.onPrimary, blue.primaryFill) >= 4.6);
+  assert.equal(blue.primary, "#3892F6", "accent text keeps the source primary");
+  const defaulted = resolveTheme({ background: "#121212", primary: "#3892F6" }, null);
+  assert.equal(defaulted.onPrimary, "#FFFFFF");
+  const yellow = resolveTheme({ background: "#FFFFFF", primary: "#FFC107" }, null);
+  assert.equal(yellow.primaryFill, "#FFC107", "a light primary is not muddied; the label goes dark instead");
+  assert.ok(contrast(yellow.onPrimary, yellow.primaryFill) >= 4.6);
+});
