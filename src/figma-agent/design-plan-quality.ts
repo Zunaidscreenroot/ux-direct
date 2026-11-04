@@ -317,3 +317,18 @@ export function auditDesignPlanQuality(
   const score = Math.max(0, 100 - weight);
   return { passed: findings.length === 0, score, findings };
 }
+
+/**
+ * Source strings the plan does not contain (same rule as the missing-source-content finding).
+ * Used to repair a plan deterministically instead of spending another model attempt.
+ */
+export function missingSourceTexts(planValue: unknown, sourceCanvasValue: unknown, promptValue = ""): string[] {
+  const plan = isRecord(planValue) ? planValue : {};
+  const sourceCanvas = isRecord(sourceCanvasValue) ? sourceCanvasValue : {};
+  const prompt = typeof promptValue === "string" ? promptValue : "";
+  const outputCorpus = fold(collectText(nodesOf(plan.elements)).join(" "));
+  return [...new Set(collectText(nodesOf(sourceCanvas.nodes)))].filter((text) => {
+    const normalized = fold(text);
+    return normalized.length >= 2 && !hasExplicitRemoval(text, prompt) && !outputCorpus.includes(normalized);
+  });
+}

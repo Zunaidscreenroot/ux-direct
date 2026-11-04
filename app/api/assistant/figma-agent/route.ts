@@ -11,7 +11,9 @@ import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openr
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
 import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
-import { auditDesignPlanQuality } from "@/src/figma-agent/design-plan-quality";
+import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
+import { appendMissingSourceText, MAX_REPAIRED_TEXTS, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
+import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, expandBlockSpec, isBlockSpec } from "@/src/figma-agent/block-spec";
 
@@ -562,7 +564,13 @@ export async function POST(request: Request) {
   const scopeInstructions = componentSelection
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
-  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions, brain);
+  // A verified spec from this project (structure only) steers whichever model `auto` picks
+  // toward the same block choices that already passed the Figma quality gate.
+  const verifiedExample = blockMode ? await loadVerifiedExample(taskScope, designScope) : "";
+  const exampleInstructions = verifiedExample
+    ? "\nVERIFIED TEAM EXAMPLE — the block structure of an earlier output that passed UX Direct's quality gate. Texts are replaced by <source text>. Follow its way of choosing sections and blocks for similar content; never copy it, and use only this screen's real content: " + verifiedExample
+    : "";
+  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + exampleInstructions, brain);
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its configured free-model chain.
   // Both are bounded by compact retry and the shared generation deadline.
@@ -606,6 +614,135 @@ export async function POST(request: Request) {
   // generated, so each attempt needs room for a complete multi-thousand-token plan. One shared
   // deadline keeps the sequential chain bounded.
   const generationDeadlineMs = 270000;
+  type BlockSpecInfo = { blocks: number; nodes: number; warnings: string[] };
+  type Candidate = {
+    stage: "blocks" | "schema" | "quality" | "component" | "style" | "ok";
+    error: string;
+    feedback: string;
+    blockSpec: BlockSpecInfo | null;
+    plan?: z.infer<typeof PlanSchema>;
+    quality?: ReturnType<typeof auditDesignPlanQuality>;
+  };
+  type SuccessCandidate = {
+    candidate: Candidate; spec: unknown; learningCandidate: unknown; servedModel: string; routed?: string;
+    isRecovery: boolean; finishReason: string; modelIndex: number; themeLocked?: boolean; repairedTexts: number;
+  };
+  const catalogueComponentIds = new Set((Array.isArray(canvas.components) ? canvas.components as Array<Record<string, unknown>> : [])
+    .map((component) => component.id).filter((id): id is string => typeof id === "string"));
+  const styleSets = canvas.styles && typeof canvas.styles === "object" ? canvas.styles as Record<string, unknown> : {};
+  /** Every deterministic gate a model answer must pass before anything is written to Figma. */
+  const renderCandidate = (candidateInput: unknown): Candidate => {
+    // A block spec is rendered deterministically; a raw layer tree (legacy mode or a model
+    // that ignored the contract) still goes through the same normalizer and gates.
+    let planInput: unknown = candidateInput;
+    let blockSpec: BlockSpecInfo | null = null;
+    if (isBlockSpec(candidateInput)) {
+      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection });
+      blockSpec = { blocks: expansion.blockCount, nodes: expansion.nodeCount, warnings: expansion.warnings };
+      if (!expansion.plan) {
+        const issues = expansion.errors.slice(0, 4).join("; ");
+        return { stage: "blocks", blockSpec, error: "block spec rejected (" + issues + ")",
+          feedback: "The block spec could not be rendered: " + issues + " Return a corrected complete block spec; keep every source text." };
+      }
+      planInput = expansion.plan;
+    }
+    const parsedPlan = PlanSchema.safeParse(normalizePlan(planInput, canvas));
+    if (!parsedPlan.success) {
+      const issues = parsedPlan.error.issues.slice(0, 4)
+        .map((issue) => issue.path.join(".") + " " + issue.message).join("; ");
+      return { stage: "schema", blockSpec, error: "invalid design plan schema (" + issues + ")",
+        feedback: "The previous plan failed native Figma schema validation: " + issues + ". Return a corrected complete plan; do not repeat these errors." };
+    }
+    const quality = auditDesignPlanQuality(parsedPlan.data, canvas, parsedInput.data.prompt);
+    if (!quality.passed) {
+      const issues = quality.findings.slice(0, 8)
+        .map((finding) => finding.code + ": " + finding.message).join("; ");
+      return { stage: "quality", blockSpec, plan: parsedPlan.data, quality, error: "quality preflight rejected plan (" + issues + ")",
+        feedback: "The plan failed deterministic pre-write quality checks (score " + quality.score +
+          "/100): " + issues + ". Fix the actual content/layout/surface defects. Never omit source labels, values, statuses or actions to simplify layout." };
+    }
+    const unknownComponentId = (function findUnknown(nodes: unknown[]): string | null {
+      for (const entry of nodes) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+        const node = entry as Record<string, unknown>;
+        if (node.type === "INSTANCE" && typeof node.componentId === "string" && !catalogueComponentIds.has(node.componentId)) return node.componentId;
+        const nested = Array.isArray(node.children) ? findUnknown(node.children) : null;
+        if (nested) return nested;
+      }
+      return null;
+    })(parsedPlan.data.elements as unknown[]);
+    if (unknownComponentId) {
+      return { stage: "component", blockSpec, error: "INSTANCE references an unknown component ID.",
+        feedback: "The previous plan used INSTANCE componentId " + unknownComponentId +
+          " which is not in canvas.components. Use an exact listed component id or build that element from native layers." };
+    }
+    const styleReferences: Array<{ key: string; group: string; node: Record<string, unknown> }> = [];
+    const collectStyleReferences = (nodes: unknown[]) => {
+      for (const entry of nodes) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+        const node = entry as Record<string, unknown>;
+        for (const [key, group] of [["paintStyleId", "paint"], ["textStyleId", "text"], ["effectStyleId", "effect"], ["gridStyleId", "grid"]] as const) {
+          if (typeof node[key] === "string") styleReferences.push({ key, group, node });
+        }
+        if (Array.isArray(node.children)) collectStyleReferences(node.children);
+      }
+    };
+    collectStyleReferences(parsedPlan.data.elements as unknown[]);
+    // Text styles already applied in the source selection (often library styles) are valid too.
+    const sourceTextStyleIds = new Set<string>();
+    (function collectSourceStyles(nodes: unknown[]) {
+      for (const entry of nodes) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+        const node = entry as Record<string, unknown>;
+        if (typeof node.textStyleId === "string") sourceTextStyleIds.add(node.textStyleId);
+        if (Array.isArray(node.children)) collectSourceStyles(node.children);
+      }
+    })(Array.isArray(canvas.nodes) ? canvas.nodes : []);
+    const invalidStyle = styleReferences.find(({ key, group, node }) => {
+      if (key === "textStyleId" && sourceTextStyleIds.has(String(node[key]))) return false;
+      const catalogue = Array.isArray(styleSets[group]) ? styleSets[group] as Array<Record<string, unknown>> : [];
+      return !catalogue.some((style) => style.id === node[key]);
+    });
+    if (invalidStyle) {
+      return { stage: "style", blockSpec, error: invalidStyle.key + " references an unknown local " + invalidStyle.group + " style ID.",
+        feedback: "The previous plan referenced an unknown local " + invalidStyle.group + " style ID for " +
+          invalidStyle.key + ". Remove that invalid reference or use an exact style ID from the supplied catalogue." };
+    }
+    return { stage: "ok", blockSpec, plan: parsedPlan.data, quality, error: "", feedback: "" };
+  };
+  // Which model produced what, per attempt, so models can be compared on the same gate.
+  const attemptLog: GenerationRecord["attempts"] = [];
+  let lastServedModel = "";
+  let fallback: SuccessCandidate | null = null;
+  // Set when an upstream rejects optional sampling parameters; the retry then omits them.
+  let paramsRejected = false;
+  const respond = (success: SuccessCandidate) => {
+    const { candidate } = success;
+    deferTaskWork(recordGeneration(taskRunId, {
+      model: success.servedModel, routedVia: success.routed,
+      planFormat: candidate.blockSpec ? "blocks" : "elements", designScope,
+      qualityScore: candidate.quality?.score, themeLocked: success.themeLocked,
+      repairedTexts: success.repairedTexts, attempts: attemptLog,
+    }, candidate.blockSpec ? success.spec : null));
+    return NextResponse.json({
+      ok: true,
+      taskRunId,
+      taskProject,
+      retrieval: taskRetrieval,
+      plan: candidate.plan,
+      planFormat: candidate.blockSpec ? "blocks" : "elements",
+      blockSpec: candidate.blockSpec,
+      learningCandidate: success.learningCandidate,
+      learning: "awaiting-verification",
+      model: success.servedModel,
+      routedVia: success.routed,
+      consistency: { themeLocked: success.themeLocked ?? false, restoredSourceTexts: success.repairedTexts, verifiedExample: Boolean(verifiedExample) },
+      brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
+      visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
+      generation: { recoveryAttempted: success.isRecovery, finishReason: success.finishReason, modelIndex: success.modelIndex + 1,
+        attempts: attemptLog.length, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt },
+    }, { headers });
+  };
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
     const attemptsForModel = 2;
@@ -655,7 +792,9 @@ export async function POST(request: Request) {
             ],
             ...(activeProvider.id === "openrouter" && model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
             ...(activeProvider.id === "openrouter" && model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}),
-            ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 } : {}),
+            // Low temperature for every model `auto` may route to: same input, near-same spec.
+            ...(model.startsWith("google/gemini-") ? { temperature: isRecovery ? 0.1 : 0.15 }
+              : isFreeLlmApi && !paramsRejected ? { temperature: isRecovery ? 0.1 : 0.2 } : {}),
             // Qwen 3.5 thinks by default; unbounded reasoning spends the attempt before any JSON is written.
             ...(model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}),
             // Many free upstream models cap output near 8k tokens and reject larger requests.
@@ -691,6 +830,8 @@ export async function POST(request: Request) {
           ? payload.error as Record<string, unknown>
           : {};
         if (!response.ok) {
+          if (shouldRetryWithoutJsonMode(activeProvider, response.status)) paramsRejected = true;
+          attemptLog.push({ model: model + (isRecovery ? " compact retry" : ""), result: "HTTP " + response.status });
           const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
           errors.push(model + (isRecovery ? " compact retry" : "") + ": " + detail);
           // The compact retry runs without JSON mode, which covers free models that reject response_format.
@@ -772,112 +913,53 @@ export async function POST(request: Request) {
           ? rawPlan as Record<string, unknown>
           : {};
         const learningCandidate = sanitizeInlineLearningCandidate(rawPlanRecord.learningCandidate);
-        // A block spec is rendered deterministically; a raw layer tree (legacy mode or a model
-        // that ignored the contract) still goes through the same normalizer and gates.
-        let planInput: unknown = rawPlan;
-        let blockSpec: { blocks: number; nodes: number; warnings: string[] } | null = null;
+        // FreeLLMAPI `auto` reports the upstream model it actually used.
+        const servedModel = typeof payload.model === "string" && payload.model.trim() ? payload.model.trim().slice(0, 160) : model;
+        lastServedModel = servedModel;
+        const attemptName = servedModel + (isRecovery ? " compact retry" : "");
+        // Same palette for the same screen whichever model answered (unless a restyle was asked).
+        let specInput: unknown = rawPlan;
+        let themeLocked: boolean | undefined;
         if (isBlockSpec(rawPlan)) {
-          const expansion = expandBlockSpec(rawPlan, canvas, { componentSelection });
-          blockSpec = { blocks: expansion.blockCount, nodes: expansion.nodeCount, warnings: expansion.warnings };
-          if (!expansion.plan) {
-            const issues = expansion.errors.slice(0, 4).join("; ");
-            validationFeedback = "The block spec could not be rendered: " + issues + " Return a corrected complete block spec; keep every source text.";
-            errors.push(model + (isRecovery ? " compact retry" : "") + ": block spec rejected (" + issues + ")");
-            if (!isRecovery) continue;
-            break;
-          }
-          planInput = expansion.plan;
+          const stabilized = stabilizeBlockSpec(rawPlan, canvas, parsedInput.data.prompt);
+          specInput = stabilized.spec;
+          themeLocked = stabilized.themeLocked;
         }
-        const normalizedPlan = normalizePlan(planInput, canvas);
-        const parsedPlan = PlanSchema.safeParse(normalizedPlan);
-        if (!parsedPlan.success) {
-          const issues = parsedPlan.error.issues.slice(0, 4)
-            .map((issue) => issue.path.join(".") + " " + issue.message).join("; ");
-          validationFeedback = "The previous plan failed native Figma schema validation: " + issues + ". Return a corrected complete plan; do not repeat these errors.";
-          errors.push(model + (isRecovery ? " compact retry" : "") + ": invalid design plan schema (" + issues + ")");
-          if (!isRecovery) continue;
-          break;
-        }
-        const qualityReport = auditDesignPlanQuality(parsedPlan.data, canvas, parsedInput.data.prompt);
-        if (!qualityReport.passed) {
-          const issues = qualityReport.findings.slice(0, 8)
-            .map((finding) => finding.code + ": " + finding.message).join("; ");
-          validationFeedback = "The plan failed deterministic pre-write quality checks (score " + qualityReport.score +
-            "/100): " + issues + ". Fix the actual content/layout/surface defects. Never omit source labels, values, statuses or actions to simplify layout.";
-          errors.push(model + (isRecovery ? " compact retry" : "") + ": quality preflight rejected plan (" + issues + ")");
-          if (!isRecovery) continue;
-          break;
-        }
-        const catalogueComponentIds = new Set((Array.isArray(canvas.components) ? canvas.components as Array<Record<string, unknown>> : [])
-          .map((component) => component.id).filter((id): id is string => typeof id === "string"));
-        const unknownComponentId = (function findUnknown(nodes: unknown[]): string | null {
-          for (const entry of nodes) {
-            if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-            const node = entry as Record<string, unknown>;
-            if (node.type === "INSTANCE" && typeof node.componentId === "string" && !catalogueComponentIds.has(node.componentId)) return node.componentId;
-            const nested = Array.isArray(node.children) ? findUnknown(node.children) : null;
-            if (nested) return nested;
-          }
-          return null;
-        })(parsedPlan.data.elements as unknown[]);
-        if (unknownComponentId) {
-          validationFeedback = "The previous plan used INSTANCE componentId " + unknownComponentId +
-            " which is not in canvas.components. Use an exact listed component id or build that element from native layers.";
-          errors.push(model + (isRecovery ? " compact retry" : "") + ": INSTANCE references an unknown component ID.");
-          if (!isRecovery) continue;
-          break;
-        }
-        const styleSets = canvas.styles && typeof canvas.styles === "object" ? canvas.styles as Record<string, unknown> : {};
-        const styleReferences: Array<{ key: string; group: string; node: Record<string, unknown> }> = [];
-        const collectStyleReferences = (nodes: unknown[]) => {
-          for (const entry of nodes) {
-            if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-            const node = entry as Record<string, unknown>;
-            for (const [key, group] of [["paintStyleId", "paint"], ["textStyleId", "text"], ["effectStyleId", "effect"], ["gridStyleId", "grid"]] as const) {
-              if (typeof node[key] === "string") styleReferences.push({ key, group, node });
+        let candidate = renderCandidate(specInput);
+        let repairedTexts = 0;
+        // A model that drops a few source strings is repaired deterministically: the text goes
+        // back in, so a weaker model can't lose content and doesn't need another attempt.
+        if (candidate.stage === "quality" && candidate.plan && isBlockSpec(specInput) &&
+            candidate.quality?.findings.every((finding) => finding.code === "missing-source-content")) {
+          const missing = missingSourceTexts(candidate.plan, canvas, parsedInput.data.prompt);
+          if (missing.length && missing.length <= MAX_REPAIRED_TEXTS) {
+            const repairedSpec = appendMissingSourceText(specInput, missing);
+            const repaired = renderCandidate(repairedSpec);
+            if (repaired.stage === "ok") {
+              const success: SuccessCandidate = { candidate: repaired, spec: repairedSpec, learningCandidate, servedModel,
+                routed: routedVia(response), isRecovery, finishReason, modelIndex, themeLocked, repairedTexts: missing.length };
+              // Small gaps are fixed now; larger ones first give the model one chance to do better.
+              if (missing.length <= 3 || isRecovery) {
+                candidate = repaired;
+                specInput = repairedSpec;
+                repairedTexts = missing.length;
+              } else if (!fallback) {
+                fallback = success;
+                attemptLog.push({ model: attemptName, result: "dropped " + missing.length + " source texts; repaired copy kept as fallback" });
+              }
             }
-            if (Array.isArray(node.children)) collectStyleReferences(node.children);
           }
-        };
-        collectStyleReferences(parsedPlan.data.elements as unknown[]);
-        // Text styles already applied in the source selection (often library styles) are valid too.
-        const sourceTextStyleIds = new Set<string>();
-        (function collectSourceStyles(nodes: unknown[]) {
-          for (const entry of nodes) {
-            if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-            const node = entry as Record<string, unknown>;
-            if (typeof node.textStyleId === "string") sourceTextStyleIds.add(node.textStyleId);
-            if (Array.isArray(node.children)) collectSourceStyles(node.children);
-          }
-        })(Array.isArray(canvas.nodes) ? canvas.nodes : []);
-        const invalidStyle = styleReferences.find(({ key, group, node }) => {
-          if (key === "textStyleId" && sourceTextStyleIds.has(String(node[key]))) return false;
-          const catalogue = Array.isArray(styleSets[group]) ? styleSets[group] as Array<Record<string, unknown>> : [];
-          return !catalogue.some((style) => style.id === node[key]);
-        });
-        if (invalidStyle) {
-          validationFeedback = "The previous plan referenced an unknown local " + invalidStyle.group + " style ID for " +
-            invalidStyle.key + ". Remove that invalid reference or use an exact style ID from the supplied catalogue.";
-          errors.push(model + (isRecovery ? " compact retry" : "") + ": " + invalidStyle.key + " references an unknown local " + invalidStyle.group + " style ID.");
+        }
+        if (candidate.stage !== "ok" || !candidate.plan || !candidate.quality) {
+          validationFeedback = candidate.feedback;
+          errors.push(attemptName + ": " + candidate.error);
+          if (!attemptLog.some((entry) => entry.model === attemptName)) attemptLog.push({ model: attemptName, result: candidate.stage + ": " + candidate.error });
           if (!isRecovery) continue;
           break;
         }
-        return NextResponse.json({
-          ok: true,
-          taskRunId,
-          taskProject,
-          retrieval: taskRetrieval,
-          plan: parsedPlan.data,
-          planFormat: blockSpec ? "blocks" : "elements",
-          blockSpec,
-          learningCandidate,
-          learning: "awaiting-verification",
-          model: typeof payload.model === "string" ? payload.model : model,
-          routedVia: routedVia(response),
-          brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
-          visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
-          generation: { recoveryAttempted: isRecovery, finishReason, modelIndex: modelIndex + 1, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt },
-        }, { headers });
+        attemptLog.push({ model: attemptName, result: repairedTexts ? "passed after restoring " + repairedTexts + " source texts" : "passed" });
+        return respond({ candidate, spec: specInput, learningCandidate, servedModel, routed: routedVia(response),
+          isRecovery, finishReason, modelIndex, themeLocked, repairedTexts });
       } catch (error) {
         errors.push(model + (isRecovery ? " compact retry" : "") + ": " +
           (controller.signal.aborted ? "timed out after " + attemptTimeoutMs + "ms before the provider finished the response" : error instanceof Error ? error.message.slice(0, 200) : "request failed"));
@@ -888,6 +970,10 @@ export async function POST(request: Request) {
       }
     }
   }
+  // Every attempt missed the gate, but one only dropped source text that was restored.
+  if (fallback) return respond(fallback);
+  deferTaskWork(recordGeneration(taskRunId, { model: lastServedModel || models[0] || "unknown", planFormat: "none", designScope,
+    attempts: errors.map((entry) => ({ model: entry.split(":")[0] || "unknown", result: entry })) }, null));
   deferTaskWork(finishTaskRun({ id: taskRunId, outcome: "failed", durationMs: Date.now() - requestStartedAt,
     retrieval: taskRetrieval, errorSummary: errors[0] || "Plan generation failed." }));
   return NextResponse.json({

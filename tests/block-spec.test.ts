@@ -156,8 +156,8 @@ test("figma agent route renders block specs by default with a legacy rollback sw
   assert.ok(route.includes('process.env.UXD_FIGMA_PLAN_MODE || "blocks"'));
   assert.ok(route.includes("(blockMode ? BLOCK_SYSTEM : SYSTEM)"));
   assert.ok(route.includes("isRecovery ? (blockMode ? blockRecoverySystem : recoverySystem) : system"));
-  assert.ok(route.includes("if (isBlockSpec(rawPlan))"));
-  assert.ok(route.includes('planFormat: blockSpec ? "blocks" : "elements"'));
+  assert.ok(route.includes("if (isBlockSpec(candidateInput))"));
+  assert.ok(route.includes('planFormat: candidate.blockSpec ? "blocks" : "elements"'));
 });
 
 test("plan extraction accepts block specs from fenced or prefixed model output", async () => {
