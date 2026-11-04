@@ -1772,6 +1772,8 @@ async function writeCanvasCommand(payload, options) {
       else if (type === "INSTANCE") node = (await resolveComponentForInstance(spec.componentId, "create-elements INSTANCE")).createInstance();
       else throw new Error("Unsupported element type: " + String(type));
       node.name = spec.name.trim().slice(0, 80);
+      // Marks layers UX Direct created so "revert" may delete them and nothing else.
+      if (typeof node.setPluginData === "function") node.setPluginData("uxdCreated", "1");
       var width = Number.isFinite(spec.width) ? spec.width : (type === "TEXT" ? 280 : type === "INSTANCE" ? node.width : 160);
       var height = Number.isFinite(spec.height) ? spec.height : (type === "TEXT" ? 40 : type === "INSTANCE" ? node.height : 100);
       width = Math.max(1, Math.min(4096, width));
@@ -2780,7 +2782,10 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo"];
+// Revert support: fills captured before each image change, kept for this plugin session.
+var UXD_FILL_SNAPSHOTS = new Map();
+var UXD_FILL_SNAPSHOT_SEQ = 0;
 var UXD_LOCAL_IMAGE_MAX_BYTES = 12 * 1024 * 1024;
 async function localReadTree(payload) {
   var maxDepth = Math.max(0, Math.min(8, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 6));
@@ -2859,11 +2864,40 @@ async function localApplyImage(payload) {
       }
     }
   }
+  var snapshotId = "fills-" + (++UXD_FILL_SNAPSHOT_SEQ);
+  UXD_FILL_SNAPSHOTS.set(snapshotId, { nodeId: node.id, fills: JSON.parse(JSON.stringify(Array.isArray(node.fills) ? node.fills : [])) });
+  if (UXD_FILL_SNAPSHOTS.size > 50) UXD_FILL_SNAPSHOTS.delete(UXD_FILL_SNAPSHOTS.keys().next().value);
   if (typeof figma.commitUndo === "function") figma.commitUndo();
   node.fills = replaced ? current : [{ type: "IMAGE", imageHash: image.hash, scaleMode: scaleMode }];
   if (typeof figma.commitUndo === "function") figma.commitUndo();
-  return { ok: true, nodeId: node.id, name: node.name, imageHash: image.hash, replaced: replaced,
+  return { ok: true, nodeId: node.id, name: node.name, imageHash: image.hash, replaced: replaced, snapshotId: snapshotId,
     width: node.width, height: node.height, bytes: bytes.length };
+}
+async function localRestoreFills(payload) {
+  var snapshot = UXD_FILL_SNAPSHOTS.get(payload.snapshotId);
+  if (!snapshot) throw new Error("The saved state for this change is gone (the plugin was reopened). Use Cmd/Ctrl+Z in Figma instead.");
+  var node = await localTaskNode(snapshot.nodeId);
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  node.fills = snapshot.fills;
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  UXD_FILL_SNAPSHOTS.delete(payload.snapshotId);
+  return { ok: true, nodeId: node.id, name: node.name };
+}
+async function localDeleteCreated(payload) {
+  var ids = Array.isArray(payload.nodeIds) ? payload.nodeIds.slice(0, 20) : [];
+  var deleted = [];
+  var missing = [];
+  for (var i = 0; i < ids.length; i++) {
+    var node = await figma.getNodeByIdAsync(String(ids[i]));
+    if (!node || node.removed) { missing.push(String(ids[i])); continue; }
+    if (typeof node.getPluginData !== "function" || node.getPluginData("uxdCreated") !== "1") {
+      throw new Error("\"" + node.name + "\" was not created by UX Direct, so revert will not delete it.");
+    }
+    deleted.push(node.name);
+    node.remove();
+  }
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  return { ok: true, deleted: deleted, missing: missing };
 }
 async function runLocalTask(message) {
   var result = null;
@@ -2875,6 +2909,14 @@ async function runLocalTask(message) {
     if (message.op === "read-tree") result = await localReadTree(payload);
     else if (message.op === "read-image") result = await localReadImage(payload);
     else if (message.op === "apply-image") result = await localApplyImage(payload);
+    else if (message.op === "restore-fills") result = await localRestoreFills(payload);
+    else if (message.op === "delete-created") result = await localDeleteCreated(payload);
+    else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
+    else if (message.op === "trigger-undo") {
+      if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");
+      figma.triggerUndo();
+      result = { ok: true };
+    }
   } catch (error) {
     errorText = error && error.message ? String(error.message).slice(0, 600) : "Local task failed.";
   }

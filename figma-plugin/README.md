@@ -23,6 +23,7 @@ Select layers and type the request in the chat. These run on free services only.
 - **Rename layers** by purpose.
 - **Variations:** "make 3 variations of this screen", or select several screens of a flow and type "create variations of this flow".
 - **UX audit** of a screen or a multi-screen flow (heuristics, flow gaps, accessibility), from screenshots + layers.
+- **Revert:** every change UX Direct makes gets a "↶ Revert this change" button, and "revert" / "undo" / "wapas pehle jaisa" in the chat reverts the last change ("revert all" for every change this session). Image fills are restored from a snapshot, text and names are written back, generated screens are deleted (only layers UX Direct created), and native edits are undone as one Figma undo step. Revert requests never start a generation.
 - **UI hygiene check:** deterministic lint of auto layout, padding/gap grid and consistency, repeated-item drift, layer names, hidden/empty layers, type scale, style/variable usage, contrast, touch targets.
 
 Image bytes and large selection trees travel over a local plugin channel (`uxd-local-task`: read-tree, read-image, apply-image only) instead of the backend bridge.

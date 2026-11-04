@@ -49,6 +49,21 @@ test("quick-task classifier routes Figma-agent style requests", () => {
   assert.equal(classify("add a primary button", frame), null);
 });
 
+test("revert and undo requests never reach a generation path", () => {
+  const classify = loadClassifier();
+  const frame = { selectionTypes: ["FRAME"] };
+  for (const prompt of ["revert this change", "Revert the change", "undo", "undo that image", "roll back the last edit",
+    "go back to the previous version", "restore the original", "isko wapas pehle jaisa kar do", "cancel the last change"]) {
+    const task = classify(prompt, frame);
+    assert.equal(task && task.kind, "revert", prompt);
+  }
+  assert.equal(classify("revert all changes", frame).all, true);
+  assert.equal(classify("revert this change", frame).all, false);
+  assert.ok(ui.includes('if (task.kind === "revert") return runRevertTask(task, stage);'));
+  assert.ok(ui.includes("attachRevertButton(assistantMessage"), "each change message gets a revert button");
+  assert.ok(/recordChange\("New screen/.test(ui), "generated screens are revertible");
+});
+
 test("ui.html wires quick tasks before the native and design paths", () => {
   const quickIndex = ui.indexOf("const quickTask = classifyQuickTask(");
   assert.ok(quickIndex > 0 && quickIndex < ui.indexOf("if (isDirectCanvasActionPrompt(prompt))"));
@@ -134,8 +149,10 @@ function makeRuntime() {
     fills: [{ type: "SOLID", color: { r: 1, g: 1, b: 1 } }, { type: "IMAGE", imageHash: "old", scaleMode: "FIT", visible: true }] });
   const label = node({ type: "TEXT", name: "Label", characters: "Hi", fontSize: 14 });
   const card = node({ type: "FRAME", name: "Card", layoutMode: "VERTICAL", fillStyleId: "S:1", children: [photo, label] });
-  page.children.push(card);
-  const all = [card, photo, label];
+  const made: any = node({ type: "FRAME", name: "Variation", getPluginData: (key: string) => (key === "uxdCreated" ? "1" : "") });
+  made.remove = () => { page.children.splice(page.children.indexOf(made), 1); made.removed = true; };
+  page.children.push(card, made);
+  const all = [card, photo, label, made];
   const posted: any[] = [];
   const figma: any = {
     fileKey: /UXD_ALLOWED_FILE_KEY = "([^"]+)"/.exec(code)![1], currentPage: page, root: { children: [page] }, mixed: Symbol("mixed"),
@@ -156,11 +173,11 @@ function makeRuntime() {
     if (message.error) throw new Error(message.error);
     return message.result;
   }
-  return { local, photo, label, card, created };
+  return { local, photo, label, card, created, made, page };
 }
 
 test("local quick-task channel reads trees and images and applies image fills in code.js", async () => {
-  const { local, photo, label, card, created } = makeRuntime();
+  const { local, photo, label, card, created, made, page } = makeRuntime();
   const tree = await local("read-tree", { maxDepth: 3 });
   assert.equal(tree.nodes[0].id, card.id);
   assert.equal(tree.nodes[0].fillStyled, true);
@@ -179,4 +196,11 @@ test("local quick-task channel reads trees and images and applies image fills in
   assert.equal(created.length, 1);
   await assert.rejects(local("apply-image", { nodeId: label.id, bytes }), /not a text layer/);
   await assert.rejects(local("delete-everything", {}), /Unsupported local task/);
+  await local("restore-fills", { snapshotId: replaced.snapshotId });
+  assert.equal(photo.fills[1].imageHash, "old", "revert restores the fills captured before the change");
+  await assert.rejects(local("restore-fills", { snapshotId: replaced.snapshotId }), /saved state/);
+  await assert.rejects(local("delete-created", { nodeIds: [card.id] }), /not created by UX Direct/);
+  const removed = await local("delete-created", { nodeIds: [made.id] });
+  assert.deepEqual([...removed.deleted], ["Variation"]);
+  assert.equal(page.children.includes(made), false);
 });

@@ -1357,6 +1357,13 @@
       }
 
       stage("creating", "Applying " + actions.length + " validated native Figma action(s)…");
+      // Group the whole edit into one Figma undo step so "revert" can undo it in one go.
+      await localTask("commit-undo", {}).catch(function () {});
+      recordChange("Edit: " + prompt.slice(0, 80), function () {
+        return localTask("commit-undo", {}).catch(function () {})
+          .then(function () { return localTask("trigger-undo", {}); })
+          .then(function () { return "undone with Figma undo"; });
+      }, { mustBeLatest: true });
       for (let index = 0; index < actions.length; index += 1) {
         const action = actions[index];
         if (!action || typeof action.operation !== "string") throw new Error("Invalid action at step " + (index + 1) + ".");
@@ -1410,6 +1417,7 @@
         stage("creating", "Applied " + (index + 1) + "/" + actions.length + " · " + action.operation);
       }
 
+      await localTask("commit-undo", {}).catch(function () {});
       if (attachedImageData && actions.some(function (a) { return ["insert-image", "create-image-fill"].includes(a.operation); })) {
         attachedImageData = null; attachedImageName = ""; renderAttachmentChip();
       }
@@ -1610,6 +1618,13 @@
         throw new Error("Figma did not return the new frame ID. Inspect the current page before retrying.");
       }
       createdFrameId = root.id;
+      const createdName = String(plan.frame.name || "UX Direct Variation").slice(0, 80);
+      const createdId = root.id;
+      recordChange("New screen \"" + createdName + "\"", function () {
+        return localTask("delete-created", { nodeIds: [createdId] }).then(function (result) {
+          return result && result.missing && result.missing.length ? "it was already deleted" : "generated frame deleted, source untouched";
+        });
+      });
       const plannedNodeCount = countPlanNodes(plan.elements);
       async function createPlanChildren(parentId, elements, depth) {
         if (depth > 4) throw new Error("Design hierarchy exceeded the safe nesting depth.");
@@ -1767,6 +1782,10 @@
       const containerTypes = ["FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE", "SECTION", "GROUP"];
       const allText = count > 0 && types.every(function (type) { return type === "TEXT"; });
       const imageNoun = "(?:image|images|photo|photos|picture|pictures|pic|illustration|artwork|graphic|tasveer|foto)";
+      // Revert/undo must never reach a generation path ("revert this change" contains "change").
+      if (/\b(revert|undo|roll ?back|reverse (it|this|that|the (last )?change))\b|\bgo back to (the )?(previous|original|old|earlier)\b|\brestore (it|this|that|the (previous|original|old)|previous|original)\b|\b(wapas|vapas|waapas)\b|pehle (jaisa|jaise|wala)|purana (wala|jaisa)|\bcancel (the |this |that |my )?(last )?(change|edit)s?\b/i.test(text)) {
+        return { kind: "revert", all: /\b(all|everything|sab|saare|sare)\b/i.test(text) };
+      }
       if (/\b(remove|erase|delete|cut ?out|clear|hatao|hata do|nikal)\b[^.]{0,25}\b(background|bg)\b|\bbackground\s*(removal|remover|remove)\b|\b(background|bg)\b[^.]{0,15}\b(hatao|hata do|remove)\b/i.test(text)) {
         return { kind: "remove-background" };
       }
@@ -1929,7 +1948,10 @@
         const description = task.description + (targets.length > 1 ? " (variation " + (index + 1) + ", different from the others)" : "");
         const generated = await postQuickTask("/api/assistant/figma-agent/image", { action: "generate", prompt: description, width: Math.max(8, width), height: Math.max(8, height) });
         stage("creating", "Placing the image into \"" + node.name + "\"…");
-        await localTask("apply-image", { nodeId: node.id, bytes: base64ToBytes(generated.imageBase64), mode: "fill", scaleMode: "FILL" }, 60000);
+        const placed = await localTask("apply-image", { nodeId: node.id, bytes: base64ToBytes(generated.imageBase64), mode: "fill", scaleMode: "FILL" }, 60000);
+        recordChange("Image in \"" + node.name + "\"", function () {
+          return localTask("restore-fills", { snapshotId: placed.snapshotId }).then(function () { return "previous fill restored"; });
+        });
         lines.push("- **" + node.name + "** " + width + "×" + height + " → " +
           (generated.width ? generated.width + "×" + generated.height + " px image (same aspect ratio, 2x for sharpness)" : "image placed with Fill") +
           " via " + generated.provider + (generated.notes && generated.notes.length ? " · note: " + String(generated.notes[generated.notes.length - 1]).slice(0, 140) : ""));
@@ -1965,7 +1987,10 @@
               ". Local fallback: " + String(fallbackError && fallbackError.message || fallbackError).slice(0, 160) + ".");
           }
         }
-        await localTask("apply-image", { nodeId: source.nodeId, bytes: output, mode: "replace-image", scaleMode: source.scaleMode || "FILL" }, 60000);
+        const cleaned = await localTask("apply-image", { nodeId: source.nodeId, bytes: output, mode: "replace-image", scaleMode: source.scaleMode || "FILL" }, 60000);
+        recordChange("Background removal on \"" + source.name + "\"", function () {
+          return localTask("restore-fills", { snapshotId: cleaned.snapshotId }).then(function () { return "original photo restored"; });
+        });
         lines.push("- **" + source.name + "**: background removed with " + method + ".");
       }
       stage("done", "Background removed · undo with Cmd/Ctrl+Z");
@@ -2024,7 +2049,13 @@
       const edits = Array.isArray(result.edits) ? result.edits : [];
       if (!edits.length) return "No changes were needed for that request.";
       stage("creating", "Applying " + edits.length + " change(s)…");
-      const applied = await applyNodePatches(edits, mode === "rewrite" ? "text" : "name", stage);
+      const patchKey = mode === "rewrite" ? "text" : "name";
+      const applied = await applyNodePatches(edits, patchKey, stage);
+      const appliedEdits = edits.slice(0, applied);
+      recordChange((mode === "rewrite" ? "Text edit on " : "Rename of ") + appliedEdits.length + " layer(s)", function () {
+        const undoEdits = appliedEdits.map(function (edit) { return { id: edit.id, value: edit.before }; });
+        return applyNodePatches(undoEdits, patchKey, function () {}).then(function (count) { return count + " layer(s) restored"; });
+      });
       stage("done", (mode === "rewrite" ? "Text updated" : "Layers renamed") + " · " + applied + " change(s)");
       const preview = edits.slice(0, 8).map(function (edit) {
         return "- " + String(edit.before).replace(/\s+/g, " ").slice(0, 60) + " → **" + String(edit.value).replace(/\s+/g, " ").slice(0, 80) + "**";
@@ -2106,9 +2137,68 @@
         "\nThe original screens were not changed.";
     }
 
+    // ---- Change journal: every canvas change UX Direct makes gets a revert recipe ----------
+    const changeJournal = [];
+    let changeSeq = 0;
+    function recordChange(label, revert, options) {
+      const entry = { id: makeId(), seq: ++changeSeq, label: String(label).slice(0, 160), revert: revert, mustBeLatest: Boolean(options && options.mustBeLatest), reverted: false };
+      changeJournal.push(entry);
+      if (changeJournal.length > 30) changeJournal.shift();
+      return entry;
+    }
+    async function revertEntries(entries, stage) {
+      const pending = entries.filter(function (entry) { return !entry.reverted; }).reverse();
+      if (!pending.length) return "That change was already reverted.";
+      const done = [];
+      for (const entry of pending) {
+        const latest = changeJournal.filter(function (item) { return !item.reverted; }).pop();
+        if (entry.mustBeLatest && latest !== entry) {
+          throw new Error("\"" + entry.label + "\" can only be reverted while it is the most recent UX Direct change. Revert the newer changes first, or use Cmd/Ctrl+Z in Figma.");
+        }
+        stage("creating", "Reverting · " + entry.label + "…");
+        const note = await entry.revert();
+        entry.reverted = true;
+        done.push("- " + entry.label + (note ? " (" + note + ")" : ""));
+      }
+      stage("done", "Reverted " + done.length + " change(s)");
+      return "Reverted:\n" + done.join("\n") + "\nNothing new was generated.";
+    }
+    async function runRevertTask(task, stage) {
+      const open = changeJournal.filter(function (entry) { return !entry.reverted; });
+      if (!open.length) {
+        stage("done", "Nothing to revert");
+        return "There is no UX Direct change to revert in this session. For older changes use Cmd/Ctrl+Z in Figma. Nothing was generated.";
+      }
+      return revertEntries(task.all ? open : [open[open.length - 1]], stage);
+    }
+    function attachRevertButton(message, entries) {
+      if (!message || !message.row || !entries.length) return;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "revert-change";
+      button.textContent = "↶ Revert this change";
+      button.style.cssText = "margin-top:6px;padding:4px 10px;border-radius:8px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;font:inherit;font-size:12px;opacity:.85";
+      button.addEventListener("click", async function () {
+        if (isSending) return;
+        button.disabled = true;
+        const reply = appendMessage("assistant", "Reverting…");
+        try {
+          const text = await revertEntries(entries, function (state, status) { setProcessState(state, status); reply.bubble.textContent = status; });
+          reply.bubble.innerHTML = renderMarkdownHtml(text);
+          button.textContent = "Reverted";
+        } catch (error) {
+          reply.bubble.textContent = "Could not revert. " + String(error && error.message || error);
+          reply.bubble.classList.add("error");
+          button.disabled = false;
+        }
+      });
+      message.row.appendChild(button);
+    }
+
     async function runQuickTask(task, prompt, reportProgress) {
       const notify = typeof reportProgress === "function" ? reportProgress : function () {};
       function stage(state, message) { setProcessState(state, message); notify(message); }
+      if (task.kind === "revert") return runRevertTask(task, stage);
       if (task.kind === "generate-image") return runGenerateImageTask(task, prompt, stage);
       if (task.kind === "remove-background") return runRemoveBackgroundTask(stage);
       if (task.kind === "rewrite-text") return runTextTask("rewrite", prompt, stage);
@@ -2134,6 +2224,7 @@
       chatHistory.push({ role: "user", content: prompt });
       const typingRow = appendTyping();
       let assistantMessage = null;
+      const journalStart = changeSeq;
       $("send").disabled = true;
       await sendTelemetry("Cockpit chat request started", "info", "The in-Figma UX Direct conversation received a user prompt.", { selectedCount: (currentSelection.selection || []).length });
       try {
@@ -2230,6 +2321,7 @@
         }
         await sendTelemetry("Cockpit chat request failed", "error", "The internal UX Direct chat or native design-agent request failed.", { durationMs: Date.now() - startedAt });
       } finally {
+        attachRevertButton(assistantMessage, changeJournal.filter(function (entry) { return entry.seq > journalStart && !entry.reverted; }));
         isSending = false;
         $("send").disabled = !$("prompt").value.trim() || !verifiedFileKey;
         $("prompt").focus();
