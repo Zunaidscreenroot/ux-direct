@@ -8,7 +8,7 @@ import { neonRequest } from "@/src/memory/neon-rest";
 import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
-import { figmaAttemptTimeoutMs, figmaModelChain, routedVia, shouldRetryWithoutJsonMode } from "@/src/providers/active-chat-provider";
+import { figmaAttemptTimeoutMs, figmaModelChain, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 import { normalizeVisualReview } from "@/src/figma-agent/normalize-visual-review";
 import { evaluateVisualQualityGate } from "@/src/figma-agent/visual-quality-gate";
@@ -34,7 +34,7 @@ function corsHeaders(request: Request): HeadersInit {
   };
 }
 function safeImage(value: unknown): string | null {
-  if (typeof value !== "string" || value.length > 52000) return null;
+  if (typeof value !== "string" || value.length > RENDERED_IMAGE_MAX_CHARS) return null;
   return /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value) ? value : null;
 }
 type SafeNode = Record<string, unknown>;
@@ -93,8 +93,8 @@ export async function POST(request: Request) {
     prompt: z.string().trim().min(2).max(5000),
     sourceCanvas: z.unknown().optional(),
     outputCanvas: z.unknown().optional(),
-    sourceImage: z.string().max(52000).nullable().optional(),
-    outputImage: z.string().max(52000).nullable().optional(),
+    sourceImage: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional(),
+    outputImage: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional(),
     taskRunId: z.string().uuid().optional(),
     finalizeTask: z.boolean().optional(),
     taskOutcome: z.enum(["verified", "failed"]).optional(),
@@ -239,6 +239,7 @@ export async function POST(request: Request) {
           Authorization: "Bearer " + apiKey,
           "Content-Type": "application/json",
           Accept: "application/json",
+            ...figmaRoutingHeaders(activeProvider),
           ...(activeProvider.id === "openrouter" ? {
             "HTTP-Referer": new URL(request.url).origin,
             "X-OpenRouter-Title": "UX Direct Visual QA",
@@ -265,7 +266,7 @@ export async function POST(request: Request) {
           temperature: 0.1,
           // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
           ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
-          max_tokens: 1800,
+          ...figmaMaxTokens(activeProvider, 1800),
           ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
         }),
         cache: "no-store",

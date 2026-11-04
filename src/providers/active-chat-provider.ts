@@ -106,8 +106,8 @@ export function getActiveChatProvider(
   };
 }
 
-/** Render Free (and similar hosts) sleep when idle; the first request after idle includes the wake-up. */
-export const FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS = 100_000;
+/** The first FreeLLMAPI attempt covers a host wake-up and an uncapped, intelligence-first answer. */
+export const FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS = 150_000;
 
 /**
  * Ordered model chain for Figma routes. OpenRouter keeps its explicit quality chain;
@@ -119,6 +119,29 @@ export function figmaModelChain(provider: ActiveChatProvider, hasVisionInput: bo
     ? (provider.figmaVisionModels?.length ? provider.figmaVisionModels : [provider.visionModel || "auto"])
     : (provider.figmaModels?.length ? provider.figmaModels : [provider.model]);
   return [...chain];
+}
+
+/**
+ * Max data-URL length for a rendered Figma screenshot (~1.1 MB JPEG). The plugin now exports
+ * screens at ~1400px locally instead of squeezing them into the bridge's 48 KB envelope.
+ */
+export const RENDERED_IMAGE_MAX_CHARS = 1_500_000;
+
+/**
+ * Quality first on FreeLLMAPI (free tokens): no output cap, so `auto` can pick models by
+ * intelligence instead of being steered toward ones that fit a small budget and no plan is
+ * cut off mid-JSON. Other providers keep the route's own cap.
+ */
+export function figmaMaxTokens(provider: ActiveChatProvider, cap: number): { max_tokens?: number } {
+  return provider.id === "freellmapi" ? {} : { max_tokens: cap };
+}
+
+/**
+ * FreeLLMAPI treats `code` turns as "a wrong answer costs more than a slow one" and shifts
+ * routing weight from speed to intelligence, while still using plain `auto`.
+ */
+export function figmaRoutingHeaders(provider: ActiveChatProvider): Record<string, string> {
+  return provider.id === "freellmapi" ? { "X-FreeLLM-Task-Type": "code" } : {};
 }
 
 /** Per-attempt timeout; the first FreeLLMAPI attempt also covers a host cold start. */

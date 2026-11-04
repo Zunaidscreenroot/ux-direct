@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
-import { figmaAttemptTimeoutMs, figmaModelChain, routedVia, shouldRetryWithoutJsonMode } from "@/src/providers/active-chat-provider";
+import { figmaAttemptTimeoutMs, figmaModelChain, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 import { FIGMA_CANVAS_STEP_OPERATION_IDS } from "@/src/figma-agent/command-registry";
 import { BIND_VARIABLE_PROPERTIES, NATIVE_ACTION_EXTENDED_FIELDS, NATIVE_INSTANCE_ELEMENT_FIELDS, NATIVE_PATCH_EXTENDED_FIELDS, NATIVE_TEXT_RANGE_EXTENDED_FIELDS, extendedActionIssues, extendedActionNodeIds } from "@/src/figma-agent/native-action-schema";
@@ -283,7 +283,7 @@ export async function POST(request: Request) {
     prompt: z.string().trim().min(2).max(5000),
     canvas: z.unknown(),
     referenceImage: z.string().max(250000).nullable().optional(),
-    renderedScreen: z.string().max(52000).nullable().optional(),
+    renderedScreen: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional(),
   }).strict();
   const input = requestSchema.safeParse(raw);
   if (!input.success) return NextResponse.json({ error: "Invalid native Figma action request.", details: input.error.issues }, { status: 400, headers });
@@ -339,7 +339,7 @@ export async function POST(request: Request) {
   const referenceImage = typeof input.data.referenceImage === "string" &&
     /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(input.data.referenceImage) ? input.data.referenceImage : null;
   const renderedScreen = typeof input.data.renderedScreen === "string" &&
-    input.data.renderedScreen.length <= 52000 &&
+    input.data.renderedScreen.length <= RENDERED_IMAGE_MAX_CHARS &&
     /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(input.data.renderedScreen) ? input.data.renderedScreen : null;
   const system = [
     UX_DIRECT_DESIGN_ROLE + " You are the native-canvas action planner for UX Direct. Work on actual selected/inspected Figma nodes; do not create a new screen unless explicitly requested.",
@@ -382,13 +382,14 @@ export async function POST(request: Request) {
       const response = await fetch(activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions", {
         method: "POST",
         headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json", Accept: "application/json",
+            ...figmaRoutingHeaders(activeProvider),
           ...(activeProvider.id === "openrouter" ? { "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Native Figma Actions" } : {}) },
         body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content }],
           ...(activeProvider.id === "openrouter" && model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
           ...(model.startsWith("google/gemini-") ? { temperature: 0.1 } : {}),
           // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
           ...(model.startsWith("qwen/") ? { reasoning: { effort: "low" } } : {}),
-          max_tokens: 3500, ...(jsonMode ? { response_format: { type: "json_object" } } : {}) }),
+          ...figmaMaxTokens(activeProvider, 3500), ...(jsonMode ? { response_format: { type: "json_object" } } : {}) }),
         cache: "no-store", signal: controller.signal,
       });
       const payload: unknown = await response.json().catch((readError: unknown) => {

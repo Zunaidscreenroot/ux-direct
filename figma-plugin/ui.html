@@ -315,6 +315,8 @@
     }
     const handledBridgeCommands = new Set();
     const pendingCanvasCommands = new Map();
+    // Matches the backend limit for renderedScreen/sourceImage/outputImage data URLs.
+    const RENDERED_IMAGE_MAX_CHARS = 1500000;
     // All native reads/writes share one FIFO so background status checks and design-generation
     // steps cannot race the bridge's single in-flight canvas command slot.
     let nativeCanvasCommandTail = Promise.resolve();
@@ -363,30 +365,19 @@
     }
 
     function runNativeCanvasCommandOnce(action, payload, timeoutMs) {
-      function enqueueWhenAvailable(attempt) {
-        return bridgeRequest({ mode: "plugin-command", action: action, payload: payload }).catch(function (error) {
-          const message = error && error.message ? error.message : String(error);
-          if (!/canvas action is still running|canvas action is already running/i.test(message) || attempt >= 80) throw error;
-          setProcessState("waiting", "Waiting for the previous Figma canvas action to finish…");
-          const waitMs = Math.min(2000, 350 + attempt * 250);
-          return new Promise(function (resolve) { window.setTimeout(resolve, waitMs); })
-            .then(function () { return enqueueWhenAvailable(attempt + 1); });
-        });
-      }
-      return enqueueWhenAvailable(0).then(function (queued) {
-        if (!queued || typeof queued.commandId !== "string") throw new Error("UX Direct did not receive a canvas command ID.");
-        return new Promise(function (resolve, reject) {
-          const timer = window.setTimeout(function () {
-            pendingCanvasCommands.delete(queued.commandId);
-            reject(new Error("Figma did not return a result for " + action + " within the expected time. Check the plugin connection and retry."));
-          }, Number.isFinite(timeoutMs) ? timeoutMs : 130000);
-          pendingCanvasCommands.set(queued.commandId, {
-            resolve: resolve,
-            reject: reject,
-            timer: timer
-          });
-          void syncPluginBridge();
-        });
+      // The plugin UI and its sandbox run in the same Figma process, so commands this UI starts
+      // go straight to the sandbox. The old path queued every read/write/export through the
+      // Worker bridge (enqueue, heartbeat claim, result upload): 3 network round trips and R2
+      // writes per command. Commands from the dashboard/MCP still arrive over the bridge.
+      return new Promise(function (resolve, reject) {
+        const commandId = "local-" + makeId();
+        const timer = window.setTimeout(function () {
+          pendingCanvasCommands.delete(commandId);
+          reject(new Error("Figma did not return a result for " + action + " within the expected time. Check the plugin connection and retry."));
+        }, Number.isFinite(timeoutMs) ? timeoutMs : 130000);
+        pendingCanvasCommands.set(commandId, { resolve: resolve, reject: reject, timer: timer, local: true });
+        parent.postMessage({ pluginMessage: { type: "run-canvas-command",
+          command: { commandId: commandId, action: action, payload: payload, local: true } } }, "*");
       });
     }
 
@@ -1549,7 +1540,7 @@
         throw new Error("The selection is " + (sourceNode.type || "a layer") + ", not a frame/container. Select the full screen.");
       }
 
-      stage("capturing", "Rendering a compact JPEG preview of the selected screen…");
+      stage("capturing", "Rendering the selected screen…");
       const renderedCapture = sourceNode && sourceNode.id
         ? await captureRenderedNodePreview(sourceNode.id)
         : { dataUrl: null, scale: 0, warning: "No selected node ID was available for image export." };
@@ -1721,31 +1712,32 @@
 
     async function captureRenderedNodePreview(nodeId) {
       const attempts = [];
-      // Retry from a reasonably detailed preview down to a compact JPEG that fits the plugin bridge limit.
-      // Keep all image payloads below 35 KB binary / 48 KB base64; native layer analysis remains the fallback.
-      const scales = [0.6, 0.45, 0.3, 0.2, 0.12, 0.08];
-      for (const scale of scales) {
+      // One export at vision-friendly resolution (longest side ~1400px). The image no longer
+      // travels through the bridge's 48 KB envelope, so there is no shrink-and-retry ladder:
+      // smaller sizes are only tried if Figma itself fails to export.
+      const maxSides = [1400, 900];
+      for (const maxSide of maxSides) {
         try {
           const result = await runNativeCanvasCommand("write-canvas", {
             confirm: true,
             operation: "export-node",
             nodeId: nodeId,
             format: "JPG",
-            scale: scale
+            maxSide: maxSide
           }, 30000);
-          if (result && typeof result.base64 === "string" && result.base64.length > 0 && result.base64.length <= 48000) {
-            return { dataUrl: "data:image/jpeg;base64," + result.base64, scale: scale, warning: "" };
+          if (result && typeof result.base64 === "string" && result.base64.length > 0 && result.base64.length <= RENDERED_IMAGE_MAX_CHARS) {
+            return { dataUrl: "data:image/jpeg;base64," + result.base64, scale: Number(result.scale) || 1, warning: "" };
           }
           const details = result && result.error ? String(result.error) : "Figma export returned no JPEG bytes.";
-          attempts.push(Math.round(scale * 100) + "%: " + details.slice(0, 140));
+          attempts.push(maxSide + "px: " + details.slice(0, 140));
         } catch (error) {
-          attempts.push(Math.round(scale * 100) + "%: " + String(error && error.message || "JPEG export failed").slice(0, 140));
+          attempts.push(maxSide + "px: " + String(error && error.message || "JPEG export failed").slice(0, 140));
         }
       }
       return {
         dataUrl: null,
         scale: 0,
-        warning: "JPEG preview export failed at all attempted scales (60%, 45%, 30%, 20%, 12%, 8%). " + attempts.slice(-3).join(" | ").slice(0, 500)
+        warning: "JPEG preview export failed (1400px, 900px). " + attempts.slice(-2).join(" | ").slice(0, 500)
       };
     }
 
@@ -2018,6 +2010,17 @@
       }
       if (message.type === "canvas-command-result") {
         const promiseEntry = pendingCanvasCommands.get(message.commandId);
+        if (promiseEntry && promiseEntry.local) {
+          // Local command: resolve now; the audit record is sent in the background.
+          pendingCanvasCommands.delete(message.commandId);
+          if (promiseEntry.timer) window.clearTimeout(promiseEntry.timer);
+          if (message.error) promiseEntry.reject(new Error(message.error));
+          else promiseEntry.resolve(message.result);
+          void sendTelemetry("Canvas command completed", message.error ? "error" : "success",
+            message.error ? "A native Figma action returned an error." : "A native Figma action completed in the plugin.",
+            { requestId: message.commandId, action: message.result && message.result.operation });
+          return;
+        }
         void bridgeRequest({
           mode: "canvas-result",
           commandId: message.commandId,
