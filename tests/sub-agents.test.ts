@@ -106,7 +106,7 @@ test("a hanging sub-agent is aborted at the shared deadline and never blocks the
     const elapsed = Date.now() - started;
     assert.ok(elapsed < 7000, "stage stopped at its deadline, took " + elapsed + "ms");
     assert.equal(calls, 3, "one call per agent, no retries");
-    assert.equal(imagesSent.filter(Boolean).length, 1, "only the UX analyst sends the screenshot");
+    assert.equal(imagesSent.filter(Boolean).length, 0, "agents are text-only; only the planner sends the screenshot");
     assert.ok(brief.runs.every((run) => !run.ok));
     assert.match(brief.instructions, /Wireframe designer/, "planner still gets the deterministic role");
   } finally {
@@ -132,6 +132,9 @@ test("the brief is cached per source frame so variations of one frame skip the a
     assert.equal(calls, 2, "second run reuses the brief");
     assert.ok(second.runs.every((run) => run.cached));
     assert.equal(second.instructions, first.instructions);
+    const variation = await runSubAgents({ ...input, prompt: "improve the cached frame\nVariation 2 of 3: list-first" });
+    assert.equal(calls, 2, "a variation prompt on the same frame still hits the cache");
+    assert.ok(variation.runs.every((run) => run.cached));
     await runSubAgents({ ...input, sourceTexts: [...SOURCE, "New row"] });
     assert.equal(calls, 4, "changed source content runs the agents again");
   } finally {

@@ -592,6 +592,9 @@ export async function POST(request: Request) {
       renderedScreen, origin: new URL(request.url).origin,
     }).catch(() => fallbackBrief)
     : Promise.resolve(fallbackBrief);
+  // The planner stops waiting after PLANNER_AGENT_WAIT_MS; keep the agents alive past the
+  // response so their brief is cached for the next run on this frame.
+  deferTaskWork(agentBriefPromise);
   const agentsStartedAt = Date.now();
   // Independent of brain retrieval, so both lookups run at the same time.
   const variationIndex = parsedInput.data.variation?.index ?? 0;
