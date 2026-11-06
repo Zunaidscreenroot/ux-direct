@@ -4,6 +4,8 @@ import { runStructuralLint } from "../src/figma-agent/structural-lint";
 import { buildFigmaFailureLesson } from "../src/memory/task-learning";
 import { pickVerifiedExample } from "../src/figma-agent/spec-consistency";
 import { expandBlockSpec } from "../src/figma-agent/block-spec";
+import { normalizePlan } from "../src/figma-agent/normalize-plan";
+import { readFileSync } from "node:fs";
 
 type N = Record<string, unknown>;
 const text = (id: string, value: string, y: number): N => ({ id, name: value, type: "TEXT", x: 16, y, width: 200, height: 20, text: value });
@@ -86,4 +88,19 @@ test("wireframe renders mark copied graphics for monochrome recolouring", () => 
   walk(mono.plan!.elements as N[]);
   assert.ok(clones.length > 0);
   assert.ok(clones.every((c) => c.monochrome && typeof (c.monochrome as N).ink === "string"));
+});
+
+test("wireframes also mark reused source component instances (finding 52)", () => {
+  const canvas = { nodes: [{ id: "r", name: "Screen", type: "FRAME", x: 0, y: 0, width: 360, height: 700, fillColors: ["#FFFFFF"], children: [
+    text("a", "Loan A", 10)] }], components: [] };
+  const plan = normalizePlan({ frame: { name: "W" }, elements: [
+    { type: "INSTANCE", name: "App bar", componentId: "9:1", width: 360, height: 56, monochrome: { ink: "#18181B", placeholder: "#E4E4E7" } },
+  ] }, canvas) as { elements: N[] };
+  const found: N[] = [];
+  const walkAll = (nodes: N[]) => nodes.forEach((n) => { if (n.type === "INSTANCE") found.push(n); walkAll((n.children as N[]) || []); });
+  walkAll(plan.elements);
+  assert.deepEqual(found[0]?.monochrome, { ink: "#18181B", placeholder: "#E4E4E7" });
+  const code = readFileSync("figma-plugin/code.js", "utf8");
+  assert.ok(code.includes('if (type === "INSTANCE" && spec.monochrome && typeof spec.monochrome === "object") await monochromeClone(node, spec.monochrome);'));
+  assert.ok(code.includes("delete solid.boundVariables"), "variable-bound colours are unbound");
 });

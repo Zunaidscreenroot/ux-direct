@@ -235,3 +235,49 @@ test("a donut left of a stat column joins the stats row before both stats (findi
   assert.equal(names[0], "Loan Graph", "donut comes first: " + names.join(", "));
   assert.ok(names.some((n) => n.includes("Loan Amount")) && names.some((n) => n.includes("Outstanding")), "both stats stay in the same row: " + names.join(", "));
 });
+
+test("a button label repeated across source cards is restored on the card that lost it (finding 53)", () => {
+  const card = (i: number, withButton: boolean) => ({ name: "Loan " + i, surface: "card", blocks: [
+    { type: "text", text: "Loan ID SLC00" + i },
+    { type: "text", text: "₹" + i + "0,000 outstanding" },
+    { type: "text", text: "View details " + i },
+    ...(withButton ? [{ type: "button", label: "Pay now", variant: "primary" }] : []),
+  ] });
+  const dropped = { summary: "Loan cards.", frame: { name: "Manage Loans" }, sections: [
+    { name: "Header", blocks: [{ type: "app_bar", title: "Manage Loans" }] }, card(1, true), card(2, true), card(3, false),
+  ], learningCandidate: null };
+  const expansion = expandBlockSpec(dropped, canvas, { sourceCanvas: canvas });
+  assert.ok(expansion.plan, expansion.errors.join("; "));
+  const plan = normalizePlan(expansion.plan, canvas) as { elements: N[] };
+  const owners: string[] = [];
+  walk(plan.elements, (node, _d, parent) => { if (node.type === "TEXT" && node.text === "Pay now") owners.push(String(parent?.name)); });
+  assert.equal(owners.length, 3, "one Pay now per source card");
+  let card3HasButton = false;
+  walk(plan.elements, (node) => {
+    if (node.type !== "FRAME") return;
+    const texts: string[] = [];
+    walk(node.children ?? [], (n) => { if (n.type === "TEXT") texts.push(String(n.text)); });
+    if (texts.includes("Loan ID SLC003") && texts.includes("Pay now") && !texts.includes("Loan ID SLC002")) card3HasButton = true;
+  });
+  assert.ok(card3HasButton, "the restored button sits in card 3");
+});
+
+test("reordered cards keep their own donut when the nearest text repeats (finding 56)", () => {
+  const card = (i: number, y: number): N => ({ id: "c" + i, name: "Loan card", type: "FRAME", x: 16, y, width: 328, height: 160, fillColors: ["#FFFFFF"], cornerRadius: 12, children: [
+    { id: "k" + i, name: "Kind", type: "TEXT", x: 16, y: 16, width: 120, height: 20, text: "Personal Loan" },
+    { id: "d" + i, name: "Donut", type: "GROUP", x: 140, y: 12, width: 60, height: 60, children: [
+      { id: "e" + i, name: "Track", type: "ELLIPSE", x: 0, y: 0, width: 60, height: 60 },
+      { id: "p" + i, name: "Pct", type: "TEXT", x: 16, y: 22, width: 30, height: 16, text: (i * 20) + "%" }] },
+    { id: "id" + i, name: "ID", type: "TEXT", x: 16, y: 100, width: 200, height: 20, text: "Loan ID DMI00" + i },
+  ] });
+  const src = { nodes: [{ id: "root", name: "Loans", type: "FRAME", x: 0, y: 0, width: 360, height: 600, fillColors: ["#F6F7F9"], children: [card(1, 20), card(2, 200), card(3, 380)] }], components: [] };
+  const section = (i: number) => ({ name: "Loan " + i, surface: "card", blocks: [{ type: "text", text: "Personal Loan" }, { type: "text", text: "Loan ID DMI00" + i }] });
+  const exp = expandBlockSpec({ summary: "Urgent first.", sections: [section(3), section(2), section(1)], learningCandidate: null }, src, { sourceCanvas: src });
+  assert.ok(exp.plan, exp.errors.join("; "));
+  walk(exp.plan.elements as N[], (node) => {
+    if (node.type !== "FRAME") return;
+    const ids: string[] = []; const clones: string[] = [];
+    walk(node.children ?? [], (n) => { if (n.type === "TEXT" && String(n.text).startsWith("Loan ID")) ids.push(String(n.text)); if (n.type === "CLONE") clones.push(String(n.sourceNodeId)); });
+    if (ids.length === 1 && clones.length) assert.ok(clones.every((c) => c.endsWith(ids[0].slice(-1))), ids[0] + " got " + clones.join(","));
+  });
+});

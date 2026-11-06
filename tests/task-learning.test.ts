@@ -42,3 +42,26 @@ test("uses only a normalized generic lesson and stable idempotency key", () => {
   assert.doesNotMatch(first.rawFeedback, /999/);
   assert.doesNotMatch(first.normalizedRule, /999|node 999/i);
 });
+
+test("a verified block layout becomes a structure-only lesson (finding 49)", async () => {
+  const { buildStructuralLessonCandidate, buildVerifiedTaskLesson } = await import("../src/memory/task-learning");
+  const spec = { sections: [
+    { name: "Header", blocks: [{ type: "app_bar", title: "Manage loans" }] },
+    { name: "Loan", surface: "card", blocks: [{ type: "stat_row", items: [{ label: "Paid", value: "₹8,450" }] }, { type: "button", label: "Pay EMI" }] },
+  ] };
+  const candidate = buildStructuralLessonCandidate(spec, "selected_screen_or_frame");
+  assert.ok(candidate);
+  const text = JSON.stringify(candidate);
+  for (const leaked of ["Manage loans", "₹8,450", "Pay EMI", "Paid"]) assert.ok(!text.includes(leaked), "leaked " + leaked);
+  assert.match(candidate.title, /app_bar, button, stat_row/);
+  const lesson = buildVerifiedTaskLesson({ id: "r", outcome: "verified", project: "ux-direct", taskContext: "improve hierarchy of this screen", candidate } as never);
+  assert.ok(lesson, "passes the relevance and safety filters");
+  assert.equal(lesson.memoryType, "approved_pattern");
+  assert.equal(buildStructuralLessonCandidate({ sections: [] }, "x"), null);
+});
+
+test("a verified run with no learning note reports no-candidate, not filtered", async () => {
+  const { captureVerifiedTaskLesson } = await import("../src/memory/task-learning");
+  const out = await captureVerifiedTaskLesson({ id: "r", outcome: "verified", project: "ux-direct", taskContext: "improve", candidate: null } as never);
+  assert.equal(out.status, "no-candidate");
+});

@@ -22,6 +22,12 @@ function normalizeColor(value: unknown): string | null {
   return null;
 }
 
+function monochromeOf(item: Record<string, unknown>): { ink: string; placeholder: string } | null {
+  const mono = item.monochrome && typeof item.monochrome === "object" ? item.monochrome as Record<string, unknown> : null;
+  const hexOk = (v: unknown): v is string => typeof v === "string" && /^#[0-9A-Fa-f]{6}$/.test(v);
+  return mono && hexOk(mono.ink) && hexOk(mono.placeholder) ? { ink: mono.ink, placeholder: mono.placeholder } : null;
+}
+
 function normalizeElementType(value: unknown, item: Record<string, unknown>): "RECTANGLE" | "ELLIPSE" | "TEXT" | "LINE" | "FRAME" | "POLYGON" | "STAR" | "INSTANCE" | "CLONE" {
   const raw = typeof value === "string" ? value.trim().toUpperCase().replace(/[ -]+/g, "_") : "";
   // A copy of a source layer (logo, icon, chart) placed by the block renderer.
@@ -298,9 +304,8 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
       for (const key of ["layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "layoutGrow"]) {
         if (item[key] !== undefined) normalized[key] = item[key];
       }
-      const mono = item.monochrome && typeof item.monochrome === "object" ? item.monochrome as Record<string, unknown> : null;
-      const hexOk = (v: unknown) => typeof v === "string" && /^#[0-9A-Fa-f]{6}$/.test(v);
-      if (mono && hexOk(mono.ink) && hexOk(mono.placeholder)) normalized.monochrome = { ink: mono.ink, placeholder: mono.placeholder };
+      const mono = monochromeOf(item);
+      if (mono) normalized.monochrome = mono;
       return normalized;
     }
     if (type === "INSTANCE") {
@@ -321,6 +326,9 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
           .map(([key, value]) => [key.slice(0, 120), value.slice(0, 500)]);
         if (entries.length) normalized.textOverrides = Object.fromEntries(entries);
       }
+      // Wireframes also recolour reused source components (the app bar), not only clones (finding 52).
+      const mono = monochromeOf(item);
+      if (mono) normalized.monochrome = mono;
     }
     const fontSizeValue = item.fontSize ?? item.textSize;
     if (typeof fontSizeValue === "number" && Number.isFinite(fontSizeValue)) normalized.fontSize = Math.max(8, Math.min(96, fontSizeValue));

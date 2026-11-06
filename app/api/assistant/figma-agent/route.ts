@@ -797,6 +797,8 @@ export async function POST(request: Request) {
   // Wall time per model attempt, returned to the plugin so a slow run shows where the time went.
   const attemptTimes: Array<{ attempt: string; ms: number; outcome: string }> = [];
   let inFlight: { attempt: string; startedAt: number } | null = null;
+  // Size of the last prompt sent, so a slow model call can be told apart from a huge prompt.
+  let promptSize: { textChars: number; approxTokens: number; imageKb: number } | null = null;
   const respond = (success: SuccessCandidate) => {
     const { candidate } = success;
     deferTaskWork(recordGeneration(taskRunId, {
@@ -825,7 +827,8 @@ export async function POST(request: Request) {
       generation: { recoveryAttempted: success.isRecovery, finishReason: success.finishReason, modelIndex: success.modelIndex + 1,
         attempts: attemptLog.length, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt,
         preModelMs: generationStartedAt - requestStartedAt,
-        attemptTimes: [...attemptTimes, ...(inFlight ? [{ attempt: inFlight.attempt, ms: Date.now() - inFlight.startedAt, outcome: "ok" }] : [])] },
+        attemptTimes: [...attemptTimes, ...(inFlight ? [{ attempt: inFlight.attempt, ms: Date.now() - inFlight.startedAt, outcome: "ok" }] : [])],
+        prompt: promptSize },
     }, { headers });
   };
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
@@ -860,6 +863,10 @@ export async function POST(request: Request) {
         const modelImages: Array<Record<string, unknown>> = [];
         if (renderedScreen) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
         if (referenceImage) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
+        const systemText = isRecovery ? (blockMode ? blockRecoverySystem : recoverySystem) : system;
+        const textChars = systemText.length + modelUserText.length;
+        promptSize = { textChars, approxTokens: Math.round(textChars / 3.6),
+          imageKb: Math.round(modelImages.reduce((sum, image) => sum + String((image.image_url as { url?: string })?.url || "").length, 0) * 0.75 / 1024) };
         const userContent: string | Array<Record<string, unknown>> = modelImages.length
           ? [{ type: "text", text: modelUserText }, ...modelImages]
           : modelUserText;
@@ -878,7 +885,7 @@ export async function POST(request: Request) {
           body: JSON.stringify({
             model,
             messages: [
-              { role: "system", content: isRecovery ? (blockMode ? blockRecoverySystem : recoverySystem) : system },
+              { role: "system", content: systemText },
               { role: "user", content: userContent },
             ],
             ...(activeProvider.id === "openrouter" && model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),

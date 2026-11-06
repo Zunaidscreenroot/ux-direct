@@ -1151,7 +1151,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     // Wireframes: copied logos, icons and charts are recoloured to the wireframe ink and images
     // become grey boxes, so white source icons don't vanish on the light theme (findings 41, 43).
     if (options.monochrome) {
-      const mark = (nodes: NativeNode[]) => { for (const n of nodes) { if (n.type === "CLONE") n.monochrome = { ink: theme.text, placeholder: theme.surfaceAlt }; if (n.children) mark(n.children); } };
+      const mark = (nodes: NativeNode[]) => { for (const n of nodes) { if (n.type === "CLONE" || n.type === "INSTANCE") n.monochrome = { ink: theme.text, placeholder: theme.surfaceAlt }; if (n.children) mark(n.children); } };
       mark(elements);
     }
     if (fidelity.clones || fidelity.restoredButtons) {
