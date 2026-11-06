@@ -36,6 +36,7 @@ const rec = (value: unknown): Record<string, unknown> =>
 const bump = (map: Record<string, number>, key: string) => { map[key] = (map[key] || 0) + 1; };
 const pct = (sorted: number[], p: number) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] : null;
 const avg = (values: number[]) => values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length * 10) / 10 : null;
+const toTime = (value: unknown) => value instanceof Date ? value.getTime() : typeof value === "string" ? Date.parse(value) : NaN;
 const safeKey = (value: unknown, fallback: string) =>
   typeof value === "string" && /^[a-z_-]{1,40}$/i.test(value) ? value : fallback;
 
@@ -56,8 +57,9 @@ export function buildBrainMonitorReport(rows: TaskRunRow[], now = Date.now()): B
     bump(outcomes, outcome);
     const source = safeKey(rec(row.metadata).source, "unknown");
     bump(bySource[source] ??= {}, outcome);
-    const updated = typeof row.updated_at === "string" ? Date.parse(row.updated_at) : NaN;
-    const created = typeof row.created_at === "string" ? Date.parse(row.created_at) : updated;
+    const updated = toTime(row.updated_at);
+    const createdAt = toTime(row.created_at);
+    const created = Number.isFinite(createdAt) ? createdAt : updated;
     if (Number.isFinite(updated)) lastRunAt = Math.max(lastRunAt, updated);
     if (outcome === "attempted" && Number.isFinite(updated) && now - updated > 30 * 60_000) stuckAttempted += 1;
     if (Number.isFinite(created) && now - created <= 24 * 3600_000) {
