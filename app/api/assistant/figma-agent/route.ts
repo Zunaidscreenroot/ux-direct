@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
+import { detectDomain, detectTaskRole, roleInstructions } from "@/src/figma-agent/agent-roles";
+import { runSubAgents, subAgentsEnabled, type AgentBrief } from "@/src/figma-agent/sub-agents";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { buildBrainQuery } from "@/src/memory/brain-query";
@@ -567,6 +569,23 @@ export async function POST(request: Request) {
   const taskProject = resolveFigmaTaskProject(parsedInput.data.prompt);
   const taskScope = resolveFigmaTaskScope(taskProject, parsedInput.data.prompt);
 
+  // Role switcher + domain detection, then the parallel sub-agents (detector, UX analyst,
+  // component scout). They run alongside brain retrieval; their grounded brief only adds
+  // planner instructions and never changes designScope, block-spec rendering or the gates.
+  const taskRole = detectTaskRole(parsedInput.data.prompt);
+  const sourceTexts = collectSourceTextInventory(Array.isArray(canvas.nodes) ? canvas.nodes : []).map((item) => item.text);
+  const keywordDomain = detectDomain(parsedInput.data.prompt, sourceTexts);
+  const fallbackBrief: AgentBrief = { domain: keywordDomain.domain, domainSource: keywordDomain.score ? "keywords" : "default",
+    instructions: roleInstructions(taskRole, keywordDomain.domain), runs: [] };
+  const agentBriefPromise: Promise<AgentBrief> = subAgentsEnabled()
+    ? runSubAgents({
+      prompt: parsedInput.data.prompt, role: taskRole, designScope,
+      selectedNode: { name: selectedName, type: selectedType, width: selectedWidth, height: selectedHeight },
+      sourceTexts, components: Array.isArray(canvas.components) ? canvas.components as Array<Record<string, unknown>> : [],
+      renderedScreen, origin: new URL(request.url).origin,
+    }).catch(() => fallbackBrief)
+    : Promise.resolve(fallbackBrief);
+  const agentsStartedAt = Date.now();
   // Independent of brain retrieval, so both lookups run at the same time.
   const verifiedExamplePromise = blockMode
     ? loadVerifiedExample(taskScope, designScope).catch(() => "")
@@ -604,10 +623,12 @@ export async function POST(request: Request) {
   // A verified spec from this project (structure only) steers whichever model `auto` picks
   // toward the same block choices that already passed the Figma quality gate.
   const verifiedExample = await verifiedExamplePromise;
+  const agentBrief = await agentBriefPromise;
+  const agentsMs = Date.now() - agentsStartedAt;
   const exampleInstructions = verifiedExample
     ? "\nVERIFIED TEAM EXAMPLE — the block structure of an earlier output that passed UX Direct's quality gate. Texts are replaced by <source text>. Follow its way of choosing sections and blocks for similar content; never copy it, and use only this screen's real content: " + verifiedExample
     : "";
-  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + exampleInstructions, brain);
+  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + "\n" + agentBrief.instructions + exampleInstructions, brain);
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its configured free-model chain.
   // Both are bounded by compact retry and the shared generation deadline.
@@ -628,6 +649,7 @@ export async function POST(request: Request) {
     UX_DIRECT_DESIGN_ROLE,
     "Create an improved native Figma variation of the selected source. The user prompt is the design change, not the procedure.",
     scopeInstructions,
+    roleInstructions(taskRole, agentBrief.domain),
     "Preserve the screen/component scope, all meaningful source text and financial values, status, date, labels, rows, actions and relationships. Do not redesign it as a generic dashboard or generic stack of cards.",
     "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Preserve every listed text string exactly, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
     "Use the attached screenshot and source layers when available. Use semantic nested FRAMEs, Auto Layout for suitable cards and rows, clear hierarchy, strong contrast, consistent spacing and editable native shapes/text. Do not invent contractual financial details.",
@@ -641,6 +663,7 @@ export async function POST(request: Request) {
     UX_DIRECT_DESIGN_ROLE,
     "Create an improved native Figma variation of the selected source as a BLOCK SPEC. The user prompt is the design change, not the procedure.",
     scopeInstructions,
+    roleInstructions(taskRole, agentBrief.domain),
     "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Copy every listed text string exactly into block fields, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
     "Do not redesign it as a generic dashboard. Do not invent contractual financial details.",
     BLOCK_SPEC_CONTRACT,
@@ -778,6 +801,7 @@ export async function POST(request: Request) {
       sourceFallback: success.sourceFallback === true,
       consistency: { themeLocked: success.themeLocked ?? false, restoredSourceTexts: success.repairedTexts, verifiedExample: Boolean(verifiedExample) },
       brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
+      agents: { role: taskRole.id, domain: agentBrief.domain.id, domainSource: agentBrief.domainSource, latencyMs: agentsMs, runs: agentBrief.runs },
       visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
       generation: { recoveryAttempted: success.isRecovery, finishReason: success.finishReason, modelIndex: success.modelIndex + 1,
         attempts: attemptLog.length, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt },
