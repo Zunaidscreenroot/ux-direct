@@ -11,7 +11,7 @@ const headers = { "Cache-Control": "public, max-age=60", "X-Robots-Tag": "noinde
 export async function GET() {
   try {
     const rows = await neonRequest(
-      "uxd_task_runs?select=outcome,status,duration_ms,retrieval,lesson,metadata,plan,created_at,updated_at&order=updated_at.desc&limit=500",
+      "uxd_task_runs?select=outcome,status,duration_ms,retrieval,lesson,metadata,plan,error_summary,created_at,updated_at&order=updated_at.desc&limit=500",
     );
     const list = Array.isArray(rows) ? rows as TaskRunRow[] : [];
     return NextResponse.json({ ok: true, checkedAt: new Date().toISOString(), ...buildBrainMonitorReport(list) }, { headers });
