@@ -102,8 +102,22 @@ export function sourcePalette(canvas: Rec): Rec {
  * any colour a model invented is dropped (the renderer's fixed defaults fill the gaps),
  * so two different models produce the same colours for the same screen.
  */
+/** True when the user asked for a wireframe / lo-fi / grey-box version. */
+export function promptRequestsWireframe(prompt: string): boolean {
+  return /\b(wire\s*-?\s*frames?|lo-?fi|low[\s-]?fi(delity)?|mid[\s-]?fi(delity)?|grey\s*box|gray\s*box|skeleton|blueprint)\b|वायरफ्रेम/iu.test(prompt);
+}
+
+/** Neutral greyscale for wireframes: no brand colour, one dark accent for the primary action. */
+export const WIREFRAME_THEME: Rec = {
+  background: "#FFFFFF", surface: "#F4F4F5", surfaceAlt: "#E4E4E7", text: "#18181B", muted: "#52525B",
+  primary: "#3F3F46", onPrimary: "#FFFFFF", border: "#D4D4D8",
+  success: "#71717A", warning: "#71717A", danger: "#71717A", info: "#71717A", radius: 6,
+};
+
 export function lockTheme(modelTheme: unknown, canvas: Rec, prompt: string): { theme: Rec; locked: boolean } {
   const model = asRec(modelTheme) ?? {};
+  // A wireframe must never inherit the source's brand palette (before, the lock re-applied it).
+  if (promptRequestsWireframe(prompt)) return { theme: { ...WIREFRAME_THEME }, locked: true };
   if (promptRequestsRestyle(prompt)) return { theme: { ...sourcePalette(canvas), ...model }, locked: false };
   return { theme: sourcePalette(canvas), locked: true };
 }
