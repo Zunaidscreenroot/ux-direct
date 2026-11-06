@@ -1575,7 +1575,8 @@
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning, capabilities: PLUGIN_CAPABILITIES })
+        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning, capabilities: PLUGIN_CAPABILITIES,
+          ...(designOptions && designOptions.variation ? { variation: designOptions.variation } : {}) })
       });
       const payload = await response.json().catch(function () { return {}; });
       if (!response.ok || payload.ok !== true || !payload.plan || !Array.isArray(payload.plan.elements)) {
@@ -1681,7 +1682,20 @@
           stage("creating", "Building editable layout · " + completedElementCount + "/" + plannedNodeCount + " native layers…");
         }
       }
-      await createPlanChildren(createdFrameId, plan.elements, 0);
+      if (plan.elements.length) {
+        // One round trip for the whole tree; the per-frame path is kept for older plugin code.
+        stage("creating", "Building " + plannedNodeCount + " native layers in one pass…");
+        let treeResult = null;
+        try {
+          treeResult = await runNativeCanvasCommand("write-canvas", {
+            confirm: true, operation: "create-tree", target: "node", parentNodeId: createdFrameId, elements: plan.elements
+          }, 180000);
+        } catch (treeError) {
+          if (!/Unsupported canvas write operation/i.test(String(treeError && treeError.message || treeError))) throw treeError;
+        }
+        if (treeResult && treeResult.ok) completedElementCount += Number(treeResult.createdCount) || 0;
+        else await createPlanChildren(createdFrameId, plan.elements, 0);
+      }
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [createdFrameId] }, 90000);
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "zoom-to-nodes", nodeIds: [createdFrameId] }, 90000);
 
@@ -2511,6 +2525,7 @@
         const frame = frames[0];
         for (let index = 0; index < task.count; index += 1) {
           jobs.push({ frame: frame, placement: { x: Number(frame.x) + (index + 1) * (Number(frame.width) + 120), y: Number(frame.y) },
+            variation: { index: index, count: task.count },
             prompt: prompt + "\n\nThis is variation " + (index + 1) + " of " + task.count + ": explore " + directions[index % directions.length] +
               " so it is clearly distinct from the other variations, while keeping all source content." });
         }
@@ -2522,7 +2537,7 @@
           await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [job.frame.id] }, 90000);
           const answer = await createFigmaDesign(job.prompt, function (status) {
             stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + status);
-          }, { placement: job.placement });
+          }, { placement: job.placement, variation: job.variation });
           results.push("**" + (index + 1) + ". " + job.frame.name + "**: " + String(answer).split("\n")[0]);
         } catch (error) {
           failures.push("**" + (index + 1) + ". " + job.frame.name + "**: " + String(error && error.message || error).slice(0, 240));

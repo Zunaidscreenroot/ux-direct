@@ -846,7 +846,7 @@ async function executeNativeApiHealthCheck() {
     // Build a broad, non-destructive capability catalogue for the in-Figma health panel.
     // These probes only inspect supported API surface. They never access external folders/files.
     var implementedCanvasActions = [
-      "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+      "batch", "create-elements", "create-tree", "update-node", "clone-node", "delete-node", "reorder-node",
       "reparent-node", "group-nodes", "ungroup-node", "flatten-nodes", "boolean-operation",
       "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance",
       "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page",
@@ -1383,7 +1383,12 @@ async function resolveCanvasWriteParent(target, parentNodeId) {
     if (typeof parentNodeId !== "string" || !parentNodeId.trim()) {
       throw new Error("target=node requires parentNodeId.");
     }
-    var parentNode = figma.currentPage.findOne(function (item) { return item.id === parentNodeId; }) || null;
+    // Direct id lookup instead of a full-page findOne per create (slow on large pages);
+    // the ancestor walk keeps writes confined to the current page.
+    var parentNode = await figma.getNodeByIdAsync(parentNodeId);
+    var onPage = false;
+    for (var up = parentNode; up; up = up.parent) { if (up === figma.currentPage) { onPage = true; break; } }
+    if (!onPage) parentNode = null;
     if (!parentNode || !("children" in parentNode) || typeof parentNode.appendChild !== "function") {
       throw new Error("parentNodeId must identify a writable container on the current page.");
     }
@@ -1756,6 +1761,51 @@ async function writeCanvasCommand(payload, options) {
         blendMode: "NORMAL"
       }];
     }
+  }
+
+  if (payload.operation === "create-tree") {
+    // Whole nested plan in one bridge round trip: each UI↔plugin message costs far more
+    // than creating the layers, and a 60-layer screen used ~40 of them.
+    if (!Array.isArray(payload.elements) || payload.elements.length < 1) throw new Error("create-tree requires elements.");
+    var treeCount = 0;
+    (function countTree(items, depth) {
+      if (depth > 5) throw new Error("create-tree exceeded the safe nesting depth.");
+      items.forEach(function (item) {
+        treeCount += 1;
+        if (item && Array.isArray(item.children)) countTree(item.children, depth + 1);
+      });
+    })(payload.elements, 0);
+    if (treeCount > 200) throw new Error("create-tree accepts at most 200 layers.");
+    var treeCreated = 0;
+    async function buildTree(parentId, items) {
+      var cursor = 0;
+      while (cursor < items.length) {
+        var item = items[cursor];
+        if (Array.isArray(item.children) && item.children.length) {
+          if (item.type !== "FRAME") throw new Error("Only native FRAME containers may have child layers.");
+          var frameSpec = Object.assign({}, item);
+          delete frameSpec.children;
+          var made = await writeCanvasCommand({ confirm: true, operation: "create-elements", target: "node", parentNodeId: parentId, elements: [frameSpec] }, options);
+          var madeNode = made && Array.isArray(made.nodes) ? made.nodes[0] : null;
+          if (!madeNode || typeof madeNode.id !== "string") throw new Error("Figma did not return a native frame ID for " + item.name + ".");
+          treeCreated += 1;
+          await buildTree(madeNode.id, item.children);
+          cursor += 1;
+          continue;
+        }
+        var leaves = [];
+        while (cursor < items.length && leaves.length < 20 && !(Array.isArray(items[cursor].children) && items[cursor].children.length)) {
+          var leaf = Object.assign({}, items[cursor]);
+          delete leaf.children;
+          leaves.push(leaf);
+          cursor += 1;
+        }
+        var leafResult = await writeCanvasCommand({ confirm: true, operation: "create-elements", target: "node", parentNodeId: parentId, elements: leaves }, options);
+        treeCreated += Number(leafResult && leafResult.createdCount) || leaves.length;
+      }
+    }
+    await buildTree(payload.parentNodeId, payload.elements);
+    return { ok: true, operation: "create-tree", fileKey: figma.fileKey, pageName: figma.currentPage.name, createdCount: treeCreated };
   }
 
   if (payload.operation === "batch") {

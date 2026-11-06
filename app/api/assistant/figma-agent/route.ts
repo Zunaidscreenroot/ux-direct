@@ -15,7 +15,7 @@ import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-prov
 import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
-import { appendMissingSourceText, MAX_REPAIRED_TEXTS, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
+import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
 import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, PLAN_NODE_LIMIT, expandBlockSpec, isBlockSpec, sourceFallbackSpec } from "@/src/figma-agent/block-spec";
@@ -507,6 +507,8 @@ export async function POST(request: Request) {
     visualCaptureWarning: z.string().max(400).optional(),
     /** Plugin build features; plugins without "clone" cannot run CLONE elements (older zips). */
     capabilities: z.array(z.string().trim().max(40)).max(20).optional(),
+    /** Position in a "Create N variations" batch (0-based); later ones get a different direction. */
+    variation: z.object({ index: z.number().int().min(0).max(3), count: z.number().int().min(1).max(4) }).optional(),
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
   if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
@@ -587,7 +589,9 @@ export async function POST(request: Request) {
     : Promise.resolve(fallbackBrief);
   const agentsStartedAt = Date.now();
   // Independent of brain retrieval, so both lookups run at the same time.
-  const verifiedExamplePromise = blockMode
+  const variationIndex = parsedInput.data.variation?.index ?? 0;
+  // Later variations must not be anchored to the same verified structure as the first.
+  const verifiedExamplePromise = blockMode && variationIndex === 0
     ? loadVerifiedExample(taskScope, designScope).catch(() => "")
     : Promise.resolve("");
   let brain: BrainContextPromptInput = { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
@@ -997,7 +1001,7 @@ export async function POST(request: Request) {
         let themeLocked: boolean | undefined;
         if (isBlockSpec(rawPlan)) {
           const stabilized = stabilizeBlockSpec(rawPlan, canvas, parsedInput.data.prompt);
-          specInput = stabilized.spec;
+          specInput = applyVariationDirection(stabilized.spec, variationIndex);
           themeLocked = stabilized.themeLocked;
         }
         let candidate = renderCandidate(specInput);

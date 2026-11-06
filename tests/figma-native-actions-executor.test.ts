@@ -313,3 +313,22 @@ test("CLONE elements copy the real source layer (logo, icon, chart) into the var
     { type: "CLONE", name: "missing", sourceNodeId: "9:999" },
   ] }), /was not found/);
 });
+
+test("create-tree builds a nested plan in one command", async () => {
+  const { page, write } = createRuntime();
+  const screen = makeNode("FRAME", { name: "Variation", layoutMode: "VERTICAL" });
+  page.appendChild(screen);
+  const result = await write({ operation: "create-tree", target: "node", parentNodeId: screen.id, elements: [
+    { type: "FRAME", name: "Card", width: 300, height: 100, layoutMode: "VERTICAL", children: [
+      { type: "TEXT", name: "Title", text: "Personal Loan", width: 200, height: 20 },
+      { type: "FRAME", name: "Row", width: 280, height: 40, layoutMode: "HORIZONTAL", children: [
+        { type: "TEXT", name: "Label", text: "EMI", width: 100, height: 20 },
+      ] },
+    ] },
+    { type: "TEXT", name: "Footer", text: "Pay now", width: 100, height: 20 },
+  ] });
+  assert.equal(result.ok, true);
+  assert.equal(result.createdCount, 5);
+  assert.deepEqual(screen.children.map((n: MockNode) => n.name), ["Card", "Footer"]);
+  assert.equal(screen.children[0].children[1].children[0].characters, "EMI");
+});
