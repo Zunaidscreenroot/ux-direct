@@ -43,7 +43,7 @@ A real task should result in editable, product-consistent design output plus rat
 
 The cockpit sidebar links to two focused workbenches:
 
-- **Command center** at `/chat`: chat scoped strictly to UX Direct data (shared brain + last 7 days of Figma plugin activity; general knowledge is refused), a shared-knowledge view, and a plugin-activity view. Locked by the `UX_DIRECT_COMMAND_CENTER_KEY` Worker secret (16+ chars), entered once in the browser. IA discovery, website UX audit and benchmarking pages were removed; the plugin's own UX audit quick task is unchanged.
+- **Command center** at `/chat`: chat scoped strictly to UX Direct data (shared brain + last 7 days of Figma plugin activity; general knowledge is refused), a shared-knowledge view, and a plugin-activity view. Open by default; set the optional `UX_DIRECT_COMMAND_CENTER_KEY` Worker secret (16+ chars) to lock it. IA discovery, website UX audit and benchmarking pages were removed; the plugin's own UX audit quick task is unchanged.
 - **Lighthouse**: the workbench calls Browserless' remote `/performance` endpoint. Configure `BROWSERLESS_API_TOKEN` (or `BROWSERLESS_API_KEY` / `BROWSERLESS_TOKEN`) and optionally `BROWSERLESS_BASE_URL`.
 
 UX Audit Skill reuse is deliberately limited to category IDs, severity calibration, duplicate reduction, and screenshot-region marking. axe-core is training/reference only and is not in runtime dependencies or audit execution. Do not send confidential client screenshots to free model endpoints unless the provider's data terms have been approved.

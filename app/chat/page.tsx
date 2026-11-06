@@ -248,7 +248,7 @@ export default function CommandCenter() {
         </div>
         <div className="ud-sidebar-bottom">
           <div className="ud-user-dot">Z</div>
-          <div className="ud-user-copy"><strong>UX Direct</strong><span>{accessKey ? "Access key saved" : "Locked"}</span></div>
+          <div className="ud-user-copy"><strong>UX Direct</strong><span>Command center</span></div>
           <span className={"ud-live-dot" + (status?.connected ? " online" : "")} title={status?.connected ? "Model connected" : "Model not connected"} />
         </div>
       </aside>
