@@ -403,7 +403,16 @@ function dropDuplicateTexts(card: NativeNode, ownTexts: string[], clone: NativeN
 // Buttons
 // ---------------------------------------------------------------------------
 
-type SourceButton = { node: SrcNode; label: string; text: string };
+type SourceButton = { node: SrcNode; label: string; text: string; strong: boolean };
+
+/** A saturated fill (brand blue, red), not a grey or white surface. */
+function isStrongFill(hex: unknown): boolean {
+  const v = typeof hex === "string" ? hex.replace("#", "") : "";
+  if (!/^[0-9a-fA-F]{6}/.test(v)) return false;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  return max > 0 && (max - min) / max > 0.35 && max > 0.25;
+}
 
 function sourceButtons(root: SrcNode): SourceButton[] {
   const buttons: SourceButton[] = [];
@@ -417,7 +426,7 @@ function sourceButtons(root: SrcNode): SourceButton[] {
     if (!(shaped || named) || texts[0].text.length > 40) continue;
     // Nested matches (a button frame inside a button instance) are one button.
     if (buttons.some((b) => descendants(b.node).includes(node))) continue;
-    buttons.push({ node, label: norm(texts[0].text), text: texts[0].text });
+    buttons.push({ node, label: norm(texts[0].text), text: texts[0].text, strong: filled && isStrongFill((node.raw.fillColors as unknown[])[0]) });
   }
   return buttons;
 }
@@ -488,10 +497,21 @@ function restoreRepeatedButtons(elements: NativeNode[], root: SrcNode, theme: Bl
 function restoreButtons(elements: NativeNode[], root: SrcNode, theme: BlockTheme, result: SourceFidelityResult) {
   const labels = sourceButtonLabels(root);
   if (!labels.size) return;
+  const strong = new Set(sourceButtons(root).filter((b) => b.strong).map((b) => b.label));
   for (const ref of indexOutput(elements)) {
     const node = ref.node;
     if (node.type !== "TEXT" || typeof node.text !== "string" || !labels.has(norm(node.text))) continue;
     const parent = ref.parent;
+    // A filled brand-colour CTA in the source stays a filled primary button; a model that
+    // demoted it to an outline pill lost the screen's main action (finding 62).
+    if (parent && /secondary button/i.test(parent.name) && strong.has(norm(node.text)) && (parent.children?.length ?? 0) === 1) {
+      parent.name = node.text.slice(0, 60) + " button";
+      parent.color = theme.primaryFill;
+      delete parent.strokeColor; delete parent.strokeWeight;
+      node.color = theme.onPrimary;
+      result.restoredButtons += 1;
+      continue;
+    }
     if (parent && typeof parent.color === "string" && (num(parent.cornerRadius) ?? 0) > 0 && (parent.children?.length ?? 0) === 1) continue; // already a button
     if (parent && /text button/i.test(parent.name) && (parent.children?.length ?? 0) === 1) {
       // The renderer's text-variant button: give it the primary fill back.

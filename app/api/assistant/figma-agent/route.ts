@@ -24,7 +24,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** Longest the planner waits for the sub-agent brief before planning without it. */
-const PLANNER_AGENT_WAIT_MS = 15000;
+const PLANNER_AGENT_WAIT_MS = 6000;
 const API_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 function allowedOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
@@ -635,7 +635,7 @@ export async function POST(request: Request) {
   // A verified spec from this project (structure only) steers whichever model `auto` picks
   // toward the same block choices that already passed the Figma quality gate.
   const verifiedExample = await verifiedExamplePromise;
-  // Speed first: the planner waits at most 15 s for the sub-agent notes (they run in parallel
+  // Speed first: the planner waits at most 6 s for the sub-agent notes (they run in parallel
   // with brain retrieval). Waiting up to 40 s was idle time on every run.
   const agentBrief = await Promise.race([agentBriefPromise,
     new Promise<AgentBrief>((resolve) => setTimeout(() => resolve(fallbackBrief), PLANNER_AGENT_WAIT_MS))]);
@@ -932,7 +932,10 @@ export async function POST(request: Request) {
           attemptLog.push({ model: model + (isRecovery ? " compact retry" : ""), result: "HTTP " + response.status });
           const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
           errors.push(model + (isRecovery ? " compact retry" : "") + ": " + detail);
-          if (!transientRetried && [408, 429, 500, 502, 503, 504].includes(response.status) &&
+          // Same-mode retry only for a FAST failure (a tunnel blip). A 5xx after a long wait means
+          // the upstream chain already tried its models; repeating it burned ~67 s (finding 61).
+          const attemptMs = inFlight ? Date.now() - inFlight.startedAt : 0;
+          if (!transientRetried && [408, 429, 500, 502, 503, 504].includes(response.status) && attemptMs < 20000 &&
             generationDeadlineMs - (Date.now() - generationStartedAt) > 45000) {
             transientRetried = true;
             await new Promise((resolve) => setTimeout(resolve, 1500));

@@ -281,3 +281,15 @@ test("reordered cards keep their own donut when the nearest text repeats (findin
     if (ids.length === 1 && clones.length) assert.ok(clones.every((c) => c.endsWith(ids[0].slice(-1))), ids[0] + " got " + clones.join(","));
   });
 });
+
+test("a filled source CTA demoted to an outline button is filled again (finding 62)", () => {
+  const spec2 = { summary: "Loan cards.", sections: [1, 2, 3].map((i) => ({ name: "Loan " + i, surface: "card", blocks: [
+    { type: "text", text: "Loan ID SLC00" + i }, { type: "text", text: "₹" + i + "0,000 outstanding" },
+    { type: "button", label: "Pay now", variant: "secondary" }] })), learningCandidate: null };
+  const exp = expandBlockSpec(spec2, canvas, { sourceCanvas: canvas });
+  assert.ok(exp.plan, exp.errors.join("; "));
+  const buttons: N[] = [];
+  walk(exp.plan.elements as N[], (node, _d, parent) => { if (node.type === "TEXT" && node.text === "Pay now" && parent) buttons.push(parent); });
+  assert.equal(buttons.length, 3);
+  for (const b of buttons) { assert.ok(!/secondary/i.test(String(b.name)), String(b.name)); assert.equal(b.strokeColor, undefined); }
+});

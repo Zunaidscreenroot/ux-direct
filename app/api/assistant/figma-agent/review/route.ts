@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveBrainScopes } from "@/src/memory/chat-context";
+import { lintScoreFromSummary } from "@/src/memory/verified-specs";
 import { buildStructuralLessonCandidate, captureVerifiedTaskLesson, resolveFigmaTaskProject } from "@/src/memory/task-learning";
 import { finishTaskRun } from "@/src/memory/task-run-log";
 import { neonRequest } from "@/src/memory/neon-rest";
@@ -166,6 +167,13 @@ export async function POST(request: Request) {
       errorSummary: failureMessage,
     });
 
+    // Record the final lint score so model stats and example ranking use the real result.
+    const lintScore = lintScoreFromSummary(outcome === "failed" ? failureMessage : parsed.data.outcomeSummary, outcome);
+    if (lintScore !== null && existingMeta.source === "figma-agent") {
+      await neonRequest("uxd_task_runs?id=eq." + encodeURIComponent(taskRunId), {
+        method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ metadata: { ...existingMeta, lintScore } }),
+      }).catch(() => null);
+    }
     const confirmedResult = await neonRequest(lookupPath).catch(() => null);
     const confirmed = Array.isArray(confirmedResult) ? confirmedResult[0] as Record<string, unknown> | undefined : undefined;
     if (!confirmed || confirmed.status !== finalStatus || confirmed.outcome !== outcome) {

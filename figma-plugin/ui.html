@@ -1747,7 +1747,7 @@
         "\n" + lint.text;
       visualNote += await finalizeTaskOutcome(lint.passed ? "verified" : "failed",
         lint.passed
-          ? "Native structure/read-back and structural lint passed; post-variation visual QA disabled as requested."
+          ? "Native structure/read-back and structural lint passed; post-variation visual QA disabled as requested. " + lint.text
           : "Structural lint blocked the variation: " + lint.text,
         lint.passed ? "" : lint.text);
       const timingLine = "\nTiming: " + formatRunTiming(localReadMs, serverMs, payload, buildMs, Date.now() - checksStartedAt, Date.now() - taskStartedAt);
