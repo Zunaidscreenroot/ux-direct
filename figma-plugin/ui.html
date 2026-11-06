@@ -1607,7 +1607,9 @@
       let rootY = placement ? Math.max(-10000, Math.min(9000, placement.y)) : sourceNode && Number.isFinite(sourceNode.y)
         ? Math.max(-10000, Math.min(9000, sourceNode.y))
         : Math.max(40, Math.min(9000, Number(viewport.y) + 80 || 80));
-      if (!placement) {
+      // Every create path (improve, wireframe, each variation, flow) takes a free slot: a fixed
+      // placement is only the starting point, so variations never land on existing frames (finding 45).
+      {
         const free = await findFreeCanvasSpot(rootX, rootY, Number(plan.frame.width) || 393, Number(plan.frame.height) || 800);
         rootX = free.x; rootY = free.y;
       }

@@ -252,7 +252,8 @@ function runtime() {
     getLocalPaintStylesAsync: async () => [], getLocalTextStylesAsync: async () => [], variables: { getLocalVariablesAsync: async () => [] },
   };
   page.findOne = (fn: any) => all.find((x) => !x.removed && fn(x)) || null;
-  runInNewContext(code, { figma, __html__: "", console, atob, btoa, Promise, Map, Set, Symbol, Uint8Array, setTimeout, clearTimeout });
+  const sandbox: any = { figma, __html__: "", console, atob, btoa, Promise, Map, Set, Symbol, Uint8Array, setTimeout, clearTimeout };
+  runInNewContext(code, sandbox);
   async function apply(prompt: string, selection: any[]) {
     page.selection = selection;
     const parsed = parse(prompt, { selectionTypes: selection.map((n) => n.type) });
@@ -263,7 +264,7 @@ function runtime() {
     if (message.error) throw new Error(message.error);
     return message.result;
   }
-  return { apply, make, screen, card, title, body, button, label, hidden, page, figma };
+  return { apply, make, screen, card, title, body, button, label, hidden, page, figma, sandbox };
 }
 
 test("direct edits change real node properties in code.js", async () => {
@@ -363,3 +364,4 @@ test("from/to copy edits are applied in place, without a model or a new frame", 
   assert.equal(r.title.characters, "My Loans");
   assert.equal(r.body.characters, "Pay ₹10,000 by 5 Dec", "layers without the text are not touched");
 });
+

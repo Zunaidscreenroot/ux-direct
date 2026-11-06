@@ -329,7 +329,27 @@ export function checkContentPreservation(source: CanvasTree, output: CanvasTree,
       });
     }
     const graphicTypes = [...GRAPHIC_TYPES];
-    const graphicNodes = (tree: CanvasTree) => tree.nodes.filter(node => graphicTypes.includes(node.type) || node.imageFill);
+    // A short component instance that carries text (app bar, tab, chip, button) is UI chrome, not a
+    // graphic: its labels are checked as text, and the renderer rebuilds it as a native header or
+    // tabs block. Counting it (and the vectors inside it) failed every good run with
+    // "missing App bar, Component 2/3/4" (finding 39).
+    const textChrome = (tree: CanvasTree) => {
+      const ids = new Set<string>();
+      for (const node of tree.nodes) {
+        if (node.type !== "TEXT" || !node.text.trim()) continue;
+        for (let p = node.parent; p; p = p.parent) {
+          if (p.type === "INSTANCE" && p.rect && p.rect.h <= 72) { ids.add(p.id); break; }
+        }
+      }
+      return ids;
+    };
+    const chromeOf = new Map<CanvasTree, Set<string>>([[source, textChrome(source)], [output, textChrome(output)]]);
+    const inChrome = (tree: CanvasTree, node: FlatNode) => {
+      const chrome = chromeOf.get(tree)!;
+      for (let p: FlatNode | null = node; p; p = p.parent) if (chrome.has(p.id)) return true;
+      return false;
+    };
+    const graphicNodes = (tree: CanvasTree) => tree.nodes.filter(node => (graphicTypes.includes(node.type) || node.imageFill) && !inChrome(tree, node));
     const sourceGraphics = graphicNodes(source).length;
     const outputGraphics = graphicNodes(output).length;
     // Name the dropped graphics by their nearest named container ("arrow-right", "Tabs/Vector 193").
