@@ -204,3 +204,49 @@ export function pickVerifiedExample(rows: VerifiedRun[], designScope: string): R
   candidates.sort((a, b) => b.score - a.score);
   return candidates[0]?.example ?? null;
 }
+
+/**
+ * Deterministic second/third direction for "Create N variations". Free models given the
+ * same screen return near-identical specs, so later variations are reshaped here: the
+ * content stays the same, the presentation does not.
+ *  - 2nd: sections flip card/plain and the corner radius moves to the other end.
+ *  - 3rd: metric rows become key-value lists (and short lists become metric rows),
+ *    with the radius moved the other way.
+ */
+export function applyVariationDirection(spec: Rec, index: number): Rec {
+  if (!Number.isInteger(index) || index < 1 || !Array.isArray(spec.sections)) return spec;
+  const theme = { ...(asRec(spec.theme) ?? {}) };
+  const radius = typeof theme.radius === "number" ? theme.radius : 12;
+  const direction = ((index - 1) % 2) + 1;
+  theme.radius = direction === 1 ? (radius <= 10 ? 20 : 6) : (radius <= 10 ? 14 : 4);
+  const swapBlock = (block: unknown): unknown => {
+    const b = asRec(block);
+    if (!b) return block;
+    if (b.type === "card" && Array.isArray(b.blocks)) return { ...b, blocks: b.blocks.map(swapBlock) };
+    if (direction !== 2) return b;
+    if (b.type === "stat_row" && Array.isArray(b.items)) {
+      return { type: "list", items: b.items.map((item) => {
+        const i = asRec(item) ?? {};
+        return { label: i.label ?? "", value: i.value ?? "", ...(i.caption ? { caption: i.caption } : {}) };
+      }) };
+    }
+    if (b.type === "list" && Array.isArray(b.items) && b.items.length >= 2 && b.items.length <= 4) {
+      const items = b.items.map((item) => asRec(item) ?? {});
+      const metricLike = items.every((i) => typeof i.value === "string" && i.value.length <= 14 && !i.chevron && !i.status);
+      if (metricLike) return { type: "stat_row", items: items.map((i) => ({ label: i.label ?? "", value: i.value, ...(i.caption ? { caption: i.caption } : {}) })) };
+    }
+    return b;
+  };
+  const sections = spec.sections.map((section) => {
+    const s = asRec(section);
+    if (!s) return section;
+    const blocks = Array.isArray(s.blocks) ? s.blocks : [];
+    const chrome = blocks.some((b) => ["app_bar", "bottom_nav", "tabs"].includes(String(asRec(b)?.type)));
+    const surface = String(s.surface ?? "plain").toLowerCase();
+    const nested = blocks.some((b) => asRec(b)?.type === "card");
+    // Navigation chrome stays plain; a section of nested cards cannot itself become a card.
+    const nextSurface = direction === 1 && !chrome && !nested ? (surface === "card" ? "plain" : "card") : s.surface;
+    return { ...s, ...(nextSurface ? { surface: nextSurface } : {}), blocks: blocks.map(swapBlock) };
+  });
+  return { ...spec, theme, sections };
+}

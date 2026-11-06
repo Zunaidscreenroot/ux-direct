@@ -130,3 +130,20 @@ test("figma route applies consistency steps for every model auto picks", () => {
   assert.ok(route.includes("recordGeneration(taskRunId"));
   assert.ok(route.includes("if (fallback) return respond(fallback);"));
 });
+
+test("later variations get a deterministic different direction with the same content", async () => {
+  const { applyVariationDirection } = await import("../src/figma-agent/spec-consistency");
+  const spec = { theme: { radius: 8 }, sections: [
+    { name: "Header", surface: "plain", blocks: [{ type: "app_bar", title: "Loans" }] },
+    { name: "Summary", surface: "card", blocks: [{ type: "stat_row", items: [{ label: "Paid", value: "₹8,450" }, { label: "Due", value: "₹1,200" }] }] },
+    { name: "Details", surface: "plain", blocks: [{ type: "list", items: [{ label: "EMI", value: "₹2,000" }, { label: "Tenure", value: "12 mo" }] }] },
+  ] };
+  assert.equal(applyVariationDirection(spec, 0), spec, "first variation unchanged");
+  const second = applyVariationDirection(spec, 1) as { theme: { radius: number }; sections: Array<{ surface: string; blocks: Array<{ type: string }> }> };
+  assert.equal(second.theme.radius, 20);
+  assert.deepEqual(second.sections.map((s) => s.surface), ["plain", "plain", "card"], "nav stays plain, others flip");
+  const third = applyVariationDirection(spec, 2) as typeof second;
+  assert.equal(third.sections[1].blocks[0].type, "list");
+  assert.equal(third.sections[2].blocks[0].type, "stat_row");
+  assert.ok(JSON.stringify(third).includes("₹8,450") && JSON.stringify(third).includes("12 mo"), "content kept");
+});
