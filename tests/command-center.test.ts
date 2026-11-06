@@ -38,11 +38,11 @@ test("command-center prompt forbids general knowledge and states missing activit
   assert.ok(buildCommandCenterPrompt("", "degraded").includes("unavailable"));
 });
 
-test("command-center access requires a configured 16+ char key and the matching header", () => {
+test("command-center is open without a key, and locked by a 16+ char key when one is set", () => {
   const previous = process.env.UX_DIRECT_COMMAND_CENTER_KEY;
   try {
     delete process.env.UX_DIRECT_COMMAND_CENTER_KEY;
-    assert.equal(isCommandCenterAuthorized(new Request("https://x.test/api/command-center")), false);
+    assert.equal(isCommandCenterAuthorized(new Request("https://x.test/api/command-center")), true);
     process.env.UX_DIRECT_COMMAND_CENTER_KEY = "short";
     assert.equal(isCommandCenterAuthorized(new Request("https://x.test", { headers: { "x-uxd-command-key": "short" } })), false);
     process.env.UX_DIRECT_COMMAND_CENTER_KEY = "a-very-long-owner-key-123";

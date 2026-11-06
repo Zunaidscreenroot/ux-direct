@@ -1,9 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 
 /**
- * The command center lists shared-brain knowledge and plugin activity, so it is
- * locked behind an owner key (Worker secret UX_DIRECT_COMMAND_CENTER_KEY).
- * The browser sends it in the X-UXD-Command-Key header after the owner enters it once.
+ * The command center is OPEN by default (owner decision, 2026-11-06).
+ * Optional lock: set the Worker secret UX_DIRECT_COMMAND_CENTER_KEY (16+ chars); the
+ * browser then sends it in the X-UXD-Command-Key header after the owner enters it once.
  */
 export const COMMAND_CENTER_KEY_HEADER = "x-uxd-command-key";
 const MIN_KEY_LENGTH = 16;
@@ -18,6 +18,7 @@ export function isCommandCenterConfigured(): boolean {
 
 export function isCommandCenterAuthorized(request: Request): boolean {
   const expected = configuredKey();
+  if (!expected) return true; // Open mode: no key configured.
   if (expected.length < MIN_KEY_LENGTH) return false;
   const supplied = (request.headers.get(COMMAND_CENTER_KEY_HEADER) || "").trim();
   const a = Buffer.from(supplied);
@@ -31,7 +32,7 @@ export function commandCenterLockedResponse(): Response {
     {
       error: configured
         ? "Command center access key is missing or wrong."
-        : "Command center is locked until the UX_DIRECT_COMMAND_CENTER_KEY Worker secret is set (16+ characters).",
+        : "UX_DIRECT_COMMAND_CENTER_KEY is set but shorter than 16 characters; lengthen or remove it.",
       locked: true,
       configured,
     },
