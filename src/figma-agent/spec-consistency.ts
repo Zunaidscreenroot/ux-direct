@@ -123,8 +123,81 @@ export function lockTheme(modelTheme: unknown, canvas: Rec, prompt: string): { t
 }
 
 /** Returns the spec with a theme fixed for consistency. Does not mutate the input. */
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      best = Math.min(best, cur[j]);
+    }
+    if (best > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+function sourceTextList(canvas: Rec): string[] {
+  const out: string[] = [];
+  const visit = (nodes: unknown) => {
+    if (!Array.isArray(nodes)) return;
+    for (const raw of nodes) {
+      const node = asRec(raw);
+      if (!node) continue;
+      if (node.type === "TEXT" && typeof node.text === "string" && node.text.trim()) out.push(node.text.trim());
+      visit(node.children);
+    }
+  };
+  visit(canvas.nodes);
+  return out;
+}
+
+const COPY_CHANGE = /\b(rewrite|reword|rephrase|translate|shorten|copy|wording|rename|placeholder|lorem|tone)\b/i;
+const SPEC_TEXT_KEYS = new Set(["text", "title", "label", "value", "caption", "subtitle", "description", "status", "badge", "detail", "amount", "meta", "right"]);
+
+/**
+ * Free models sometimes mistype the source: a loan ID "DMI1234567890" becomes "DMII1234567890",
+ * an amount gains a digit. An ID or amount token (it has digits) that is not in the source but is
+ * one or two edits from a source token is put back to the source spelling (finding 55).
+ */
+export function correctNearMissTexts(spec: Rec, canvas: Rec, prompt: string): { spec: Rec; corrected: number } {
+  if (COPY_CHANGE.test(prompt)) return { spec, corrected: 0 };
+  const sourceTokens = new Set(sourceTextList(canvas).flatMap((t) => t.split(/\s+/)).filter((t) => /\d/.test(t) && t.length >= 4));
+  if (!sourceTokens.size) return { spec, corrected: 0 };
+  const tokens = [...sourceTokens];
+  let corrected = 0;
+  const fixToken = (token: string): string => {
+    if (!/\d/.test(token) || token.length < 4 || sourceTokens.has(token)) return token;
+    const max = token.length >= 10 ? 2 : 1;
+    let best: string | null = null;
+    let bestDistance = max + 1;
+    let tie = false;
+    for (const candidate of tokens) {
+      const d = editDistance(token, candidate, max);
+      if (d < bestDistance) { best = candidate; bestDistance = d; tie = false; }
+      else if (d === bestDistance) tie = true;
+    }
+    if (!best || bestDistance > max || tie) return token;
+    // Only digit-for-digit or letter-for-letter slips: "40%" vs "60%" is a real different value.
+    if (best.replace(/\D/g, "") !== token.replace(/\D/g, "") && best.replace(/\d/g, "") !== token.replace(/\d/g, "")) return token;
+    corrected += 1;
+    return best;
+  };
+  const walk = (value: unknown, key: string): unknown => {
+    if (typeof value === "string") return SPEC_TEXT_KEYS.has(key) ? value.split(/(\s+)/).map((part) => /\s/.test(part) ? part : fixToken(part)).join("") : value;
+    if (Array.isArray(value)) return value.map((item) => walk(item, key));
+    const rec = asRec(value);
+    if (!rec) return value;
+    return Object.fromEntries(Object.entries(rec).map(([k, v]) => [k, walk(v, k)]));
+  };
+  const next = walk(spec, "") as Rec;
+  return { spec: corrected ? next : spec, corrected };
+}
+
 export function stabilizeBlockSpec(spec: unknown, canvas: Rec, prompt: string): { spec: Rec; themeLocked: boolean } {
-  const rec = asRec(spec) ?? {};
+  const rec = correctNearMissTexts(asRec(spec) ?? {}, canvas, prompt).spec;
   const frame = asRec(rec.frame) ?? {};
   const { theme, locked } = lockTheme(rec.theme ?? frame.theme, canvas, prompt);
   const nextFrame = { ...frame };
