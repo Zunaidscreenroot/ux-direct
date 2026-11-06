@@ -33,6 +33,8 @@ export interface SubAgentRun {
   ms: number;
   model?: string;
   error?: string;
+  /** Served from the per-frame brief cache. */
+  cached?: boolean;
 }
 
 export interface AgentBrief {
@@ -49,7 +51,7 @@ export function subAgentsEnabled(): boolean {
 
 function subAgentTimeoutMs(): number {
   const value = Number(process.env.UXD_SUB_AGENT_TIMEOUT_MS);
-  return Number.isFinite(value) && value >= 5000 ? Math.min(value, 60000) : 35000;
+  return Number.isFinite(value) && value >= 5000 ? Math.min(value, 60000) : 12000;
 }
 
 const AGENT_RULES = "You are one sub-agent in a team; another model will design the screen from your notes. Report only what the request, the source text list and the screenshot show. If something is unclear, say \"unknown\" rather than guessing. Return one JSON object only, no markdown.";
@@ -151,7 +153,37 @@ const SCOUT_SYSTEM = [
 ].join("\n");
 
 /** Runs the three sub-agents in parallel and composes a grounded brief for the planner. */
+// Same source + same role + same request → same brief, so screen variations of one frame and
+// quick retries reuse it instead of calling the agents again. Per Worker isolate, best effort.
+const BRIEF_CACHE = new Map<string, { at: number; brief: AgentBrief }>();
+const BRIEF_TTL_MS = 15 * 60 * 1000;
+const BRIEF_CACHE_SIZE = 30;
+
+function briefCacheKey(input: SubAgentInput): string {
+  return [input.role.id, input.designScope, input.prompt.trim().toLowerCase(), input.selectedNode.name,
+    input.selectedNode.width, input.selectedNode.height, input.sourceTexts.join("\u0001")].join("\u0002");
+}
+
+export function clearBriefCache(): void {
+  BRIEF_CACHE.clear();
+}
+
+/** Cached wrapper; only a brief where at least one agent succeeded is cached. */
 export async function runSubAgents(input: SubAgentInput): Promise<AgentBrief> {
+  const key = briefCacheKey(input);
+  const hit = BRIEF_CACHE.get(key);
+  if (hit && Date.now() - hit.at < BRIEF_TTL_MS) {
+    return { ...hit.brief, runs: hit.brief.runs.map((run) => ({ ...run, ms: 0, cached: true })) };
+  }
+  const brief = await runSubAgentsUncached(input);
+  if (brief.runs.some((run) => run.ok)) {
+    if (BRIEF_CACHE.size >= BRIEF_CACHE_SIZE) BRIEF_CACHE.delete(BRIEF_CACHE.keys().next().value as string);
+    BRIEF_CACHE.set(key, { at: Date.now(), brief });
+  }
+  return brief;
+}
+
+async function runSubAgentsUncached(input: SubAgentInput): Promise<AgentBrief> {
   const keywordDomain = detectDomain(input.prompt, input.sourceTexts);
   const componentList = input.components.slice(0, 40).map((component) => ({
     id: component.id, name: component.name, ...(component.properties ? { properties: component.properties } : {}),

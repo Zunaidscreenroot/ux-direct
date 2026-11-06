@@ -583,7 +583,8 @@ export async function POST(request: Request) {
   const keywordDomain = detectDomain(parsedInput.data.prompt, sourceTexts);
   const fallbackBrief: AgentBrief = { domain: keywordDomain.domain, domainSource: keywordDomain.score ? "keywords" : "default",
     instructions: roleInstructions(taskRole, keywordDomain.domain), runs: [] };
-  const agentBriefPromise: Promise<AgentBrief> = subAgentsEnabled()
+  // Wireframes keep the source content and only restyle, so the agents add latency for little gain.
+  const agentBriefPromise: Promise<AgentBrief> = subAgentsEnabled() && taskRole.id !== "wireframe"
     ? runSubAgents({
       prompt: parsedInput.data.prompt, role: taskRole, designScope,
       selectedNode: { name: selectedName, type: selectedType, width: selectedWidth, height: selectedHeight },
