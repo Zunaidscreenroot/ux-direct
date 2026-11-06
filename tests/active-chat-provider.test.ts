@@ -114,7 +114,7 @@ test("FreeLLMAPI gets a cold-start first attempt and retries 4xx without JSON mo
   const { figmaAttemptTimeoutMs, shouldRetryWithoutJsonMode } = await import("../src/providers/active-chat-provider");
   const free = getActiveChatProvider({ NODE_ENV: "production", UX_DIRECT_MODEL_PROVIDER: "freellmapi", FREELLMAPI_BASE_URL: "https://freellmapi.example.com/v1", FREELLMAPI_API_KEY: "k" });
   const openrouter = getActiveChatProvider({ NODE_ENV: "test", OPENROUTER_API_KEY: "k" });
-  assert.equal(figmaAttemptTimeoutMs(free, 0, 60000, 45000), 150000);
+  assert.equal(figmaAttemptTimeoutMs(free, 0, 60000, 45000), 100000);
   assert.equal(figmaAttemptTimeoutMs(free, 1, 60000, 45000), 45000);
   assert.equal(figmaAttemptTimeoutMs(openrouter, 0, 60000, 45000), 60000);
   assert.equal(shouldRetryWithoutJsonMode(free, 400), true);

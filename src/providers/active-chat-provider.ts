@@ -106,8 +106,12 @@ export function getActiveChatProvider(
   };
 }
 
-/** The first FreeLLMAPI attempt covers a host wake-up and an uncapped, intelligence-first answer. */
-export const FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS = 150_000;
+/**
+ * The first FreeLLMAPI attempt gets room for an intelligence-first answer. FreeLLMAPI now runs on
+ * an always-on Mac (no Render cold start), and a block spec is small, so 150 s only meant a hung
+ * route held the user for minutes before the retry (speed priority, 2026-11-06).
+ */
+export const FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS = 100_000;
 
 /**
  * Ordered model chain for Figma routes. OpenRouter keeps its explicit quality chain;
