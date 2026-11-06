@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
+import { detectDomain, detectTaskRole, roleInstructions } from "@/src/figma-agent/agent-roles";
+import { runSubAgents, subAgentsEnabled, type AgentBrief } from "@/src/figma-agent/sub-agents";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
+import { buildBrainQuery } from "@/src/memory/brain-query";
 import { resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/task-learning";
 import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { deferTaskWork, finishTaskRun, startTaskRun, type RetrievalRecord } from "@/src/memory/task-run-log";
@@ -12,10 +15,10 @@ import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-prov
 import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
-import { appendMissingSourceText, MAX_REPAIRED_TEXTS, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
+import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, promptRequestsWireframe, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
 import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
-import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, expandBlockSpec, isBlockSpec, sourceFallbackSpec } from "@/src/figma-agent/block-spec";
+import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, PLAN_NODE_LIMIT, expandBlockSpec, isBlockSpec, sourceFallbackSpec } from "@/src/figma-agent/block-spec";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,8 +41,12 @@ function cors(request: Request): HeadersInit {
 }
 
 const ElementFieldsSchema = z.object({
-  type: z.enum(["RECTANGLE", "ELLIPSE", "TEXT", "LINE", "FRAME", "POLYGON", "STAR", "INSTANCE"]),
+  type: z.enum(["RECTANGLE", "ELLIPSE", "TEXT", "LINE", "FRAME", "POLYGON", "STAR", "INSTANCE", "CLONE"]),
   name: z.string().trim().min(1).max(80),
+  /** CLONE only: the source layer (logo, icon, chart, image) copied into the variation. */
+  sourceNodeId: z.string().trim().min(1).max(100).optional(),
+  /** CLONE only: recolour the copy to one ink colour (wireframes); images become placeholder boxes. */
+  monochrome: z.object({ ink: z.string().regex(/^#[0-9A-Fa-f]{6}$/), placeholder: z.string().regex(/^#[0-9A-Fa-f]{6}$/) }).strict().optional(),
   ...NATIVE_INSTANCE_ELEMENT_FIELDS,
   x: z.number().finite().min(-1000).max(5000),
   y: z.number().finite().min(-1000).max(5000),
@@ -108,6 +115,9 @@ const ElementSchema: z.ZodTypeAny = z.lazy(() =>
       }
       if (item.type !== "INSTANCE" && (item.componentId !== undefined || item.instanceProperties !== undefined || item.textOverrides !== undefined)) {
         ctx.addIssue({ code: "custom", path: ["componentId"], message: "componentId/instanceProperties are only valid on INSTANCE elements." });
+      }
+      if ((item.type === "CLONE") !== (typeof item.sourceNodeId === "string")) {
+        ctx.addIssue({ code: "custom", path: ["sourceNodeId"], message: "sourceNodeId is required on CLONE elements and only valid there." });
       }
       if (Array.isArray(item.children) && item.children.length && item.type !== "FRAME") {
         ctx.addIssue({ code: "custom", path: ["children"], message: "Only FRAME elements may contain nested children." });
@@ -221,8 +231,8 @@ function checkPlanShape(plan: z.infer<typeof PlanObjectSchema>, ctx: z.Refinemen
   if (decorativeDominance) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Design is too shape-heavy relative to its meaningful content. Add labels, values, and task-specific detail." });
   }
-  if (totalNodes > 80) {
-    ctx.addIssue({ code: "custom", path: ["elements"], message: "Design exceeds the safe 80-node budget." });
+  if (totalNodes > PLAN_NODE_LIMIT) {
+    ctx.addIssue({ code: "custom", path: ["elements"], message: "Design exceeds the safe " + PLAN_NODE_LIMIT + "-node budget." });
   }
   if (invalidChildType) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Nested children must belong to FRAME containers." });
@@ -243,8 +253,11 @@ type CanvasNode = {
   componentProperties?: Record<string, string | boolean>;
   childCount?: number; children?: CanvasNode[];
 };
+/** Model-facing canvas budget: deep enough for card internals (rows, badges, icons) of a full screen. */
+const COMPACT_NODE_LIMIT = 220;
+const COMPACT_DEPTH_LIMIT = 6;
 function compactNode(value: unknown, state: { count: number }, depth = 0): CanvasNode | null {
-  if (!value || typeof value !== "object" || Array.isArray(value) || state.count >= 100) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value) || state.count >= COMPACT_NODE_LIMIT) return null;
   const node = value as Record<string, unknown>;
   if (typeof node.name !== "string" || typeof node.type !== "string") return null;
   state.count += 1;
@@ -270,12 +283,12 @@ function compactNode(value: unknown, state: { count: number }, depth = 0): Canva
       .filter((entry): entry is [string, string | boolean] => typeof entry[1] === "string" || typeof entry[1] === "boolean")
       .map(([key, entryValue]) => [key.slice(0, 80), typeof entryValue === "string" ? entryValue.slice(0, 120) : entryValue]));
   }
-  if (depth < 4 && Array.isArray(node.children)) {
+  if (depth < COMPACT_DEPTH_LIMIT && Array.isArray(node.children)) {
     out.children = [];
     for (const child of node.children.slice(0, 50)) {
       const compact = compactNode(child, state, depth + 1);
       if (compact) out.children.push(compact);
-      if (state.count >= 100) break;
+      if (state.count >= COMPACT_NODE_LIMIT) break;
     }
   }
   return out;
@@ -331,10 +344,11 @@ function compactRecoveryCanvas(canvas: Record<string, unknown>): Record<string, 
 function collectSourceTextInventory(nodes: unknown[]): Array<{ name: string; text: string }> {
   const result: Array<{ name: string; text: string }> = [];
   const visit = (items: unknown[], depth = 0) => {
-    if (depth > 8 || result.length >= 80) return;
+    if (depth > 12 || result.length >= 80) return;
     for (const value of items) {
       if (!value || typeof value !== "object" || Array.isArray(value) || result.length >= 80) continue;
       const node = value as Record<string, unknown>;
+      if (node.visible === false || node.opacity === 0) continue;
       if (node.type === "TEXT" && typeof node.text === "string" && node.text.trim()) {
         result.push({
           name: typeof node.name === "string" ? node.name.slice(0, 100) : "Text layer",
@@ -348,7 +362,7 @@ function collectSourceTextInventory(nodes: unknown[]): Array<{ name: string; tex
   return result;
 }
 
-function compactResourceList(value: unknown, limit = 50): Array<Record<string, string>> {
+function compactResourceList(value: unknown, limit = 50): Array<Record<string, string | number>> {
   if (!Array.isArray(value)) return [];
   return value.slice(0, limit).flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
@@ -357,7 +371,12 @@ function compactResourceList(value: unknown, limit = 50): Array<Record<string, s
     return [{ id: item.id.slice(0, 300), name: item.name.slice(0, 120),
       ...(typeof item.type === "string" ? { type: item.type.slice(0, 40) } : {}),
       ...(typeof item.collectionName === "string" ? { collectionName: item.collectionName.slice(0, 100) } : {}),
-      ...(typeof item.collectionId === "string" ? { collectionId: item.collectionId.slice(0, 300) } : {}) }];
+      ...(typeof item.collectionId === "string" ? { collectionId: item.collectionId.slice(0, 300) } : {}),
+      // Style metrics used to bind generated layers to the file's own text/paint styles.
+      ...(typeof item.color === "string" && /^#[0-9A-Fa-f]{6}$/.test(item.color) ? { color: item.color.toUpperCase() } : {}),
+      ...(typeof item.fontSize === "number" && Number.isFinite(item.fontSize) ? { fontSize: item.fontSize } : {}),
+      ...(typeof item.fontFamily === "string" ? { fontFamily: item.fontFamily.slice(0, 100) } : {}),
+      ...(typeof item.fontStyle === "string" ? { fontStyle: item.fontStyle.slice(0, 100) } : {}) }];
   });
 }
 function compactCanvas(value: unknown): Record<string, unknown> {
@@ -368,7 +387,7 @@ function compactCanvas(value: unknown): Record<string, unknown> {
     ? canvas.nodes.slice(0, 20).map((node) => compactNode(node, state)).filter((node): node is CanvasNode => !!node)
     : [];
   const rawStyles = canvas.styles && typeof canvas.styles === "object" && !Array.isArray(canvas.styles) ? canvas.styles as Record<string, unknown> : {};
-  const styles = { paint: compactResourceList(rawStyles.paint), text: compactResourceList(rawStyles.text),
+  const styles = { paint: compactResourceList(rawStyles.paint, 100), text: compactResourceList(rawStyles.text, 100),
     effect: compactResourceList(rawStyles.effect), grid: compactResourceList(rawStyles.grid) };
   const variableCollections = Array.isArray(canvas.variableCollections) ? canvas.variableCollections.slice(0, 30).flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
@@ -384,7 +403,7 @@ function compactCanvas(value: unknown): Record<string, unknown> {
   }) : [];
   return { pageName: typeof canvas.pageName === "string" ? canvas.pageName.slice(0, 120) : "Unknown page",
     scope: typeof canvas.scope === "string" ? canvas.scope.slice(0, 40) : "selection",
-    nodeCount: state.count, truncated: canvas.truncated === true || state.count >= 100, nodes,
+    nodeCount: state.count, truncated: canvas.truncated === true || state.count >= COMPACT_NODE_LIMIT, nodes,
     viewport: canvas.viewport && typeof canvas.viewport === "object" ? canvas.viewport : undefined,
     styles, variableCollections, variables: compactResourceList(canvas.variables, 120),
     components: compactComponentCatalogue(canvas.components) };
@@ -488,6 +507,10 @@ export async function POST(request: Request) {
     renderedScreen: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional(),
     referenceImage: z.string().max(250000).nullable().optional(),
     visualCaptureWarning: z.string().max(400).optional(),
+    /** Plugin build features; plugins without "clone" cannot run CLONE elements (older zips). */
+    capabilities: z.array(z.string().trim().max(40)).max(20).optional(),
+    /** Position in a "Create N variations" batch (0-based); later ones get a different direction. */
+    variation: z.object({ index: z.number().int().min(0).max(3), count: z.number().int().min(1).max(4) }).optional(),
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
   if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
@@ -501,6 +524,10 @@ export async function POST(request: Request) {
     new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.referenceImage)
     ? parsedInput.data.referenceImage : null;
   const canvas = compactCanvas(parsedInput.data.canvas);
+  // Uncompacted read-back: carries image fills, corner radii and deep icon layers for source fidelity.
+  const rawSourceCanvas = parsedInput.data.canvas && typeof parsedInput.data.canvas === "object" && !Array.isArray(parsedInput.data.canvas)
+    ? parsedInput.data.canvas as Record<string, unknown> : null;
+  const pluginCanClone = (parsedInput.data.capabilities ?? []).includes("clone");
   const selectedRoot = Array.isArray(canvas.nodes) && canvas.nodes[0] && typeof canvas.nodes[0] === "object"
     ? canvas.nodes[0] as Record<string, unknown> : {};
   const selectedName = typeof selectedRoot.name === "string" ? selectedRoot.name : "";
@@ -546,8 +573,27 @@ export async function POST(request: Request) {
   const taskProject = resolveFigmaTaskProject(parsedInput.data.prompt);
   const taskScope = resolveFigmaTaskScope(taskProject, parsedInput.data.prompt);
 
+  // Role switcher + domain detection, then the parallel sub-agents (detector, UX analyst,
+  // component scout). They run alongside brain retrieval; their grounded brief only adds
+  // planner instructions and never changes designScope, block-spec rendering or the gates.
+  const taskRole = detectTaskRole(parsedInput.data.prompt);
+  const sourceTexts = collectSourceTextInventory(Array.isArray(canvas.nodes) ? canvas.nodes : []).map((item) => item.text);
+  const keywordDomain = detectDomain(parsedInput.data.prompt, sourceTexts);
+  const fallbackBrief: AgentBrief = { domain: keywordDomain.domain, domainSource: keywordDomain.score ? "keywords" : "default",
+    instructions: roleInstructions(taskRole, keywordDomain.domain), runs: [] };
+  const agentBriefPromise: Promise<AgentBrief> = subAgentsEnabled()
+    ? runSubAgents({
+      prompt: parsedInput.data.prompt, role: taskRole, designScope,
+      selectedNode: { name: selectedName, type: selectedType, width: selectedWidth, height: selectedHeight },
+      sourceTexts, components: Array.isArray(canvas.components) ? canvas.components as Array<Record<string, unknown>> : [],
+      renderedScreen, origin: new URL(request.url).origin,
+    }).catch(() => fallbackBrief)
+    : Promise.resolve(fallbackBrief);
+  const agentsStartedAt = Date.now();
   // Independent of brain retrieval, so both lookups run at the same time.
-  const verifiedExamplePromise = blockMode
+  const variationIndex = parsedInput.data.variation?.index ?? 0;
+  // Later variations must not be anchored to the same verified structure as the first.
+  const verifiedExamplePromise = blockMode && variationIndex === 0
     ? loadVerifiedExample(taskScope, designScope).catch(() => "")
     : Promise.resolve("");
   let brain: BrainContextPromptInput = { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
@@ -555,7 +601,8 @@ export async function POST(request: Request) {
   const brainStarted = Date.now();
   try {
     const retrieved = await retrieveBrainContext({
-      query: (parsedInput.data.prompt + "\n" + JSON.stringify(canvas).slice(0, 1800)).slice(0, 3000),
+      query: buildBrainQuery({ prompt: parsedInput.data.prompt, frameName: selectedName, designScope,
+        nodes: Array.isArray(canvas.nodes) ? canvas.nodes : [] }),
       scopeKeys: resolveBrainScopes(parsedInput.data.prompt + "\n" + JSON.stringify(canvas.nodes).slice(0, 1500)),
       limit: 6,
       maxChars: 6000,
@@ -582,10 +629,15 @@ export async function POST(request: Request) {
   // A verified spec from this project (structure only) steers whichever model `auto` picks
   // toward the same block choices that already passed the Figma quality gate.
   const verifiedExample = await verifiedExamplePromise;
+  // Belt and braces: the sub-agent stage has its own hard deadline, but the planner never
+  // waits on it for more than 40 s whatever happens inside.
+  const agentBrief = await Promise.race([agentBriefPromise,
+    new Promise<AgentBrief>((resolve) => setTimeout(() => resolve(fallbackBrief), 40000))]);
+  const agentsMs = Date.now() - agentsStartedAt;
   const exampleInstructions = verifiedExample
     ? "\nVERIFIED TEAM EXAMPLE — the block structure of an earlier output that passed UX Direct's quality gate. Texts are replaced by <source text>. Follow its way of choosing sections and blocks for similar content; never copy it, and use only this screen's real content: " + verifiedExample
     : "";
-  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + exampleInstructions, brain);
+  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + "\n" + agentBrief.instructions + exampleInstructions, brain);
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its configured free-model chain.
   // Both are bounded by compact retry and the shared generation deadline.
@@ -606,6 +658,7 @@ export async function POST(request: Request) {
     UX_DIRECT_DESIGN_ROLE,
     "Create an improved native Figma variation of the selected source. The user prompt is the design change, not the procedure.",
     scopeInstructions,
+    roleInstructions(taskRole, agentBrief.domain),
     "Preserve the screen/component scope, all meaningful source text and financial values, status, date, labels, rows, actions and relationships. Do not redesign it as a generic dashboard or generic stack of cards.",
     "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Preserve every listed text string exactly, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
     "Use the attached screenshot and source layers when available. Use semantic nested FRAMEs, Auto Layout for suitable cards and rows, clear hierarchy, strong contrast, consistent spacing and editable native shapes/text. Do not invent contractual financial details.",
@@ -619,6 +672,7 @@ export async function POST(request: Request) {
     UX_DIRECT_DESIGN_ROLE,
     "Create an improved native Figma variation of the selected source as a BLOCK SPEC. The user prompt is the design change, not the procedure.",
     scopeInstructions,
+    roleInstructions(taskRole, agentBrief.domain),
     "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Copy every listed text string exactly into block fields, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
     "Do not redesign it as a generic dashboard. Do not invent contractual financial details.",
     BLOCK_SPEC_CONTRACT,
@@ -647,6 +701,7 @@ export async function POST(request: Request) {
   const catalogueComponentIds = new Set((Array.isArray(canvas.components) ? canvas.components as Array<Record<string, unknown>> : [])
     .map((component) => component.id).filter((id): id is string => typeof id === "string"));
   const styleSets = canvas.styles && typeof canvas.styles === "object" ? canvas.styles as Record<string, unknown> : {};
+  const wireframeRequest = promptRequestsWireframe(parsedInput.data.prompt);
   /** Every deterministic gate a model answer must pass before anything is written to Figma. */
   const renderCandidate = (candidateInput: unknown): Candidate => {
     // A block spec is rendered deterministically; a raw layer tree (legacy mode or a model
@@ -654,7 +709,7 @@ export async function POST(request: Request) {
     let planInput: unknown = candidateInput;
     let blockSpec: BlockSpecInfo | null = null;
     if (isBlockSpec(candidateInput)) {
-      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection });
+      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone, monochrome: wireframeRequest });
       blockSpec = { blocks: expansion.blockCount, nodes: expansion.nodeCount, warnings: expansion.warnings };
       if (!expansion.plan) {
         const issues = expansion.errors.slice(0, 4).join("; ");
@@ -756,6 +811,7 @@ export async function POST(request: Request) {
       sourceFallback: success.sourceFallback === true,
       consistency: { themeLocked: success.themeLocked ?? false, restoredSourceTexts: success.repairedTexts, verifiedExample: Boolean(verifiedExample) },
       brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
+      agents: { role: taskRole.id, domain: agentBrief.domain.id, domainSource: agentBrief.domainSource, latencyMs: agentsMs, runs: agentBrief.runs },
       visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
       generation: { recoveryAttempted: success.isRecovery, finishReason: success.finishReason, modelIndex: success.modelIndex + 1,
         attempts: attemptLog.length, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt },
@@ -951,7 +1007,7 @@ export async function POST(request: Request) {
         let themeLocked: boolean | undefined;
         if (isBlockSpec(rawPlan)) {
           const stabilized = stabilizeBlockSpec(rawPlan, canvas, parsedInput.data.prompt);
-          specInput = stabilized.spec;
+          specInput = applyVariationDirection(stabilized.spec, variationIndex);
           themeLocked = stabilized.themeLocked;
         }
         let candidate = renderCandidate(specInput);
@@ -1006,6 +1062,12 @@ export async function POST(request: Request) {
     const sourceSpec = sourceFallbackSpec(canvas);
     if (sourceSpec) {
       const stabilized = stabilizeBlockSpec(sourceSpec, canvas, parsedInput.data.prompt);
+      // Say why the model answers were not used (timeout, parse error, schema, quality gate). This
+      // must go in before rendering: the plan's summary is copied from the spec at render time, so
+      // appending it afterwards never reached the plugin (Tests #6/#7: no "Model attempts:" line).
+      const reasons = [...new Set(errors.map((entry) => entry.replace(/\s+/g, " ").slice(0, 150)))].slice(0, 3);
+      const why = reasons.length ? reasons.join(" | ") : "no model call finished (generation time budget used up before any attempt ran)";
+      stabilized.spec.summary = (String(stabilized.spec.summary || "") + " Model attempts: " + why).slice(0, 690);
       const candidate = renderCandidate(stabilized.spec);
       // The fallback is the source's own content, so a subjective quality finding must not block it.
       if (candidate.plan && (candidate.stage === "ok" || candidate.stage === "quality")) {

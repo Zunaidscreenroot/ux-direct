@@ -8,6 +8,9 @@ import { recordOperationalEvent } from "@/src/observability/event-log";
 import { hasAssistantTextDelta } from "@/src/providers/openrouter-chat";
 import { OPENROUTER_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
+import { commandCenterLockedResponse, isCommandCenterAuthorized } from "@/src/command-center/access";
+import { formatActivityForPrompt, loadRecentActivity } from "@/src/command-center/activity";
+import { buildCommandCenterPrompt } from "@/src/command-center/chat-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -110,6 +113,15 @@ async function retrieveMemory(_request: Request, query: string): Promise<BrainCo
     };
   } catch {
     return { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: Date.now() - startedAt };
+  }
+}
+
+async function loadCommandCenterActivity(): Promise<{ text: string; status: "complete" | "empty" | "degraded" }> {
+  try {
+    const items = await loadRecentActivity();
+    return items.length ? { text: formatActivityForPrompt(items), status: "complete" } : { text: "", status: "empty" };
+  } catch {
+    return { text: "", status: "degraded" };
   }
 }
 
@@ -361,6 +373,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400, headers: responseHeaders });
   }
   const value = body as Record<string, unknown>;
+  // Command-center chat (dashboard only): answers strictly from UX Direct data and needs the owner key.
+  const commandCenter = value.mode === "command-center";
+  if (commandCenter) {
+    const requestOrigin = request.headers.get("origin");
+    if (requestOrigin && ALLOWED_FIGMA_ORIGINS.has(requestOrigin)) {
+      return NextResponse.json({ error: "Command-center chat is only available in the UX Direct dashboard." }, { status: 403, headers: responseHeaders });
+    }
+    if (!isCommandCenterAuthorized(request)) return commandCenterLockedResponse();
+  }
   // Provider and model are selected server-side; never accept a provider/model override from the browser.
   const model = activeProvider.id === "openrouter" ? ROUTER_MODEL : activeProvider.model;
   if (!Array.isArray(value.messages) || value.messages.length < 1 || value.messages.length > MAX_MESSAGES) {
@@ -392,16 +413,21 @@ export async function POST(request: Request) {
   const retrievalQuery = buildRetrievalQuery(lastUserMessage, previousUserMessage);
   const chatOrigin = request.headers.get("origin");
   const chatSourceProduct = chatOrigin && ALLOWED_FIGMA_ORIGINS.has(chatOrigin) ? "figma-plugin" : "ux-direct";
-  const [brainBase, learning] = await Promise.all([
+  const [brainBase, learning, activity] = await Promise.all([
     retrieveMemory(request, retrievalQuery),
-    captureChatLearning(lastUserMessage, previousUserMessage, chatSourceProduct),
+    // Command-center questions are lookups, not coaching; they never write to the brain.
+    commandCenter ? Promise.resolve<ChatLearningCapture>({ status: "none" }) : captureChatLearning(lastUserMessage, previousUserMessage, chatSourceProduct),
+    commandCenter ? loadCommandCenterActivity() : Promise.resolve(null),
   ]);
   const brain: BrainContextInfo = {
     ...brainBase,
     learningStatus: learning.status,
     ...(learning.recordId ? { learningRecordId: learning.recordId, learningDraftId: learning.recordId } : {}),
   };
-  const systemContent = buildBrainSystemPrompt(SYSTEM_PROMPT, brain);
+  const systemContent = buildBrainSystemPrompt(
+    activity ? buildCommandCenterPrompt(activity.text, activity.status) : SYSTEM_PROMPT,
+    brain,
+  );
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   const candidates = [model];
   const failures: string[] = [];
@@ -428,7 +454,7 @@ export async function POST(request: Request) {
             model: currentModel,
             messages: [{ role: "system", content: systemContent }, ...promptMessages],
             stream: true,
-            temperature: 0.4,
+            temperature: commandCenter ? 0.1 : 0.4,
             max_tokens: 25000,
             ...(activeProvider.id === "openrouter" ? {
               plugins: [{ id: "auto-router", cost_tier: "low" }],

@@ -1,153 +1,122 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import "./chat.css";
 import { ThinkingOrb } from "thinking-orbs";
 import { MarkdownContent } from "@/src/components/markdown-content";
 
+/**
+ * UX Direct command center: a chat scoped to UX Direct data, the shared knowledge
+ * brain, and the last 7 days of Figma plugin activity. Everything else (audits, IA,
+ * benchmarking) was removed; new sections are added under "Coming next".
+ */
 type Role = "user" | "assistant";
-type BrainTrace = {
-  status: "complete" | "empty" | "degraded" | "disabled" | "unknown";
-  memoryCount: number;
-  knowledgeChunkCount: number;
-  durationMs: number;
-  model?: string;
-  learningStatus?: "none" | "learned" | "skipped_sensitive" | "failed";
+type ChatMessage = { id: string; role: Role; content: string; model?: string };
+type Tab = "chat" | "knowledge" | "activity";
+type ServiceStatus = { connected: boolean; provider?: string; defaultModel?: string; providerId?: string; error?: string };
+type ActivityItem = {
+  id: string; at: string; title: string; request: string;
+  outcome: "attempted" | "succeeded" | "verified" | "failed" | "unknown";
+  durationMs: number | null; model: string | null; summary: string; error: string; projectKey: string;
 };
-type ChatMessage = { id: string; role: Role; content: string; brain?: BrainTrace };
-type ChatModel = { id: string; name: string; contextLength?: number };
-type RegressionSuiteStatus = {
-  status: "not_configured" | "not_run" | "partial" | "passed" | "failed" | "unavailable";
-  configuredCases: number;
-  completedCases: number;
-  passed: number;
-  failed: number;
-  lastRunAt: string | null;
+type ActivityPayload = {
+  items: ActivityItem[];
+  summary: { windowDays: number; total: number; byOutcome: Record<ActivityItem["outcome"], number>; byDay: Array<{ day: string; count: number }> };
 };
-type ServiceStatus = {
-  connected: boolean;
-  checkedAt?: string;
-  error?: string;
-  defaultModel?: string;
-  provider?: string;
-  providerId?: "openrouter" | "freellmapi";
-  models: ChatModel[];
-  uxAudit: { reachable: boolean; baseUrl: string; error?: string };
-  brain: {
-    reachable: boolean;
-    error?: string;
-    retrievalRegressionTests?: RegressionSuiteStatus;
-    semanticVectorSearch?: string;
-  };
+type KnowledgePayload = {
+  rules: Array<{ id: string; title: string; rule: string; scope: string; kind: string; source: string; status: string; updatedAt: string }>;
+  documents: Array<{ id: string; title: string; projectKey: string; sourceType: string; status: string; updatedAt: string }>;
 };
-type Tab = "chat" | "audit" | "connections";
-type AuditTool = "ia" | "audit" | "benchmark";
 
-const HISTORY_KEY = "ux-direct-chat-v1";
-const AUDIT_URL = "https://uxaudit.zunaid-cb7.workers.dev";
-const auditTools: Array<{ id: AuditTool; title: string; description: string; icon: string; path: string }> = [
-  { id: "ia", title: "Information architecture", description: "Discover a website, inspect nested page structure, and select the journeys worth auditing.", icon: "⌘", path: "/ia-demo" },
-  { id: "audit", title: "Website UX audit", description: "Audit a live page or upload screenshots, then review evidence-marked findings and recommendations.", icon: "◉", path: "/" },
-  { id: "benchmark", title: "Competitive benchmarking", description: "Compare a client and competitors at the same desktop or mobile viewport.", icon: "⇄", path: "/benchmark" },
+const HISTORY_KEY = "ux-direct-command-chat-v1";
+const ACCESS_KEY_STORAGE = "ux-direct-command-key";
+const ACCESS_HEADER = "X-UXD-Command-Key";
+const TABS: Array<{ id: Tab; label: string; glyph: string }> = [
+  { id: "chat", label: "Chat", glyph: "◌" },
+  { id: "knowledge", label: "Shared knowledge", glyph: "✦" },
+  { id: "activity", label: "Plugin activity", glyph: "⌁" },
 ];
+// Skeleton only: planned command-center sections, not implemented yet.
+const COMING_NEXT = ["Context files", "Brain training", "Quality reports"];
+const OUTCOME_LABEL: Record<ActivityItem["outcome"], string> = { verified: "Verified", succeeded: "Succeeded", attempted: "In progress", failed: "Failed", unknown: "Unknown" };
 
-export default function ChatWorkspace() {
+function readStorage(key: string): string {
+  try { return window.localStorage.getItem(key) || ""; } catch { return ""; }
+}
+function writeStorage(key: string, value: string) {
+  try { if (value) window.localStorage.setItem(key, value); else window.localStorage.removeItem(key); } catch { /* Storage may be disabled. */ }
+}
+function formatWhen(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+export default function CommandCenter() {
   const [activeTab, setActiveTab] = useState<Tab>("chat");
-  const [auditTool, setAuditTool] = useState<AuditTool | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [status, setStatus] = useState<ServiceStatus | null>(null);
+  const [accessKey, setAccessKey] = useState("");
+  const [keyDraft, setKeyDraft] = useState("");
+  const [locked, setLocked] = useState<{ message: string } | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [historyReady, setHistoryReady] = useState(false);
   const [draft, setDraft] = useState("");
-  const [status, setStatus] = useState<ServiceStatus | null>(null);
-  const [statusBusy, setStatusBusy] = useState(false);
-  const [regressionBusy, setRegressionBusy] = useState(false);
-  const [regressionNotice, setRegressionNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [chatError, setChatError] = useState("");
-  const [selectedModel, setSelectedModel] = useState("");
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [activity, setActivity] = useState<ActivityPayload | null>(null);
+  const [knowledge, setKnowledge] = useState<KnowledgePayload | null>(null);
+  const [dataBusy, setDataBusy] = useState(false);
+  const [dataError, setDataError] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  async function refreshStatus() {
-    setStatusBusy(true);
-    try {
-      const response = await fetch("/api/assistant/status", { cache: "no-store" });
-      const payload = await response.json() as ServiceStatus;
-      setStatus(payload);
-      setSelectedModel((current) => {
-        if (current && payload.models.some((model) => model.id === current)) return current;
-        return payload.defaultModel || payload.models[0]?.id || "";
-      });
-    } catch {
-      setStatus({
-        connected: false,
-        error: "Could not reach the UX Direct status endpoint.",
-        models: [],
-        uxAudit: { reachable: false, baseUrl: AUDIT_URL },
-        brain: { reachable: false },
-      });
-    } finally {
-      setStatusBusy(false);
-    }
-  }
-
-  async function runRetrievalRegressionTests() {
-    setRegressionBusy(true);
-    setRegressionNotice("");
-    try {
-      const response = await fetch("/api/assistant/retrieval-evaluate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-        cache: "no-store",
-      });
-      const payload = await response.json() as { total?: number; passed?: number; failed?: number; error?: string; modelInferenceCalls?: number };
-      if (!response.ok) throw new Error(payload.error || "Retrieval regression tests could not be completed.");
-      setRegressionNotice(
-        "Completed " + (payload.total ?? 0) + " cases: " + (payload.passed ?? 0) + " passed, " +
-        (payload.failed ?? 0) + " failed. Model calls: " + (payload.modelInferenceCalls ?? 0) + "."
-      );
-      await refreshStatus();
-    } catch (error) {
-      setRegressionNotice(error instanceof Error ? error.message : "Retrieval regression run failed.");
-    } finally {
-      setRegressionBusy(false);
-    }
-  }
-
   useEffect(() => {
-    let mounted = true;
+    setAccessKey(readStorage(ACCESS_KEY_STORAGE));
     try {
-      const raw = window.localStorage.getItem(HISTORY_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as ChatMessage[];
-        if (Array.isArray(parsed)) setMessages(parsed.filter((item) =>
-          item && typeof item.id === "string" &&
-          (item.role === "user" || item.role === "assistant") &&
-          typeof item.content === "string"
-        ).slice(-100));
-      }
-    } catch { /* Ignore stale or invalid local history. */ }
+      const parsed = JSON.parse(readStorage(HISTORY_KEY) || "[]") as ChatMessage[];
+      if (Array.isArray(parsed)) setMessages(parsed.filter((m) => m && typeof m.id === "string" && (m.role === "user" || m.role === "assistant") && typeof m.content === "string").slice(-100));
+    } catch { /* Ignore stale history. */ }
     const hash = window.location.hash.replace("#", "");
-    if (hash === "audit" || hash === "connections" || hash === "chat") setActiveTab(hash);
+    if (TABS.some((tab) => tab.id === hash)) setActiveTab(hash as Tab);
     setHistoryReady(true);
-    void refreshStatus();
-    const onHash = () => {
-      const next = window.location.hash.replace("#", "");
-      if (next === "audit" || next === "connections" || next === "chat") setActiveTab(next);
-    };
-    window.addEventListener("hashchange", onHash);
-    return () => { mounted = false; window.removeEventListener("hashchange", onHash); if (!mounted) abortRef.current?.abort(); };
+    fetch("/api/assistant/status", { cache: "no-store" })
+      .then((response) => response.json() as Promise<ServiceStatus>)
+      .then(setStatus)
+      .catch(() => setStatus({ connected: false, error: "Could not reach the UX Direct status endpoint." }));
+    return () => abortRef.current?.abort();
   }, []);
 
-  useEffect(() => {
-    if (historyReady) {
-      try { window.localStorage.setItem(HISTORY_KEY, JSON.stringify(messages.slice(-100))); } catch { /* Storage may be disabled. */ }
-    }
-  }, [messages, historyReady]);
-
+  useEffect(() => { if (historyReady) writeStorage(HISTORY_KEY, JSON.stringify(messages.slice(-100))); }, [messages, historyReady]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: busy ? "auto" : "smooth", block: "end" }); }, [messages, busy]);
+
+  const handleLocked = useCallback(async (response: Response) => {
+    const payload = await response.json().catch(() => ({})) as { error?: string };
+    setLocked({ message: payload.error || "Command center access key is required." });
+  }, []);
+
+  const loadView = useCallback(async (view: "activity" | "knowledge") => {
+    setDataBusy(true);
+    setDataError("");
+    try {
+      const response = await fetch("/api/command-center?view=" + view, { cache: "no-store", headers: { [ACCESS_HEADER]: accessKey } });
+      if (response.status === 401 || response.status === 503 && (await response.clone().json().catch(() => ({}))).locked) { await handleLocked(response); return; }
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not load " + view + ".");
+      setLocked(null);
+      if (view === "activity") setActivity(payload as ActivityPayload); else setKnowledge(payload as KnowledgePayload);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : "Could not load data.");
+    } finally {
+      setDataBusy(false);
+    }
+  }, [accessKey, handleLocked]);
+
+  useEffect(() => {
+    if (!historyReady) return;
+    if (activeTab === "activity" && !activity) void loadView("activity");
+    if (activeTab === "knowledge" && !knowledge) void loadView("knowledge");
+  }, [activeTab, historyReady, activity, knowledge, loadView]);
 
   function navigate(next: Tab) {
     setActiveTab(next);
@@ -155,13 +124,16 @@ export default function ChatWorkspace() {
     window.history.replaceState(null, "", window.location.pathname + window.location.search + "#" + next);
   }
 
-  function openAuditTool(toolId: AuditTool) {
-    // IA is a first-party UX Direct page, not a route on the separate UX Audit worker.
-    if (toolId === "ia") {
-      window.location.assign("/ia-demo?from=audit");
-      return;
-    }
-    setAuditTool(toolId);
+  function unlock(event: FormEvent) {
+    event.preventDefault();
+    const value = keyDraft.trim();
+    if (!value) return;
+    writeStorage(ACCESS_KEY_STORAGE, value);
+    setAccessKey(value);
+    setKeyDraft("");
+    setLocked(null);
+    setActivity(null);
+    setKnowledge(null);
   }
 
   function newChat() {
@@ -177,10 +149,6 @@ export default function ChatWorkspace() {
   async function sendText(value?: string) {
     const text = (value ?? draft).trim();
     if (!text || busy) return;
-    if (!status?.connected || !selectedModel) {
-      setChatError((status?.provider || "Model provider") + " is not ready. Refresh the connection status and check its connection.");
-      return;
-    }
     const conversation = [...messages, { id: crypto.randomUUID(), role: "user" as const, content: text }];
     const assistantId = crypto.randomUUID();
     setMessages([...conversation, { id: assistantId, role: "assistant", content: "" }]);
@@ -189,31 +157,24 @@ export default function ChatWorkspace() {
     setBusy(true);
     const controller = new AbortController();
     abortRef.current = controller;
-    let brainTrace: BrainTrace | undefined;
     try {
       const response = await fetch("/api/assistant/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-        body: JSON.stringify({
-          model: selectedModel,
-          messages: conversation,
-        }),
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream", [ACCESS_HEADER]: accessKey },
+        body: JSON.stringify({ mode: "command-center", messages: conversation.map(({ role, content }) => ({ role, content })) }),
         signal: controller.signal,
       });
-      const headerStatus = response.headers.get("X-UXD-Brain-Status");
-      brainTrace = {
-        status: headerStatus === "complete" || headerStatus === "empty" || headerStatus === "degraded" || headerStatus === "disabled" ? headerStatus : "unknown",
-        memoryCount: Number(response.headers.get("X-UXD-Brain-Memories") || 0) || 0,
-        knowledgeChunkCount: Number(response.headers.get("X-UXD-Brain-References") || 0) || 0,
-        durationMs: Number(response.headers.get("X-UXD-Brain-Latency-Ms") || 0) || 0,
-        model: response.headers.get("X-UXD-Model") || selectedModel,
-        learningStatus: response.headers.get("X-UXD-Learning-Status") === "learned" || response.headers.get("X-UXD-Learning-Status") === "skipped_sensitive" || response.headers.get("X-UXD-Learning-Status") === "failed" ? response.headers.get("X-UXD-Learning-Status") as "learned" | "skipped_sensitive" | "failed" : "none",
-      };
+      if (response.status === 401 || response.status === 503 && response.headers.get("content-type")?.includes("json") && (await response.clone().json().catch(() => ({}))).locked) {
+        await handleLocked(response);
+        setMessages(conversation);
+        return;
+      }
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        throw new Error(typeof payload.error === "string" ? payload.error : (status?.provider || "Model provider") + " returned HTTP " + response.status + ".");
+        throw new Error(typeof payload.error === "string" ? payload.error : "Chat returned HTTP " + response.status + ".");
       }
       if (!response.body) throw new Error("The model response stream was empty.");
+      const model = response.headers.get("X-UXD-Model") || undefined;
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -224,18 +185,12 @@ export default function ChatWorkspace() {
         const data = trimmed.slice(5).trim();
         if (!data || data === "[DONE]") return;
         try {
-          const payload = JSON.parse(data);
-          const delta = payload.choices?.[0]?.delta?.content;
-          const textDelta = typeof delta === "string"
-            ? delta
-            : Array.isArray(delta)
-              ? delta.filter((part: unknown) => !!part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string").map((part: { text: string }) => part.text).join("")
-              : "";
-          if (textDelta) {
-            fullText += textDelta;
-            setMessages([...conversation, { id: assistantId, role: "assistant", content: fullText, brain: brainTrace }]);
+          const delta = JSON.parse(data).choices?.[0]?.delta?.content;
+          if (typeof delta === "string" && delta) {
+            fullText += delta;
+            setMessages([...conversation, { id: assistantId, role: "assistant", content: fullText, model }]);
           }
-        } catch { /* Ignore malformed or non-text SSE event frames. */ }
+        } catch { /* Ignore non-text SSE frames. */ }
       };
       while (true) {
         const chunk = await reader.read();
@@ -243,18 +198,18 @@ export default function ChatWorkspace() {
         buffer += decoder.decode(chunk.value, { stream: true });
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || "";
-        for (const line of lines) consumeLine(line);
+        lines.forEach(consumeLine);
       }
       buffer += decoder.decode();
       if (buffer.trim()) consumeLine(buffer);
       if (!fullText.trim() && !controller.signal.aborted) {
-        setMessages([...conversation, { id: assistantId, role: "assistant", content: (status?.provider || "The selected model") + " returned no readable text. Please try again.", brain: brainTrace }]);
+        setMessages([...conversation, { id: assistantId, role: "assistant", content: "No readable answer came back. Please try again.", model }]);
       }
     } catch (error) {
       if (!controller.signal.aborted) {
         const message = error instanceof Error ? error.message : "Chat request failed.";
         setChatError(message);
-        setMessages([...conversation, { id: assistantId, role: "assistant", content: "I couldn't complete that response. " + message, brain: brainTrace }]);
+        setMessages([...conversation, { id: assistantId, role: "assistant", content: "I couldn't complete that response. " + message }]);
       }
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
@@ -267,8 +222,12 @@ export default function ChatWorkspace() {
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendText(); }
   }
 
-  const activeTitle = activeTab === "chat" ? "Chat" : activeTab === "audit" ? "Audit studio" : "Connections";
-  const auditToolInfo = auditTools.find((tool) => tool.id === auditTool);
+  const activeTitle = TABS.find((tab) => tab.id === activeTab)?.label || "Chat";
+  const lockPanel = locked && <form className="ud-cc-lock" onSubmit={unlock}>
+    <strong>Command center locked</strong>
+    <p>{locked.message}</p>
+    <div><input type="password" value={keyDraft} onChange={(event) => setKeyDraft(event.target.value)} placeholder="Access key" aria-label="Command center access key" autoComplete="off" /><button type="submit" className="ud-secondary-button">Unlock</button></div>
+  </form>;
 
   return (
     <main className="ud-shell">
@@ -278,21 +237,19 @@ export default function ChatWorkspace() {
           <span className="ud-brand-name">UX <strong>Direct</strong></span>
           <button className="ud-mobile-close" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)}>×</button>
         </div>
-        <button className="ud-new-chat" onClick={newChat}><span>＋</span> New chat <kbd>⌘ K</kbd></button>
-        <div className="ud-nav-label">WORKSPACE</div>
+        <button className="ud-new-chat" onClick={newChat}><span>＋</span> New chat</button>
+        <div className="ud-nav-label">COMMAND CENTER</div>
         <nav className="ud-nav" aria-label="Main navigation">
-          <button className={"ud-nav-item" + (activeTab === "chat" ? " active" : "")} onClick={() => navigate("chat")}><span className="ud-nav-glyph">◌</span><span>Chat</span><span className="ud-nav-trailing">↗</span></button>
-          <button className={"ud-nav-item" + (activeTab === "audit" ? " active" : "")} onClick={() => navigate("audit")}><span className="ud-nav-glyph">⌘</span><span>Audit</span><span className="ud-nav-trailing">↗</span></button>
-          <button className={"ud-nav-item" + (activeTab === "connections" ? " active" : "")} onClick={() => navigate("connections")}><span className="ud-nav-glyph">⌁</span><span>Connections</span><span className="ud-nav-trailing">↗</span></button>
+          {TABS.map((tab) => <button key={tab.id} className={"ud-nav-item" + (activeTab === tab.id ? " active" : "")} onClick={() => navigate(tab.id)}><span className="ud-nav-glyph">{tab.glyph}</span><span>{tab.label}</span><span className="ud-nav-trailing">↗</span></button>)}
         </nav>
         <div className="ud-history">
-          <div className="ud-nav-label">RECENT CHATS</div>
-          {messages.length ? <button className="ud-history-item" onClick={() => navigate("chat")}><span>◌</span><span>{messages.find((message) => message.role === "user")?.content.slice(0, 36) || "Current conversation"}</span></button> : <p className="ud-empty-history">Your conversations will appear here.</p>}
+          <div className="ud-nav-label">COMING NEXT</div>
+          {COMING_NEXT.map((label) => <div className="ud-cc-soon" key={label}><span>{label}</span><i>Soon</i></div>)}
         </div>
         <div className="ud-sidebar-bottom">
           <div className="ud-user-dot">Z</div>
-          <div className="ud-user-copy"><strong>UX Intelligence</strong><span>Shared brain enabled</span></div>
-          <span className={"ud-live-dot" + (status?.connected ? " online" : "")} title={status?.connected ? (status.provider || "Model provider") + " connected" : (status?.provider || "Model provider") + " not connected"} />
+          <div className="ud-user-copy"><strong>UX Direct</strong><span>Command center</span></div>
+          <span className={"ud-live-dot" + (status?.connected ? " online" : "")} title={status?.connected ? "Model connected" : "Model not connected"} />
         </div>
       </aside>
 
@@ -302,76 +259,92 @@ export default function ChatWorkspace() {
             <button className="ud-mobile-menu" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}>☰</button>
             <span className="ud-mobile-brand">UX <strong>Direct</strong></span>
           </div>
-          <div className="ud-breadcrumb"><span>Workspace</span><b>/</b><strong>{activeTitle}</strong></div>
+          <div className="ud-breadcrumb"><span>Command center</span><b>/</b><strong>{activeTitle}</strong></div>
           <div className="ud-top-actions">
-            <span className={"ud-provider-chip" + (status?.connected ? " connected" : status ? " disconnected" : "")}><i />{status?.connected ? (status.provider || "Model provider") + " · " + (selectedModel || status.defaultModel || "Auto") : statusBusy ? "Connecting…" : "Connection needed"}</span>
-            <button className="ud-icon-button" onClick={() => void refreshStatus()} title="Refresh service connections" aria-label="Refresh service connections">↻</button>
-            <div className="ud-avatar">Z</div>
+            <span className={"ud-provider-chip" + (status?.connected ? " connected" : status ? " disconnected" : "")}><i />{status?.connected ? (status.provider || "Model") + " · " + (status.defaultModel || "auto") : status ? "Model offline" : "Connecting…"}</span>
           </div>
         </header>
 
         {activeTab === "chat" && <section className="ud-chat-workspace">
+          {lockPanel && <div className="ud-cc-lock-wrap">{lockPanel}</div>}
           {messages.length === 0 ? <div className="ud-welcome">
             <div className="ud-thinking-orb" aria-label="UX Direct thinking orb">
-              <ThinkingOrb state={busy ? "working" : statusBusy ? "connecting" : messages.length ? "solving" : "breathing"} size={64} theme="dark" />
+              <ThinkingOrb state={busy ? "working" : "breathing"} size={64} theme="dark" />
             </div>
-            <div className="ud-welcome-kicker"><span /> YOUR AI UX PARTNER</div>
-            <h1>Think it through.<br /><em>Make it better.</em></h1>
-            <p className="ud-welcome-copy">A senior UX partner for product decisions, audits, information architecture, and the details that make experiences work.</p>
+            <div className="ud-welcome-kicker"><span /> UX DIRECT DATA ONLY</div>
+            <h1>Ask about our<br /><em>UX Direct work.</em></h1>
+            <p className="ud-welcome-copy">Answers come only from the shared knowledge brain and the last 7 days of Figma plugin activity. General questions are declined.</p>
             <div className="ud-prompt-grid">
-              <button onClick={() => void sendText("Help me plan a UX audit for an Indian banking website.")}><span>◉</span><strong>Plan a UX audit</strong><small>Turn a brief into an evidence-led workflow.</small><b>↗</b></button>
-              <button onClick={() => void sendText("Help me improve the information architecture of a banking website.")}><span>⌘</span><strong>Improve information architecture</strong><small>Structure journeys and simplify navigation.</small><b>↗</b></button>
-              <button onClick={() => void sendText("Help me benchmark Ujjivan Small Finance Bank against its competitors.")}><span>⇄</span><strong>Benchmark competitors</strong><small>Compare journeys at the same viewport.</small><b>↗</b></button>
-              <button onClick={() => void sendText("Review this UX problem like a senior designer. Help me frame evidence, severity, and recommendations.")}><span>✦</span><strong>Think through a UX problem</strong><small>Reason about evidence, severity, and trade-offs.</small><b>↗</b></button>
+              <button onClick={() => void sendText("Is hafte plugin se humne kya kya kiya?")}><span>⌁</span><strong>This week in the plugin</strong><small>Runs, outcomes and failures from the last 7 days.</small><b>↗</b></button>
+              <button onClick={() => void sendText("Kaunse plugin tasks fail hue aur kyun?")}><span>!</span><strong>What failed and why</strong><small>Failed runs with their recorded errors.</small><b>↗</b></button>
+              <button onClick={() => void sendText("Shared brain mein Figma output ke liye kaunse rules hain?")}><span>✦</span><strong>Rules the brain knows</strong><small>Stored rules for Figma output.</small><b>↗</b></button>
+              <button onClick={() => void sendText("Kal humne kya kiya tha plugin mein?")}><span>◷</span><strong>What did we do yesterday</strong><small>Look up a specific day.</small><b>↗</b></button>
             </div>
           </div> : <div className="ud-messages">
-            <div className="ud-thread-heading"><span className="ud-thread-mark">◌</span><div><strong>UX Direct</strong><small>{status?.providerId === "freellmapi" ? "FreeLLMAPI · auto" : "OpenRouter Auto · low cost, throughput-prioritized"}</small></div><button onClick={newChat}>New chat ＋</button></div>
+            <div className="ud-thread-heading"><span className="ud-thread-mark">◌</span><div><strong>UX Direct chat</strong><small>Scoped to shared knowledge + plugin activity</small></div><button onClick={newChat}>New chat ＋</button></div>
             {messages.map((message) => <article className={"ud-message " + message.role} key={message.id}>
               <div className={"ud-message-avatar " + message.role}>{message.role === "assistant" ? "u" : "Z"}</div>
-              <div className="ud-message-body"><div className="ud-message-role">{message.role === "assistant" ? "UX Direct" : "You"}</div><div className="ud-message-text">{message.content ? (message.role === "assistant" ? <MarkdownContent content={message.content} /> : message.content) : (busy && message.role === "assistant" ? <span className="ud-typing"><ThinkingOrb state="solving" size={20} theme="dark" /><span>Thinking through your request…</span></span> : "")}</div>{message.brain && <div className="ud-message-meta"><span className={message.brain.status === "complete" && (message.brain.memoryCount + message.brain.knowledgeChunkCount) > 0 ? "retrieval-ok" : "retrieval-note"}>{message.brain.status === "complete" ? "Shared brain · " + message.brain.memoryCount + " memories · " + message.brain.knowledgeChunkCount + " references" : message.brain.status === "empty" ? "Shared brain · no matching approved context" : message.brain.status === "disabled" ? "Shared brain · API key not configured" : message.brain.status === "degraded" ? "Shared brain · retrieval unavailable" : "Shared brain · status not reported"}</span>{message.brain.model && <span>Model · {message.brain.model.split("/").slice(-1)[0].replace(/:free$/, "")}</span>}{message.brain.learningStatus === "learned" && <span>Learning · added to shared memory</span>}{message.brain.learningStatus === "skipped_sensitive" && <span>Learning · sensitive content not stored</span>}{message.brain.learningStatus === "failed" && <span>Learning · capture failed</span>}</div>}</div>
+              <div className="ud-message-body">
+                <div className="ud-message-role">{message.role === "assistant" ? "UX Direct" : "You"}</div>
+                <div className="ud-message-text">{message.content ? (message.role === "assistant" ? <MarkdownContent content={message.content} /> : message.content) : (busy && message.role === "assistant" ? <span className="ud-typing"><ThinkingOrb state="solving" size={20} theme="dark" /><span>Looking through UX Direct data…</span></span> : "")}</div>
+                {message.model && <div className="ud-message-meta"><span>{message.model}</span></div>}
+              </div>
             </article>)}
             <div ref={endRef} />
           </div>}
           <div className="ud-composer-zone">
             {chatError && <div className="ud-chat-error" role="alert">{chatError}</div>}
             <form className="ud-composer" onSubmit={onSubmit}>
-              <textarea ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onComposerKeyDown} placeholder={status?.connected ? "Message UX Direct…" : "Connecting to " + (status?.provider || "model provider") + "…"} rows={1} aria-label="Message UX Direct" disabled={statusBusy} />
+              <textarea ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onComposerKeyDown} placeholder="Ask about UX Direct work…" rows={1} aria-label="Message UX Direct" />
               <div className="ud-composer-bottom">
-                <div className="ud-composer-meta">
-                  <span className="ud-mode-tag"><i /> {status?.providerId === "freellmapi" ? "SMART ROUTING" : "LOW-COST AUTO"}</span>
-                  <label className="ud-model-select-label"><span>Model</span><select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={!status?.models.length} aria-label="Select chat routing mode">{status?.models.map((model) => <option value={model.id} key={model.id}>{model.name}</option>)}</select></label>
-                </div>
-                {busy ? <button type="button" className="ud-send-button stop" onClick={() => abortRef.current?.abort()}><span>■</span> Stop</button> : <button type="submit" className="ud-send-button" disabled={!draft.trim() || !status?.connected || !selectedModel} aria-label="Send message"><span>↑</span></button>}
+                <div className="ud-composer-meta"><span className="ud-mode-tag"><i /> UX DIRECT DATA ONLY</span></div>
+                {busy ? <button type="button" className="ud-send-button stop" onClick={() => abortRef.current?.abort()}><span>■</span> Stop</button> : <button type="submit" className="ud-send-button" disabled={!draft.trim()} aria-label="Send message"><span>↑</span></button>}
               </div>
             </form>
-            <p className="ud-disclaimer">{status?.providerId === "freellmapi" ? "FreeLLMAPI uses its auto profile for chat, images and Figma. The upstream model it selects can vary." : "UX Direct lets OpenRouter choose a suitable model in its low-cost band and prioritizes throughput. The selected model and actual usage cost can vary."}</p>
           </div>
         </section>}
 
-        {activeTab === "audit" && <section className="ud-audit-workspace">
-          {!auditTool ? <div className="ud-audit-landing">
-            <div className="ud-page-overline">UX INTELLIGENCE · AUDIT</div><h1>Your audit workspace.</h1><p>Discover structure, inspect real screens, and benchmark the experience — all from UX Direct.</p>
-            <div className="ud-audit-tool-grid">{auditTools.map((tool, index) => <button className="ud-audit-tool-card" key={tool.id} onClick={() => openAuditTool(tool.id)}>
-              <div className="ud-audit-card-top"><span>{tool.icon}</span><i>0{index + 1}</i></div><h2>{tool.title}</h2><p>{tool.description}</p><b>Open workspace <span>→</span></b>
-            </button>)}</div>
-            <div className="ud-audit-note"><span>✦</span><p><strong>Evidence first, recommendations second.</strong> UX Direct opens the existing audit engine inside this workspace. Findings continue to use the current audit API and Past Findings flow.</p></div>
-          </div> : <div className="ud-audit-embedded">
-            <div className="ud-audit-toolbar">
-              <button className="ud-audit-back" onClick={() => setAuditTool(null)}>← Audit workspace</button>
-              <div className="ud-audit-tool-switcher">{auditTools.map((tool) => <button className={auditTool === tool.id ? "active" : ""} key={tool.id} onClick={() => openAuditTool(tool.id)}>{tool.title}</button>)}</div>
+        {activeTab === "knowledge" && <section className="ud-connections-workspace">
+          <div className="ud-page-overline">SHARED BRAIN</div>
+          <div className="ud-connections-heading"><div><h1>Shared knowledge.</h1><p>Active rules and reference documents the plugin and chat learn from.</p></div><button className="ud-secondary-button" onClick={() => void loadView("knowledge")} disabled={dataBusy}>{dataBusy ? "Loading…" : "Refresh ↻"}</button></div>
+          {lockPanel}
+          {dataError && <div className="ud-chat-error" role="alert">{dataError}</div>}
+          {knowledge && <>
+            <div className="ud-cc-stats"><div><b>{knowledge.rules.length}</b><span>Active rules</span></div><div><b>{knowledge.documents.length}</b><span>Reference documents</span></div></div>
+            <h2 className="ud-cc-section">Rules</h2>
+            {knowledge.rules.length ? <div className="ud-cc-list">{knowledge.rules.map((rule) => <article className="ud-cc-row" key={rule.id}>
+              <div className="ud-cc-row-top"><strong>{rule.title}</strong><span className="ud-status-pill muted">{rule.scope || "shared"}</span></div>
+              <p>{rule.rule}</p>
+              <small>{[rule.kind, rule.source, formatWhen(rule.updatedAt)].filter(Boolean).join(" · ")}</small>
+            </article>)}</div> : <p className="ud-cc-empty">No active rules yet.</p>}
+            <h2 className="ud-cc-section">Reference documents</h2>
+            {knowledge.documents.length ? <div className="ud-cc-list">{knowledge.documents.map((doc) => <article className="ud-cc-row" key={doc.id}>
+              <div className="ud-cc-row-top"><strong>{doc.title}</strong><span className="ud-status-pill muted">{doc.projectKey || "shared"}</span></div>
+              <small>{[doc.sourceType, formatWhen(doc.updatedAt)].filter(Boolean).join(" · ")}</small>
+            </article>)}</div> : <p className="ud-cc-empty">No reference documents yet. File uploads come later.</p>}
+          </>}
+        </section>}
+
+        {activeTab === "activity" && <section className="ud-connections-workspace">
+          <div className="ud-page-overline">FIGMA PLUGIN · LAST 7 DAYS</div>
+          <div className="ud-connections-heading"><div><h1>Plugin activity.</h1><p>Every recorded plugin task from the last 7 days, newest first.</p></div><button className="ud-secondary-button" onClick={() => void loadView("activity")} disabled={dataBusy}>{dataBusy ? "Loading…" : "Refresh ↻"}</button></div>
+          {lockPanel}
+          {dataError && <div className="ud-chat-error" role="alert">{dataError}</div>}
+          {activity && <>
+            <div className="ud-cc-stats">
+              <div><b>{activity.summary.total}</b><span>Runs</span></div>
+              <div><b>{activity.summary.byOutcome.verified}</b><span>Verified</span></div>
+              <div><b>{activity.summary.byOutcome.succeeded}</b><span>Succeeded</span></div>
+              <div><b>{activity.summary.byOutcome.failed}</b><span>Failed</span></div>
             </div>
-            <iframe className="ud-audit-frame" key={auditTool} title={auditToolInfo?.title || "UX Audit"} src={AUDIT_URL + (auditToolInfo?.path || "/") + "?embed=1"} allow="clipboard-read; clipboard-write" />
-          </div>}
-        </section>}
-
-        {activeTab === "connections" && <section className="ud-connections-workspace">
-          <div className="ud-page-overline">SYSTEM STATUS</div><div className="ud-connections-heading"><div><h1>Connections.</h1><p>Your AI model, audit engine, and shared brain — in one place.</p></div><button className="ud-secondary-button" onClick={() => void refreshStatus()} disabled={statusBusy}>{statusBusy ? "Checking…" : "Check again ↻"}</button></div>
-          <div className="ud-connection-grid">
-            <article className="ud-connection-card"><div className="ud-connection-card-top"><span className="ud-connection-icon purple">◎</span><span className={"ud-status-pill " + (status?.connected ? "ok" : "error")}>{status?.connected ? "Connected" : statusBusy ? "Checking" : "Needs attention"}</span></div><h2>{status?.providerId === "freellmapi" ? "FreeLLMAPI auto routing" : "OpenRouter Auto routing"}</h2><p>{status?.providerId === "freellmapi" ? "Chat, screenshots and Figma planning all use the auto profile, resolved by your FreeLLMAPI fallback chain." : "OpenRouter selects a suitable model dynamically, prioritizes its low-cost band, and prefers higher-throughput endpoints. No fixed model allowlist or app-imposed spending budget is sent; actual cost depends on the selected model."}</p><dl><div><dt>Routing policy</dt><dd>{status?.providerId === "freellmapi" ? "auto" : "Low cost + throughput"}</dd></div><div><dt>Model choice</dt><dd>{status?.providerId === "freellmapi" ? "Managed by FreeLLMAPI chains" : "Managed by OpenRouter"}</dd></div><div><dt>Last check</dt><dd>{status?.checkedAt ? new Date(status.checkedAt).toLocaleTimeString() : "Not checked"}</dd></div></dl>{status?.error && <p className="ud-connection-error">{status.error}</p>}</article>
-            <article className="ud-connection-card"><div className="ud-connection-card-top"><span className="ud-connection-icon green">⌘</span><span className={"ud-status-pill " + (status?.uxAudit.reachable ? "ok" : "error")}>{status?.uxAudit.reachable ? "Reachable" : statusBusy ? "Checking" : "Unavailable"}</span></div><h2>UX Audit engine</h2><p>The existing audit product is embedded here. It remains a separate backend Worker, but you do not need to open it as a second product.</p><dl><div><dt>Service</dt><dd>Cloudflare Worker</dd></div><div><dt>Workspace route</dt><dd>/#audit</dd></div><div><dt>Audit endpoint</dt><dd>Server-side</dd></div></dl>{!status?.uxAudit.reachable && <p className="ud-connection-error">{status?.uxAudit.error || "Audit worker did not respond during the last check."}</p>}</article>
-            <article className="ud-connection-card"><div className="ud-connection-card-top"><span className="ud-connection-icon cyan">✦</span><span className={"ud-status-pill " + (status?.brain.reachable ? "ok" : "muted")}>{status?.brain.reachable ? "Reachable" : statusBusy ? "Checking" : "Not verified"}</span></div><h2>Shared Knowledge Brain</h2><p>Approved shared context is retrieved for chat when the server-side brain key is configured. Chat continues if memory retrieval is temporarily unavailable.</p><dl><div><dt>Memory context</dt><dd>{status?.brain.reachable ? "Available" : "Best effort"}</dd></div><div><dt>Scope</dt><dd>UX Direct + UX Audit</dd></div><div><dt>Retrieval tests</dt><dd>{status?.brain.retrievalRegressionTests?.configuredCases ? status.brain.retrievalRegressionTests.configuredCases + " configured · " + (status.brain.retrievalRegressionTests.status === "not_run" ? "not run" : status.brain.retrievalRegressionTests.status) : status?.brain.retrievalRegressionTests?.status === "not_configured" ? "Not configured" : "Not verified"}</dd></div><div><dt>Last evaluation</dt><dd>{status?.brain.retrievalRegressionTests?.lastRunAt ? status.brain.retrievalRegressionTests.passed + "/" + status.brain.retrievalRegressionTests.configuredCases + " passed · " + new Date(status.brain.retrievalRegressionTests.lastRunAt).toLocaleTimeString() : "Not run yet"}</dd></div><div><dt>Retrieval mode</dt><dd>Postgres full-text · no model call</dd></div></dl><button className="ud-secondary-button" onClick={() => void runRetrievalRegressionTests()} disabled={!status?.brain.reachable || regressionBusy}>{regressionBusy ? "Running retrieval tests…" : "Run retrieval tests ↻"}</button>{regressionNotice && <p className="ud-connection-error" role="status">{regressionNotice}</p>}</article>
-          </div>
-          <section className="ud-connector-footer"><div><span className="ud-connector-icon">⌁</span><div><strong>ChatGPT MCP connector</strong><p>Use this endpoint when connecting UX Direct as a ChatGPT tool provider. It exposes audit and shared-brain tools through OAuth, separately from this app chat.</p><code>{typeof window !== "undefined" ? window.location.origin + "/api/mcp" : "/api/mcp"}</code></div></div><a href="/.well-known/oauth-authorization-server" target="_blank" rel="noreferrer">View OAuth metadata ↗</a></section>
+            {activity.items.length ? <div className="ud-cc-list">{activity.items.map((item) => <article className="ud-cc-row" key={item.id}>
+              <div className="ud-cc-row-top"><strong>{item.title}</strong><span className={"ud-status-pill " + (item.outcome === "failed" ? "error" : item.outcome === "verified" || item.outcome === "succeeded" ? "ok" : "muted")}>{OUTCOME_LABEL[item.outcome]}</span></div>
+              {item.request && item.request !== item.title && <p>{item.request}</p>}
+              {item.summary && <p>{item.summary}</p>}
+              {item.error && <p className="ud-cc-error-text">{item.error}</p>}
+              <small>{[formatWhen(item.at), item.model, item.durationMs !== null ? Math.round(item.durationMs / 1000) + "s" : ""].filter(Boolean).join(" · ")}</small>
+            </article>)}</div> : <p className="ud-cc-empty">No plugin runs in the last 7 days.</p>}
+          </>}
         </section>}
       </section>
       {mobileNavOpen && <button className="ud-mobile-scrim" onClick={() => setMobileNavOpen(false)} aria-label="Close navigation" />}

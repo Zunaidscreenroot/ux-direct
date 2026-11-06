@@ -30,9 +30,26 @@ function fold(value: string): string {
   return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}₹]/gu, "");
 }
 
-function collectText(nodes: RecordLike[], output: string[] = [], depth = 0): string[] {
-  if (depth > 8) return output;
+function indexById(nodes: RecordLike[], out = new Map<string, RecordLike>(), depth = 0): Map<string, RecordLike> {
+  if (depth > 12) return out;
   for (const node of nodes) {
+    if (typeof node.id === "string") out.set(node.id, node);
+    indexById(childrenOf(node), out, depth + 1);
+  }
+  return out;
+}
+
+/** sourceById: a CLONE copies its source layer, so the source layer's own texts count as present. */
+function collectText(nodes: RecordLike[], output: string[] = [], depth = 0, sourceById?: Map<string, RecordLike>): string[] {
+  if (depth > 12) return output;
+  for (const node of nodes) {
+    // Hidden or fully transparent layers are not visible content.
+    if (node.visible === false || node.opacity === 0) continue;
+    if (node.type === "CLONE" && sourceById && typeof node.sourceNodeId === "string") {
+      const original = sourceById.get(node.sourceNodeId);
+      if (original) collectText([original], output, 0);
+      continue;
+    }
     if (node.type === "TEXT" && typeof node.text === "string" && node.text.trim()) {
       output.push(node.text.trim().slice(0, 240));
     }
@@ -47,7 +64,7 @@ function collectText(nodes: RecordLike[], output: string[] = [], depth = 0): str
         if (typeof value === "string" && value.trim()) output.push(value.trim().slice(0, 240));
       }
     }
-    collectText(childrenOf(node), output, depth + 1);
+    collectText(childrenOf(node), output, depth + 1, sourceById);
   }
   return output;
 }
@@ -138,7 +155,7 @@ export function auditDesignPlanQuality(
   };
 
   const sourceTexts = collectText(sourceNodes);
-  const outputTexts = collectText(outputNodes);
+  const outputTexts = collectText(outputNodes, [], 0, indexById(sourceNodes));
   const outputCorpus = fold(outputTexts.join(" "));
   const sourceUnique = [...new Set(sourceTexts)];
   // Retain all source copy/data by default. A removal/rewrite is allowed only
@@ -326,7 +343,7 @@ export function missingSourceTexts(planValue: unknown, sourceCanvasValue: unknow
   const plan = isRecord(planValue) ? planValue : {};
   const sourceCanvas = isRecord(sourceCanvasValue) ? sourceCanvasValue : {};
   const prompt = typeof promptValue === "string" ? promptValue : "";
-  const outputCorpus = fold(collectText(nodesOf(plan.elements)).join(" "));
+  const outputCorpus = fold(collectText(nodesOf(plan.elements), [], 0, indexById(nodesOf(sourceCanvas.nodes))).join(" "));
   return [...new Set(collectText(nodesOf(sourceCanvas.nodes)))].filter((text) => {
     const normalized = fold(text);
     return normalized.length >= 2 && !hasExplicitRemoval(text, prompt) && !outputCorpus.includes(normalized);

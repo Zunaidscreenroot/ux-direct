@@ -316,6 +316,8 @@
     const pendingCanvasCommands = new Map();
     // Matches the backend limit for renderedScreen/sourceImage/outputImage data URLs.
     const RENDERED_IMAGE_MAX_CHARS = 1500000;
+    // Features this build's code.js executes; the server only emits what the plugin can run.
+    const PLUGIN_CAPABILITIES = ["clone"];
     // All native reads/writes share one FIFO so background status checks and design-generation
     // steps cannot race the bridge's single in-flight canvas command slot.
     let nativeCanvasCommandTail = Promise.resolve();
@@ -1521,19 +1523,21 @@
           });
           const result = await response.json().catch(function () { return {}; });
           if (!response.ok || result.ok !== true) {
-            console.warn("[uxd-task-run] final outcome was not confirmed:", String(result.error || response.status).slice(0, 160));
-            return "\nTask outcome logging could not be confirmed.";
+            const reason = String(result.error || ("HTTP " + response.status)).slice(0, 160);
+            console.warn("[uxd-task-run] final outcome was not confirmed:", reason);
+            return "\nTask outcome logging could not be confirmed (" + reason + ").";
           }
-          return result.lessonStatus ? "\nBrain learning: " + String(result.lessonStatus) + "." : "";
+          return result.lessonStatus ? "\nBrain learning: " + String(result.lessonStatus) + (result.lessonStatus === "stored" && outcome === "failed" ? " (failure lesson, not an example)" : "") + "." : "";
         } catch (error) {
           console.warn("[uxd-task-run] final outcome logging failed:", String(error && error.message || error).slice(0, 160));
-          return "\\nTask outcome logging could not be confirmed.";
+          return "\nTask outcome logging could not be confirmed (" + String(error && error.message || error).slice(0, 120) + ").";
         }
       }
 
       stage("scanning", "Scanning selected screen, nested layers, text and styles…");
+      // Deep read: card internals (logos, icons, charts) must be visible to keep them in the variation.
       const canvas = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 4, maxNodes: 100, includeStyles: true, includeVariables: true, includeComponents: true
+        scope: "selection", maxDepth: 12, maxNodes: 400, includeStyles: true, includeVariables: true, includeComponents: true
       }, 90000);
       const selectedNodes = Array.isArray(canvas && canvas.nodes) ? canvas.nodes : [];
       const expectsSelection = /\b(selected|selection|this frame|this screen|current frame|variation|variant|duplicate|redesign this|improve this)\b/i.test(prompt);
@@ -1571,7 +1575,8 @@
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning })
+        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning, capabilities: PLUGIN_CAPABILITIES,
+          ...(designOptions && designOptions.variation ? { variation: designOptions.variation } : {}) })
       });
       const payload = await response.json().catch(function () { return {}; });
       if (!response.ok || payload.ok !== true || !payload.plan || !Array.isArray(payload.plan.elements)) {
@@ -1587,8 +1592,8 @@
       // fewer sections/layers; model-authored layer trees keep the richness floor.
       const blockRendered = payload.planFormat === "blocks";
       const minSections = blockRendered ? 1 : 3, minNodes = blockRendered ? 2 : 18;
-      if (plan.elements.length < minSections || plan.elements.length > 8 || planNodeCount < minNodes || planNodeCount > 80) {
-        throw new Error("The proposed design plan must contain " + minSections + "–8 top-level sections and " + minNodes + "–80 native layers. No canvas changes were made.");
+      if (plan.elements.length < minSections || plan.elements.length > 8 || planNodeCount < minNodes || planNodeCount > 140) {
+        throw new Error("The proposed design plan must contain " + minSections + "–8 top-level sections and " + minNodes + "–140 native layers. No canvas changes were made.");
       }
       const memory = payload.brain && payload.brain.status === "complete"
         ? String(payload.brain.memories || 0) + " memories and " + String(payload.brain.knowledgeChunks || 0) + " Knowledge Base chunks retrieved"
@@ -1596,12 +1601,18 @@
       stage("planning", "Plan validated · " + memory + (renderedScreen ? " · rendered screenshot analysed" : " · layer-only analysis"));
 
       const viewport = canvas && canvas.viewport && canvas.viewport.bounds ? canvas.viewport.bounds : {};
-      const rootX = placement ? Math.max(-10000, Math.min(9000, placement.x)) : sourceNode && Number.isFinite(sourceNode.x)
+      let rootX = placement ? Math.max(-10000, Math.min(9000, placement.x)) : sourceNode && Number.isFinite(sourceNode.x)
         ? Math.max(-10000, Math.min(9000, sourceNode.x + (Number(sourceNode.width) || Number(plan.frame.width) || 393) + 100))
         : Math.max(40, Math.min(9000, Number(viewport.x) + 80 || 80));
-      const rootY = placement ? Math.max(-10000, Math.min(9000, placement.y)) : sourceNode && Number.isFinite(sourceNode.y)
+      let rootY = placement ? Math.max(-10000, Math.min(9000, placement.y)) : sourceNode && Number.isFinite(sourceNode.y)
         ? Math.max(-10000, Math.min(9000, sourceNode.y))
         : Math.max(40, Math.min(9000, Number(viewport.y) + 80 || 80));
+      // Every create path (improve, wireframe, each variation, flow) takes a free slot: a fixed
+      // placement is only the starting point, so variations never land on existing frames (finding 45).
+      {
+        const free = await findFreeCanvasSpot(rootX, rootY, Number(plan.frame.width) || 393, Number(plan.frame.height) || 800);
+        rootX = free.x; rootY = free.y;
+      }
       stage("creating", "Creating a separate editable variation; the original stays untouched…");
       try {
       const rootResult = await runNativeCanvasCommand("write-canvas", {
@@ -1673,15 +1684,30 @@
           stage("creating", "Building editable layout · " + completedElementCount + "/" + plannedNodeCount + " native layers…");
         }
       }
-      await createPlanChildren(createdFrameId, plan.elements, 0);
+      if (plan.elements.length) {
+        // One round trip for the whole tree; the per-frame path is kept for older plugin code.
+        stage("creating", "Building " + plannedNodeCount + " native layers in one pass…");
+        let treeResult = null;
+        try {
+          treeResult = await runNativeCanvasCommand("write-canvas", {
+            confirm: true, operation: "create-tree", target: "node", parentNodeId: createdFrameId, elements: plan.elements
+          }, 180000);
+        } catch (treeError) {
+          if (!/Unsupported canvas write operation/i.test(String(treeError && treeError.message || treeError))) throw treeError;
+        }
+        if (treeResult && treeResult.ok) completedElementCount += Number(treeResult.createdCount) || 0;
+        else await createPlanChildren(createdFrameId, plan.elements, 0);
+      }
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [createdFrameId] }, 90000);
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "zoom-to-nodes", nodeIds: [createdFrameId] }, 90000);
 
       stage("verifying", "Checking the final native layer tree and frame bounds…");
       // Read to the maximum supported depth so nested native FRAMEs are included.
       // The previous depth-2 read made otherwise-valid nested designs look incomplete.
+      // Full-depth read without collapsing instances: header/icon instance texts and nested
+      // card content must be visible, or the lint cannot prove the source content was kept.
       const verified = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 5, maxNodes: 100, includeStyles: true, includeVariables: true, collapseInstances: true
+        scope: "selection", maxDepth: 12, maxNodes: 500, includeStyles: true, includeVariables: true
       }, 90000);
       const verifiedNode = verified && Array.isArray(verified.nodes)
         ? verified.nodes.find(function (node) { return node.id === createdFrameId; })
@@ -1694,7 +1720,7 @@
         const problem = !verifiedNode
           ? "The generated frame was not returned by the native read-back."
           : readbackTruncated
-            ? "The native read-back was truncated at the 100-node safety limit."
+            ? "The native read-back was truncated at the 500-node safety limit."
             : "Expected " + completedElementCount + " generated child layers, but read-back confirmed " + verifiedChildCount + ".";
         throw new Error(problem + " The variation may be partial; the source frame remains untouched. Inspect the new frame before retrying.");
       }
@@ -1727,8 +1753,44 @@
           await finalizeTaskOutcome("failed", String(error && error.message || error || "Native Figma task failed"),
             String(error && error.message || error || "Native Figma task failed"));
         }
+        // A half-built variation is not a result: remove it (UX Direct-created layers only).
+        if (createdFrameId) {
+          const removed = await localTask("delete-created", { nodeIds: [createdFrameId] }).then(function () { return true; }, function () { return false; });
+          if (removed && error && typeof error.message === "string") {
+            error.message += " The partial variation was removed; the source frame is untouched.";
+          }
+        }
         throw error;
       }
+    }
+
+    /**
+     * Moves a new frame off any existing top-level frame on the page: first to the right along
+     * the source row, then (if the row is crowded) below everything. Never lands on a frame.
+     */
+    async function findFreeCanvasSpot(x, y, width, height) {
+      let page = null;
+      try {
+        page = await runNativeCanvasCommand("read-canvas", { scope: "current-page", maxDepth: 0, maxNodes: 500 }, 30000);
+      } catch (_) { return { x: x, y: y }; }
+      const boxes = (page && Array.isArray(page.nodes) ? page.nodes : []).filter(function (node) {
+        return node && node.visible !== false && [node.x, node.y, node.width, node.height].every(Number.isFinite);
+      });
+      const gap = 100;
+      const hits = function (cx, cy) {
+        return boxes.find(function (b) {
+          return cx < b.x + b.width + gap && cx + width + gap > b.x && cy < b.y + b.height + gap && cy + height + gap > b.y;
+        });
+      };
+      let cx = x;
+      for (let i = 0; i < 60; i++) {
+        const hit = hits(cx, y);
+        if (!hit) return { x: Math.round(cx), y: Math.round(y) };
+        cx = hit.x + hit.width + gap;
+        if (cx > 9000) break;
+      }
+      const bottom = boxes.reduce(function (max, b) { return Math.max(max, b.y + b.height); }, y);
+      return { x: Math.round(x), y: Math.round(Math.min(9500, bottom + gap)) };
     }
 
     async function captureRenderedNodePreview(nodeId) {
@@ -1839,6 +1901,12 @@
       const ctx = context || {};
       const types = Array.isArray(ctx.selectionTypes) ? ctx.selectionTypes : [];
       if (!original || !types.length || original.length > 300) return null;
+      // Find/replace copy: 'change the screen title from "A" to "B"', 'rename "A" to "B"', 'replace "A" with "B"'.
+      const fromTo = /^\s*(?:please\s+|pls\s+)?(?:change|update|edit|rename|replace|make)\s+(?:the\s+|this\s+)?(?:(?:screen|page|header|card|button|cta)\s+)?(?:title|text|label|heading|headline|copy|name|button|cta)?\s*(?:text\s+)?from\s+"([^"]+)"\s+(?:to|with|into)\s+"([^"]*)"\s*[.!]?\s*$/i.exec(original) ||
+        /^\s*(?:please\s+|pls\s+)?(?:rename|change|replace)\s+"([^"]+)"\s+(?:to|with|into|as)\s+"([^"]*)"\s*[.!]?\s*$/i.exec(original);
+      if (fromTo && fromTo[1].trim()) {
+        return { ops: [{ target: "text", set: { replace: { from: fromTo[1], to: fromTo[2] } }, label: "Replaced \"" + fromTo[1] + "\"" }] };
+      }
       if (/\b(screens?|flows?|variations?|versions?|dark mode|light mode|themes?|wireframes?|redesign|improve|better|modern|cleaner|premium|similar|inspired|like the|look like|consistent|hygiene|audit|review|generate|image of|photo of|picture of|translate|rewrite|shorter|longer|tone)\b/i.test(original)) return null;
       const allText = types.every(function (t) { return t === "TEXT"; });
       const ops = [];
@@ -1869,7 +1937,7 @@
       const N = "(-?\\d+(?:\\.\\d+)?)";
       const SEP = "(?:\\s*[=:]\\s*|\\s+(?:(?:to|of|ko|is|as|at|by|ka|ki|ke|kar|karke|ke\\s+liye)\\s+)*)";
       const clauses = rest.split(/\s*(?:,|;|\n|&|\+|\band\b|\baur\b|\bthen\b|\bphir\b|\balso\b)\s*/i);
-      let inherited = { noun: null, text: false };
+      let inherited = { noun: null, text: false, single: false };
       const finalRest = [];
       clauses.forEach(function (clause) {
         const before = ops.length;
@@ -1881,11 +1949,20 @@
         const textHint = /\b(text|texts|font|fonts|typography|copy|words|letters|likha\w*)\b/i.test(clause) || (noun && DIRECT_TEXT_NOUNS.includes(noun));
         const bgHint = /\b(background|bg|backdrop|fill)\b/i.test(clause);
         if (noun && DIRECT_TEXT_NOUNS.includes(noun) && allText) noun = null;
-        if (!noun && !textHint && !bgHint && clause.trim() && !/\b(this|it|isko|ise|selection|selected)\b/i.test(clause)) { noun = inherited.noun; }
+        let inheritedNoun = false;
+        if (!noun && !textHint && !bgHint && clause.trim() && !/\b(this|it|isko|ise|selection|selected)\b/i.test(clause)) { noun = inherited.noun; inheritedNoun = !!noun; }
         const clauseText = textHint || (!bgHint && !noun && inherited.text);
         const colorKind = bgHint ? "bg" : clauseText || allText ? "text" : "self";
         const kindFor = function (base) { return base === "color" ? colorKind : base; };
-        const pushNoun = function (op) { if (noun) op.noun = noun; op.kind = kindFor(op.kind); return op; };
+        // "the title" means one layer; "titles" / "all titles" means every match.
+        let nounWord = "";
+        DIRECT_EDIT_NOUNS.forEach(function (entry) {
+          const hit = entry[0] === noun && !nounWord ? new RegExp("\\b(?:" + entry[1] + ")\\b", "i").exec(clause) : null;
+          if (hit) nounWord = hit[0];
+        });
+        const singleNoun = inheritedNoun ? inherited.single === true
+          : !!nounWord && !/s$/i.test(nounWord) && !/\b(all|every|each|sab|sabhi|saare|sare)\b/i.test(clause);
+        const pushNoun = function (op) { if (noun) { op.noun = noun; if (singleNoun) op.single = true; } op.kind = kindFor(op.kind); return op; };
         const add = function (kind, set, label) { return pushNoun({ kind: kind, set: set, label: label }); };
         const act = function (action, label, extra) { return pushNoun(Object.assign({ kind: "self", action: action, label: label }, extra || {})); };
         const times = function (word) { const map = { two: 2, three: 3, four: 4, five: 5, do: 2, teen: 3, char: 4 }; return map[String(word || "").toLowerCase()] || Number(word) || 1; };
@@ -2100,7 +2177,7 @@
         const nounWords = /^(buttons?|btns?|ctas?|icons?|cards?|headers?|navbar|nav|bars?|top|app|navigation|footers?|tab|tabs|bottom|images?|photos?|pictures?|banners?|thumbnails?|avatars?|dividers?|separators?|inputs?|fields?|search|dropdowns?|chips?|badges?|tags?|list|rows?|cells?|modals?|dialogs?|sheets?|popups?|titles?|headings?|headlines?|sub|subtitles?|subheadings?|labels?|captions?|helper|body|descriptions?|paragraphs?|links?|prices?|amounts?)$/;
         const unknown = leftover.filter(function (word) { return !DIRECT_EDIT_FILLER.has(word) && !nounWords.test(word); });
         if (unknown.length) finalRest.push.apply(finalRest, unknown);
-        if (ops.length > before) inherited = { noun: noun, text: clauseText };
+        if (ops.length > before) inherited = { noun: noun, text: clauseText, single: singleNoun };
       });
       if (finalRest.length || !ops.length) return null;
       ops.forEach(function (op) {
@@ -2359,7 +2436,7 @@
         ? "Select the text layer(s), or the frame that contains them, then ask again."
         : "Select the frame whose layers should be renamed.");
       stage("scanning", "Reading the selected layers…");
-      const tree = await localTask("read-tree", { maxDepth: 8, maxNodes: 500 });
+      const tree = await localTask("read-tree", { maxDepth: 12, maxNodes: 500 });
       const items = [];
       flattenTree(tree.nodes, function (node, parentNode, insideInstance) {
         if (node.visible === false) return;
@@ -2408,7 +2485,7 @@
     async function runAuditTask(kind, prompt, stage) {
       if (!selectedIds().length) throw new Error("Select the screen (or several screens of a flow) to review.");
       stage("scanning", "Reading every layer in the selection…");
-      const tree = await localTask("read-tree", { maxDepth: 8, maxNodes: kind === "hygiene" ? 800 : 400 });
+      const tree = await localTask("read-tree", { maxDepth: 12, maxNodes: kind === "hygiene" ? 800 : 400 });
       const roots = (tree.nodes || []).slice(0, 6);
       const screens = [];
       if (kind === "ux-audit") {
@@ -2450,6 +2527,7 @@
         const frame = frames[0];
         for (let index = 0; index < task.count; index += 1) {
           jobs.push({ frame: frame, placement: { x: Number(frame.x) + (index + 1) * (Number(frame.width) + 120), y: Number(frame.y) },
+            variation: { index: index, count: task.count },
             prompt: prompt + "\n\nThis is variation " + (index + 1) + " of " + task.count + ": explore " + directions[index % directions.length] +
               " so it is clearly distinct from the other variations, while keeping all source content." });
         }
@@ -2461,7 +2539,7 @@
           await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [job.frame.id] }, 90000);
           const answer = await createFigmaDesign(job.prompt, function (status) {
             stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + status);
-          }, { placement: job.placement });
+          }, { placement: job.placement, variation: job.variation });
           results.push("**" + (index + 1) + ". " + job.frame.name + "**: " + String(answer).split("\n")[0]);
         } catch (error) {
           failures.push("**" + (index + 1) + ". " + job.frame.name + "**: " + String(error && error.message || error).slice(0, 240));

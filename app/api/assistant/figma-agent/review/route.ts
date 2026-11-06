@@ -121,13 +121,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Task finalization requires taskRunId and taskOutcome." }, { status: 400, headers });
     }
     const lookupPath = "uxd_task_runs?id=eq." + encodeURIComponent(taskRunId) +
-      "&select=id,status,outcome,lesson&limit=1";
+      "&select=id,status,outcome,lesson,metadata&limit=1";
     const existingResult = await neonRequest(lookupPath).catch(() => null);
     const existing = Array.isArray(existingResult) ? existingResult[0] as Record<string, unknown> | undefined : undefined;
     if (!existing?.id) {
       return NextResponse.json({ error: "The task run could not be confirmed before finalization." }, { status: 503, headers });
     }
-    if (existing.status === "completed" && existing.outcome === outcome) {
+    // finishTaskRun stores a failed outcome with status "failed", a verified one with "completed".
+    const finalStatus = outcome === "failed" ? "failed" : "completed";
+    if (existing.status === finalStatus && existing.outcome === outcome) {
       return NextResponse.json({ ok: true, logged: true, alreadyFinalized: true }, { headers });
     }
 
@@ -135,7 +137,11 @@ export async function POST(request: Request) {
       ? (parsed.data.executionFailure || "The native Figma task did not pass final quality verification.")
       : undefined;
     const candidate = outcome === "verified" ? sanitizeInlineLearningCandidate(parsed.data.learningCandidate) : null;
-    const learned = await captureVerifiedTaskLesson({
+    // A source-fallback output was built by the renderer, not a model: a failure there says
+    // nothing about model behaviour, so it must not become a failure lesson.
+    const existingMeta = existing.metadata && typeof existing.metadata === "object" ? existing.metadata as Record<string, unknown> : {};
+    const rendererOnly = existingMeta.model === "source-fallback" || existingMeta.sourceFallback === true;
+    const learned = rendererOnly && outcome === "failed" ? { status: "not-eligible" as const, lesson: undefined, memoryId: undefined } : await captureVerifiedTaskLesson({
       id: taskRunId,
       outcome,
       project,
@@ -157,7 +163,7 @@ export async function POST(request: Request) {
 
     const confirmedResult = await neonRequest(lookupPath).catch(() => null);
     const confirmed = Array.isArray(confirmedResult) ? confirmedResult[0] as Record<string, unknown> | undefined : undefined;
-    if (!confirmed || confirmed.status !== "completed" || confirmed.outcome !== outcome) {
+    if (!confirmed || confirmed.status !== finalStatus || confirmed.outcome !== outcome) {
       return NextResponse.json({ error: "Task outcome persistence could not be confirmed." }, { status: 503, headers });
     }
     return NextResponse.json({

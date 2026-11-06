@@ -846,7 +846,7 @@ async function executeNativeApiHealthCheck() {
     // Build a broad, non-destructive capability catalogue for the in-Figma health panel.
     // These probes only inspect supported API surface. They never access external folders/files.
     var implementedCanvasActions = [
-      "batch", "create-elements", "update-node", "clone-node", "delete-node", "reorder-node",
+      "batch", "create-elements", "create-tree", "update-node", "clone-node", "delete-node", "reorder-node",
       "reparent-node", "group-nodes", "ungroup-node", "flatten-nodes", "boolean-operation",
       "create-component", "create-component-set", "create-instance", "swap-component", "detach-instance",
       "set-selection", "zoom-to-nodes", "create-page", "rename-page", "set-current-page",
@@ -1077,8 +1077,11 @@ function canvasColorHex(color) {
 }
 function summarizePaintColors(paints) {
   if (!Array.isArray(paints)) return [];
-  return paints.filter(function (paint) { return paint && paint.type === "SOLID" && paint.visible !== false && paint.color; })
-    .slice(0, 3).map(function (paint) { return canvasColorHex(paint.color); }).filter(Boolean);
+  // Gradient fills (e.g. a gradient CTA) report their first stop so the layer still reads as filled.
+  return paints.filter(function (paint) {
+    return paint && paint.visible !== false && ((paint.type === "SOLID" && paint.color) ||
+      (/^GRADIENT_/.test(String(paint.type)) && Array.isArray(paint.gradientStops) && paint.gradientStops.length && paint.gradientStops[0].color));
+  }).slice(0, 3).map(function (paint) { return canvasColorHex(paint.type === "SOLID" ? paint.color : paint.gradientStops[0].color); }).filter(Boolean);
 }
 function summarizeCanvasNode(node, depth, state) {
   if (!node || state.count >= state.maxNodes) { state.truncated = true; return null; }
@@ -1168,8 +1171,8 @@ async function readCanvasCommand(payload) {
   assertUxDirectFileScope("read canvas");
   payload = payload || {};
   var scope = payload.scope === "current-page" ? "current-page" : "selection";
-  var maxDepth = Math.max(0, Math.min(5, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
-  var maxNodes = Math.max(1, Math.min(100, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
+  var maxDepth = Math.max(0, Math.min(12, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
+  var maxNodes = Math.max(1, Math.min(500, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
   var isSearch = (typeof payload.queryName === "string" && payload.queryName.trim()) ||
     (typeof payload.queryType === "string" && payload.queryType.trim());
   var source;
@@ -1223,8 +1226,19 @@ async function readCanvasCommand(payload) {
       figma.getLocalGridStylesAsync()
     ]);
     result.styles = {
-      paint: styles[0].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; }),
-      text: styles[1].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; }),
+      // Colour and type metrics let the renderer bind generated layers to matching file styles.
+      paint: styles[0].slice(0, 100).map(function (style) {
+        var out = { id: style.id, name: style.name };
+        var solid = Array.isArray(style.paints) && style.paints.length === 1 && style.paints[0].type === "SOLID" ? style.paints[0] : null;
+        if (solid && solid.color && (solid.opacity === undefined || solid.opacity >= 0.99)) out.color = canvasColorHex(solid.color);
+        return out;
+      }),
+      text: styles[1].slice(0, 100).map(function (style) {
+        var out = { id: style.id, name: style.name };
+        if (typeof style.fontSize === "number") out.fontSize = style.fontSize;
+        if (style.fontName && typeof style.fontName.family === "string") { out.fontFamily = style.fontName.family; out.fontStyle = style.fontName.style; }
+        return out;
+      }),
       effect: styles[2].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; }),
       grid: styles[3].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; })
     };
@@ -1369,7 +1383,12 @@ async function resolveCanvasWriteParent(target, parentNodeId) {
     if (typeof parentNodeId !== "string" || !parentNodeId.trim()) {
       throw new Error("target=node requires parentNodeId.");
     }
-    var parentNode = figma.currentPage.findOne(function (item) { return item.id === parentNodeId; }) || null;
+    // Direct id lookup instead of a full-page findOne per create (slow on large pages);
+    // the ancestor walk keeps writes confined to the current page.
+    var parentNode = await figma.getNodeByIdAsync(parentNodeId);
+    var onPage = false;
+    for (var up = parentNode; up; up = up.parent) { if (up === figma.currentPage) { onPage = true; break; } }
+    if (!onPage) parentNode = null;
     if (!parentNode || !("children" in parentNode) || typeof parentNode.appendChild !== "function") {
       throw new Error("parentNodeId must identify a writable container on the current page.");
     }
@@ -1701,7 +1720,8 @@ async function writeCanvasCommand(payload, options) {
     if (Number.isFinite(spec.strokeWeight) && "strokeWeight" in node) node.strokeWeight = Math.max(0, Math.min(100, spec.strokeWeight));
     if (Number.isFinite(spec.cornerRadius) && "cornerRadius" in node) node.cornerRadius = Math.max(0, Math.min(512, spec.cornerRadius));
     if (typeof spec.clipsContent === "boolean" && "clipsContent" in node) node.clipsContent = spec.clipsContent;
-    if (typeof spec.paintStyleId === "string" && "fillStyleId" in node) node.fillStyleId = spec.paintStyleId;
+    // dynamic-page files need the async setter; the plain property is the fallback.
+    if (typeof spec.paintStyleId === "string" && "fillStyleId" in node && typeof node.setFillStyleIdAsync !== "function") node.fillStyleId = spec.paintStyleId;
     // TEXT styles are applied asynchronously by applyTextStyleAsync (dynamic-page safe).
     if (typeof spec.effectStyleId === "string" && "effectStyleId" in node) node.effectStyleId = spec.effectStyleId;
     if (typeof spec.gridStyleId === "string" && "gridStyleId" in node) node.gridStyleId = spec.gridStyleId;
@@ -1741,6 +1761,51 @@ async function writeCanvasCommand(payload, options) {
         blendMode: "NORMAL"
       }];
     }
+  }
+
+  if (payload.operation === "create-tree") {
+    // Whole nested plan in one bridge round trip: each UI↔plugin message costs far more
+    // than creating the layers, and a 60-layer screen used ~40 of them.
+    if (!Array.isArray(payload.elements) || payload.elements.length < 1) throw new Error("create-tree requires elements.");
+    var treeCount = 0;
+    (function countTree(items, depth) {
+      if (depth > 5) throw new Error("create-tree exceeded the safe nesting depth.");
+      items.forEach(function (item) {
+        treeCount += 1;
+        if (item && Array.isArray(item.children)) countTree(item.children, depth + 1);
+      });
+    })(payload.elements, 0);
+    if (treeCount > 200) throw new Error("create-tree accepts at most 200 layers.");
+    var treeCreated = 0;
+    async function buildTree(parentId, items) {
+      var cursor = 0;
+      while (cursor < items.length) {
+        var item = items[cursor];
+        if (Array.isArray(item.children) && item.children.length) {
+          if (item.type !== "FRAME") throw new Error("Only native FRAME containers may have child layers.");
+          var frameSpec = Object.assign({}, item);
+          delete frameSpec.children;
+          var made = await writeCanvasCommand({ confirm: true, operation: "create-elements", target: "node", parentNodeId: parentId, elements: [frameSpec] }, options);
+          var madeNode = made && Array.isArray(made.nodes) ? made.nodes[0] : null;
+          if (!madeNode || typeof madeNode.id !== "string") throw new Error("Figma did not return a native frame ID for " + item.name + ".");
+          treeCreated += 1;
+          await buildTree(madeNode.id, item.children);
+          cursor += 1;
+          continue;
+        }
+        var leaves = [];
+        while (cursor < items.length && leaves.length < 20 && !(Array.isArray(items[cursor].children) && items[cursor].children.length)) {
+          var leaf = Object.assign({}, items[cursor]);
+          delete leaf.children;
+          leaves.push(leaf);
+          cursor += 1;
+        }
+        var leafResult = await writeCanvasCommand({ confirm: true, operation: "create-elements", target: "node", parentNodeId: parentId, elements: leaves }, options);
+        treeCreated += Number(leafResult && leafResult.createdCount) || leaves.length;
+      }
+    }
+    await buildTree(payload.parentNodeId, payload.elements);
+    return { ok: true, operation: "create-tree", fileKey: figma.fileKey, pageName: figma.currentPage.name, createdCount: treeCreated };
   }
 
   if (payload.operation === "batch") {
@@ -1796,6 +1861,15 @@ async function writeCanvasCommand(payload, options) {
       else if (type === "STAR") node = figma.createStar();
       else if (type === "SLICE") node = figma.createSlice();
       else if (type === "VECTOR") node = figma.createVector();
+      else if (type === "CLONE") {
+        // A copy of a source layer (logo, icon, chart, image) so variations keep real assets.
+        var cloneOf = typeof spec.sourceNodeId === "string" ? await figma.getNodeByIdAsync(spec.sourceNodeId) : null;
+        if (!cloneOf || typeof cloneOf.clone !== "function" || cloneOf.type === "PAGE" || cloneOf.type === "DOCUMENT") {
+          throw new Error("CLONE source layer " + String(spec.sourceNodeId) + " was not found.");
+        }
+        node = cloneOf.clone();
+        if (spec.monochrome && typeof spec.monochrome === "object") await monochromeClone(node, spec.monochrome);
+      }
       else if (type === "INSTANCE") {
         try {
           node = (await resolveComponentForInstance(spec.componentId, "create-elements INSTANCE")).createInstance();
@@ -1810,12 +1884,18 @@ async function writeCanvasCommand(payload, options) {
       node.name = spec.name.trim().slice(0, 80);
       // Marks layers UX Direct created so "revert" may delete them and nothing else.
       if (typeof node.setPluginData === "function") node.setPluginData("uxdCreated", "1");
-      var width = Number.isFinite(spec.width) ? spec.width : (type === "TEXT" ? 280 : type === "INSTANCE" ? node.width : 160);
-      var height = Number.isFinite(spec.height) ? spec.height : (type === "TEXT" ? 40 : type === "INSTANCE" ? node.height : 100);
+      var width = Number.isFinite(spec.width) ? spec.width : (type === "TEXT" ? 280 : type === "INSTANCE" || type === "CLONE" ? node.width : 160);
+      var height = Number.isFinite(spec.height) ? spec.height : (type === "TEXT" ? 40 : type === "INSTANCE" || type === "CLONE" ? node.height : 100);
       width = Math.max(1, Math.min(4096, width));
       height = Math.max(1, Math.min(4096, height));
+      if (type === "CLONE") {
+        // Keep the source proportions; only scale down when the plan gives a smaller slot.
+        if (node.width > 0 && width < node.width - 0.5 && typeof node.rescale === "function") {
+          try { node.rescale(width / node.width); } catch (_) {}
+        }
+      }
       // Instances keep their component's intrinsic size unless the plan sets one explicitly.
-      if (typeof node.resize === "function" && (type !== "INSTANCE" || Number.isFinite(spec.width) || Number.isFinite(spec.height))) node.resize(width, height);
+      else if (typeof node.resize === "function" && (type !== "INSTANCE" || Number.isFinite(spec.width) || Number.isFinite(spec.height))) node.resize(width, height);
       if (type === "INSTANCE" && spec.instanceProperties) applyInstanceProperties(node, spec.instanceProperties);
       if (type === "INSTANCE" && spec.textOverrides) await applyInstanceTextOverrides(node, spec.textOverrides);
       if (type === "VECTOR") {
@@ -1855,9 +1935,19 @@ async function writeCanvasCommand(payload, options) {
         if (typeof spec.textCase === "string") node.textCase = spec.textCase;
         if (typeof spec.textDecoration === "string") node.textDecoration = spec.textDecoration;
       }
-      applyCreateProperties(node, spec);
+      // A clone keeps the source layer's own paints, effects and layout.
+      if (type !== "CLONE") applyCreateProperties(node, spec);
       if (type === "TEXT" && typeof spec.textStyleId === "string") await applyTextStyleAsync(node, spec.textStyleId);
+      if (type !== "CLONE" && typeof spec.paintStyleId === "string" && typeof node.setFillStyleIdAsync === "function") {
+        try { await node.setFillStyleIdAsync(spec.paintStyleId); } catch (_) { /* keep the literal colour */ }
+      }
       parent.appendChild(node);
+      if (type === "CLONE" && "layoutPositioning" in node && spec.layoutPositioning !== "ABSOLUTE") {
+        try { node.layoutPositioning = "AUTO"; } catch (_) {}
+        // A copy keeps its source size; source FILL/STRETCH settings must not squash it here.
+        try { if ("layoutGrow" in node) node.layoutGrow = 0; } catch (_) {}
+        try { if ("layoutAlign" in node) node.layoutAlign = "INHERIT"; } catch (_) {}
+      }
 
       var parentLayoutMode = parent && typeof parent.layoutMode === "string" ? parent.layoutMode : "NONE";
       var inAutoLayout = parentLayoutMode !== "NONE";
@@ -2824,7 +2914,7 @@ var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
 var UXD_LOCAL_IMAGE_MAX_BYTES = 12 * 1024 * 1024;
 async function localReadTree(payload) {
-  var maxDepth = Math.max(0, Math.min(8, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 6));
+  var maxDepth = Math.max(0, Math.min(12, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 6));
   var maxNodes = Math.max(1, Math.min(800, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 500));
   var source = figma.currentPage.selection;
   if (Array.isArray(payload.nodeIds) && payload.nodeIds.length) {
@@ -2990,6 +3080,31 @@ function uxdTextNodes(node) {
   if (node.type === "TEXT") return [node];
   return uxdDescendants(node, function (c) { return c.type === "TEXT" && c.visible !== false; });
 }
+function uxdInside(node, root) {
+  for (var p = node; p; p = p.parent) if (p === root) return true;
+  return false;
+}
+function uxdOffsetY(node, root) {
+  var y = 0;
+  for (var p = node; p && p !== root; p = p.parent) y += Number(p.y) || 0;
+  return y;
+}
+function uxdPickOne(root, candidates) {
+  var inRoot = candidates.filter(function (n) { return uxdInside(n, root); });
+  if (inRoot.length <= 1) return inRoot[0] || null;
+  var screenLevel = /\b(screen|page|header|app ?bar|nav ?bar|navigation|top ?bar|toolbar)\b/i;
+  var preferred = inRoot.filter(function (n) {
+    for (var p = n; p && p !== root.parent; p = p.parent) if (screenLevel.test(String(p.name || ""))) return true;
+    return false;
+  });
+  var pool = preferred.length ? preferred : inRoot;
+  pool.sort(function (a, b) {
+    var dy = uxdOffsetY(a, root) - uxdOffsetY(b, root);
+    if (Math.abs(dy) > 1) return dy;
+    return (Number(b.fontSize) || 0) - (Number(a.fontSize) || 0);
+  });
+  return pool[0];
+}
 function uxdResolveTargets(roots, op) {
   var nodes = roots.slice();
   if (op.noun) {
@@ -3016,12 +3131,23 @@ function uxdResolveTargets(roots, op) {
     // A selected component part ("the button" with the button itself selected) is the target.
     if (!matched.length && roots.every(function (r) { return r.parent && r.parent.type !== "PAGE"; })) matched = roots.slice();
     if (!matched.length) return { needsModel: true, reason: "no layer named like \"" + op.noun + "\" in the selection" };
+    // "the title" (singular) is one layer per selected root: the screen/header one, else the topmost.
+    if (op.single === true && matched.length > roots.length) {
+      matched = roots.map(function (root) { return uxdPickOne(root, matched); }).filter(Boolean);
+    }
     nodes = matched;
   }
   if (op.target === "text") {
     var texts = [];
     nodes.forEach(function (n) { uxdTextNodes(n).forEach(function (t) { if (texts.indexOf(t) < 0) texts.push(t); }); });
     if (!texts.length) return { error: "There is no text layer in the selection." };
+    // Find/replace only touches the layers that contain the text.
+    var replace = op.set && op.set.replace;
+    if (replace && typeof replace.from === "string") {
+      var needle = replace.from.toLowerCase();
+      texts = texts.filter(function (t) { return String(t.characters || "").toLowerCase().indexOf(needle) >= 0; });
+      if (!texts.length) return { error: "\"" + replace.from + "\" is not in the selection." };
+    }
     return { nodes: texts };
   }
   if (op.target === "bg") {
@@ -3048,7 +3174,7 @@ async function uxdTryFont(family, styles) {
   var realFamily = known ? known.family : family;
   for (var i = 0; i < styles.length; i++) {
     if (known && known.styles.indexOf(styles[i]) < 0) continue;
-    try { await figma.loadFontAsync({ family: realFamily, style: styles[i] }); return { family: realFamily, style: styles[i] }; } catch (_) {}
+    try { await uxdEnsureFont({ family: realFamily, style: styles[i] }); return { family: realFamily, style: styles[i] }; } catch (_) {}
   }
   return null;
 }
@@ -3071,11 +3197,102 @@ function uxdStyleCandidates(weight, italic) {
   if (weight === "regular") out.unshift("Italic");
   return out;
 }
+// Wireframe copies: every paint in a cloned logo/icon/chart becomes a grey of the same lightness,
+// near-white marks (white icons made for a dark header) become the wireframe ink, and image fills
+// become a flat placeholder grey. Runs on the copy only; the source layer is never touched.
+function monoHexToRgb(hex) {
+  var v = String(hex || "").replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(v)) return { r: 0.1, g: 0.1, b: 0.1 };
+  return { r: parseInt(v.slice(0, 2), 16) / 255, g: parseInt(v.slice(2, 4), 16) / 255, b: parseInt(v.slice(4, 6), 16) / 255 };
+}
+function monoGrey(color, ink, isMark) {
+  var l = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+  if (isMark && l > 0.8) return { r: ink.r, g: ink.g, b: ink.b };
+  // Keep light tracks light and dark marks dark, without pure black.
+  var g = Math.max(0.12, Math.min(0.92, l));
+  return { r: g, g: g, b: g };
+}
+function monoPaints(paints, ink, placeholder, isMark) {
+  if (!Array.isArray(paints)) return paints;
+  return paints.map(function (p) {
+    if (!p || p.visible === false) return p;
+    if (p.type === "SOLID") return Object.assign({}, p, { color: monoGrey(p.color, ink, isMark) });
+    if (p.type === "IMAGE" || p.type === "VIDEO") return { type: "SOLID", color: placeholder, opacity: p.opacity === undefined ? 1 : p.opacity };
+    if (p.type && p.type.indexOf("GRADIENT") === 0 && Array.isArray(p.gradientStops)) {
+      return Object.assign({}, p, { gradientStops: p.gradientStops.map(function (s) {
+        var c = monoGrey(s.color, ink, isMark); return Object.assign({}, s, { color: { r: c.r, g: c.g, b: c.b, a: s.color.a } });
+      }) });
+    }
+    return p;
+  });
+}
+async function monochromeClone(root, mono) {
+  var ink = monoHexToRgb(mono.ink), placeholder = monoHexToRgb(mono.placeholder);
+  var nodes = [root].concat(typeof root.findAll === "function" ? root.findAll(function () { return true; }) : []);
+  for (var i = 0; i < nodes.length && i < 400; i++) {
+    var n = nodes[i];
+    var isMark = n.type !== "FRAME" && n.type !== "COMPONENT" && n.type !== "INSTANCE" && n.type !== "GROUP" && n.type !== "SECTION";
+    try {
+      if (n.type === "TEXT") {
+        var len = n.characters.length;
+        var fonts = len ? n.getRangeAllFontNames(0, len) : [n.fontName];
+        for (var f = 0; f < fonts.length; f++) if (fonts[f] && typeof fonts[f] === "object") await uxdEnsureFont(fonts[f]);
+      }
+      if ("fills" in n && Array.isArray(n.fills) && n.fills.length) {
+        if (typeof n.fillStyleId === "string" && n.fillStyleId && typeof n.setFillStyleIdAsync === "function") await n.setFillStyleIdAsync("");
+        n.fills = monoPaints(n.fills, ink, placeholder, isMark);
+      }
+      if ("strokes" in n && Array.isArray(n.strokes) && n.strokes.length) {
+        if (typeof n.strokeStyleId === "string" && n.strokeStyleId && typeof n.setStrokeStyleIdAsync === "function") await n.setStrokeStyleIdAsync("");
+        n.strokes = monoPaints(n.strokes, ink, placeholder, isMark);
+      }
+    } catch (_) { /* instance sublayers that refuse overrides keep their paint */ }
+  }
+}
+// Fonts this plugin session already loaded. Skipping the real loadFontAsync for them keeps the
+// apply phase of a direct edit free of network waits, so Figma records it as ONE undo step.
+var UXD_LOADED_FONTS = new Set();
+function uxdFontKey(font) { return font && typeof font === "object" ? font.family + "\u0000" + font.style : ""; }
+async function uxdEnsureFont(font) {
+  var key = uxdFontKey(font);
+  if (!key || UXD_LOADED_FONTS.has(key)) return;
+  await figma.loadFontAsync(font);
+  UXD_LOADED_FONTS.add(key);
+}
 async function uxdLoadTextFonts(node) {
   var length = typeof node.characters === "string" ? node.characters.length : 0;
   var fonts = length && typeof node.getRangeAllFontNames === "function" ? node.getRangeAllFontNames(0, length)
     : (node.fontName && typeof node.fontName === "object" ? [node.fontName] : []);
-  for (var i = 0; i < fonts.length; i++) await figma.loadFontAsync(fonts[i]);
+  for (var i = 0; i < fonts.length; i++) await uxdEnsureFont(fonts[i]);
+}
+// Load every font a direct edit will need BEFORE the first change. Font loading waits on the
+// network; when it happens between two changes Figma splits the edit into separate undo steps
+// (e.g. "24px bold" needed two Cmd+Z). Best effort: a font missed here is still loaded later.
+async function uxdPrewarmDirectEditFonts(plan) {
+  var needsList = plan.some(function (step) { return step.op.set && ("fontWeight" in step.op.set || "italic" in step.op.set || "fontFamily" in step.op.set); });
+  if (needsList) await uxdFontList();
+  for (var p = 0; p < plan.length; p++) {
+    var step = plan[p];
+    if (!step.op.set) continue;
+    var key = Object.keys(step.op.set)[0];
+    var value = step.op.set[key];
+    for (var n = 0; n < step.nodes.length && n < 200; n++) {
+      var node = step.nodes[n];
+      if (!node || node.type !== "TEXT") continue;
+      try { await uxdLoadTextFonts(node); } catch (_) { continue; }
+      if (key !== "fontWeight" && key !== "italic" && key !== "fontFamily") continue;
+      var segments = uxdFontSegments(node);
+      for (var s = 0; s < segments.length; s++) {
+        var current = segments[s].fontName && typeof segments[s].fontName === "object" ? segments[s].fontName : { family: "Inter", style: "Regular" };
+        var italicNow = /italic|oblique/i.test(current.style);
+        if (key === "fontFamily") {
+          await uxdTryFont(value, [current.style].concat(uxdStyleCandidates(uxdWeightOf(current.style), italicNow), ["Regular"]));
+        } else {
+          await uxdTryFont(current.family, uxdStyleCandidates(key === "fontWeight" ? value : uxdWeightOf(current.style), key === "italic" ? value : italicNow));
+        }
+      }
+    }
+  }
 }
 function uxdFontSegments(node) {
   var length = typeof node.characters === "string" ? node.characters.length : 0;
@@ -3445,6 +3662,7 @@ async function localApplyDirectEdits(payload) {
     if (resolved.error) throw new Error(resolved.error);
     plan.push({ op: ops[i], nodes: resolved.nodes });
   }
+  await uxdPrewarmDirectEditFonts(plan);
   if (typeof figma.commitUndo === "function") figma.commitUndo();
   var applied = [], notes = [], errors = [];
   for (var p = 0; p < plan.length; p++) {

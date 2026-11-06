@@ -41,7 +41,7 @@ function lightness(color: string): number {
 
 /** True when the prompt asks to change colours/theme, so the model's palette is wanted. */
 export function promptRequestsRestyle(prompt: string): boolean {
-  return /\b(colou?rs?|theme|palette|dark\s*mode|light\s*mode|brand(ing)?|restyle|re-?skin|gradient|rang|kala|dark|night)\b|रंग|कलर|थीम|डार्क/iu.test(prompt);
+  return /\b(colou?rs?|theme|palette|dark\s*mode|light\s*mode|brand(ing)?|restyle|re-?skin|gradient|wire\s*-?\s*frames?|lo-?fi|low[\s-]?fi(delity)?|grey\s*box|gray\s*box|rang|kala|dark|night)\b|रंग|कलर|थीम|डार्क/iu.test(prompt);
 }
 
 type Tally = Map<string, number>;
@@ -67,7 +67,7 @@ export function sourcePalette(canvas: Rec): Rec {
   const accentFills: Tally = new Map();
   const surfaceFills: Tally = new Map();
   const visit = (node: Rec, depth: number) => {
-    if (depth > 8) return;
+    if (depth > 12) return;
     const fill = Array.isArray(node.fillColors) ? hex(node.fillColors[0]) : null;
     const name = typeof node.name === "string" ? node.name : "";
     if (node.type === "TEXT") bump(textFills, fill);
@@ -102,8 +102,22 @@ export function sourcePalette(canvas: Rec): Rec {
  * any colour a model invented is dropped (the renderer's fixed defaults fill the gaps),
  * so two different models produce the same colours for the same screen.
  */
+/** True when the user asked for a wireframe / lo-fi / grey-box version. */
+export function promptRequestsWireframe(prompt: string): boolean {
+  return /\b(wire\s*-?\s*frames?|lo-?fi|low[\s-]?fi(delity)?|mid[\s-]?fi(delity)?|grey\s*box|gray\s*box|skeleton|blueprint)\b|वायरफ्रेम/iu.test(prompt);
+}
+
+/** Neutral greyscale for wireframes: no brand colour, one dark accent for the primary action. */
+export const WIREFRAME_THEME: Rec = {
+  background: "#FFFFFF", surface: "#F4F4F5", surfaceAlt: "#E4E4E7", text: "#18181B", muted: "#52525B",
+  primary: "#3F3F46", onPrimary: "#FFFFFF", border: "#D4D4D8",
+  success: "#71717A", warning: "#71717A", danger: "#71717A", info: "#71717A", radius: 6,
+};
+
 export function lockTheme(modelTheme: unknown, canvas: Rec, prompt: string): { theme: Rec; locked: boolean } {
   const model = asRec(modelTheme) ?? {};
+  // A wireframe must never inherit the source's brand palette (before, the lock re-applied it).
+  if (promptRequestsWireframe(prompt)) return { theme: { ...WIREFRAME_THEME }, locked: true };
   if (promptRequestsRestyle(prompt)) return { theme: { ...sourcePalette(canvas), ...model }, locked: false };
   return { theme: sourcePalette(canvas), locked: true };
 }
@@ -182,12 +196,20 @@ export function structuralExample(spec: unknown): Rec | null {
 
 export type VerifiedRun = { plan?: unknown; metadata?: unknown };
 
+/**
+ * Bumped whenever the verification lint gets stricter. Runs verified under an older,
+ * looser lint (e.g. before graphics/CTA checks) are never served as team examples.
+ */
+export const VERIFIED_LINT_VERSION = 2;
+
 /** Pick the best verified spec for this scope: same selection kind, highest quality, newest first. */
 export function pickVerifiedExample(rows: VerifiedRun[], designScope: string): Rec | null {
   const candidates = rows.flatMap((row) => {
     const plan = asRec(row.plan);
     const meta = asRec(row.metadata) ?? {};
-    if (!plan || meta.planFormat !== "blocks" || meta.repairedTexts) return [];
+    // Source-fallback rebuilds are never a model example, whatever their outcome.
+    if (!plan || meta.planFormat !== "blocks" || meta.repairedTexts || meta.sourceFallback === true || meta.model === "source-fallback") return [];
+    if (typeof meta.lintVersion !== "number" || meta.lintVersion < VERIFIED_LINT_VERSION) return [];
     const example = structuralExample(plan);
     if (!example) return [];
     const score = typeof meta.qualityScore === "number" ? meta.qualityScore : 0;
@@ -195,4 +217,50 @@ export function pickVerifiedExample(rows: VerifiedRun[], designScope: string): R
   });
   candidates.sort((a, b) => b.score - a.score);
   return candidates[0]?.example ?? null;
+}
+
+/**
+ * Deterministic second/third direction for "Create N variations". Free models given the
+ * same screen return near-identical specs, so later variations are reshaped here: the
+ * content stays the same, the presentation does not.
+ *  - 2nd: sections flip card/plain and the corner radius moves to the other end.
+ *  - 3rd: metric rows become key-value lists (and short lists become metric rows),
+ *    with the radius moved the other way.
+ */
+export function applyVariationDirection(spec: Rec, index: number): Rec {
+  if (!Number.isInteger(index) || index < 1 || !Array.isArray(spec.sections)) return spec;
+  const theme = { ...(asRec(spec.theme) ?? {}) };
+  const radius = typeof theme.radius === "number" ? theme.radius : 12;
+  const direction = ((index - 1) % 2) + 1;
+  theme.radius = direction === 1 ? (radius <= 10 ? 20 : 6) : (radius <= 10 ? 14 : 4);
+  const swapBlock = (block: unknown): unknown => {
+    const b = asRec(block);
+    if (!b) return block;
+    if (b.type === "card" && Array.isArray(b.blocks)) return { ...b, blocks: b.blocks.map(swapBlock) };
+    if (direction !== 2) return b;
+    if (b.type === "stat_row" && Array.isArray(b.items)) {
+      return { type: "list", items: b.items.map((item) => {
+        const i = asRec(item) ?? {};
+        return { label: i.label ?? "", value: i.value ?? "", ...(i.caption ? { caption: i.caption } : {}) };
+      }) };
+    }
+    if (b.type === "list" && Array.isArray(b.items) && b.items.length >= 2 && b.items.length <= 4) {
+      const items = b.items.map((item) => asRec(item) ?? {});
+      const metricLike = items.every((i) => typeof i.value === "string" && i.value.length <= 14 && !i.chevron && !i.status);
+      if (metricLike) return { type: "stat_row", items: items.map((i) => ({ label: i.label ?? "", value: i.value, ...(i.caption ? { caption: i.caption } : {}) })) };
+    }
+    return b;
+  };
+  const sections = spec.sections.map((section) => {
+    const s = asRec(section);
+    if (!s) return section;
+    const blocks = Array.isArray(s.blocks) ? s.blocks : [];
+    const chrome = blocks.some((b) => ["app_bar", "bottom_nav", "tabs"].includes(String(asRec(b)?.type)));
+    const surface = String(s.surface ?? "plain").toLowerCase();
+    const nested = blocks.some((b) => asRec(b)?.type === "card");
+    // Navigation chrome stays plain; a section of nested cards cannot itself become a card.
+    const nextSurface = direction === 1 && !chrome && !nested ? (surface === "card" ? "plain" : "card") : s.surface;
+    return { ...s, ...(nextSurface ? { surface: nextSurface } : {}), blocks: blocks.map(swapBlock) };
+  });
+  return { ...spec, theme, sections };
 }

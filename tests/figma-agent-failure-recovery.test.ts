@@ -10,16 +10,23 @@ type Reply = () => Response | Promise<Response>;
 const realFetch = globalThis.fetch;
 let providerReplies: Reply[] = [];
 let providerCalls = 0;
+let subAgentCalls = 0;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
   if (url === PROVIDER) {
+    // Parallel sub-agents (detector / UX analyst) are answered separately so the scripted
+    // replies below stay the planner's; a sub-agent failure must never block the planner.
+    const body = typeof init?.body === "string" ? init.body : "";
+    if (body.includes("You are one sub-agent in a team")) {
+      subAgentCalls += 1;
+      return new Response(JSON.stringify({ error: { message: "sub-agent offline in test" } }), { status: 502 });
+    }
     providerCalls += 1;
     const reply = providerReplies.shift();
     if (!reply) return new Response(JSON.stringify({ error: { message: "no more scripted replies" } }), { status: 502 });
     return reply();
   }
   // Brain, logging and storage calls are not under test: fail them like an offline backend.
-  void init;
   throw new Error("offline in test: " + url);
 }) as typeof fetch;
 
@@ -56,6 +63,7 @@ const goodSpec = JSON.stringify({
 async function run(replies: Reply[]) {
   providerReplies = [...replies];
   providerCalls = 0;
+  subAgentCalls = 0;
   const { POST } = await import("../app/api/assistant/figma-agent/route");
   const response = await POST(new Request("https://ux-direct.test/api/assistant/figma-agent", {
     method: "POST", headers: { "content-type": "application/json" },
@@ -97,7 +105,11 @@ const cases: Array<{ name: string; replies: Reply[]; fallback: boolean }> = [
 
 for (const c of cases) {
   test("improve flow recovers from: " + c.name, async () => {
-    assertDesign(await run(c.replies), c.fallback);
+    const result = await run(c.replies);
+    assertDesign(result, c.fallback);
+    // Detector + analyst ran (in parallel) and their failure did not block the planner.
+    assert.equal(subAgentCalls, 2);
+    if (result.body.agents) assert.equal(result.body.agents.domain, "fintech");
   });
 }
 

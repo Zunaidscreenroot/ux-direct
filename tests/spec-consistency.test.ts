@@ -100,9 +100,9 @@ test("verified examples keep structure but never another screen's text", () => {
   for (const leaked of ["₹8,450", "PL12345678", "Pay EMI", "Due 05 Dec", "Current"]) assert.ok(!text.includes(leaked), "leaked " + leaked);
   assert.ok(text.includes('"percent":60'), "numbers that carry meaning survive");
   const rows = [
-    { plan: spec, metadata: { planFormat: "blocks", designScope: "selected_component_or_card", qualityScore: 100 } },
-    { plan: spec, metadata: { planFormat: "blocks", designScope: "selected_screen_or_frame", qualityScore: 90, repairedTexts: 2 } },
-    { plan: { ...spec, sections: spec.sections.slice(0, 1) }, metadata: { planFormat: "blocks", designScope: "selected_screen_or_frame", qualityScore: 80 } },
+    { plan: spec, metadata: { lintVersion: 2, planFormat: "blocks", designScope: "selected_component_or_card", qualityScore: 100 } },
+    { plan: spec, metadata: { lintVersion: 2, planFormat: "blocks", designScope: "selected_screen_or_frame", qualityScore: 90, repairedTexts: 2 } },
+    { plan: { ...spec, sections: spec.sections.slice(0, 1) }, metadata: { lintVersion: 2, planFormat: "blocks", designScope: "selected_screen_or_frame", qualityScore: 80 } },
   ];
   const picked = pickVerifiedExample(rows, "selected_screen_or_frame");
   assert.equal((picked?.sections as unknown[]).length, 1, "same scope wins; repaired runs are not examples");
@@ -129,4 +129,31 @@ test("figma route applies consistency steps for every model auto picks", () => {
   assert.ok(route.includes("loadVerifiedExample(taskScope, designScope)"));
   assert.ok(route.includes("recordGeneration(taskRunId"));
   assert.ok(route.includes("if (fallback) return respond(fallback);"));
+});
+
+test("later variations get a deterministic different direction with the same content", async () => {
+  const { applyVariationDirection } = await import("../src/figma-agent/spec-consistency");
+  const spec = { theme: { radius: 8 }, sections: [
+    { name: "Header", surface: "plain", blocks: [{ type: "app_bar", title: "Loans" }] },
+    { name: "Summary", surface: "card", blocks: [{ type: "stat_row", items: [{ label: "Paid", value: "₹8,450" }, { label: "Due", value: "₹1,200" }] }] },
+    { name: "Details", surface: "plain", blocks: [{ type: "list", items: [{ label: "EMI", value: "₹2,000" }, { label: "Tenure", value: "12 mo" }] }] },
+  ] };
+  assert.equal(applyVariationDirection(spec, 0), spec, "first variation unchanged");
+  const second = applyVariationDirection(spec, 1) as { theme: { radius: number }; sections: Array<{ surface: string; blocks: Array<{ type: string }> }> };
+  assert.equal(second.theme.radius, 20);
+  assert.deepEqual(second.sections.map((s) => s.surface), ["plain", "plain", "card"], "nav stays plain, others flip");
+  const third = applyVariationDirection(spec, 2) as typeof second;
+  assert.equal(third.sections[1].blocks[0].type, "list");
+  assert.equal(third.sections[2].blocks[0].type, "stat_row");
+  assert.ok(JSON.stringify(third).includes("₹8,450") && JSON.stringify(third).includes("12 mo"), "content kept");
+});
+
+test("a wireframe request gets a greyscale theme even on the source fallback", async () => {
+  const { stabilizeBlockSpec } = await import("../src/figma-agent/spec-consistency");
+  const canvas = { nodes: [{ id: "1", name: "S", type: "FRAME", fillColors: ["#121212"], children: [{ id: "2", name: "Pay button", type: "FRAME", fillColors: ["#2E7DEA"] }] }] };
+  const out = stabilizeBlockSpec({ sections: [], theme: { primary: "#FF0000" } }, canvas, "make a wireframe of this");
+  const theme = out.spec.theme as Record<string, unknown>;
+  assert.equal(theme.background, "#FFFFFF");
+  assert.equal(theme.primary, "#3F3F46", "no brand or model colour");
+  assert.equal(out.themeLocked, true);
 });

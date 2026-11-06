@@ -4,13 +4,17 @@ import { neonRequest } from "./neon-rest";
 import { saveBrainFeedback } from "./shared-brain";
 import type { TaskProject } from "@/src/core/types";
 import { containsSensitiveMaterial, referencesUnstatedClient, sanitizeInlineLearningCandidate, type InlineLearningCandidate } from "./inline-learning";
+import { VERIFIED_LINT_VERSION } from "@/src/figma-agent/spec-consistency";
 
 export type FigmaFailureCategory =
   | "file-scope"
   | "stale-node-id"
   | "timeout-or-expired"
   | "unsupported-api"
-  | "invalid-payload";
+  | "invalid-payload"
+  | "dropped-visual-assets"
+  | "cta-downgraded"
+  | "dropped-source-content";
 
 export type FigmaFailureLesson = {
   category: FigmaFailureCategory;
@@ -30,7 +34,15 @@ export function buildFigmaFailureLesson(errorMessage: string): FigmaFailureLesso
   const value = String(errorMessage || "").toLowerCase();
   let category: FigmaFailureCategory | null = null;
 
-  if (/\b(allowlist|allowlisted|file[- ]key|approved file|permission|not authorized)\b/.test(value)) {
+  // Quality failures from the structural lint (its fixed issue wording), checked first: they are
+  // the failures that teach the next generation something about design fidelity.
+  if (/icons?, logos? or graphics from the source were dropped|circular graphics from the source/.test(value)) {
+    category = "dropped-visual-assets";
+  } else if (/source button\(s\) are no longer buttons/.test(value)) {
+    category = "cta-downgraded";
+  } else if (/source (text item|value)\(s\).{0,40}missing from the output/.test(value)) {
+    category = "dropped-source-content";
+  } else if (/\b(allowlist|allowlisted|file[- ]key|approved file|permission|not authorized)\b/.test(value)) {
     category = "file-scope";
   } else if (/\b(invalid payload|payload is invalid|validation|schema|requires .{1,50}|required field|must be provided)\b/.test(value)) {
     category = "invalid-payload";
@@ -64,6 +76,21 @@ export function buildFigmaFailureLesson(errorMessage: string): FigmaFailureLesso
       label: "unsupported native API operation",
       rule: "Before retrying a failed Figma operation, verify native Plugin API support and the installed UX Direct bridge version. Report unsupported capabilities explicitly instead of assuming a write succeeded.",
       keywords: ["figma", "plugin", "native-api", "execution", "recovery"],
+    },
+    "dropped-visual-assets": {
+      label: "dropped icons, logos or charts",
+      rule: "When improving or varying a Figma screen, keep every source logo, icon, chevron, status mark, chart and image. Put the content they belong to in the matching block (row, card, badge, progress_ring) so UX Direct can carry the original layers into the same card.",
+      keywords: ["figma", "variation", "fidelity", "icons", "logos", "charts", "source-content"],
+    },
+    "cta-downgraded": {
+      label: "call to action turned into a text link",
+      rule: "Keep each source call to action with its original emphasis: a filled source button stays a button block with variant primary, never a text link or a banner action.",
+      keywords: ["figma", "variation", "fidelity", "button", "cta"],
+    },
+    "dropped-source-content": {
+      label: "dropped source text or values",
+      rule: "Copy every source label, amount, date, status and action into the block spec exactly as written; restructure the layout instead of omitting content.",
+      keywords: ["figma", "variation", "fidelity", "content", "values"],
     },
     "invalid-payload": {
       label: "invalid command payload",
@@ -212,7 +239,9 @@ export function buildVerifiedTaskLesson(run: VerifiedTaskRun): VerifiedTaskLesso
   if (content.length > 600 || containsSensitiveMaterial(content) || containsNodeId(content) || referencesUnstatedClient(candidate, taskContext)) return null;
   const relevance = assessBrainRelevance(candidate.title, content, safeScope);
   if (!relevance.eligible || relevance.score < 0.5) return null;
-  return { memoryType, title: candidate.title, content, tags: [...new Set(candidate.keywords)].sort().slice(0, 20), scope: safeScope };
+  // Approved lessons carry the lint version they passed, so older looser ones can be told apart.
+  const keywords = memoryType === "approved_pattern" ? [...candidate.keywords.slice(0, 19), "lint-v" + VERIFIED_LINT_VERSION] : candidate.keywords;
+  return { memoryType, title: candidate.title, content, tags: [...new Set(keywords)].sort().slice(0, 20), scope: safeScope };
 }
 
 /** Capture only lessons supported by a verified result or a categorized execution failure. */

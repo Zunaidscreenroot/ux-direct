@@ -14,6 +14,8 @@
  *  - `custom` accepts a raw native FRAME/TEXT/... node for anything no block covers.
  */
 
+import { restoreSourceFidelity, SOURCE_GRAPHIC_BUDGET } from "./source-graphics";
+
 type Rec = Record<string, unknown>;
 export type NativeNode = Rec & { type: string; name: string; width: number; height: number; children?: NativeNode[] };
 
@@ -36,8 +38,10 @@ export type BlockExpansion = {
   blockCount: number;
 };
 
-/** normalizePlan keeps at most 75 nodes and depth 0–4; stay inside both. */
+/** Layers the model's blocks may expand to; source graphic clones get the rest of PLAN_NODE_LIMIT. */
 export const BLOCK_NODE_BUDGET = 75;
+/** normalizePlan, the plan schema and the plugin all accept at most this many nodes (depth 0–4). */
+export const PLAN_NODE_LIMIT = 140;
 const MAX_DEPTH = 4;
 const FONT = "Inter";
 
@@ -161,7 +165,7 @@ export function collectSourceTokens(canvas: Record<string, unknown>, componentId
   const seen = new Set<string>();
   const root = asRec(arr(canvas.nodes)[0]);
   const walk = (node: Rec, insideInstance: boolean, depth: number) => {
-    if (depth > 8 || texts.length >= 60) return;
+    if (depth > 12 || texts.length >= 60) return;
     // Text inside instances belongs to the component, not the screen's own type scale.
     if (node.type === "TEXT" && !insideInstance && typeof node.fontSize === "number" && Number.isFinite(node.fontSize)) {
       const weight = clean(node.fontStyle, 40) || "Regular";
@@ -229,6 +233,11 @@ function label(value: string, fallback: string): string {
   return base ? fallback + " · " + base : fallback;
 }
 
+/** Spacing on the 4px grid (2→4, 6→8, 10→12, 14→16), so hygiene checks see a consistent scale. */
+function grid4(value: number): number {
+  return value <= 0 ? 0 : Math.max(4, Math.round(value / 4) * 4);
+}
+
 class Builder {
   count = 0;
   warnings: string[] = [];
@@ -285,8 +294,8 @@ class Builder {
   /** Vertical Auto Layout frame that hugs its content height and fills the parent width. */
   vstack(name: string, width: number, children: NativeNode[], opts: { gap?: number; pad?: [number, number, number, number]; fill?: string | null; radius?: number; stroke?: string; align?: "MIN" | "CENTER" | "MAX"; hugWidth?: boolean } = {}): NativeNode {
     this.count += 1;
-    const [pt, pr, pb, pl] = opts.pad ?? [0, 0, 0, 0];
-    const gap = opts.gap ?? 8;
+    const [pt, pr, pb, pl] = (opts.pad ?? [0, 0, 0, 0]).map(grid4);
+    const gap = grid4(opts.gap ?? 8);
     const flow = children.filter((child) => child.layoutPositioning !== "ABSOLUTE");
     const height = pt + pb + flow.reduce((sum, child) => sum + child.height, 0) + Math.max(0, flow.length - 1) * gap;
     const hugWidth = opts.hugWidth === true;
@@ -307,8 +316,8 @@ class Builder {
   /** Horizontal Auto Layout frame: fills parent width, hugs the tallest child. */
   hstack(name: string, width: number, children: NativeNode[], opts: { gap?: number; pad?: [number, number, number, number]; fill?: string | null; radius?: number; stroke?: string; justify?: "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN"; align?: "MIN" | "CENTER" | "MAX"; hugWidth?: boolean; fixedHeight?: number; wrap?: boolean } = {}): NativeNode {
     this.count += 1;
-    const [pt, pr, pb, pl] = opts.pad ?? [0, 0, 0, 0];
-    const gap = opts.gap ?? 8;
+    const [pt, pr, pb, pl] = (opts.pad ?? [0, 0, 0, 0]).map(grid4);
+    const gap = grid4(opts.gap ?? 8);
     const flow = children.filter((child) => child.layoutPositioning !== "ABSOLUTE");
     const tallest = flow.reduce((max, child) => Math.max(max, child.height), 0);
     const hugWidth = opts.hugWidth === true;
@@ -694,7 +703,7 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
         const on = i === active;
         const fill = type === "tabs" && on ? t.surface : null;
         const txt = b.text(type === "tabs" ? "Tab label" : "Nav label", item, cell - 8, { size: 13, weight: on ? "Semi Bold" : "Regular", color: on ? t.primary : t.muted, bg: fill ?? segFill, align: "CENTER" });
-        const seg = b.hstack(label(item, on ? (type === "tabs" ? "Tab (active)" : "Nav item (active)") : (type === "tabs" ? "Tab" : "Nav item")), cell, [txt], { pad: [8, 4, 8, 4], fill, radius: Math.max(0, t.radius - 4), justify: "CENTER" });
+        const seg = b.hstack(label(item, on ? (type === "tabs" ? "Tab (active)" : "Nav item (active)") : (type === "tabs" ? "Tab" : "Nav item")), cell, [txt], { pad: [8, 4, 8, 4], fill, radius: Math.max(0, t.radius - 4), justify: "CENTER", align: "CENTER", fixedHeight: 44 });
         seg.layoutGrow = 1;
         return seg;
       });
@@ -938,12 +947,22 @@ export function sourceFallbackSpec(canvas: Record<string, unknown>): Rec | null 
   const visible = (node: Rec | null): node is Rec => !!node && node.visible !== false;
   const kids = (node: Rec) => arr(node.children).map(asRec).filter(visible);
   const textOf = (node: Rec) => (node.type === "TEXT" ? clean(node.text, 1200) : "");
+  // A horizontal row of 2–5 single-label items (tab components) is one tabs block, not
+  // separate sections. The active tab is the fully opaque label.
+  const tabItems = (node: Rec): { items: string[]; active: number } | null => {
+    const children = kids(node);
+    if (node.layoutMode !== "HORIZONTAL" || children.length < 2 || children.length > 5) return null;
+    const labels = children.map((c) => kids(c).filter((d) => d.type === "TEXT"));
+    if (!labels.every((l) => l.length === 1 && clean(l[0].text, 40))) return null;
+    const active = labels.findIndex((l) => (typeof l[0].opacity === "number" ? l[0].opacity : 1) >= 0.99);
+    return { items: labels.map((l) => clean(l[0].text, 40)), active: Math.max(0, active) };
+  };
   // Flatten structural wrappers (e.g. "Screen body") so each real group becomes a section.
   const groups: Rec[] = [];
   const addGroups = (nodes: Rec[], depth: number) => {
     for (const node of nodes) {
       const children = kids(node);
-      if (depth < 2 && node.type !== "INSTANCE" && children.length >= 2 && children.every((c) => c.type !== "TEXT") && !node.fillColors && !node.strokeColors) {
+      if (depth < 2 && node.type !== "INSTANCE" && children.length >= 2 && children.every((c) => c.type !== "TEXT") && !node.fillColors && !node.strokeColors && !tabItems(node)) {
         addGroups(children, depth + 1);
       } else {
         groups.push(node);
@@ -953,8 +972,10 @@ export function sourceFallbackSpec(canvas: Record<string, unknown>): Rec | null 
   addGroups(kids(root), 0);
 
   const blocksOf = (node: Rec, depth: number, out: Rec[]) => {
-    if (depth > 6 || out.length >= 24) return;
+    if (depth > 10 || out.length >= 24) return;
     if (node.type === "TEXT") { const text = textOf(node); if (text) out.push({ type: "text", text }); return; }
+    const tabs = tabItems(node);
+    if (tabs) { out.push({ type: "tabs", items: tabs.items, active: tabs.active }); return; }
     const children = kids(node);
     const texts = children.filter((c) => c.type === "TEXT").map(textOf).filter(Boolean);
     const filled = Array.isArray(node.fillColors) && node.fillColors.length > 0;
@@ -979,12 +1000,54 @@ export function sourceFallbackSpec(canvas: Record<string, unknown>): Rec | null 
     const blocks: Rec[] = [];
     blocksOf(group, 0, blocks);
     if (!blocks.length) continue;
-    const fill = Array.isArray(group.fillColors) ? hex(group.fillColors[0]) : null;
-    const card = (fill && fill !== rootFill) || Array.isArray(group.strokeColors);
+    // Component cards often carry their fill on the first inner frame, not the instance.
+    const surfaceNode = [group, kids(group)[0]].find((n) => n && (Array.isArray(n.fillColors) || Array.isArray(n.strokeColors))) ?? group;
+    const fill = Array.isArray(surfaceNode.fillColors) ? hex(surfaceNode.fillColors[0]) : null;
+    const card = (fill && fill !== rootFill) || Array.isArray(surfaceNode.strokeColors);
     sections.push({ name, surface: card ? "card" : "plain", blocks });
   }
   if (sections.length > 8) sections.length = 8;
   return sections.length ? { summary: "Source-preserving layout: the model response could not be used, so UX Direct rebuilt the screen natively from its own layers.", sections, learningCandidate: null } : null;
+}
+
+/**
+ * Bind generated layers to the file's own styles: a TEXT layer takes a local text style with
+ * the same size (±1px) and weight class, and any exact colour match takes the paint style.
+ * Hygiene checks otherwise report every generated layer as hard-coded.
+ */
+function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: string[]) {
+  if (!styles) return;
+  const textStyles = arr(styles.text).map(asRec).filter((x): x is Rec => !!x && typeof x.id === "string" && typeof x.fontSize === "number");
+  const paintByColor = new Map<string, string>();
+  for (const style of arr(styles.paint).map(asRec)) {
+    if (style && typeof style.id === "string" && typeof style.color === "string" && !paintByColor.has(style.color.toUpperCase())) paintByColor.set(style.color.toUpperCase(), style.id);
+  }
+  let texts = 0, paints = 0;
+  const visit = (nodes: NativeNode[]) => {
+    for (const node of nodes) {
+      if (node.type === "TEXT" && typeof node.textStyleId !== "string" && textStyles.length) {
+        const size = typeof node.fontSize === "number" ? node.fontSize : 14;
+        const bold = isBoldWeight(String(node.fontStyle ?? "Regular"));
+        const fits = textStyles.filter((st) => Math.abs(Number(st.fontSize) - size) <= 1 && isBoldWeight(String(st.fontStyle ?? "Regular")) === bold);
+        const pick = fits.find((st) => st.fontFamily === node.fontFamily && Number(st.fontSize) === size) ??
+          fits.find((st) => Number(st.fontSize) === size) ?? fits[0];
+        if (pick) {
+          node.textStyleId = pick.id;
+          node.fontSize = Number(pick.fontSize);
+          if (typeof pick.fontFamily === "string") node.fontFamily = pick.fontFamily;
+          if (typeof pick.fontStyle === "string") node.fontStyle = pick.fontStyle;
+          texts += 1;
+        }
+      }
+      if (node.type !== "CLONE" && node.type !== "INSTANCE" && typeof node.color === "string" && typeof node.paintStyleId !== "string") {
+        const id = paintByColor.get(node.color.toUpperCase());
+        if (id) { node.paintStyleId = id; paints += 1; }
+      }
+      if (node.children) visit(node.children);
+    }
+  };
+  visit(elements);
+  if (texts || paints) warnings.push("Bound " + texts + " text layer(s) and " + paints + " fill(s) to the file's own styles.");
 }
 
 export function isBlockSpec(value: unknown): boolean {
@@ -992,7 +1055,7 @@ export function isBlockSpec(value: unknown): boolean {
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
 }
 
-export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean } = {}): BlockExpansion {
+export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean } = {}): BlockExpansion {
   const spec = asRec(value) ?? {};
   const sourceNodes = arr(canvas.nodes);
   const source = asRec(sourceNodes[0]) ?? {};
@@ -1070,10 +1133,31 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   }
   const fitted = fitDepth(elements, 0, b.warnings);
   elements.splice(0, elements.length, ...fitted);
-  const nodeCount = countNodes(elements);
-  if (nodeCount > BLOCK_NODE_BUDGET) {
-    errors.push("The spec expands to " + nodeCount + " native layers, over the " + BLOCK_NODE_BUDGET + "-layer budget. Merge rows into lists, drop decorative blocks, and keep every source text.");
+  const renderedCount = countNodes(elements);
+  if (renderedCount > BLOCK_NODE_BUDGET) {
+    errors.push("The spec expands to " + renderedCount + " native layers, over the " + BLOCK_NODE_BUDGET + "-layer budget. Merge rows into lists, drop decorative blocks, and keep every source text.");
+  } else {
+    // Logos, icons, charts and images are not in the block spec: clone them from the source.
+    const fidelity = restoreSourceFidelity(elements, options.sourceCanvas ?? canvas, theme, {
+      // Older plugin builds cannot run CLONE elements: they still get the button restore.
+      budget: options.allowClones === false ? 0 : Math.min(SOURCE_GRAPHIC_BUDGET, PLAN_NODE_LIMIT - renderedCount - 10),
+      headerComponentId: b.source?.header?.componentId ?? null,
+    });
+    // Wireframes: copied logos, icons and charts are recoloured to the wireframe ink and images
+    // become grey boxes, so white source icons don't vanish on the light theme (findings 41, 43).
+    if (options.monochrome) {
+      const mark = (nodes: NativeNode[]) => { for (const n of nodes) { if (n.type === "CLONE") n.monochrome = { ink: theme.text, placeholder: theme.surfaceAlt }; if (n.children) mark(n.children); } };
+      mark(elements);
+    }
+    if (fidelity.clones || fidelity.restoredButtons) {
+      b.warnings.push("Kept " + fidelity.clones + " source graphic(s)" + (fidelity.replacedRings ? " (" + fidelity.replacedRings + " real chart(s) replaced generated rings)" : "") +
+        (fidelity.restoredButtons ? " and restored " + fidelity.restoredButtons + " source button(s)" : "") + ".");
+    }
+    if (fidelity.unplaced.length && options.allowClones === false) b.warnings.push(fidelity.unplaced.length + " source graphic(s) were not copied: this plugin build cannot copy layers. Re-import the latest UX Direct plugin zip.");
+    else if (fidelity.unplaced.length) b.warnings.push("Could not place " + fidelity.unplaced.length + " source graphic(s): " + fidelity.unplaced.slice(0, 5).join(", ") + ".");
   }
+  bindFileStyles(elements, asRec(canvas.styles), b.warnings);
+  const nodeCount = countNodes(elements);
 
   const contentHeight = rootPad[0] + rootPad[2] + elements.reduce((sum, node) => sum + node.height, 0) + Math.max(0, elements.length - 1) * gap;
   const requestedHeight = typeof rawFrame.height === "number" ? rawFrame.height : sourceHeight || 800;

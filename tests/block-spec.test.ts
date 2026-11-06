@@ -322,3 +322,34 @@ test("source fallback still renders a tiny source screen", () => {
   walk(normalized.elements, (node) => { if (node.type === "TEXT") texts.push(String(node.text)); });
   assert.deepEqual(texts.sort(), ["Upcoming EMI", "₹10,000"].sort());
 });
+
+test("source fallback keeps deep card texts, tab rows and inner-frame card fills (Manage Loans)", () => {
+  const t = (id: string, text: string, extra: Record<string, unknown> = {}) => ({ id, name: text, type: "TEXT", x: 0, y: 0, width: 80, height: 16, text, fillColors: ["#FFFFFF"], ...extra });
+  const tab = (id: string, label: string, opacity: number) => ({ id, name: "Tab", type: "INSTANCE", x: 0, y: 0, width: 106, height: 29, layoutMode: "VERTICAL",
+    children: [t(id + "t", label, { opacity }), { id: id + "v", name: "Vector", type: "VECTOR", x: 0, y: 29, width: 106, height: 0 }] });
+  const deepCard = (n: number) => ({ id: "c" + n, name: "Loan Card", type: "INSTANCE", x: 20, y: 0, width: 320, height: 198, layoutMode: "VERTICAL", children: [
+    { id: "c" + n + "a", name: "Frame A", type: "FRAME", x: 0, y: 0, width: 320, height: 144, fillColors: ["#383838"], cornerRadius: 12, layoutMode: "HORIZONTAL", children: [
+      { id: "c" + n + "b", name: "Frame B", type: "FRAME", x: 16, y: 20, width: 288, height: 108, layoutMode: "HORIZONTAL", children: [
+        { id: "c" + n + "c", name: "Frame C", type: "FRAME", x: 0, y: 0, width: 271, height: 108, layoutMode: "VERTICAL", children: [
+          { id: "c" + n + "d", name: "Loan Amount", type: "INSTANCE", x: 0, y: 49, width: 271, height: 59, layoutMode: "HORIZONTAL", children: [
+            { id: "c" + n + "e", name: "Frame E", type: "FRAME", x: 71, y: 11, width: 200, height: 36, layoutMode: "HORIZONTAL", children: [
+              { id: "c" + n + "f", name: "Frame F", type: "FRAME", x: 0, y: 0, width: 96, height: 36, layoutMode: "VERTICAL", children: [
+                t("c" + n + "g", "Loan Amount"), t("c" + n + "h", "₹1,20,00" + n),
+              ] },
+            ] },
+          ] },
+        ] },
+      ] },
+    ] },
+  ] });
+  const canvas = { nodes: [{ id: "root", name: "15", type: "FRAME", x: 0, y: 0, width: 360, height: 800, fillColors: ["#121212"], layoutMode: "VERTICAL", children: [
+    { id: "tabs", name: "Frame tabs", type: "FRAME", x: 0, y: 64, width: 360, height: 41, layoutMode: "HORIZONTAL", children: [tab("t1", "Active", 1), tab("t2", "Others", 0.5), tab("t3", "Closed", 0.5)] },
+    { id: "list", name: "Frame list", type: "FRAME", x: 0, y: 105, width: 360, height: 600, layoutMode: "VERTICAL", children: [deepCard(1), deepCard(2)] },
+  ] }] };
+  const spec = sourceFallbackSpec(canvas)!;
+  const json = JSON.stringify(spec);
+  assert.ok(json.includes('"type":"tabs"') && json.includes('"Others"'), "tab row becomes one tabs block");
+  assert.ok(json.includes("₹1,20,001") && json.includes("₹1,20,002"), "deep texts are kept");
+  const sections = spec.sections as Array<{ surface: string; blocks: unknown[] }>;
+  assert.equal(sections.filter((s) => s.surface === "card").length, 2, "both cards keep a card surface");
+});

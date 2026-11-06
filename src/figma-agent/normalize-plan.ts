@@ -22,8 +22,10 @@ function normalizeColor(value: unknown): string | null {
   return null;
 }
 
-function normalizeElementType(value: unknown, item: Record<string, unknown>): "RECTANGLE" | "ELLIPSE" | "TEXT" | "LINE" | "FRAME" | "POLYGON" | "STAR" | "INSTANCE" {
+function normalizeElementType(value: unknown, item: Record<string, unknown>): "RECTANGLE" | "ELLIPSE" | "TEXT" | "LINE" | "FRAME" | "POLYGON" | "STAR" | "INSTANCE" | "CLONE" {
   const raw = typeof value === "string" ? value.trim().toUpperCase().replace(/[ -]+/g, "_") : "";
+  // A copy of a source layer (logo, icon, chart) placed by the block renderer.
+  if (raw === "CLONE" && typeof item.sourceNodeId === "string" && item.sourceNodeId.trim()) return "CLONE";
   // A component reference always means a real instance, whatever label the model used for its type.
   if (typeof item.componentId === "string" && item.componentId.trim() && (raw === "INSTANCE" || raw === "COMPONENT" || !Array.isArray(item.children))) return "INSTANCE";
   const aliases: Record<string, "RECTANGLE" | "ELLIPSE" | "TEXT" | "LINE" | "FRAME" | "POLYGON" | "STAR"> = {
@@ -122,26 +124,40 @@ export function repairPlanGeometry(value: unknown): unknown {
     } else if (mode === "HORIZONTAL") {
       const contentBudget = Math.max(1, width - padL - padR - Math.max(0, flow.length - 1) * gap);
       const currentTotal = flow.reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "width", 1)), 0);
-      if (currentTotal > contentBudget + 1) {
+      const hugs = node.layoutSizingHorizontal === "HUG";
+      if (currentTotal > contentBudget + 1 && hugs) {
+        // A hug-width row (badge, chip, button) grows to fit its content instead of squeezing it:
+        // shrinking the label of a badge that got a cloned icon made "Current" wrap to "Curr/ent".
+        node.width = Math.min(4096, Math.ceil(currentTotal + padL + padR + Math.max(0, flow.length - 1) * gap));
+      } else if (currentTotal > contentBudget + 1) {
         // Preserve the horizontal relationship but proportionally allocate the real
         // content width. Text nodes then wrap rather than collide or get clipped.
-        const scale = contentBudget / currentTotal;
-        const widths = flow.map(child => Math.max(1, Math.floor(repairGeometryNumber(child, "width", 1) * scale)));
+        // Copied source graphics and component instances keep their own size: shrinking
+        // them squashed logos, charts and badges to a few pixels (Test #1 retest).
+        // Small hug-width pills (badges, chips) size to their content, so they keep it too.
+        const rigid = (child: RepairGeometryRecord) => child.type === "CLONE" || (child.type === "INSTANCE" && repairGeometryNumber(child, "width", 1) <= 96)
+          || (child.type !== "TEXT" && child.layoutSizingHorizontal === "HUG" && repairGeometryNumber(child, "width", 1) <= 160);
+        const rigidTotal = flow.filter(rigid).reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "width", 1)), 0);
+        const flexTotal = Math.max(1, currentTotal - rigidTotal);
+        const flexBudget = Math.max(1, contentBudget - rigidTotal);
+        const scale = Math.min(1, flexBudget / flexTotal);
+        const widths = flow.map(child => rigid(child) ? repairGeometryNumber(child, "width", 1)
+          : Math.max(Math.min(24, repairGeometryNumber(child, "width", 1)), Math.floor(repairGeometryNumber(child, "width", 1) * scale)));
         let excess = widths.reduce((sum, next) => sum + next, 0) - contentBudget;
         if (excess > 0) {
-          const order = widths.map((next, index) => ({ next, index })).sort((a, b) => b.next - a.next);
+          const order = widths.map((next, index) => ({ next, index })).filter(entry => !rigid(flow[entry.index])).sort((a, b) => b.next - a.next);
           for (const entry of order) {
             if (excess <= 0) break;
-            const canReduce = Math.max(0, widths[entry.index] - 1);
+            const canReduce = Math.max(0, widths[entry.index] - 24);
             const reduceBy = Math.min(canReduce, excess);
             widths[entry.index] -= reduceBy;
             excess -= reduceBy;
           }
         }
-        flow.forEach((child, index) => fitWidth(child, widths[index], mode));
+        flow.forEach((child, index) => { if (!rigid(child)) fitWidth(child, widths[index], mode); });
         // Frames also use fixed allocated widths here; FILL could re-distribute
         // uneven columns and invalidate the geometry that was just repaired.
-        flow.filter(child => child.type !== "TEXT").forEach(child => {
+        flow.filter(child => child.type !== "TEXT" && !rigid(child)).forEach(child => {
           if (child.layoutPositioning !== "ABSOLUTE") child.layoutSizingHorizontal = "FIXED";
         });
       }
@@ -247,7 +263,7 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
 
   let visited = 0;
   function normalizeNode(raw: unknown, index: number, depth: number): Record<string, unknown> | null {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw) || depth > 4 || visited >= 75) return null;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || depth > 4 || visited >= 140) return null;
     const item = raw as Record<string, unknown>;
     visited += 1;
     const type = normalizeElementType(item.type ?? item.kind ?? item.elementType ?? item.nodeType, item);
@@ -276,6 +292,17 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
       height: Math.max(1, Math.min(4096, height)),
     };
     if (text !== undefined && type === "TEXT") normalized.text = text;
+    if (type === "CLONE") {
+      // The clone keeps the source layer's own paints, effects and children.
+      normalized.sourceNodeId = String(item.sourceNodeId).trim().slice(0, 100);
+      for (const key of ["layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "layoutGrow"]) {
+        if (item[key] !== undefined) normalized[key] = item[key];
+      }
+      const mono = item.monochrome && typeof item.monochrome === "object" ? item.monochrome as Record<string, unknown> : null;
+      const hexOk = (v: unknown) => typeof v === "string" && /^#[0-9A-Fa-f]{6}$/.test(v);
+      if (mono && hexOk(mono.ink) && hexOk(mono.placeholder)) normalized.monochrome = { ink: mono.ink, placeholder: mono.placeholder };
+      return normalized;
+    }
     if (type === "INSTANCE") {
       normalized.componentId = String(item.componentId).trim().slice(0, 100);
       const props = item.instanceProperties ?? item.properties ?? item.props;
@@ -392,7 +419,7 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
       for (const [childIndex, child] of item.children.slice(0, 35).entries()) {
         const nested = normalizeNode(child, childIndex, depth + 1);
         if (nested) children.push(nested);
-        if (visited >= 75) break;
+        if (visited >= 140) break;
       }
       if (children.length) normalized.children = children;
     }
