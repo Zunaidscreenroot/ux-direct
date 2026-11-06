@@ -124,12 +124,19 @@ export function repairPlanGeometry(value: unknown): unknown {
     } else if (mode === "HORIZONTAL") {
       const contentBudget = Math.max(1, width - padL - padR - Math.max(0, flow.length - 1) * gap);
       const currentTotal = flow.reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "width", 1)), 0);
-      if (currentTotal > contentBudget + 1) {
+      const hugs = node.layoutSizingHorizontal === "HUG";
+      if (currentTotal > contentBudget + 1 && hugs) {
+        // A hug-width row (badge, chip, button) grows to fit its content instead of squeezing it:
+        // shrinking the label of a badge that got a cloned icon made "Current" wrap to "Curr/ent".
+        node.width = Math.min(4096, Math.ceil(currentTotal + padL + padR + Math.max(0, flow.length - 1) * gap));
+      } else if (currentTotal > contentBudget + 1) {
         // Preserve the horizontal relationship but proportionally allocate the real
         // content width. Text nodes then wrap rather than collide or get clipped.
         // Copied source graphics and component instances keep their own size: shrinking
         // them squashed logos, charts and badges to a few pixels (Test #1 retest).
-        const rigid = (child: RepairGeometryRecord) => child.type === "CLONE" || (child.type === "INSTANCE" && repairGeometryNumber(child, "width", 1) <= 96);
+        // Small hug-width pills (badges, chips) size to their content, so they keep it too.
+        const rigid = (child: RepairGeometryRecord) => child.type === "CLONE" || (child.type === "INSTANCE" && repairGeometryNumber(child, "width", 1) <= 96)
+          || (child.type !== "TEXT" && child.layoutSizingHorizontal === "HUG" && repairGeometryNumber(child, "width", 1) <= 160);
         const rigidTotal = flow.filter(rigid).reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "width", 1)), 0);
         const flexTotal = Math.max(1, currentTotal - rigidTotal);
         const flexBudget = Math.max(1, contentBudget - rigidTotal);
