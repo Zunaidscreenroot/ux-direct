@@ -75,3 +75,29 @@ export async function finishTaskRun(input: {
     console.warn("[uxd-task-run] finish failed:", error instanceof Error ? error.message.slice(0, 160) : "unknown");
   }
 }
+
+export type QuickTaskKind = "text" | "image" | "audit";
+
+/**
+ * One-row outcome log for quick tasks (text, image, audit) so the brain monitor can see
+ * their success rate, duration and model. Runs after the response; never blocks or throws.
+ */
+export function recordQuickTask(kind: QuickTaskKind, startedAt: number, response: Response, detail?: string): void {
+  if (response.status === 403) return;
+  const durationMs = Math.max(0, Date.now() - startedAt);
+  deferTaskWork((async () => {
+    let body: Record<string, unknown> = {};
+    try { body = await response.clone().json() as Record<string, unknown>; } catch { /* non-JSON body */ }
+    const ok = response.ok && body.ok !== false;
+    const subKind = typeof body.mode === "string" ? body.mode : typeof body.kind === "string" ? body.kind : undefined;
+    await neonRequest("uxd_task_runs", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({
+      id: randomUUID(), project_key: "project:general-ux", title: "Quick task: " + kind + (subKind ? " / " + subKind.slice(0, 40) : ""),
+      request_summary: sanitizeTaskSummary(detail || kind), status: ok ? "completed" : "failed", outcome: ok ? "succeeded" : "failed",
+      duration_ms: durationMs,
+      retrieval: { status: "disabled", memoryIds: [], chunkIds: [], chars: 0 },
+      metadata: { source: "figma-quick", kind, ...(subKind ? { subKind: subKind.slice(0, 40) } : {}),
+        ...(typeof body.model === "string" ? { model: body.model.slice(0, 160) } : {}), httpStatus: response.status },
+      ...(!ok && typeof body.error === "string" ? { error_summary: sanitizeTaskSummary(body.error).slice(0, 600) } : {}),
+    }) });
+  })());
+}

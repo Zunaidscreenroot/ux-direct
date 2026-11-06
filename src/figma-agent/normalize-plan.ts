@@ -127,23 +127,30 @@ export function repairPlanGeometry(value: unknown): unknown {
       if (currentTotal > contentBudget + 1) {
         // Preserve the horizontal relationship but proportionally allocate the real
         // content width. Text nodes then wrap rather than collide or get clipped.
-        const scale = contentBudget / currentTotal;
-        const widths = flow.map(child => Math.max(1, Math.floor(repairGeometryNumber(child, "width", 1) * scale)));
+        // Copied source graphics and component instances keep their own size: shrinking
+        // them squashed logos, charts and badges to a few pixels (Test #1 retest).
+        const rigid = (child: RepairGeometryRecord) => child.type === "CLONE" || (child.type === "INSTANCE" && repairGeometryNumber(child, "width", 1) <= 96);
+        const rigidTotal = flow.filter(rigid).reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "width", 1)), 0);
+        const flexTotal = Math.max(1, currentTotal - rigidTotal);
+        const flexBudget = Math.max(1, contentBudget - rigidTotal);
+        const scale = Math.min(1, flexBudget / flexTotal);
+        const widths = flow.map(child => rigid(child) ? repairGeometryNumber(child, "width", 1)
+          : Math.max(Math.min(24, repairGeometryNumber(child, "width", 1)), Math.floor(repairGeometryNumber(child, "width", 1) * scale)));
         let excess = widths.reduce((sum, next) => sum + next, 0) - contentBudget;
         if (excess > 0) {
-          const order = widths.map((next, index) => ({ next, index })).sort((a, b) => b.next - a.next);
+          const order = widths.map((next, index) => ({ next, index })).filter(entry => !rigid(flow[entry.index])).sort((a, b) => b.next - a.next);
           for (const entry of order) {
             if (excess <= 0) break;
-            const canReduce = Math.max(0, widths[entry.index] - 1);
+            const canReduce = Math.max(0, widths[entry.index] - 24);
             const reduceBy = Math.min(canReduce, excess);
             widths[entry.index] -= reduceBy;
             excess -= reduceBy;
           }
         }
-        flow.forEach((child, index) => fitWidth(child, widths[index], mode));
+        flow.forEach((child, index) => { if (!rigid(child)) fitWidth(child, widths[index], mode); });
         // Frames also use fixed allocated widths here; FILL could re-distribute
         // uneven columns and invalidate the geometry that was just repaired.
-        flow.filter(child => child.type !== "TEXT").forEach(child => {
+        flow.filter(child => child.type !== "TEXT" && !rigid(child)).forEach(child => {
           if (child.layoutPositioning !== "ABSOLUTE") child.layoutSizingHorizontal = "FIXED";
         });
       }

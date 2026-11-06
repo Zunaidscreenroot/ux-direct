@@ -1077,8 +1077,11 @@ function canvasColorHex(color) {
 }
 function summarizePaintColors(paints) {
   if (!Array.isArray(paints)) return [];
-  return paints.filter(function (paint) { return paint && paint.type === "SOLID" && paint.visible !== false && paint.color; })
-    .slice(0, 3).map(function (paint) { return canvasColorHex(paint.color); }).filter(Boolean);
+  // Gradient fills (e.g. a gradient CTA) report their first stop so the layer still reads as filled.
+  return paints.filter(function (paint) {
+    return paint && paint.visible !== false && ((paint.type === "SOLID" && paint.color) ||
+      (/^GRADIENT_/.test(String(paint.type)) && Array.isArray(paint.gradientStops) && paint.gradientStops.length && paint.gradientStops[0].color));
+  }).slice(0, 3).map(function (paint) { return canvasColorHex(paint.type === "SOLID" ? paint.color : paint.gradientStops[0].color); }).filter(Boolean);
 }
 function summarizeCanvasNode(node, depth, state) {
   if (!node || state.count >= state.maxNodes) { state.truncated = true; return null; }
@@ -1890,6 +1893,9 @@ async function writeCanvasCommand(payload, options) {
       parent.appendChild(node);
       if (type === "CLONE" && "layoutPositioning" in node && spec.layoutPositioning !== "ABSOLUTE") {
         try { node.layoutPositioning = "AUTO"; } catch (_) {}
+        // A copy keeps its source size; source FILL/STRETCH settings must not squash it here.
+        try { if ("layoutGrow" in node) node.layoutGrow = 0; } catch (_) {}
+        try { if ("layoutAlign" in node) node.layoutAlign = "INHERIT"; } catch (_) {}
       }
 
       var parentLayoutMode = parent && typeof parent.layoutMode === "string" ? parent.layoutMode : "NONE";

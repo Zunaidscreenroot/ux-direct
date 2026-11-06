@@ -4,6 +4,7 @@ import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
+import { buildBrainQuery } from "@/src/memory/brain-query";
 import { resolveFigmaTaskProject, resolveFigmaTaskScope } from "@/src/memory/task-learning";
 import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { deferTaskWork, finishTaskRun, startTaskRun, type RetrievalRecord } from "@/src/memory/task-run-log";
@@ -343,6 +344,7 @@ function collectSourceTextInventory(nodes: unknown[]): Array<{ name: string; tex
     for (const value of items) {
       if (!value || typeof value !== "object" || Array.isArray(value) || result.length >= 80) continue;
       const node = value as Record<string, unknown>;
+      if (node.visible === false || node.opacity === 0) continue;
       if (node.type === "TEXT" && typeof node.text === "string" && node.text.trim()) {
         result.push({
           name: typeof node.name === "string" ? node.name.slice(0, 100) : "Text layer",
@@ -574,7 +576,8 @@ export async function POST(request: Request) {
   const brainStarted = Date.now();
   try {
     const retrieved = await retrieveBrainContext({
-      query: (parsedInput.data.prompt + "\n" + JSON.stringify(canvas).slice(0, 1800)).slice(0, 3000),
+      query: buildBrainQuery({ prompt: parsedInput.data.prompt, frameName: selectedName, designScope,
+        nodes: Array.isArray(canvas.nodes) ? canvas.nodes : [] }),
       scopeKeys: resolveBrainScopes(parsedInput.data.prompt + "\n" + JSON.stringify(canvas.nodes).slice(0, 1500)),
       limit: 6,
       maxChars: 6000,
