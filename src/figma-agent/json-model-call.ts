@@ -26,6 +26,10 @@ export async function callFigmaJsonModel(options: {
   timeoutMs?: number;
   /** Accept any JSON object, not only ones with the usual review/plan keys (sub-agents use their own keys). */
   anyObject?: boolean;
+  /** Aborts every attempt (sub-agents share one hard deadline). */
+  signal?: AbortSignal;
+  /** Stop after this many attempts (sub-agents make one call each). */
+  maxAttempts?: number;
   accept: (data: Record<string, unknown>, raw: string) => string | null;
 }): Promise<JsonModelResult> {
   const provider = await getResolvedActiveChatProvider();
@@ -36,9 +40,16 @@ export async function callFigmaJsonModel(options: {
   const models = figmaModelChain(provider, options.hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id));
   const attempts = models.map((model) => ({ model, jsonMode: true }));
   const errors: string[] = [];
-  for (let index = 0; index < attempts.length; index++) {
+  const maxAttempts = options.maxAttempts ?? Number.POSITIVE_INFINITY;
+  for (let index = 0; index < attempts.length && index < maxAttempts; index++) {
+    if (options.signal?.aborted) {
+      errors.push("stopped: shared deadline reached");
+      break;
+    }
     const { model, jsonMode } = attempts[index];
     const controller = new AbortController();
+    const abortFromParent = () => controller.abort();
+    options.signal?.addEventListener("abort", abortFromParent, { once: true });
     const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? figmaAttemptTimeoutMs(provider, index, 60000, 45000));
     try {
       const response = await fetch(endpoint, {
@@ -96,6 +107,7 @@ export async function callFigmaJsonModel(options: {
       errors.push(model + ": " + (controller.signal.aborted ? "timed out" : String(error instanceof Error ? error.message : error).slice(0, 160)));
     } finally {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abortFromParent);
     }
   }
   return { ok: false, status: 502, error: "No free model returned a usable answer.", errors };
