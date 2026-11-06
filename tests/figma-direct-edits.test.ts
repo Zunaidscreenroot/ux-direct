@@ -263,7 +263,7 @@ function runtime() {
     if (message.error) throw new Error(message.error);
     return message.result;
   }
-  return { apply, screen, card, title, body, button, label, hidden, page };
+  return { apply, make, screen, card, title, body, button, label, hidden, page };
 }
 
 test("direct edits change real node properties in code.js", async () => {
@@ -320,4 +320,31 @@ test("layer actions, hidden layers and unknown targets", async () => {
   const handover = await r.apply("make the avatar red", [r.screen]);
   assert.equal(handover.needsModel, true, "an unknown named target goes to the model instead of guessing");
   await assert.rejects(r.apply("padding 24", [r.title]), /has no padding/);
+});
+
+test("'the title' on a whole screen edits only the screen title, with every clause applied", async () => {
+  const r = runtime();
+  const header = r.make({ type: "FRAME", name: "Header", width: 375, height: 56, y: 0 }, r.screen);
+  const screenTitle = r.make({ type: "TEXT", name: "Screen title", characters: "My Loans", fontSize: 20 }, header);
+  const card2 = r.make({ type: "FRAME", name: "Card 2", width: 343, height: 200, y: 300 }, r.screen);
+  const cardTitle = r.make({ type: "TEXT", name: "Card title", characters: "Personal Loan", fontSize: 16 }, card2);
+  const result = await r.apply("make the title 24px and bold", [r.screen]);
+  assert.equal(screenTitle.fontSize, 24);
+  assert.deepEqual(plain(screenTitle.fontName), { family: "Inter", style: "Bold" });
+  assert.equal(cardTitle.fontSize, 16, "card titles are untouched");
+  assert.equal(r.title.fontSize, 20, "the card's own title is untouched");
+  assert.equal(result.applied.length, 2, "both the size and the weight were applied");
+  await r.apply("make all titles bold", [r.screen]);
+  assert.deepEqual(plain(cardTitle.fontName), { family: "Inter", style: "Bold" }, "plural still hits every title");
+});
+
+test("from/to copy edits are applied in place, without a model or a new frame", async () => {
+  const r = runtime();
+  const ops = parse('Change the screen title from "Loan summary" to "My Loans"', FRAME);
+  assert.ok(ops, "screen-title from/to is a direct edit");
+  assert.ok(parse('rename "Loan summary" to "My Loans"', FRAME));
+  assert.ok(parse('replace "Loan summary" with "My Loans"', FRAME));
+  await r.apply('Change the screen title from "Loan summary" to "My Loans"', [r.screen]);
+  assert.equal(r.title.characters, "My Loans");
+  assert.equal(r.body.characters, "Pay ₹10,000 by 5 Dec", "layers without the text are not touched");
 });

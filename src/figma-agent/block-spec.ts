@@ -233,6 +233,11 @@ function label(value: string, fallback: string): string {
   return base ? fallback + " · " + base : fallback;
 }
 
+/** Spacing on the 4px grid (2→4, 6→8, 10→12, 14→16), so hygiene checks see a consistent scale. */
+function grid4(value: number): number {
+  return value <= 0 ? 0 : Math.max(4, Math.round(value / 4) * 4);
+}
+
 class Builder {
   count = 0;
   warnings: string[] = [];
@@ -289,8 +294,8 @@ class Builder {
   /** Vertical Auto Layout frame that hugs its content height and fills the parent width. */
   vstack(name: string, width: number, children: NativeNode[], opts: { gap?: number; pad?: [number, number, number, number]; fill?: string | null; radius?: number; stroke?: string; align?: "MIN" | "CENTER" | "MAX"; hugWidth?: boolean } = {}): NativeNode {
     this.count += 1;
-    const [pt, pr, pb, pl] = opts.pad ?? [0, 0, 0, 0];
-    const gap = opts.gap ?? 8;
+    const [pt, pr, pb, pl] = (opts.pad ?? [0, 0, 0, 0]).map(grid4);
+    const gap = grid4(opts.gap ?? 8);
     const flow = children.filter((child) => child.layoutPositioning !== "ABSOLUTE");
     const height = pt + pb + flow.reduce((sum, child) => sum + child.height, 0) + Math.max(0, flow.length - 1) * gap;
     const hugWidth = opts.hugWidth === true;
@@ -311,8 +316,8 @@ class Builder {
   /** Horizontal Auto Layout frame: fills parent width, hugs the tallest child. */
   hstack(name: string, width: number, children: NativeNode[], opts: { gap?: number; pad?: [number, number, number, number]; fill?: string | null; radius?: number; stroke?: string; justify?: "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN"; align?: "MIN" | "CENTER" | "MAX"; hugWidth?: boolean; fixedHeight?: number; wrap?: boolean } = {}): NativeNode {
     this.count += 1;
-    const [pt, pr, pb, pl] = opts.pad ?? [0, 0, 0, 0];
-    const gap = opts.gap ?? 8;
+    const [pt, pr, pb, pl] = (opts.pad ?? [0, 0, 0, 0]).map(grid4);
+    const gap = grid4(opts.gap ?? 8);
     const flow = children.filter((child) => child.layoutPositioning !== "ABSOLUTE");
     const tallest = flow.reduce((max, child) => Math.max(max, child.height), 0);
     const hugWidth = opts.hugWidth === true;
@@ -698,7 +703,7 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
         const on = i === active;
         const fill = type === "tabs" && on ? t.surface : null;
         const txt = b.text(type === "tabs" ? "Tab label" : "Nav label", item, cell - 8, { size: 13, weight: on ? "Semi Bold" : "Regular", color: on ? t.primary : t.muted, bg: fill ?? segFill, align: "CENTER" });
-        const seg = b.hstack(label(item, on ? (type === "tabs" ? "Tab (active)" : "Nav item (active)") : (type === "tabs" ? "Tab" : "Nav item")), cell, [txt], { pad: [8, 4, 8, 4], fill, radius: Math.max(0, t.radius - 4), justify: "CENTER" });
+        const seg = b.hstack(label(item, on ? (type === "tabs" ? "Tab (active)" : "Nav item (active)") : (type === "tabs" ? "Tab" : "Nav item")), cell, [txt], { pad: [8, 4, 8, 4], fill, radius: Math.max(0, t.radius - 4), justify: "CENTER", align: "CENTER", fixedHeight: 44 });
         seg.layoutGrow = 1;
         return seg;
       });

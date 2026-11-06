@@ -101,7 +101,10 @@ export function flattenCanvas(canvas: unknown, rootId?: string): CanvasTree {
     if (text.trim()) texts.push(text);
     const props = record(node.componentProperties);
     if (props) {
-      for (const propValue of Object.values(props)) if (typeof propValue === "string" && propValue.trim()) texts.push(propValue);
+      // Variant values like "24" (icon size) or "true" are settings, not visible copy.
+      for (const propValue of Object.values(props)) {
+        if (typeof propValue === "string" && propValue.trim() && !/^(?:\d+(?:\.\d+)?(?:px)?|true|false)$/i.test(propValue.trim())) texts.push(propValue);
+      }
     }
     const flat: FlatNode = {
       id: node.id,
