@@ -30,3 +30,27 @@
 .ud-markdown hr{border:0;border-top:1px solid #2a3546;margin:13px 0}
 .ud-typing{display:inline-flex;align-items:center;gap:8px;color:#91e8ce;font-size:11px}
 .ud-typing canvas{display:block;width:22px;height:22px}
+
+/* Command center */
+.ud-cc-soon{display:flex;align-items:center;justify-content:space-between;padding:9px 10px;color:#5e6d83;font-size:11px}
+.ud-cc-soon i{font:8px 'DM Mono',monospace;font-style:normal;letter-spacing:.8px;padding:3px 6px;border:1px solid #2a3546;border-radius:5px;color:#6f7f96}
+.ud-cc-lock-wrap{padding:14px 24px 0;width:min(890px,100%);margin:0 auto}
+.ud-cc-lock{display:flex;flex-direction:column;gap:6px;margin:0 0 16px;padding:14px 16px;border:1px solid #4a3f2a;border-radius:12px;background:#1d1912}
+.ud-cc-lock strong{font-size:12px;color:#f1d3a6}
+.ud-cc-lock p{margin:0;color:#b9a68a;font-size:11px;line-height:1.6}
+.ud-cc-lock div{display:flex;gap:8px;margin-top:6px}
+.ud-cc-lock input{flex:1;min-width:0;padding:9px 11px;border:1px solid #334154;border-radius:9px;background:#10151f;color:#f0f5fb;font-size:12px;outline:none}
+.ud-cc-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:0 0 22px}
+.ud-cc-stats div{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border:1px solid #293649;border-radius:12px;background:#111823}
+.ud-cc-stats b{font:600 24px Manrope,sans-serif;color:#f3f7fd}
+.ud-cc-stats span{font-size:10px;color:#8191a7}
+.ud-cc-section{margin:22px 0 10px;font:600 14px Manrope,sans-serif;color:#dce5f3}
+.ud-cc-list{display:grid;gap:8px}
+.ud-cc-row{display:flex;flex-direction:column;gap:6px;padding:13px 15px;border:1px solid #232f40;border-radius:11px;background:#0f151f}
+.ud-cc-row-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.ud-cc-row-top strong{font-size:12px;color:#eef3fa;overflow-wrap:anywhere}
+.ud-cc-row-top .ud-status-pill{flex:0 0 auto}
+.ud-cc-row p{margin:0;color:#9aa8bd;font-size:11px;line-height:1.65;overflow-wrap:anywhere}
+.ud-cc-row small{color:#627087;font:9px 'DM Mono',monospace}
+.ud-cc-row .ud-cc-error-text{color:#e8a1ab}
+.ud-cc-empty{color:#6e7d91;font-size:12px}
