@@ -94,7 +94,7 @@ export function flattenCanvas(canvas: unknown, rootId?: string): CanvasTree {
   function walk(value: unknown, parentX: number, parentY: number, isRoot: boolean, clipAncestors: FlatNode["clipAncestors"], parent: FlatNode | null = null) {
     const node = record(value);
     if (!node || typeof node.id !== "string" || typeof node.type !== "string") return;
-    if (node.visible === false) return;
+    if (node.visible === false || num(node.opacity) === 0) return;
     const x = num(node.x), y = num(node.y), w = num(node.width), h = num(node.height);
     const rotated = (num(node.rotation) || 0) !== 0;
     // Top-level read-back nodes carry page coordinates; children are parent-relative.
@@ -104,10 +104,13 @@ export function flattenCanvas(canvas: unknown, rootId?: string): CanvasTree {
     const text = node.type === "TEXT" && typeof node.text === "string" ? node.text : "";
     if (text.trim()) texts.push(text);
     const props = record(node.componentProperties);
-    if (props) {
+    // An expanded instance shows its real texts; its property values are variant settings
+    // ("type 1", "yes"), not copy. Only a collapsed instance needs them as a text proxy.
+    const expanded = Array.isArray(node.children) && node.children.length > 0;
+    if (props && !expanded) {
       // Variant values like "24" (icon size) or "true" are settings, not visible copy.
       for (const propValue of Object.values(props)) {
-        if (typeof propValue === "string" && propValue.trim() && !/^(?:\d+(?:\.\d+)?(?:px)?|true|false)$/i.test(propValue.trim())) texts.push(propValue);
+        if (typeof propValue === "string" && propValue.trim() && !/^(?:\d+(?:\.\d+)?(?:px)?|true|false|yes|no|on|off|type \d+|variant\s*\d*|default)$/i.test(propValue.trim())) texts.push(propValue);
       }
     }
     const flat: FlatNode = {

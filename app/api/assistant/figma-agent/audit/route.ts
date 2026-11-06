@@ -5,6 +5,7 @@ import { callFigmaJsonModel, type JsonModelContent } from "@/src/figma-agent/jso
 import { normalizeUxAudit, formatUxAudit, compactAuditCanvas } from "@/src/figma-agent/ux-audit-review";
 import { auditImageSchema } from "@/src/figma-agent/audit-input";
 import { isAllowedPluginOrigin, pluginCorsHeaders, pluginOptions } from "@/src/figma-agent/route-cors";
+import { recordQuickTask } from "@/src/memory/task-run-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +22,13 @@ export async function OPTIONS(request: Request) {
  *   hygiene findings attached as objective evidence.
  */
 export async function POST(request: Request) {
+  const startedAt = Date.now();
+  const response = await handleAuditTask(request);
+  recordQuickTask("audit", startedAt, response);
+  return response;
+}
+
+async function handleAuditTask(request: Request): Promise<Response> {
   const headers = pluginCorsHeaders(request);
   if (!isAllowedPluginOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
   const body: unknown = await request.json().catch(() => null);

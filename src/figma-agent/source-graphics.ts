@@ -120,6 +120,13 @@ function isCardLike(node: NativeNode): boolean {
   return node.type === "FRAME" && (typeof node.color === "string" || typeof node.strokeColor === "string");
 }
 
+function isPillLike(node: NativeNode): boolean {
+  if (node.type !== "FRAME") return false;
+  if (/\b(badge|chip|pill|tag|tab|button|btn)\b/i.test(String(node.name || ""))) return true;
+  const radius = num(node.cornerRadius) ?? 0;
+  return radius > 0 && node.height <= 48 && radius >= node.height / 2 - 1;
+}
+
 function siblingsOf(ref: OutRef, elements: NativeNode[]): NativeNode[] {
   return ref.parent ? ref.parent.children ?? [] : elements;
 }
@@ -199,11 +206,17 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
     for (const r of refs) if (r.node.type === "TEXT" && typeof r.node.text === "string") {
       const k = norm(r.node.text); outTextCount.set(k, (outTextCount.get(k) || 0) + 1);
     }
+    // Badge, chip, tab and button labels are no anchor: graphics put inside those pills
+    // squeezed the label to one letter per line (Test #1 retest).
+    const inPill = (key: string) => {
+      const ref = refs.find((r) => r.node.type === "TEXT" && typeof r.node.text === "string" && norm(r.node.text) === key);
+      return !!ref && ref.ancestors.some(isPillLike);
+    };
     // Walk up from the graphic until an ancestor holds a text that is unique in both trees.
     let anchor: SrcNode | null = null;
     for (let scope = graphic.parent, hops = 0; scope && hops < 5 && !anchor; scope = scope.parent, hops += 1) {
       const candidates = descendants(scope).filter((d) => d.type === "TEXT" && d.text && !own.has(d.id) &&
-        sourceCount.get(norm(d.text)) === 1 && outTextCount.get(norm(d.text)) === 1);
+        sourceCount.get(norm(d.text)) === 1 && outTextCount.get(norm(d.text)) === 1 && !inPill(norm(d.text)));
       const cx = graphic.rect.x + graphic.rect.w / 2, cy = graphic.rect.y + graphic.rect.h / 2;
       candidates.sort((a, b) => Math.hypot(a.rect.x + a.rect.w / 2 - cx, a.rect.y + a.rect.h / 2 - cy) -
         Math.hypot(b.rect.x + b.rect.w / 2 - cx, b.rect.y + b.rect.h / 2 - cy));

@@ -126,3 +126,18 @@ test("the source back icon replaces the drawn arrow, and layers bind to the file
   const body = flat.find((n) => n.type === "TEXT" && n.text === "Two active loans")!;
   assert.equal(body.textStyleId, "S:body");
 });
+
+test("geometry repair never squashes copied graphics in a crowded row", () => {
+  const plan = { summary: "x", frame: { name: "F", width: 360, height: 400, layoutMode: "VERTICAL" }, elements: [
+    { type: "FRAME", name: "Header row", x: 0, y: 0, width: 200, height: 40, layoutMode: "HORIZONTAL", itemSpacing: 8,
+      paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0, children: [
+        { type: "TEXT", name: "Title", x: 0, y: 0, width: 160, height: 20, text: "Personal Loan" },
+        { type: "CLONE", name: "Loan Graph", sourceNodeId: "1:2", x: 0, y: 0, width: 59, height: 59, layoutSizingHorizontal: "FIXED", layoutSizingVertical: "FIXED" },
+      ] },
+  ] };
+  const out = normalizePlan(plan, { nodes: [] }, { trustedSections: true }) as { elements: N[] };
+  let clone: N | undefined, title: N | undefined;
+  walk(out.elements, (n) => { if (n.type === "CLONE") clone = n; if (n.name === "Title") title = n; });
+  assert.equal(clone?.width, 59, "clone keeps its source width");
+  assert.ok(Number(title?.width) < 160, "the text gives way instead");
+});

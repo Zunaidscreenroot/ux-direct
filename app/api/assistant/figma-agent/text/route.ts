@@ -3,6 +3,7 @@ import { z } from "zod";
 import { callFigmaJsonModel } from "@/src/figma-agent/json-model-call";
 import { deterministicLayerNames, modelLayers, normalizeTextEdits } from "@/src/figma-agent/text-tasks";
 import { isAllowedPluginOrigin, pluginCorsHeaders, pluginOptions } from "@/src/figma-agent/route-cors";
+import { recordQuickTask } from "@/src/memory/task-run-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +29,13 @@ const itemSchema = z.object({
  * The model only returns {id, value} pairs; the plugin applies them with native update-node.
  */
 export async function POST(request: Request) {
+  const startedAt = Date.now();
+  const response = await handleTextTask(request);
+  recordQuickTask("text", startedAt, response);
+  return response;
+}
+
+async function handleTextTask(request: Request): Promise<Response> {
   const headers = pluginCorsHeaders(request);
   if (!isAllowedPluginOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
   const body: unknown = await request.json().catch(() => null);

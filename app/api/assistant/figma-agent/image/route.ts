@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { bytesToBase64, generateImage, removeImageBackground } from "@/src/figma-agent/image-services";
 import { isAllowedPluginOrigin, pluginCorsHeaders, pluginOptions } from "@/src/figma-agent/route-cors";
+import { recordQuickTask } from "@/src/memory/task-run-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +15,13 @@ const MAX_INPUT_BASE64 = 12_000_000;
 
 /** Image quick tasks: generate an image for a shape's exact aspect ratio, or remove an image's background. */
 export async function POST(request: Request) {
+  const startedAt = Date.now();
+  const response = await handleImageTask(request);
+  recordQuickTask("image", startedAt, response);
+  return response;
+}
+
+async function handleImageTask(request: Request): Promise<Response> {
   const headers = pluginCorsHeaders(request);
   if (!isAllowedPluginOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
   const body: unknown = await request.json().catch(() => null);

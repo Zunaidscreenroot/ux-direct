@@ -43,6 +43,8 @@ function indexById(nodes: RecordLike[], out = new Map<string, RecordLike>(), dep
 function collectText(nodes: RecordLike[], output: string[] = [], depth = 0, sourceById?: Map<string, RecordLike>): string[] {
   if (depth > 8) return output;
   for (const node of nodes) {
+    // Hidden or fully transparent layers are not visible content.
+    if (node.visible === false || node.opacity === 0) continue;
     if (node.type === "CLONE" && sourceById && typeof node.sourceNodeId === "string") {
       const original = sourceById.get(node.sourceNodeId);
       if (original) collectText([original], output, 0);
