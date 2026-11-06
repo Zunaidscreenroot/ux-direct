@@ -466,7 +466,7 @@ test("visual QA exits without model calls when rendered evidence is missing", ()
 test("Figma agent retries a transient provider error once and falls back to the source layout", () => {
   const agent = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   assert.ok(agent.includes("transientRetried = true;") && agent.includes("recoveryAttempt -= 1;"), "A 5xx must get one same-mode retry before the compact prompt.");
-  assert.ok(agent.includes("sourceFallbackSpec(canvas)") && agent.includes("sourceFallback: true"), "A total model failure must fall back to the source layout.");
+  assert.ok(agent.includes("sourceFallbackSpec(rawSourceCanvas ?? canvas)") && agent.includes("sourceFallback: true"), "A total model failure must fall back to the source layout.");
   assert.ok(agent.includes("candidate.blockSpec && !success.sourceFallback ? success.spec : null"), "Fallback specs must never become verified examples.");
 });
 

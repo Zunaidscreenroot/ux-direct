@@ -353,3 +353,19 @@ test("source fallback keeps deep card texts, tab rows and inner-frame card fills
   const sections = spec.sections as Array<{ surface: string; blocks: unknown[] }>;
   assert.equal(sections.filter((s) => s.surface === "card").length, 2, "both cards keep a card surface");
 });
+
+test("source fallback keeps deep card texts and turns small status pills into badges (finding 42)", () => {
+  const T = (id: string, text: string) => ({ id, name: text, type: "TEXT", x: 0, y: 0, width: 100, height: 15, text });
+  // Card title sits 8 levels under the screen, like the "Manage Loans" loan cards.
+  let deep: Record<string, unknown> = { id: "t", name: "Title stack", type: "FRAME", x: 0, y: 0, width: 200, height: 30, layoutMode: "VERTICAL", children: [T("a", "Personal Loan"), T("b", "DMI1234567890")] };
+  for (let i = 0; i < 6; i++) deep = { id: "w" + i, name: "Frame " + i, type: "FRAME", x: 0, y: 0, width: 300, height: 120, layoutMode: i % 2 ? "VERTICAL" : "HORIZONTAL", children: [deep] };
+  const card = { id: "c", name: "Loan Card", type: "INSTANCE", x: 20, y: 80, width: 320, height: 144, fillColors: ["#383838"], children: [deep,
+    { id: "p", name: "Labels", type: "INSTANCE", x: 247, y: 0, width: 73, height: 18, fillColors: ["#2E7D6B"], cornerRadius: 4, children: [T("s", "Current")] }] };
+  const canvas = { nodes: [{ id: "r", name: "15", type: "FRAME", x: 0, y: 0, width: 360, height: 800, fillColors: ["#121212"], children: [
+    { id: "ab", name: "App bar", type: "INSTANCE", x: 0, y: 0, width: 360, height: 64, children: [T("h", "Manage Loans")] }, card] }] };
+  const spec = sourceFallbackSpec(canvas)!;
+  const json = JSON.stringify(spec);
+  assert.match(json, /Personal Loan/);
+  assert.match(json, /DMI1234567890/);
+  assert.match(json, /"type":"badge","text":"Current"/);
+});

@@ -1073,7 +1073,9 @@ export async function POST(request: Request) {
   if (fallback) return respond(fallback);
   // No model answer was usable: rebuild the screen from its own layers rather than failing.
   if (blockMode) {
-    const sourceSpec = sourceFallbackSpec(canvas);
+    // The full read: the model-facing canvas is cut at depth 6, which dropped every card title,
+    // ID, label and amount (they sit 7–8 levels deep) from the fallback (findings 27, 42).
+    const sourceSpec = sourceFallbackSpec(rawSourceCanvas ?? canvas);
     if (sourceSpec) {
       const stabilized = stabilizeBlockSpec(sourceSpec, canvas, parsedInput.data.prompt);
       // Say why the model answers were not used (timeout, parse error, schema, quality gate). This

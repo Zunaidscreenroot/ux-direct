@@ -979,6 +979,11 @@ export function sourceFallbackSpec(canvas: Record<string, unknown>): Rec | null 
     const children = kids(node);
     const texts = children.filter((c) => c.type === "TEXT").map(textOf).filter(Boolean);
     const filled = Array.isArray(node.fillColors) && node.fillColors.length > 0;
+    // A small filled pill with one label (status "Current", "Matured") is a badge, not a button.
+    if (texts.length === 1 && filled && typeof node.height === "number" && node.height <= 24 && children.length <= 3) {
+      out.push({ type: "badge", text: texts[0] });
+      return;
+    }
     if (texts.length === 1 && children.length <= 2 && filled && typeof node.height === "number" && node.height <= 64 && typeof node.cornerRadius === "number") {
       out.push({ type: "button", label: texts[0] });
       return;
