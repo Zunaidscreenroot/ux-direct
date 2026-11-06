@@ -292,3 +292,24 @@ test("create-elements keeps going when a component is missing or a sizing mode i
   assert.deepEqual(fallback.children.map((n: MockNode) => n.characters), ["Personal Loan"], "its text content is kept");
   assert.equal(screen.children[1].characters, "Full amount");
 });
+
+test("CLONE elements copy the real source layer (logo, icon, chart) into the variation", async () => {
+  const { page, write } = createRuntime();
+  const source = makeNode("FRAME", { name: "Source" });
+  const logo = makeNode("FRAME", { name: "slice logo", width: 40, height: 20, fills: [{ type: "IMAGE" }] });
+  logo.clone = () => { const copy = makeNode("FRAME", { name: logo.name, width: logo.width, height: logo.height, fills: logo.fills }); return copy; };
+  source.appendChild(logo);
+  const screen = makeNode("FRAME", { name: "Variation", layoutMode: "HORIZONTAL" });
+  page.appendChild(source); page.appendChild(screen);
+  const result = await write({ operation: "create-elements", target: "node", parentNodeId: screen.id, elements: [
+    { type: "CLONE", name: "slice logo", sourceNodeId: logo.id, width: 40, height: 20, layoutSizingHorizontal: "FIXED" },
+  ] });
+  assert.equal(result.ok, true);
+  const copy = screen.children[0];
+  assert.equal(copy.name, "slice logo");
+  assert.equal(copy.fills[0].type, "IMAGE", "the clone keeps the source paints");
+  assert.equal(source.children.length, 1, "the source layer stays in place");
+  await assert.rejects(write({ operation: "create-elements", target: "node", parentNodeId: screen.id, elements: [
+    { type: "CLONE", name: "missing", sourceNodeId: "9:999" },
+  ] }), /was not found/);
+});

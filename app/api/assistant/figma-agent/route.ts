@@ -15,7 +15,7 @@ import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/de
 import { appendMissingSourceText, MAX_REPAIRED_TEXTS, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
 import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
-import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, expandBlockSpec, isBlockSpec, sourceFallbackSpec } from "@/src/figma-agent/block-spec";
+import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, PLAN_NODE_LIMIT, expandBlockSpec, isBlockSpec, sourceFallbackSpec } from "@/src/figma-agent/block-spec";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,8 +38,10 @@ function cors(request: Request): HeadersInit {
 }
 
 const ElementFieldsSchema = z.object({
-  type: z.enum(["RECTANGLE", "ELLIPSE", "TEXT", "LINE", "FRAME", "POLYGON", "STAR", "INSTANCE"]),
+  type: z.enum(["RECTANGLE", "ELLIPSE", "TEXT", "LINE", "FRAME", "POLYGON", "STAR", "INSTANCE", "CLONE"]),
   name: z.string().trim().min(1).max(80),
+  /** CLONE only: the source layer (logo, icon, chart, image) copied into the variation. */
+  sourceNodeId: z.string().trim().min(1).max(100).optional(),
   ...NATIVE_INSTANCE_ELEMENT_FIELDS,
   x: z.number().finite().min(-1000).max(5000),
   y: z.number().finite().min(-1000).max(5000),
@@ -108,6 +110,9 @@ const ElementSchema: z.ZodTypeAny = z.lazy(() =>
       }
       if (item.type !== "INSTANCE" && (item.componentId !== undefined || item.instanceProperties !== undefined || item.textOverrides !== undefined)) {
         ctx.addIssue({ code: "custom", path: ["componentId"], message: "componentId/instanceProperties are only valid on INSTANCE elements." });
+      }
+      if ((item.type === "CLONE") !== (typeof item.sourceNodeId === "string")) {
+        ctx.addIssue({ code: "custom", path: ["sourceNodeId"], message: "sourceNodeId is required on CLONE elements and only valid there." });
       }
       if (Array.isArray(item.children) && item.children.length && item.type !== "FRAME") {
         ctx.addIssue({ code: "custom", path: ["children"], message: "Only FRAME elements may contain nested children." });
@@ -221,8 +226,8 @@ function checkPlanShape(plan: z.infer<typeof PlanObjectSchema>, ctx: z.Refinemen
   if (decorativeDominance) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Design is too shape-heavy relative to its meaningful content. Add labels, values, and task-specific detail." });
   }
-  if (totalNodes > 80) {
-    ctx.addIssue({ code: "custom", path: ["elements"], message: "Design exceeds the safe 80-node budget." });
+  if (totalNodes > PLAN_NODE_LIMIT) {
+    ctx.addIssue({ code: "custom", path: ["elements"], message: "Design exceeds the safe " + PLAN_NODE_LIMIT + "-node budget." });
   }
   if (invalidChildType) {
     ctx.addIssue({ code: "custom", path: ["elements"], message: "Nested children must belong to FRAME containers." });
@@ -243,8 +248,11 @@ type CanvasNode = {
   componentProperties?: Record<string, string | boolean>;
   childCount?: number; children?: CanvasNode[];
 };
+/** Model-facing canvas budget: deep enough for card internals (rows, badges, icons) of a full screen. */
+const COMPACT_NODE_LIMIT = 220;
+const COMPACT_DEPTH_LIMIT = 6;
 function compactNode(value: unknown, state: { count: number }, depth = 0): CanvasNode | null {
-  if (!value || typeof value !== "object" || Array.isArray(value) || state.count >= 100) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value) || state.count >= COMPACT_NODE_LIMIT) return null;
   const node = value as Record<string, unknown>;
   if (typeof node.name !== "string" || typeof node.type !== "string") return null;
   state.count += 1;
@@ -270,12 +278,12 @@ function compactNode(value: unknown, state: { count: number }, depth = 0): Canva
       .filter((entry): entry is [string, string | boolean] => typeof entry[1] === "string" || typeof entry[1] === "boolean")
       .map(([key, entryValue]) => [key.slice(0, 80), typeof entryValue === "string" ? entryValue.slice(0, 120) : entryValue]));
   }
-  if (depth < 4 && Array.isArray(node.children)) {
+  if (depth < COMPACT_DEPTH_LIMIT && Array.isArray(node.children)) {
     out.children = [];
     for (const child of node.children.slice(0, 50)) {
       const compact = compactNode(child, state, depth + 1);
       if (compact) out.children.push(compact);
-      if (state.count >= 100) break;
+      if (state.count >= COMPACT_NODE_LIMIT) break;
     }
   }
   return out;
@@ -384,7 +392,7 @@ function compactCanvas(value: unknown): Record<string, unknown> {
   }) : [];
   return { pageName: typeof canvas.pageName === "string" ? canvas.pageName.slice(0, 120) : "Unknown page",
     scope: typeof canvas.scope === "string" ? canvas.scope.slice(0, 40) : "selection",
-    nodeCount: state.count, truncated: canvas.truncated === true || state.count >= 100, nodes,
+    nodeCount: state.count, truncated: canvas.truncated === true || state.count >= COMPACT_NODE_LIMIT, nodes,
     viewport: canvas.viewport && typeof canvas.viewport === "object" ? canvas.viewport : undefined,
     styles, variableCollections, variables: compactResourceList(canvas.variables, 120),
     components: compactComponentCatalogue(canvas.components) };
@@ -501,6 +509,9 @@ export async function POST(request: Request) {
     new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.referenceImage)
     ? parsedInput.data.referenceImage : null;
   const canvas = compactCanvas(parsedInput.data.canvas);
+  // Uncompacted read-back: carries image fills, corner radii and deep icon layers for source fidelity.
+  const rawSourceCanvas = parsedInput.data.canvas && typeof parsedInput.data.canvas === "object" && !Array.isArray(parsedInput.data.canvas)
+    ? parsedInput.data.canvas as Record<string, unknown> : null;
   const selectedRoot = Array.isArray(canvas.nodes) && canvas.nodes[0] && typeof canvas.nodes[0] === "object"
     ? canvas.nodes[0] as Record<string, unknown> : {};
   const selectedName = typeof selectedRoot.name === "string" ? selectedRoot.name : "";
@@ -654,7 +665,7 @@ export async function POST(request: Request) {
     let planInput: unknown = candidateInput;
     let blockSpec: BlockSpecInfo | null = null;
     if (isBlockSpec(candidateInput)) {
-      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection });
+      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas });
       blockSpec = { blocks: expansion.blockCount, nodes: expansion.nodeCount, warnings: expansion.warnings };
       if (!expansion.plan) {
         const issues = expansion.errors.slice(0, 4).join("; ");

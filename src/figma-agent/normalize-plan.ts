@@ -22,8 +22,10 @@ function normalizeColor(value: unknown): string | null {
   return null;
 }
 
-function normalizeElementType(value: unknown, item: Record<string, unknown>): "RECTANGLE" | "ELLIPSE" | "TEXT" | "LINE" | "FRAME" | "POLYGON" | "STAR" | "INSTANCE" {
+function normalizeElementType(value: unknown, item: Record<string, unknown>): "RECTANGLE" | "ELLIPSE" | "TEXT" | "LINE" | "FRAME" | "POLYGON" | "STAR" | "INSTANCE" | "CLONE" {
   const raw = typeof value === "string" ? value.trim().toUpperCase().replace(/[ -]+/g, "_") : "";
+  // A copy of a source layer (logo, icon, chart) placed by the block renderer.
+  if (raw === "CLONE" && typeof item.sourceNodeId === "string" && item.sourceNodeId.trim()) return "CLONE";
   // A component reference always means a real instance, whatever label the model used for its type.
   if (typeof item.componentId === "string" && item.componentId.trim() && (raw === "INSTANCE" || raw === "COMPONENT" || !Array.isArray(item.children))) return "INSTANCE";
   const aliases: Record<string, "RECTANGLE" | "ELLIPSE" | "TEXT" | "LINE" | "FRAME" | "POLYGON" | "STAR"> = {
@@ -247,7 +249,7 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
 
   let visited = 0;
   function normalizeNode(raw: unknown, index: number, depth: number): Record<string, unknown> | null {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw) || depth > 4 || visited >= 75) return null;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || depth > 4 || visited >= 140) return null;
     const item = raw as Record<string, unknown>;
     visited += 1;
     const type = normalizeElementType(item.type ?? item.kind ?? item.elementType ?? item.nodeType, item);
@@ -276,6 +278,14 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
       height: Math.max(1, Math.min(4096, height)),
     };
     if (text !== undefined && type === "TEXT") normalized.text = text;
+    if (type === "CLONE") {
+      // The clone keeps the source layer's own paints, effects and children.
+      normalized.sourceNodeId = String(item.sourceNodeId).trim().slice(0, 100);
+      for (const key of ["layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "layoutGrow"]) {
+        if (item[key] !== undefined) normalized[key] = item[key];
+      }
+      return normalized;
+    }
     if (type === "INSTANCE") {
       normalized.componentId = String(item.componentId).trim().slice(0, 100);
       const props = item.instanceProperties ?? item.properties ?? item.props;
@@ -392,7 +402,7 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
       for (const [childIndex, child] of item.children.slice(0, 35).entries()) {
         const nested = normalizeNode(child, childIndex, depth + 1);
         if (nested) children.push(nested);
-        if (visited >= 75) break;
+        if (visited >= 140) break;
       }
       if (children.length) normalized.children = children;
     }

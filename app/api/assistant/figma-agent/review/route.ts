@@ -127,7 +127,9 @@ export async function POST(request: Request) {
     if (!existing?.id) {
       return NextResponse.json({ error: "The task run could not be confirmed before finalization." }, { status: 503, headers });
     }
-    if (existing.status === "completed" && existing.outcome === outcome) {
+    // finishTaskRun stores a failed outcome with status "failed", a verified one with "completed".
+    const finalStatus = outcome === "failed" ? "failed" : "completed";
+    if (existing.status === finalStatus && existing.outcome === outcome) {
       return NextResponse.json({ ok: true, logged: true, alreadyFinalized: true }, { headers });
     }
 
@@ -157,7 +159,7 @@ export async function POST(request: Request) {
 
     const confirmedResult = await neonRequest(lookupPath).catch(() => null);
     const confirmed = Array.isArray(confirmedResult) ? confirmedResult[0] as Record<string, unknown> | undefined : undefined;
-    if (!confirmed || confirmed.status !== "completed" || confirmed.outcome !== outcome) {
+    if (!confirmed || confirmed.status !== finalStatus || confirmed.outcome !== outcome) {
       return NextResponse.json({ error: "Task outcome persistence could not be confirmed." }, { status: 503, headers });
     }
     return NextResponse.json({

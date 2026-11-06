@@ -1168,8 +1168,8 @@ async function readCanvasCommand(payload) {
   assertUxDirectFileScope("read canvas");
   payload = payload || {};
   var scope = payload.scope === "current-page" ? "current-page" : "selection";
-  var maxDepth = Math.max(0, Math.min(5, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
-  var maxNodes = Math.max(1, Math.min(100, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
+  var maxDepth = Math.max(0, Math.min(8, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
+  var maxNodes = Math.max(1, Math.min(500, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
   var isSearch = (typeof payload.queryName === "string" && payload.queryName.trim()) ||
     (typeof payload.queryType === "string" && payload.queryType.trim());
   var source;
@@ -1796,6 +1796,14 @@ async function writeCanvasCommand(payload, options) {
       else if (type === "STAR") node = figma.createStar();
       else if (type === "SLICE") node = figma.createSlice();
       else if (type === "VECTOR") node = figma.createVector();
+      else if (type === "CLONE") {
+        // A copy of a source layer (logo, icon, chart, image) so variations keep real assets.
+        var cloneOf = typeof spec.sourceNodeId === "string" ? await figma.getNodeByIdAsync(spec.sourceNodeId) : null;
+        if (!cloneOf || typeof cloneOf.clone !== "function" || cloneOf.type === "PAGE" || cloneOf.type === "DOCUMENT") {
+          throw new Error("CLONE source layer " + String(spec.sourceNodeId) + " was not found.");
+        }
+        node = cloneOf.clone();
+      }
       else if (type === "INSTANCE") {
         try {
           node = (await resolveComponentForInstance(spec.componentId, "create-elements INSTANCE")).createInstance();
@@ -1810,12 +1818,18 @@ async function writeCanvasCommand(payload, options) {
       node.name = spec.name.trim().slice(0, 80);
       // Marks layers UX Direct created so "revert" may delete them and nothing else.
       if (typeof node.setPluginData === "function") node.setPluginData("uxdCreated", "1");
-      var width = Number.isFinite(spec.width) ? spec.width : (type === "TEXT" ? 280 : type === "INSTANCE" ? node.width : 160);
-      var height = Number.isFinite(spec.height) ? spec.height : (type === "TEXT" ? 40 : type === "INSTANCE" ? node.height : 100);
+      var width = Number.isFinite(spec.width) ? spec.width : (type === "TEXT" ? 280 : type === "INSTANCE" || type === "CLONE" ? node.width : 160);
+      var height = Number.isFinite(spec.height) ? spec.height : (type === "TEXT" ? 40 : type === "INSTANCE" || type === "CLONE" ? node.height : 100);
       width = Math.max(1, Math.min(4096, width));
       height = Math.max(1, Math.min(4096, height));
+      if (type === "CLONE") {
+        // Keep the source proportions; only scale down when the plan gives a smaller slot.
+        if (node.width > 0 && width < node.width - 0.5 && typeof node.rescale === "function") {
+          try { node.rescale(width / node.width); } catch (_) {}
+        }
+      }
       // Instances keep their component's intrinsic size unless the plan sets one explicitly.
-      if (typeof node.resize === "function" && (type !== "INSTANCE" || Number.isFinite(spec.width) || Number.isFinite(spec.height))) node.resize(width, height);
+      else if (typeof node.resize === "function" && (type !== "INSTANCE" || Number.isFinite(spec.width) || Number.isFinite(spec.height))) node.resize(width, height);
       if (type === "INSTANCE" && spec.instanceProperties) applyInstanceProperties(node, spec.instanceProperties);
       if (type === "INSTANCE" && spec.textOverrides) await applyInstanceTextOverrides(node, spec.textOverrides);
       if (type === "VECTOR") {
@@ -1855,9 +1869,13 @@ async function writeCanvasCommand(payload, options) {
         if (typeof spec.textCase === "string") node.textCase = spec.textCase;
         if (typeof spec.textDecoration === "string") node.textDecoration = spec.textDecoration;
       }
-      applyCreateProperties(node, spec);
+      // A clone keeps the source layer's own paints, effects and layout.
+      if (type !== "CLONE") applyCreateProperties(node, spec);
       if (type === "TEXT" && typeof spec.textStyleId === "string") await applyTextStyleAsync(node, spec.textStyleId);
       parent.appendChild(node);
+      if (type === "CLONE" && "layoutPositioning" in node && spec.layoutPositioning !== "ABSOLUTE") {
+        try { node.layoutPositioning = "AUTO"; } catch (_) {}
+      }
 
       var parentLayoutMode = parent && typeof parent.layoutMode === "string" ? parent.layoutMode : "NONE";
       var inAutoLayout = parentLayoutMode !== "NONE";
