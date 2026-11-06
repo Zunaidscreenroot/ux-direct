@@ -116,7 +116,7 @@ test("model stats group figma-agent runs by the model auto actually used", () =>
     { outcome: "verified", metadata: { source: "figma-agent", model: "glm-5", qualityScore: 92, repairedTexts: 2 } },
     { outcome: "verified", metadata: { source: "other" } },
   ]);
-  assert.deepEqual(stats[0], { model: "gemini-3.8-flash", runs: 2, verified: 1, failed: 1, pending: 0, repaired: 0, avgQuality: 85 });
+  assert.deepEqual(stats[0], { model: "gemini-3.8-flash", runs: 2, verified: 1, failed: 1, pending: 0, repaired: 0, avgQuality: 50 }, "a failed run without a lint score counts as 0");
   assert.equal(stats[1].repaired, 1);
   assert.equal(stats.length, 2);
 });
@@ -170,4 +170,14 @@ test("variation directions also change hierarchy and colour treatment (finding 4
   assert.equal(two.theme.surface, "#121212");
   const route = (await import("node:fs")).readFileSync("app/api/assistant/figma-agent/route.ts", "utf8");
   assert.ok(route.includes("const variationDirection = parsedInput.data.variation ? variationIndex + 1 : 0;"), "the first variation is not a plain improve");
+});
+
+test("final lint line becomes the run's quality score (brain monitor)", async () => {
+  const { lintScoreFromSummary, aggregateModelStats: agg } = await import("../src/memory/verified-specs");
+  assert.equal(lintScoreFromSummary("Structural lint passed · 25/25 source texts kept, 0 value(s) missing · 0 overlap(s), 0 clipped, 0 collapsed text", "verified"), 100);
+  assert.equal(lintScoreFromSummary("Structural lint found 2 issue(s) · 23/25 source texts kept, 1 value(s) missing · 1 overlap(s), 0 clipped, 0 collapsed text", "failed"), 60);
+  assert.equal(lintScoreFromSummary("Structural lint found 2 issue(s) · 12/25 source texts kept, 0 value(s) missing · 0 overlap(s), 0 clipped, 0 collapsed text", "failed"), 48);
+  assert.equal(lintScoreFromSummary("passed", "verified"), null);
+  const stats = agg([{ outcome: "verified", metadata: { source: "figma-agent", model: "m", qualityScore: 100, lintScore: 90 } }]);
+  assert.equal(stats[0].avgQuality, 90);
 });

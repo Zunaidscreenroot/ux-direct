@@ -24,7 +24,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** Longest the planner waits for the sub-agent brief before planning without it. */
-const PLANNER_AGENT_WAIT_MS = 15000;
+const PLANNER_AGENT_WAIT_MS = 6000;
 const API_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 function allowedOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
@@ -635,7 +635,7 @@ export async function POST(request: Request) {
   // A verified spec from this project (structure only) steers whichever model `auto` picks
   // toward the same block choices that already passed the Figma quality gate.
   const verifiedExample = await verifiedExamplePromise;
-  // Speed first: the planner waits at most 15 s for the sub-agent notes (they run in parallel
+  // Speed first: the planner waits at most 6 s for the sub-agent notes (they run in parallel
   // with brain retrieval). Waiting up to 40 s was idle time on every run.
   const agentBrief = await Promise.race([agentBriefPromise,
     new Promise<AgentBrief>((resolve) => setTimeout(() => resolve(fallbackBrief), PLANNER_AGENT_WAIT_MS))]);
@@ -797,6 +797,8 @@ export async function POST(request: Request) {
   // Wall time per model attempt, returned to the plugin so a slow run shows where the time went.
   const attemptTimes: Array<{ attempt: string; ms: number; outcome: string }> = [];
   let inFlight: { attempt: string; startedAt: number } | null = null;
+  // Size of the last prompt sent, so a slow model call can be told apart from a huge prompt.
+  let promptSize: { textChars: number; approxTokens: number; imageKb: number } | null = null;
   const respond = (success: SuccessCandidate) => {
     const { candidate } = success;
     deferTaskWork(recordGeneration(taskRunId, {
@@ -825,7 +827,8 @@ export async function POST(request: Request) {
       generation: { recoveryAttempted: success.isRecovery, finishReason: success.finishReason, modelIndex: success.modelIndex + 1,
         attempts: attemptLog.length, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt,
         preModelMs: generationStartedAt - requestStartedAt,
-        attemptTimes: [...attemptTimes, ...(inFlight ? [{ attempt: inFlight.attempt, ms: Date.now() - inFlight.startedAt, outcome: "ok" }] : [])] },
+        attemptTimes: [...attemptTimes, ...(inFlight ? [{ attempt: inFlight.attempt, ms: Date.now() - inFlight.startedAt, outcome: "ok" }] : [])],
+        prompt: promptSize },
     }, { headers });
   };
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
@@ -860,6 +863,10 @@ export async function POST(request: Request) {
         const modelImages: Array<Record<string, unknown>> = [];
         if (renderedScreen) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
         if (referenceImage) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
+        const systemText = isRecovery ? (blockMode ? blockRecoverySystem : recoverySystem) : system;
+        const textChars = systemText.length + modelUserText.length;
+        promptSize = { textChars, approxTokens: Math.round(textChars / 3.6),
+          imageKb: Math.round(modelImages.reduce((sum, image) => sum + String((image.image_url as { url?: string })?.url || "").length, 0) * 0.75 / 1024) };
         const userContent: string | Array<Record<string, unknown>> = modelImages.length
           ? [{ type: "text", text: modelUserText }, ...modelImages]
           : modelUserText;
@@ -878,7 +885,7 @@ export async function POST(request: Request) {
           body: JSON.stringify({
             model,
             messages: [
-              { role: "system", content: isRecovery ? (blockMode ? blockRecoverySystem : recoverySystem) : system },
+              { role: "system", content: systemText },
               { role: "user", content: userContent },
             ],
             ...(activeProvider.id === "openrouter" && model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
@@ -925,7 +932,10 @@ export async function POST(request: Request) {
           attemptLog.push({ model: model + (isRecovery ? " compact retry" : ""), result: "HTTP " + response.status });
           const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
           errors.push(model + (isRecovery ? " compact retry" : "") + ": " + detail);
-          if (!transientRetried && [408, 429, 500, 502, 503, 504].includes(response.status) &&
+          // Same-mode retry only for a FAST failure (a tunnel blip). A 5xx after a long wait means
+          // the upstream chain already tried its models; repeating it burned ~67 s (finding 61).
+          const attemptMs = inFlight ? Date.now() - inFlight.startedAt : 0;
+          if (!transientRetried && [408, 429, 500, 502, 503, 504].includes(response.status) && attemptMs < 20000 &&
             generationDeadlineMs - (Date.now() - generationStartedAt) > 45000) {
             transientRetried = true;
             await new Promise((resolve) => setTimeout(resolve, 1500));

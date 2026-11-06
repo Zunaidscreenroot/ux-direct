@@ -212,7 +212,7 @@ export function pickVerifiedExample(rows: VerifiedRun[], designScope: string): R
     if (typeof meta.lintVersion !== "number" || meta.lintVersion < VERIFIED_LINT_VERSION) return [];
     const example = structuralExample(plan);
     if (!example) return [];
-    const score = typeof meta.qualityScore === "number" ? meta.qualityScore : 0;
+    const score = typeof meta.lintScore === "number" ? meta.lintScore : typeof meta.qualityScore === "number" ? meta.qualityScore : 0;
     return [{ example, score: score + (meta.designScope === designScope ? 100 : 0) }];
   });
   candidates.sort((a, b) => b.score - a.score);

@@ -162,6 +162,7 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
     firstChild.raw.mainComponentId === options.headerComponentId ? firstChild.id : null;
 
   restoreButtons(elements, root, theme, result);
+  restoreRepeatedButtons(elements, root, theme, result);
 
   const graphics: SrcNode[] = [];
   collectGraphics(root, headerId, graphics);
@@ -230,6 +231,7 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
     // Walk up from the graphic until an ancestor holds a text that maps to one output text.
     let anchor: SrcNode | null = null;
     let anchorRef: OutRef | null = null;
+    let repeatedFallback: { d: SrcNode; ref: OutRef } | null = null;
     for (let scope = graphic.parent, hops = 0; scope && hops < 5 && !anchor; scope = scope.parent, hops += 1) {
       const candidates = descendants(scope).flatMap((d) => {
         if (d.type !== "TEXT" || !d.text || own.has(d.id)) return [];
@@ -241,8 +243,18 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
       // straight below (a top-right logo anchored to a stat label in the next row; finding 38).
       const dist = (n: SrcNode) => Math.hypot((n.rect.x + n.rect.w / 2 - cx) / 2, n.rect.y + n.rect.h / 2 - cy);
       candidates.sort((a, b) => dist(a.d) - dist(b.d));
-      if (candidates[0]) { anchor = candidates[0].d; anchorRef = candidates[0].ref; }
+      // A text that appears once is a safe anchor. A repeated one ("Personal Loan", "Paid") maps by
+      // order, which is wrong once the model reorders cards (a 60% donut beside "40% Paid"; finding
+      // 56), so it is used only when no unique text is found further up.
+      const unique = candidates.find((c) => (sourceCount.get(norm(c.d.text)) || 0) === 1);
+      // Climbed past the card (the scope now holds a second copy of the repeated text): the
+      // unique text belongs to the screen, not this card, so keep the nearer repeated anchor.
+      const pastCard = repeatedFallback !== null && descendants(scope).filter((d) => d.type === "TEXT" && norm(d.text) === norm(repeatedFallback!.d.text)).length > 1;
+      if (unique && !pastCard) { anchor = unique.d; anchorRef = unique.ref; }
+      else if (pastCard) break;
+      else if (candidates[0] && !repeatedFallback) repeatedFallback = candidates[0];
     }
+    if ((!anchor || !anchorRef) && repeatedFallback) { anchor = repeatedFallback.d; anchorRef = repeatedFallback.ref; }
     if (!anchor || !anchorRef) { result.unplaced.push(graphic.name); continue; }
 
     const clone: NativeNode = {
@@ -391,8 +403,19 @@ function dropDuplicateTexts(card: NativeNode, ownTexts: string[], clone: NativeN
 // Buttons
 // ---------------------------------------------------------------------------
 
-function sourceButtonLabels(root: SrcNode): Set<string> {
-  const labels = new Set<string>();
+type SourceButton = { node: SrcNode; label: string; text: string; strong: boolean };
+
+/** A saturated fill (brand blue, red), not a grey or white surface. */
+function isStrongFill(hex: unknown): boolean {
+  const v = typeof hex === "string" ? hex.replace("#", "") : "";
+  if (!/^[0-9a-fA-F]{6}/.test(v)) return false;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  return max > 0 && (max - min) / max > 0.35 && max > 0.25;
+}
+
+function sourceButtons(root: SrcNode): SourceButton[] {
+  const buttons: SourceButton[] = [];
   for (const node of descendants(root)) {
     if (!CONTAINER_TYPES.has(node.type)) continue;
     const texts = descendants(node).filter((d) => d.type === "TEXT" && d.text);
@@ -400,18 +423,95 @@ function sourceButtonLabels(root: SrcNode): Set<string> {
     const filled = Array.isArray(node.raw.fillColors) && node.raw.fillColors.length > 0;
     const named = /\b(button|btn|cta)\b/i.test(node.name);
     const shaped = filled && node.rect.h >= 24 && node.rect.h <= 64 && node.rect.w >= 48 && node.rect.w <= 420 && (num(node.raw.cornerRadius) ?? 0) > 0;
-    if ((shaped || named) && texts[0].text.length <= 40) labels.add(norm(texts[0].text));
+    if (!(shaped || named) || texts[0].text.length > 40) continue;
+    // Nested matches (a button frame inside a button instance) are one button.
+    if (buttons.some((b) => descendants(b.node).includes(node))) continue;
+    buttons.push({ node, label: norm(texts[0].text), text: texts[0].text, strong: filled && isStrongFill((node.raw.fillColors as unknown[])[0]) });
   }
-  return labels;
+  return buttons;
+}
+
+function sourceButtonLabels(root: SrcNode): Set<string> {
+  return new Set(sourceButtons(root).map((b) => b.label));
+}
+
+/** Texts of the card a source button sits in (its nearest ancestor with 2+ other texts). */
+function buttonContext(button: SourceButton): Set<string> {
+  for (let p = button.node.parent; p; p = p.parent) {
+    const texts = descendants(p).filter((d) => d.type === "TEXT" && d.text && norm(d.text) !== button.label).map((d) => norm(d.text));
+    if (texts.length >= 2) return new Set(texts);
+  }
+  return new Set();
+}
+
+function outputTexts(node: NativeNode, out: string[] = []): string[] {
+  if (node.type === "TEXT" && typeof node.text === "string") out.push(norm(node.text));
+  for (const child of node.children ?? []) outputTexts(child, out);
+  return out;
+}
+
+/**
+ * The same button label on several source cards ("Pay now" on two loans) must appear as often in
+ * the output. A model that keeps it once passes a text-set check, so a dropped copy is put back
+ * into the output card that holds that source card's other texts (finding 53).
+ */
+function restoreRepeatedButtons(elements: NativeNode[], root: SrcNode, theme: BlockTheme, result: SourceFidelityResult) {
+  const byLabel = new Map<string, SourceButton[]>();
+  for (const button of sourceButtons(root)) byLabel.set(button.label, [...(byLabel.get(button.label) ?? []), button]);
+  for (const [label, buttons] of byLabel) {
+    if (buttons.length < 2) continue;
+    const refs = indexOutput(elements);
+    const have = refs.filter((r) => r.node.type === "TEXT" && typeof r.node.text === "string" && norm(r.node.text) === label).length;
+    let deficit = buttons.length - have;
+    if (deficit <= 0) continue;
+    for (const button of buttons) {
+      if (deficit <= 0) break;
+      const context = buttonContext(button);
+      if (context.size < 2) continue;
+      let best: { ref: OutRef; score: number; size: number } | null = null;
+      for (const ref of refs) {
+        if (ref.node.type !== "FRAME" || ref.node.layoutMode !== "VERTICAL" || ref.depth + 2 > MAX_PLAN_DEPTH) continue;
+        const texts = outputTexts(ref.node);
+        if (texts.includes(label)) continue;
+        const score = texts.filter((t) => context.has(t)).length;
+        // Smallest frame that holds the most of the card's texts: the card, not the screen.
+        if (score >= 2 && (!best || score > best.score || (score === best.score && texts.length < best.size))) best = { ref, score, size: texts.length };
+      }
+      if (!best) continue;
+      const fontSize = 15;
+      const labelWidth = Math.ceil(button.text.length * fontSize * 0.6 + 4);
+      best.ref.node.children = [...(best.ref.node.children ?? []), {
+        type: "FRAME", name: button.text.slice(0, 60) + " button", x: 0, y: 0, width: labelWidth + 32, height: 44,
+        layoutMode: "HORIZONTAL", itemSpacing: 8, paddingTop: 10, paddingRight: 16, paddingBottom: 10, paddingLeft: 16,
+        primaryAxisSizingMode: "FIXED", counterAxisSizingMode: "FIXED", primaryAxisAlignItems: "CENTER", counterAxisAlignItems: "CENTER",
+        layoutSizingHorizontal: "FILL", layoutSizingVertical: "FIXED", color: theme.primaryFill, cornerRadius: theme.radius,
+        children: [{ type: "TEXT", name: "Label", text: button.text, x: 0, y: 0, width: labelWidth, height: 20, fontSize, fontFamily: "Inter",
+          fontStyle: "Semi Bold", color: theme.onPrimary, textAlignHorizontal: "CENTER", textAutoResize: "WIDTH_AND_HEIGHT", layoutSizingHorizontal: "HUG" }],
+      } as NativeNode];
+      deficit -= 1;
+      result.restoredButtons += 1;
+    }
+  }
 }
 
 function restoreButtons(elements: NativeNode[], root: SrcNode, theme: BlockTheme, result: SourceFidelityResult) {
   const labels = sourceButtonLabels(root);
   if (!labels.size) return;
+  const strong = new Set(sourceButtons(root).filter((b) => b.strong).map((b) => b.label));
   for (const ref of indexOutput(elements)) {
     const node = ref.node;
     if (node.type !== "TEXT" || typeof node.text !== "string" || !labels.has(norm(node.text))) continue;
     const parent = ref.parent;
+    // A filled brand-colour CTA in the source stays a filled primary button; a model that
+    // demoted it to an outline pill lost the screen's main action (finding 62).
+    if (parent && /secondary button/i.test(parent.name) && strong.has(norm(node.text)) && (parent.children?.length ?? 0) === 1) {
+      parent.name = node.text.slice(0, 60) + " button";
+      parent.color = theme.primaryFill;
+      delete parent.strokeColor; delete parent.strokeWeight;
+      node.color = theme.onPrimary;
+      result.restoredButtons += 1;
+      continue;
+    }
     if (parent && typeof parent.color === "string" && (num(parent.cornerRadius) ?? 0) > 0 && (parent.children?.length ?? 0) === 1) continue; // already a button
     if (parent && /text button/i.test(parent.name) && (parent.children?.length ?? 0) === 1) {
       // The renderer's text-variant button: give it the primary fill back.

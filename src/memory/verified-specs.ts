@@ -83,7 +83,9 @@ export function aggregateModelStats(rows: Array<{ outcome?: unknown; metadata?: 
     if (row.outcome === "verified") entry.verified += 1;
     else if (row.outcome === "failed") entry.failed += 1;
     else entry.pending += 1;
-    if (typeof meta.qualityScore === "number") entry.quality.push(meta.qualityScore);
+    // The final lint score (texts kept in Figma) beats the plan-time audit, which is 100 for most plans.
+    const quality = typeof meta.lintScore === "number" ? meta.lintScore : row.outcome === "failed" ? 0 : meta.qualityScore;
+    if (typeof quality === "number") entry.quality.push(quality);
     if (typeof meta.repairedTexts === "number" && meta.repairedTexts > 0) entry.repaired += 1;
     byModel.set(meta.model, entry);
   }
@@ -91,4 +93,20 @@ export function aggregateModelStats(rows: Array<{ outcome?: unknown; metadata?: 
     model, runs: e.runs, verified: e.verified, failed: e.failed, pending: e.pending, repaired: e.repaired,
     avgQuality: e.quality.length ? Math.round(e.quality.reduce((a, b) => a + b, 0) / e.quality.length) : null,
   })).sort((a, b) => b.runs - a.runs);
+}
+
+/**
+ * Final quality of a finished run from the plugin's lint line ("23/25 source texts kept, 1 value(s)
+ * missing · 2 overlap(s), 0 clipped, 0 collapsed text"): share of texts kept, minus layout defects.
+ */
+export function lintScoreFromSummary(summary: unknown, outcome: "verified" | "failed"): number | null {
+  const text = typeof summary === "string" ? summary : "";
+  const kept = /(\d+)\/(\d+) source texts kept/.exec(text);
+  if (!kept) return outcome === "failed" ? 0 : null;
+  const total = Number(kept[2]);
+  let score = total > 0 ? (Number(kept[1]) / total) * 100 : 100;
+  const count = (re: RegExp) => Number(re.exec(text)?.[1] ?? 0);
+  score -= 5 * count(/(\d+) value\(s\) missing/) + 5 * count(/(\d+) overlap\(s\)/) + 5 * count(/(\d+) clipped/) + 5 * count(/(\d+) collapsed text/);
+  if (outcome === "failed") score = Math.min(score, 60);
+  return Math.max(0, Math.min(100, Math.round(score)));
 }

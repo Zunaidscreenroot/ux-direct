@@ -1536,13 +1536,15 @@
 
       stage("scanning", "Scanning and rendering the selected screen…");
       // Speed: the screenshot export starts at the same time as the layer read (both are local).
-      const preIds = selectedIds();
+      // A batch job names its source frame, so jobs can run side by side without the selection.
+      const preIds = designOptions && designOptions.sourceId ? [designOptions.sourceId] : selectedIds();
       const earlyCapture = preIds.length === 1 ? captureRenderedNodePreview(preIds[0]).catch(function (error) {
         return { dataUrl: null, scale: 0, warning: String(error && error.message || error).slice(0, 200) };
       }) : null;
       // Deep read: card internals (logos, icons, charts) must be visible to keep them in the variation.
       const canvas = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 12, maxNodes: 400, includeStyles: true, includeVariables: true, includeComponents: true
+        scope: "selection", maxDepth: 12, maxNodes: 400, includeStyles: true, includeVariables: true, includeComponents: true,
+        ...(designOptions && designOptions.sourceId ? { nodeIds: [designOptions.sourceId] } : {})
       }, 90000);
       const selectedNodes = Array.isArray(canvas && canvas.nodes) ? canvas.nodes : [];
       const expectsSelection = /\b(selected|selection|this frame|this screen|current frame|variation|variant|duplicate|redesign this|improve this)\b/i.test(prompt);
@@ -1719,7 +1721,7 @@
       // Full-depth read without collapsing instances: header/icon instance texts and nested
       // card content must be visible, or the lint cannot prove the source content was kept.
       const verified = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 12, maxNodes: 500, includeStyles: true, includeVariables: true
+        scope: "selection", nodeIds: [createdFrameId], maxDepth: 12, maxNodes: 500, includeStyles: true, includeVariables: true
       }, 90000);
       const verifiedNode = verified && Array.isArray(verified.nodes)
         ? verified.nodes.find(function (node) { return node.id === createdFrameId; })
@@ -1745,7 +1747,7 @@
         "\n" + lint.text;
       visualNote += await finalizeTaskOutcome(lint.passed ? "verified" : "failed",
         lint.passed
-          ? "Native structure/read-back and structural lint passed; post-variation visual QA disabled as requested."
+          ? "Native structure/read-back and structural lint passed; post-variation visual QA disabled as requested. " + lint.text
           : "Structural lint blocked the variation: " + lint.text,
         lint.passed ? "" : lint.text);
       const timingLine = "\nTiming: " + formatRunTiming(localReadMs, serverMs, payload, buildMs, Date.now() - checksStartedAt, Date.now() - taskStartedAt);
@@ -1789,6 +1791,9 @@
       if (payload && payload.brain && Number.isFinite(payload.brain.latencyMs)) parts.push("brain " + s(payload.brain.latencyMs));
       if (payload && payload.agents && Number.isFinite(payload.agents.latencyMs)) parts.push("agents " + s(payload.agents.latencyMs));
       if (Number.isFinite(gen.preModelMs)) parts.push("pre-model " + s(gen.preModelMs));
+      if (gen.prompt && Number.isFinite(gen.prompt.approxTokens)) {
+        parts.push("prompt ~" + (gen.prompt.approxTokens / 1000).toFixed(1) + "k tok" + (gen.prompt.imageKb ? " + " + gen.prompt.imageKb + " KB image" : ""));
+      }
       const attempts = Array.isArray(gen.attemptTimes) ? gen.attemptTimes : [];
       attempts.slice(0, 6).forEach(function (a) {
         parts.push(String(a.attempt || "model").slice(0, 60) + " " + s(a.ms) + (a.outcome && a.outcome !== "ok" ? " (failed)" : ""));
@@ -1797,14 +1802,23 @@
         " · build " + s(buildMs) + " · checks " + s(checksMs) + " · total " + s(totalMs);
     }
 
+    // Slots handed to builds that have not created their frame yet (parallel variation jobs).
+    const reservedCanvasSpots = [];
     async function findFreeCanvasSpot(x, y, width, height) {
+      const spot = await findFreeCanvasSpotRaw(x, y, width, height);
+      const now = Date.now();
+      while (reservedCanvasSpots.length && (now - reservedCanvasSpots[0].at > 300000 || reservedCanvasSpots.length > 20)) reservedCanvasSpots.shift();
+      reservedCanvasSpots.push({ x: spot.x, y: spot.y, width: width, height: height, at: now });
+      return spot;
+    }
+    async function findFreeCanvasSpotRaw(x, y, width, height) {
       let page = null;
       try {
         page = await runNativeCanvasCommand("read-canvas", { scope: "current-page", maxDepth: 0, maxNodes: 500 }, 30000);
       } catch (_) { return { x: x, y: y }; }
       const boxes = (page && Array.isArray(page.nodes) ? page.nodes : []).filter(function (node) {
         return node && node.visible !== false && [node.x, node.y, node.width, node.height].every(Number.isFinite);
-      });
+      }).concat(reservedCanvasSpots);
       const gap = 100;
       const hits = function (cx, cy) {
         return boxes.find(function (b) {
@@ -2561,25 +2575,36 @@
               " so it is clearly distinct from the other variations, while keeping all source content." });
         }
       }
-      for (let index = 0; index < jobs.length; index += 1) {
-        const job = jobs[index];
-        stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + job.frame.name + "…");
-        try {
-          await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [job.frame.id] }, 90000);
-          const answer = await createFigmaDesign(job.prompt, function (status) {
-            stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + status);
-          }, { placement: job.placement, variation: job.variation });
-          results.push("**" + (index + 1) + ". " + job.frame.name + "**: " + String(answer).split("\n")[0]);
-        } catch (error) {
-          failures.push("**" + (index + 1) + ". " + job.frame.name + "**: " + String(error && error.message || error).slice(0, 240));
+      // Speed: jobs run side by side (up to 3), each reading its own source frame by id, so two
+      // variations take about as long as one instead of twice as long.
+      const batchStartedAt = Date.now();
+      const outcomes = new Array(jobs.length);
+      let nextJob = 0;
+      async function worker() {
+        while (nextJob < jobs.length) {
+          const index = nextJob++;
+          const job = jobs[index];
+          stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + job.frame.name + "…");
+          try {
+            const answer = String(await createFigmaDesign(job.prompt, function (status) {
+              stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + status);
+            }, { placement: job.placement, variation: job.variation, sourceId: job.frame.id }));
+            const timing = answer.split("\n").find(function (line) { return line.indexOf("Timing: ") === 0; });
+            outcomes[index] = { ok: true, text: "**" + (index + 1) + ". " + job.frame.name + "**: " + answer.split("\n")[0] + (timing ? "\n   " + timing : "") };
+          } catch (error) {
+            outcomes[index] = { ok: false, text: "**" + (index + 1) + ". " + job.frame.name + "**: " + String(error && error.message || error).slice(0, 240) };
+          }
         }
       }
+      await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, worker));
+      outcomes.forEach(function (o) { if (o) (o.ok ? results : failures).push(o.text); });
+      const batchLine = "\nBatch time: " + ((Date.now() - batchStartedAt) / 1000).toFixed(1) + "s for " + jobs.length + " job(s), up to 3 in parallel.";
       stage(failures.length ? "error" : "done", results.length + "/" + jobs.length + " variation(s) created");
       return (task.kind === "flow-variations"
         ? "Flow variation: " + results.length + " of " + jobs.length + " screens created in a new row below the original flow."
         : results.length + " of " + jobs.length + " variations created to the right of the source screen.") +
         (results.length ? "\n" + results.join("\n") : "") +
-        (failures.length ? "\n\nNot created:\n" + failures.join("\n") : "") +
+        (failures.length ? "\n\nNot created:\n" + failures.join("\n") : "") + batchLine +
         "\nThe original screens were not changed.";
     }
 

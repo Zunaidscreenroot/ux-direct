@@ -1186,6 +1186,14 @@ async function readCanvasCommand(payload) {
       return true;
     });
     scope = "search-current-page";
+  } else if (Array.isArray(payload.nodeIds) && payload.nodeIds.length) {
+    // Read named nodes without touching the selection, so parallel variation jobs don't race.
+    source = [];
+    for (var ni = 0; ni < payload.nodeIds.length && ni < 20; ni++) {
+      var byId = typeof payload.nodeIds[ni] === "string" ? await figma.getNodeByIdAsync(payload.nodeIds[ni]) : null;
+      if (byId && byId.type !== "PAGE" && byId.type !== "DOCUMENT") source.push(byId);
+    }
+    scope = "selection";
   } else {
     source = scope === "current-page" ? figma.currentPage.children : figma.currentPage.selection;
   }
@@ -1898,6 +1906,7 @@ async function writeCanvasCommand(payload, options) {
       else if (typeof node.resize === "function" && (type !== "INSTANCE" || Number.isFinite(spec.width) || Number.isFinite(spec.height))) node.resize(width, height);
       if (type === "INSTANCE" && spec.instanceProperties) applyInstanceProperties(node, spec.instanceProperties);
       if (type === "INSTANCE" && spec.textOverrides) await applyInstanceTextOverrides(node, spec.textOverrides);
+      if (type === "INSTANCE" && spec.monochrome && typeof spec.monochrome === "object") await monochromeClone(node, spec.monochrome);
       if (type === "VECTOR") {
         if (!Array.isArray(spec.vectorPaths) || spec.vectorPaths.length < 1 || spec.vectorPaths.length > 20) {
           throw new Error("VECTOR elements require 1–20 vectorPaths.");
@@ -3216,7 +3225,8 @@ function monoPaints(paints, ink, placeholder, isMark) {
   if (!Array.isArray(paints)) return paints;
   return paints.map(function (p) {
     if (!p || p.visible === false) return p;
-    if (p.type === "SOLID") return Object.assign({}, p, { color: monoGrey(p.color, ink, isMark) });
+    // Drop variable bindings: a bound colour variable would override the grey (finding 52).
+    if (p.type === "SOLID") { var solid = Object.assign({}, p, { color: monoGrey(p.color, ink, isMark) }); delete solid.boundVariables; return solid; }
     if (p.type === "IMAGE" || p.type === "VIDEO") return { type: "SOLID", color: placeholder, opacity: p.opacity === undefined ? 1 : p.opacity };
     if (p.type && p.type.indexOf("GRADIENT") === 0 && Array.isArray(p.gradientStops)) {
       return Object.assign({}, p, { gradientStops: p.gradientStops.map(function (s) {
@@ -3238,8 +3248,13 @@ async function monochromeClone(root, mono) {
         var fonts = len ? n.getRangeAllFontNames(0, len) : [n.fontName];
         for (var f = 0; f < fonts.length; f++) if (fonts[f] && typeof fonts[f] === "object") await uxdEnsureFont(fonts[f]);
       }
+      if (n.type === "TEXT" && !Array.isArray(n.fills) && typeof n.getStyledTextSegments === "function") {
+        // Mixed-colour text: recolour each styled run.
+        var runs = n.getStyledTextSegments(["fills"]);
+        for (var r = 0; r < runs.length; r++) n.setRangeFills(runs[r].start, runs[r].end, monoPaints(runs[r].fills, ink, placeholder, true));
+      }
       if ("fills" in n && Array.isArray(n.fills) && n.fills.length) {
-        if (typeof n.fillStyleId === "string" && n.fillStyleId && typeof n.setFillStyleIdAsync === "function") await n.setFillStyleIdAsync("");
+        if (n.fillStyleId && typeof n.setFillStyleIdAsync === "function") await n.setFillStyleIdAsync("");
         n.fills = monoPaints(n.fills, ink, placeholder, isMark);
       }
       if ("strokes" in n && Array.isArray(n.strokes) && n.strokes.length) {
