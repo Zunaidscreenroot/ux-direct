@@ -326,7 +326,7 @@ test("source screenshot is exported once at vision resolution and variation comp
   assert.ok(pluginUi.includes("JPEG preview export failed (1400px, 900px)."));
   assert.ok(plugin.includes("exportScale = Math.max(0.05, Math.min(2, Math.min(2000, payload.maxSide) / longestSide))"));
   assert.ok(plugin.includes("var maxExportBytes = isLocal ? LOCAL_EXPORT_MAX_BYTES : 35000;"), "Bridge-sourced exports keep the 35 KB envelope.");
-  assert.ok(pluginUi.includes("const renderedCapture = sourceNode && sourceNode.id"));
+  assert.ok(pluginUi.includes("const renderedCapture = earlyCapture && sourceNode && sourceNode.id === preIds[0]"), "the screenshot export runs in parallel with the layer read");
   assert.ok(pluginUi.includes('const verified = await runNativeCanvasCommand("read-canvas"'));
   assert.ok(pluginUi.includes("const verifiedChildCount = verifiedNode"));
   assert.equal(pluginUi.includes("const qualityTree = await runNativeCanvasCommand"), false,

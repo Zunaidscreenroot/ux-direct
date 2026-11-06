@@ -97,7 +97,7 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("...figmaMaxTokens(activeProvider, isRecovery ? 6000 : 9000)"), "FreeLLMAPI is uncapped; other providers keep a bounded plan.");
   assert.ok(route.includes("modelIndex === 0 ? firstAttemptMs : 70000") && route.includes("isFreeLlmApi ? FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS : 80000"), "The primary and fallback get useful completion windows.");
   assert.ok(route.includes('model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}'), "GPT-6 Luna prefers throughput and low reasoning effort for stability.");
-  assert.ok(route.includes("isRecovery ? (isFreeLlmApi ? 90000 : 45000)"), "Compact retries have a bounded but useful completion window.");
+  assert.ok(route.includes("isRecovery ? (isFreeLlmApi ? 60000 : 45000)"), "Compact retries have a bounded but useful completion window.");
   assert.ok(route.includes("sourceTextInventory: collectSourceTextInventory"), "Compact retries retain a full bounded source-text checklist.");
   assert.ok(route.includes("depth > 4 || state.count >= 60"), "Recovery preserves short text layers nested inside instances/cards.");
   assert.ok(route.includes("at least 30% of all native nodes must be TEXT"), "Prompts require content-rich native layers.");
@@ -140,7 +140,7 @@ test("Figma agent routes report body-read timeouts instead of empty bodies and b
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
   assert.equal(route.includes('response.text().catch(() => "")'), false, "An aborted body read must not be reported as an empty body.");
   assert.ok(route.includes("if (controller.signal.aborted) throw readError;"));
-  assert.ok(route.includes("const generationDeadlineMs = 270000;"), "The sequential chain has a bounded 270-second deadline.");
+  assert.ok(route.includes("const generationDeadlineMs = 200000;"), "The sequential chain has a bounded 200-second deadline.");
   assert.ok(route.includes('model.startsWith("qwen/") ? { reasoning: isRecovery ? { enabled: false } : { effort: "low" } } : {}'));
   for (const name of ["refine", "review", "actions"]) {
     const sub = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/" + name + "/route.ts"), "utf8");

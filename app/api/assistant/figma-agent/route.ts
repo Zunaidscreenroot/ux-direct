@@ -23,6 +23,8 @@ import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, PLAN_NODE_LIMIT, expandBlockSp
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/** Longest the planner waits for the sub-agent brief before planning without it. */
+const PLANNER_AGENT_WAIT_MS = 15000;
 const API_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 function allowedOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
@@ -630,10 +632,10 @@ export async function POST(request: Request) {
   // A verified spec from this project (structure only) steers whichever model `auto` picks
   // toward the same block choices that already passed the Figma quality gate.
   const verifiedExample = await verifiedExamplePromise;
-  // Belt and braces: the sub-agent stage has its own hard deadline, but the planner never
-  // waits on it for more than 40 s whatever happens inside.
+  // Speed first: the planner waits at most 15 s for the sub-agent notes (they run in parallel
+  // with brain retrieval). Waiting up to 40 s was idle time on every run.
   const agentBrief = await Promise.race([agentBriefPromise,
-    new Promise<AgentBrief>((resolve) => setTimeout(() => resolve(fallbackBrief), 40000))]);
+    new Promise<AgentBrief>((resolve) => setTimeout(() => resolve(fallbackBrief), PLANNER_AGENT_WAIT_MS))]);
   const agentsMs = Date.now() - agentsStartedAt;
   const exampleInstructions = verifiedExample
     ? "\nVERIFIED TEAM EXAMPLE — the block structure of an earlier output that passed UX Direct's quality gate. Texts are replaced by <source text>. Follow its way of choosing sections and blocks for similar content; never copy it, and use only this screen's real content: " + verifiedExample
@@ -683,7 +685,7 @@ export async function POST(request: Request) {
   // OpenRouter sends HTTP 200 headers immediately and the body only once the full plan is
   // generated, so each attempt needs room for a complete multi-thousand-token plan. One shared
   // deadline keeps the sequential chain bounded.
-  const generationDeadlineMs = 270000;
+  const generationDeadlineMs = 200000;
   type BlockSpecInfo = { blocks: number; nodes: number; warnings: string[] };
   type Candidate = {
     stage: "blocks" | "schema" | "quality" | "component" | "style" | "ok";
@@ -789,6 +791,9 @@ export async function POST(request: Request) {
   let fallback: SuccessCandidate | null = null;
   // Set when an upstream rejects optional sampling parameters; the retry then omits them.
   let paramsRejected = false;
+  // Wall time per model attempt, returned to the plugin so a slow run shows where the time went.
+  const attemptTimes: Array<{ attempt: string; ms: number; outcome: string }> = [];
+  let inFlight: { attempt: string; startedAt: number } | null = null;
   const respond = (success: SuccessCandidate) => {
     const { candidate } = success;
     deferTaskWork(recordGeneration(taskRunId, {
@@ -815,7 +820,9 @@ export async function POST(request: Request) {
       agents: { role: taskRole.id, domain: agentBrief.domain.id, domainSource: agentBrief.domainSource, latencyMs: agentsMs, runs: agentBrief.runs },
       visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
       generation: { recoveryAttempted: success.isRecovery, finishReason: success.finishReason, modelIndex: success.modelIndex + 1,
-        attempts: attemptLog.length, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt },
+        attempts: attemptLog.length, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt,
+        preModelMs: generationStartedAt - requestStartedAt,
+        attemptTimes: [...attemptTimes, ...(inFlight ? [{ attempt: inFlight.attempt, ms: Date.now() - inFlight.startedAt, outcome: "ok" }] : [])] },
     }, { headers });
   };
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
@@ -833,9 +840,11 @@ export async function POST(request: Request) {
       }
       // The first FreeLLMAPI attempt also absorbs a sleeping host's cold start.
       const firstAttemptMs = isFreeLlmApi ? FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS : 80000;
-      const attemptTimeoutMs = Math.min(isRecovery ? (isFreeLlmApi ? 90000 : 45000) : (modelIndex === 0 ? firstAttemptMs : 70000), remainingMs);
+      const attemptTimeoutMs = Math.min(isRecovery ? (isFreeLlmApi ? 60000 : 45000) : (modelIndex === 0 ? firstAttemptMs : 70000), remainingMs);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
+      const errorsBefore = errors.length;
+      inFlight = { attempt: model + (isRecovery ? " compact retry" : ""), startedAt: Date.now() };
       try {
         const validationBlock = validationFeedback
           ? "\n\nAUTOMATED VALIDATION FEEDBACK — fix every listed defect in this new plan before returning JSON:\n" + validationFeedback
@@ -1053,6 +1062,11 @@ export async function POST(request: Request) {
         break;
       } finally {
         clearTimeout(timer);
+        if (inFlight) {
+          attemptTimes.push({ attempt: (lastServedModel && lastServedModel !== model ? lastServedModel + " via " : "") + inFlight.attempt,
+            ms: Date.now() - inFlight.startedAt, outcome: errors.length > errorsBefore ? errors[errors.length - 1].slice(0, 120) : "ok" });
+          inFlight = null;
+        }
       }
     }
   }
