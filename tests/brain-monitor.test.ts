@@ -25,3 +25,10 @@ test("aggregates outcomes, retrieval, learning and stuck runs without leaking te
   assert.deepEqual(report.last24h, { runs: 2, verified: 1, failed: 0 });
   assert.doesNotMatch(JSON.stringify(report), /SECRET/);
 });
+
+test("accepts Date timestamps from the Postgres driver", () => {
+  const at = new Date("2026-11-06T11:30:00Z");
+  const report = buildBrainMonitorReport([{ outcome: "verified", created_at: at, updated_at: at }], now);
+  assert.equal(report.last24h.runs, 1);
+  assert.equal(report.lastRunAt, at.toISOString());
+});
