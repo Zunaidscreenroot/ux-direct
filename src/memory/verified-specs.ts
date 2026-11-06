@@ -1,5 +1,5 @@
 import { neonRequest } from "@/src/memory/neon-rest";
-import { pickVerifiedExample, type VerifiedRun } from "@/src/figma-agent/spec-consistency";
+import { pickVerifiedExample, VERIFIED_LINT_VERSION, type VerifiedRun } from "@/src/figma-agent/spec-consistency";
 
 /** Which upstream model produced a run, and how it fared at each attempt. */
 export type GenerationRecord = {
@@ -23,6 +23,7 @@ export async function recordGeneration(id: string, record: GenerationRecord, pla
     model: record.model.slice(0, 160),
     ...(record.routedVia ? { routedVia: record.routedVia.slice(0, 160) } : {}),
     planFormat: record.planFormat,
+    lintVersion: VERIFIED_LINT_VERSION,
     designScope: record.designScope,
     ...(typeof record.qualityScore === "number" ? { qualityScore: record.qualityScore } : {}),
     ...(record.themeLocked !== undefined ? { themeLocked: record.themeLocked } : {}),

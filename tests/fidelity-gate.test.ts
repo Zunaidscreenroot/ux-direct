@@ -37,9 +37,12 @@ test("lint passes a faithful variation", () => {
 
 test("source-fallback runs are never used as the verified few-shot example", () => {
   const plan = { sections: [{ name: "A", blocks: [{ type: "text", text: "x" }] }] };
-  assert.equal(pickVerifiedExample([{ plan, metadata: { planFormat: "blocks", sourceFallback: true } }], "s"), null);
-  assert.equal(pickVerifiedExample([{ plan, metadata: { planFormat: "blocks", model: "source-fallback" } }], "s"), null);
-  assert.ok(pickVerifiedExample([{ plan, metadata: { planFormat: "blocks", model: "gemini" } }], "s"));
+  assert.equal(pickVerifiedExample([{ plan, metadata: { lintVersion: 2, planFormat: "blocks", sourceFallback: true } }], "s"), null);
+  assert.equal(pickVerifiedExample([{ plan, metadata: { lintVersion: 2, planFormat: "blocks", model: "source-fallback" } }], "s"), null);
+  assert.ok(pickVerifiedExample([{ plan, metadata: { lintVersion: 2, planFormat: "blocks", model: "gemini" } }], "s"));
+  // Runs verified under the older, looser lint are never served as examples.
+  assert.equal(pickVerifiedExample([{ plan, metadata: { planFormat: "blocks", model: "gemini" } }], "s"), null);
+  assert.equal(pickVerifiedExample([{ plan, metadata: { lintVersion: 1, planFormat: "blocks", model: "gemini" } }], "s"), null);
 });
 
 test("plugins without the clone capability get no CLONE elements", () => {
