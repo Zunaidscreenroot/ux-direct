@@ -114,3 +114,27 @@ test("a hanging sub-agent is aborted at the shared deadline and never blocks the
     delete process.env.UXD_SUB_AGENT_TIMEOUT_MS;
   }
 });
+
+test("the brief is cached per source frame so variations of one frame skip the agents", async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ model: "m", choices: [{ message: { content: JSON.stringify({ domain: "fintech", userGoal: "Pay", hierarchy: ["EMI"], matches: [] }) } }] }), { status: 200 });
+  }) as typeof fetch;
+  const input = { prompt: "improve the cached frame", role: detectTaskRole("improve"), designScope: "selected_screen_or_frame",
+    selectedNode: { name: "Cached", type: "FRAME", width: 360, height: 800 }, sourceTexts: SOURCE,
+    components: [], renderedScreen: null, origin: "https://ux-direct.test" };
+  try {
+    const first = await runSubAgents(input);
+    assert.equal(calls, 2);
+    const second = await runSubAgents(input);
+    assert.equal(calls, 2, "second run reuses the brief");
+    assert.ok(second.runs.every((run) => run.cached));
+    assert.equal(second.instructions, first.instructions);
+    await runSubAgents({ ...input, sourceTexts: [...SOURCE, "New row"] });
+    assert.equal(calls, 4, "changed source content runs the agents again");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
