@@ -187,7 +187,8 @@ export function pickVerifiedExample(rows: VerifiedRun[], designScope: string): R
   const candidates = rows.flatMap((row) => {
     const plan = asRec(row.plan);
     const meta = asRec(row.metadata) ?? {};
-    if (!plan || meta.planFormat !== "blocks" || meta.repairedTexts) return [];
+    // Source-fallback rebuilds are never a model example, whatever their outcome.
+    if (!plan || meta.planFormat !== "blocks" || meta.repairedTexts || meta.sourceFallback === true || meta.model === "source-fallback") return [];
     const example = structuralExample(plan);
     if (!example) return [];
     const score = typeof meta.qualityScore === "number" ? meta.qualityScore : 0;
