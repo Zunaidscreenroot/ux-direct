@@ -181,3 +181,19 @@ test("final lint line becomes the run's quality score (brain monitor)", async ()
   const stats = agg([{ outcome: "verified", metadata: { source: "figma-agent", model: "m", qualityScore: 100, lintScore: 90 } }]);
   assert.equal(stats[0].avgQuality, 90);
 });
+
+test("a mistyped loan ID or amount goes back to the source spelling (finding 55)", async () => {
+  const { correctNearMissTexts } = await import("../src/figma-agent/spec-consistency");
+  const canvas = { nodes: [{ type: "FRAME", children: [
+    { type: "TEXT", text: "Loan ID DMI1234567890" }, { type: "TEXT", text: "₹1,07,649" }, { type: "TEXT", text: "40% Paid" }, { type: "TEXT", text: "60% Paid" }] }] };
+  const spec = { sections: [{ name: "Loan", blocks: [
+    { type: "row", label: "Loan ID", value: "DMII1234567890" },
+    { type: "stat", value: "₹1,07,694", label: "Outstanding" },
+    { type: "text", text: "50% Paid" }] }] };
+  const out = correctNearMissTexts(spec, canvas, "improve hierarchy");
+  const text = JSON.stringify(out.spec);
+  assert.ok(text.includes('"DMI1234567890"'), text);
+  assert.ok(text.includes("50% Paid"), "an ambiguous percent is not guessed");
+  assert.ok(text.includes('"name":"Loan"'));
+  assert.equal(correctNearMissTexts(spec, canvas, "rewrite the copy").corrected, 0);
+});
