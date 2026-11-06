@@ -22,6 +22,10 @@ export async function callFigmaJsonModel(options: {
   temperature?: number;
   title: string;
   origin: string;
+  /** Per-attempt timeout override (sub-agents use a short one so they never hold up the planner). */
+  timeoutMs?: number;
+  /** Accept any JSON object, not only ones with the usual review/plan keys (sub-agents use their own keys). */
+  anyObject?: boolean;
   accept: (data: Record<string, unknown>, raw: string) => string | null;
 }): Promise<JsonModelResult> {
   const provider = await getResolvedActiveChatProvider();
@@ -35,7 +39,7 @@ export async function callFigmaJsonModel(options: {
   for (let index = 0; index < attempts.length; index++) {
     const { model, jsonMode } = attempts[index];
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), figmaAttemptTimeoutMs(provider, index, 60000, 45000));
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? figmaAttemptTimeoutMs(provider, index, 60000, 45000));
     try {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -76,6 +80,7 @@ export async function callFigmaJsonModel(options: {
       const message = choice.message && typeof choice.message === "object" ? choice.message as Record<string, unknown> : {};
       const raw = typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? "");
       const decoded = extractJsonObject(message.content) ?? extractJsonObject(message.parsed) ?? extractJsonObject(message.tool_calls)
+        ?? (options.anyObject ? parseAnyObject(raw) : null)
         ?? (/^\s*(```(json)?\s*)?\[/i.test(raw) ? {} : null);
       if (!decoded) {
         errors.push(model + ": response contained no JSON object.");
@@ -94,4 +99,17 @@ export async function callFigmaJsonModel(options: {
     }
   }
   return { ok: false, status: 502, error: "No free model returned a usable answer.", errors };
+}
+
+function parseAnyObject(raw: string): Record<string, unknown> | null {
+  const text = raw.trim().replace(/^\uFEFF/, "").replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed: unknown = JSON.parse(text.slice(start, end + 1));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
 }

@@ -41,7 +41,7 @@ function lightness(color: string): number {
 
 /** True when the prompt asks to change colours/theme, so the model's palette is wanted. */
 export function promptRequestsRestyle(prompt: string): boolean {
-  return /\b(colou?rs?|theme|palette|dark\s*mode|light\s*mode|brand(ing)?|restyle|re-?skin|gradient|rang|kala|dark|night)\b|रंग|कलर|थीम|डार्क/iu.test(prompt);
+  return /\b(colou?rs?|theme|palette|dark\s*mode|light\s*mode|brand(ing)?|restyle|re-?skin|gradient|wire\s*-?\s*frames?|lo-?fi|low[\s-]?fi(delity)?|grey\s*box|gray\s*box|rang|kala|dark|night)\b|रंग|कलर|थीम|डार्क/iu.test(prompt);
 }
 
 type Tally = Map<string, number>;
