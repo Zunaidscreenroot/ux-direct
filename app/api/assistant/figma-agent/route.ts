@@ -15,7 +15,7 @@ import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-prov
 import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
-import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
+import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, promptRequestsWireframe, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
 import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, PLAN_NODE_LIMIT, expandBlockSpec, isBlockSpec, sourceFallbackSpec } from "@/src/figma-agent/block-spec";
@@ -45,6 +45,8 @@ const ElementFieldsSchema = z.object({
   name: z.string().trim().min(1).max(80),
   /** CLONE only: the source layer (logo, icon, chart, image) copied into the variation. */
   sourceNodeId: z.string().trim().min(1).max(100).optional(),
+  /** CLONE only: recolour the copy to one ink colour (wireframes); images become placeholder boxes. */
+  monochrome: z.object({ ink: z.string().regex(/^#[0-9A-Fa-f]{6}$/), placeholder: z.string().regex(/^#[0-9A-Fa-f]{6}$/) }).strict().optional(),
   ...NATIVE_INSTANCE_ELEMENT_FIELDS,
   x: z.number().finite().min(-1000).max(5000),
   y: z.number().finite().min(-1000).max(5000),
@@ -699,6 +701,7 @@ export async function POST(request: Request) {
   const catalogueComponentIds = new Set((Array.isArray(canvas.components) ? canvas.components as Array<Record<string, unknown>> : [])
     .map((component) => component.id).filter((id): id is string => typeof id === "string"));
   const styleSets = canvas.styles && typeof canvas.styles === "object" ? canvas.styles as Record<string, unknown> : {};
+  const wireframeRequest = promptRequestsWireframe(parsedInput.data.prompt);
   /** Every deterministic gate a model answer must pass before anything is written to Figma. */
   const renderCandidate = (candidateInput: unknown): Candidate => {
     // A block spec is rendered deterministically; a raw layer tree (legacy mode or a model
@@ -706,7 +709,7 @@ export async function POST(request: Request) {
     let planInput: unknown = candidateInput;
     let blockSpec: BlockSpecInfo | null = null;
     if (isBlockSpec(candidateInput)) {
-      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone });
+      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone, monochrome: wireframeRequest });
       blockSpec = { blocks: expansion.blockCount, nodes: expansion.nodeCount, warnings: expansion.warnings };
       if (!expansion.plan) {
         const issues = expansion.errors.slice(0, 4).join("; ");
@@ -1059,13 +1062,16 @@ export async function POST(request: Request) {
     const sourceSpec = sourceFallbackSpec(canvas);
     if (sourceSpec) {
       const stabilized = stabilizeBlockSpec(sourceSpec, canvas, parsedInput.data.prompt);
+      // Say why the model answers were not used (timeout, parse error, schema, quality gate). This
+      // must go in before rendering: the plan's summary is copied from the spec at render time, so
+      // appending it afterwards never reached the plugin (Tests #6/#7: no "Model attempts:" line).
+      const reasons = [...new Set(errors.map((entry) => entry.replace(/\s+/g, " ").slice(0, 150)))].slice(0, 3);
+      const why = reasons.length ? reasons.join(" | ") : "no model call finished (generation time budget used up before any attempt ran)";
+      stabilized.spec.summary = (String(stabilized.spec.summary || "") + " Model attempts: " + why).slice(0, 690);
       const candidate = renderCandidate(stabilized.spec);
       // The fallback is the source's own content, so a subjective quality finding must not block it.
       if (candidate.plan && (candidate.stage === "ok" || candidate.stage === "quality")) {
         attemptLog.push({ model: "source-fallback", result: "passed" });
-        // Say why the model answers were not used (timeout, parse error, schema, quality gate).
-        const reasons = [...new Set(errors.map((entry) => entry.replace(/\s+/g, " ").slice(0, 160)))].slice(0, 3);
-        if (reasons.length) stabilized.spec.summary = String(stabilized.spec.summary || "") + " Model attempts: " + reasons.join(" | ");
         return respond({ candidate, spec: stabilized.spec, learningCandidate: null, servedModel: "source-fallback",
           isRecovery: true, finishReason: "fallback", modelIndex: models.length - 1, themeLocked: stabilized.themeLocked,
           repairedTexts: 0, sourceFallback: true });

@@ -1055,7 +1055,7 @@ export function isBlockSpec(value: unknown): boolean {
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
 }
 
-export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean } = {}): BlockExpansion {
+export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean } = {}): BlockExpansion {
   const spec = asRec(value) ?? {};
   const sourceNodes = arr(canvas.nodes);
   const source = asRec(sourceNodes[0]) ?? {};
@@ -1143,6 +1143,12 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
       budget: options.allowClones === false ? 0 : Math.min(SOURCE_GRAPHIC_BUDGET, PLAN_NODE_LIMIT - renderedCount - 10),
       headerComponentId: b.source?.header?.componentId ?? null,
     });
+    // Wireframes: copied logos, icons and charts are recoloured to the wireframe ink and images
+    // become grey boxes, so white source icons don't vanish on the light theme (findings 41, 43).
+    if (options.monochrome) {
+      const mark = (nodes: NativeNode[]) => { for (const n of nodes) { if (n.type === "CLONE") n.monochrome = { ink: theme.text, placeholder: theme.surfaceAlt }; if (n.children) mark(n.children); } };
+      mark(elements);
+    }
     if (fidelity.clones || fidelity.restoredButtons) {
       b.warnings.push("Kept " + fidelity.clones + " source graphic(s)" + (fidelity.replacedRings ? " (" + fidelity.replacedRings + " real chart(s) replaced generated rings)" : "") +
         (fidelity.restoredButtons ? " and restored " + fidelity.restoredButtons + " source button(s)" : "") + ".");

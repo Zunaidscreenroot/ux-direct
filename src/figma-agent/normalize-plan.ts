@@ -298,6 +298,9 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
       for (const key of ["layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "layoutGrow"]) {
         if (item[key] !== undefined) normalized[key] = item[key];
       }
+      const mono = item.monochrome && typeof item.monochrome === "object" ? item.monochrome as Record<string, unknown> : null;
+      const hexOk = (v: unknown) => typeof v === "string" && /^#[0-9A-Fa-f]{6}$/.test(v);
+      if (mono && hexOk(mono.ink) && hexOk(mono.placeholder)) normalized.monochrome = { ink: mono.ink, placeholder: mono.placeholder };
       return normalized;
     }
     if (type === "INSTANCE") {

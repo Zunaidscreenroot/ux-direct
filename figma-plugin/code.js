@@ -1868,6 +1868,7 @@ async function writeCanvasCommand(payload, options) {
           throw new Error("CLONE source layer " + String(spec.sourceNodeId) + " was not found.");
         }
         node = cloneOf.clone();
+        if (spec.monochrome && typeof spec.monochrome === "object") await monochromeClone(node, spec.monochrome);
       }
       else if (type === "INSTANCE") {
         try {
@@ -3195,6 +3196,58 @@ function uxdStyleCandidates(weight, italic) {
   base.forEach(function (b) { out.push(b + " Italic", b + "Italic"); });
   if (weight === "regular") out.unshift("Italic");
   return out;
+}
+// Wireframe copies: every paint in a cloned logo/icon/chart becomes a grey of the same lightness,
+// near-white marks (white icons made for a dark header) become the wireframe ink, and image fills
+// become a flat placeholder grey. Runs on the copy only; the source layer is never touched.
+function monoHexToRgb(hex) {
+  var v = String(hex || "").replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(v)) return { r: 0.1, g: 0.1, b: 0.1 };
+  return { r: parseInt(v.slice(0, 2), 16) / 255, g: parseInt(v.slice(2, 4), 16) / 255, b: parseInt(v.slice(4, 6), 16) / 255 };
+}
+function monoGrey(color, ink, isMark) {
+  var l = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+  if (isMark && l > 0.8) return { r: ink.r, g: ink.g, b: ink.b };
+  // Keep light tracks light and dark marks dark, without pure black.
+  var g = Math.max(0.12, Math.min(0.92, l));
+  return { r: g, g: g, b: g };
+}
+function monoPaints(paints, ink, placeholder, isMark) {
+  if (!Array.isArray(paints)) return paints;
+  return paints.map(function (p) {
+    if (!p || p.visible === false) return p;
+    if (p.type === "SOLID") return Object.assign({}, p, { color: monoGrey(p.color, ink, isMark) });
+    if (p.type === "IMAGE" || p.type === "VIDEO") return { type: "SOLID", color: placeholder, opacity: p.opacity === undefined ? 1 : p.opacity };
+    if (p.type && p.type.indexOf("GRADIENT") === 0 && Array.isArray(p.gradientStops)) {
+      return Object.assign({}, p, { gradientStops: p.gradientStops.map(function (s) {
+        var c = monoGrey(s.color, ink, isMark); return Object.assign({}, s, { color: { r: c.r, g: c.g, b: c.b, a: s.color.a } });
+      }) });
+    }
+    return p;
+  });
+}
+async function monochromeClone(root, mono) {
+  var ink = monoHexToRgb(mono.ink), placeholder = monoHexToRgb(mono.placeholder);
+  var nodes = [root].concat(typeof root.findAll === "function" ? root.findAll(function () { return true; }) : []);
+  for (var i = 0; i < nodes.length && i < 400; i++) {
+    var n = nodes[i];
+    var isMark = n.type !== "FRAME" && n.type !== "COMPONENT" && n.type !== "INSTANCE" && n.type !== "GROUP" && n.type !== "SECTION";
+    try {
+      if (n.type === "TEXT") {
+        var len = n.characters.length;
+        var fonts = len ? n.getRangeAllFontNames(0, len) : [n.fontName];
+        for (var f = 0; f < fonts.length; f++) if (fonts[f] && typeof fonts[f] === "object") await uxdEnsureFont(fonts[f]);
+      }
+      if ("fills" in n && Array.isArray(n.fills) && n.fills.length) {
+        if (typeof n.fillStyleId === "string" && n.fillStyleId && typeof n.setFillStyleIdAsync === "function") await n.setFillStyleIdAsync("");
+        n.fills = monoPaints(n.fills, ink, placeholder, isMark);
+      }
+      if ("strokes" in n && Array.isArray(n.strokes) && n.strokes.length) {
+        if (typeof n.strokeStyleId === "string" && n.strokeStyleId && typeof n.setStrokeStyleIdAsync === "function") await n.setStrokeStyleIdAsync("");
+        n.strokes = monoPaints(n.strokes, ink, placeholder, isMark);
+      }
+    } catch (_) { /* instance sublayers that refuse overrides keep their paint */ }
+  }
 }
 // Fonts this plugin session already loaded. Skipping the real loadFontAsync for them keeps the
 // apply phase of a direct edit free of network waits, so Figma records it as ONE undo step.
