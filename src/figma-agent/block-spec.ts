@@ -270,15 +270,18 @@ class Builder {
   text(name: string, value: string, width: number, opts: TextOpts): NativeNode {
     this.count += 1;
     const type = this.sourceType(name, opts.size ?? 14, opts.weight ?? "Regular", opts.color);
-    const size = type.size;
+    let size = type.size;
+    // One unbreakable token (an amount, a loan ID) never wraps mid-word: shrink it to fit, to 11px.
+    const token = !/\s/.test(value.trim());
+    while (token && size > 11 && textWidth(value, size) > width) size -= 1;
     const natural = textWidth(value, size);
-    const hug = opts.hug === true && natural <= width;
+    const hug = (opts.hug === true || token) && natural <= width;
     const w = hug ? natural : Math.max(1, Math.floor(width));
     return {
       type: "TEXT", name: label(value, name), x: 0, y: 0, width: w, height: textHeight(value, size, w),
       text: value, fontSize: size, fontFamily: FONT, fontStyle: type.weight,
       color: ensureContrast(type.color, opts.bg),
-      ...(type.textStyleId ? { textStyleId: type.textStyleId } : {}),
+      ...(type.textStyleId && size === type.size ? { textStyleId: type.textStyleId } : {}),
       textAlignHorizontal: opts.align ?? "LEFT",
       textAutoResize: hug ? "WIDTH_AND_HEIGHT" : "HEIGHT",
       layoutSizingHorizontal: hug ? "HUG" : "FILL",
@@ -525,12 +528,21 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       if (!items.length) return null;
       const gap = 12;
       const cell = Math.floor((W - gap * (items.length - 1)) / items.length);
+      // Amounts and IDs must not wrap ("₹12, / 000"; finding 59): shrink the value type to fit the
+      // cell, and when even 13px is too wide, show the stats as label/value rows instead.
+      const values = items.map((item) => clean(item.value ?? item.amount, 40));
+      const valueSize = [17, 15, 13].find((size) => values.every((v) => !v || textWidth(v, size) <= cell));
+      if (!valueSize) {
+        const rows = items.map((item) => expandLeaf(ctx, { type: "row", label: clean(item.label ?? item.title, 80) || clean(item.value ?? item.amount, 40),
+          value: clean(item.label ?? item.title, 80) ? item.value ?? item.amount : undefined, caption: item.caption }, "row", W, depth)).filter((n): n is NativeNode => !!n);
+        return rows.length === 1 ? rows[0] : b.vstack("Stats", W, rows, { gap: 0 });
+      }
       const cells = items.map((item) => {
         const lbl = clean(item.label ?? item.title, 80);
         const value = clean(item.value ?? item.amount, 40);
         const kids: NativeNode[] = [];
         if (lbl) kids.push(b.text("Stat label", lbl, cell, { size: 12, color: t.muted, bg }));
-        if (value) kids.push(b.text("Stat value", value, cell, { size: 17, weight: "Semi Bold", color: t.text, bg }));
+        if (value) kids.push(b.text("Stat value", value, cell, { size: valueSize, weight: "Semi Bold", color: t.text, bg }));
         const cap = clean(item.caption, 80);
         if (cap) kids.push(b.text("Stat caption", cap, cell, { size: 11, color: t.muted, bg }));
         const stack = b.vstack(label(lbl || value, "Stat"), cell, kids, { gap: 2 });

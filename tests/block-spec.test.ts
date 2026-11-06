@@ -369,3 +369,19 @@ test("source fallback keeps deep card texts and turns small status pills into ba
   assert.match(json, /DMI1234567890/);
   assert.match(json, /"type":"badge","text":"Current"/);
 });
+
+test("amounts and IDs never wrap mid-token (finding 59)", async () => {
+  const { expandBlockSpec: expand } = await import("../src/figma-agent/block-spec");
+  const canvas = { nodes: [{ id: "1", name: "S", type: "FRAME", width: 360, height: 800, children: [] }], components: [] };
+  const spec = { summary: "x", sections: [{ name: "Loan", surface: "card", blocks: [
+    { type: "stat_row", items: [{ label: "EMI", value: "₹12,000" }, { label: "Outstanding", value: "₹1,07,649" }, { label: "Paid", value: "₹88,351" }, { label: "Tenure", value: "36 months" }] },
+    { type: "text", text: "DMI1234567890123456789" }] }], learningCandidate: null };
+  const exp = expand(spec, canvas, {});
+  assert.ok(exp.plan, exp.errors.join("; "));
+  const texts: Array<Record<string, unknown>> = [];
+  const walk = (ns: Array<Record<string, unknown>>) => ns.forEach((n) => { if (n.type === "TEXT") texts.push(n); walk((n.children as Array<Record<string, unknown>>) || []); });
+  walk(exp.plan.elements as Array<Record<string, unknown>>);
+  for (const n of texts.filter((n) => !/\s/.test(String(n.text)))) {
+    assert.ok(Number(n.width) >= Math.ceil(String(n.text).length * Number(n.fontSize) * 0.56), n.text + " fits on one line");
+  }
+});
