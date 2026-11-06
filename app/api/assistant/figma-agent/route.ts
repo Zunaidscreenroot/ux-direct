@@ -595,8 +595,11 @@ export async function POST(request: Request) {
   const agentsStartedAt = Date.now();
   // Independent of brain retrieval, so both lookups run at the same time.
   const variationIndex = parsedInput.data.variation?.index ?? 0;
+  // Every requested variation gets its own direction; index 0 used to be a plain improve, so
+  // "2 variations" gave one near-copy of the improve output (finding 47).
+  const variationDirection = parsedInput.data.variation ? variationIndex + 1 : 0;
   // Later variations must not be anchored to the same verified structure as the first.
-  const verifiedExamplePromise = blockMode && variationIndex === 0
+  const verifiedExamplePromise = blockMode && !parsedInput.data.variation
     ? loadVerifiedExample(taskScope, designScope).catch(() => "")
     : Promise.resolve("");
   let brain: BrainContextPromptInput = { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
@@ -1017,7 +1020,7 @@ export async function POST(request: Request) {
         let themeLocked: boolean | undefined;
         if (isBlockSpec(rawPlan)) {
           const stabilized = stabilizeBlockSpec(rawPlan, canvas, parsedInput.data.prompt);
-          specInput = applyVariationDirection(stabilized.spec, variationIndex);
+          specInput = applyVariationDirection(stabilized.spec, variationDirection);
           themeLocked = stabilized.themeLocked;
         }
         let candidate = renderCandidate(specInput);

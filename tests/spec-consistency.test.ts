@@ -157,3 +157,17 @@ test("a wireframe request gets a greyscale theme even on the source fallback", a
   assert.equal(theme.primary, "#3F3F46", "no brand or model colour");
   assert.equal(out.themeLocked, true);
 });
+
+test("variation directions also change hierarchy and colour treatment (finding 47)", async () => {
+  const { applyVariationDirection } = await import("../src/figma-agent/spec-consistency");
+  const spec = { theme: { radius: 12, background: "#121212", surface: "#383838" }, sections: [
+    { name: "Loan", surface: "card", blocks: [{ type: "row", label: "Personal Loan", value: "DMI1" }, { type: "stat_row", items: [{ label: "Paid", value: "₹8" }] }, { type: "button", label: "Pay now" }] },
+  ] };
+  const one = applyVariationDirection(spec, 1) as { sections: Array<{ blocks: Array<{ type: string }> }> };
+  assert.deepEqual(one.sections[0].blocks.map((b) => b.type), ["stat_row", "row", "button"], "key numbers lead");
+  const two = applyVariationDirection(spec, 2) as { theme: { background: string; surface: string } };
+  assert.equal(two.theme.background, "#383838");
+  assert.equal(two.theme.surface, "#121212");
+  const route = (await import("node:fs")).readFileSync("app/api/assistant/figma-agent/route.ts", "utf8");
+  assert.ok(route.includes("const variationDirection = parsedInput.data.variation ? variationIndex + 1 : 0;"), "the first variation is not a plain improve");
+});

@@ -289,7 +289,9 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
     // row's right edge, a logo at the top-right of a card header) belongs beside the anchor's
     // column, not inside it: inserting it into the vertical stack put the chevron above the
     // "Outstanding" value and the logo under the title (Test #1, finding 38).
-    const besideColumn = !sideBySide && (g.x >= a.x + a.w - 1 || g.x + g.w <= a.x + 1);
+    // Also when it overlaps vertically: a donut left of a stat column ("Loan Amount" over
+    // "₹12,000") belongs in the stats row before both stats, not wrapped with one label (finding 48).
+    const besideColumn = g.x >= a.x + a.w - 1 || g.x + g.w <= a.x + 1;
     if (besideColumn && target.parent && target.parent.layoutMode === "VERTICAL") {
       for (let i = target.ancestors.length - 1, hops = 0; i >= 0 && hops < 3; i -= 1, hops += 1) {
         const anc = target.ancestors[i];
@@ -314,7 +316,7 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
       // No row to join (a heading stack straight in a card): wrap the column and the graphic in one.
       const column = target.parent;
       const columnRef = refs.find((r) => r.node === column);
-      if (!usedSourceIds.has(graphic.id) && columnRef && columnRef.parent && !isCardLike(column) && !isPillLike(column)
+      if (!sideBySide && !usedSourceIds.has(graphic.id) && columnRef && columnRef.parent && !isCardLike(column) && !isPillLike(column)
         && columnRef.depth + 2 <= MAX_PLAN_DEPTH) {
         const host = columnRef.parent;
         const list = host.children ?? [];

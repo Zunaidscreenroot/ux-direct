@@ -233,10 +233,25 @@ export function applyVariationDirection(spec: Rec, index: number): Rec {
   const radius = typeof theme.radius === "number" ? theme.radius : 12;
   const direction = ((index - 1) % 2) + 1;
   theme.radius = direction === 1 ? (radius <= 10 ? 20 : 6) : (radius <= 10 ? 14 : 4);
+  // Direction 2 also changes the colour treatment with the source's own palette: cards and the
+  // page background swap, so the variation reads differently at a glance (finding 47).
+  if (direction === 2 && typeof theme.background === "string" && typeof theme.surface === "string" && theme.background !== theme.surface) {
+    const bg = theme.background; theme.background = theme.surface; theme.surface = bg;
+  }
+  // Direction 1 changes the hierarchy: key numbers lead each section, actions close it.
+  const rank = (block: unknown) => {
+    const type = String(asRec(block)?.type ?? "");
+    if (["stat", "stat_row", "progress_ring", "progress_bar"].includes(type)) return 0;
+    if (["button", "buttons"].includes(type)) return 2;
+    return 1;
+  };
+  const reorder = (blocks: unknown[]) => direction === 1
+    ? blocks.map((b, i) => ({ b, i })).sort((x, y) => rank(x.b) - rank(y.b) || x.i - y.i).map((e) => e.b)
+    : blocks;
   const swapBlock = (block: unknown): unknown => {
     const b = asRec(block);
     if (!b) return block;
-    if (b.type === "card" && Array.isArray(b.blocks)) return { ...b, blocks: b.blocks.map(swapBlock) };
+    if (b.type === "card" && Array.isArray(b.blocks)) return { ...b, blocks: reorder(b.blocks.map(swapBlock)) };
     if (direction !== 2) return b;
     if (b.type === "stat_row" && Array.isArray(b.items)) {
       return { type: "list", items: b.items.map((item) => {
@@ -260,7 +275,7 @@ export function applyVariationDirection(spec: Rec, index: number): Rec {
     const nested = blocks.some((b) => asRec(b)?.type === "card");
     // Navigation chrome stays plain; a section of nested cards cannot itself become a card.
     const nextSurface = direction === 1 && !chrome && !nested ? (surface === "card" ? "plain" : "card") : s.surface;
-    return { ...s, ...(nextSurface ? { surface: nextSurface } : {}), blocks: blocks.map(swapBlock) };
+    return { ...s, ...(nextSurface ? { surface: nextSurface } : {}), blocks: chrome ? blocks.map(swapBlock) : reorder(blocks.map(swapBlock)) };
   });
   return { ...spec, theme, sections };
 }
