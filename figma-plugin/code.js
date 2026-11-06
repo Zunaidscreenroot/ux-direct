@@ -1223,8 +1223,19 @@ async function readCanvasCommand(payload) {
       figma.getLocalGridStylesAsync()
     ]);
     result.styles = {
-      paint: styles[0].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; }),
-      text: styles[1].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; }),
+      // Colour and type metrics let the renderer bind generated layers to matching file styles.
+      paint: styles[0].slice(0, 100).map(function (style) {
+        var out = { id: style.id, name: style.name };
+        var solid = Array.isArray(style.paints) && style.paints.length === 1 && style.paints[0].type === "SOLID" ? style.paints[0] : null;
+        if (solid && solid.color && (solid.opacity === undefined || solid.opacity >= 0.99)) out.color = canvasColorHex(solid.color);
+        return out;
+      }),
+      text: styles[1].slice(0, 100).map(function (style) {
+        var out = { id: style.id, name: style.name };
+        if (typeof style.fontSize === "number") out.fontSize = style.fontSize;
+        if (style.fontName && typeof style.fontName.family === "string") { out.fontFamily = style.fontName.family; out.fontStyle = style.fontName.style; }
+        return out;
+      }),
       effect: styles[2].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; }),
       grid: styles[3].slice(0, 50).map(function (style) { return { id: style.id, name: style.name }; })
     };
@@ -1701,7 +1712,8 @@ async function writeCanvasCommand(payload, options) {
     if (Number.isFinite(spec.strokeWeight) && "strokeWeight" in node) node.strokeWeight = Math.max(0, Math.min(100, spec.strokeWeight));
     if (Number.isFinite(spec.cornerRadius) && "cornerRadius" in node) node.cornerRadius = Math.max(0, Math.min(512, spec.cornerRadius));
     if (typeof spec.clipsContent === "boolean" && "clipsContent" in node) node.clipsContent = spec.clipsContent;
-    if (typeof spec.paintStyleId === "string" && "fillStyleId" in node) node.fillStyleId = spec.paintStyleId;
+    // dynamic-page files need the async setter; the plain property is the fallback.
+    if (typeof spec.paintStyleId === "string" && "fillStyleId" in node && typeof node.setFillStyleIdAsync !== "function") node.fillStyleId = spec.paintStyleId;
     // TEXT styles are applied asynchronously by applyTextStyleAsync (dynamic-page safe).
     if (typeof spec.effectStyleId === "string" && "effectStyleId" in node) node.effectStyleId = spec.effectStyleId;
     if (typeof spec.gridStyleId === "string" && "gridStyleId" in node) node.gridStyleId = spec.gridStyleId;
@@ -1872,6 +1884,9 @@ async function writeCanvasCommand(payload, options) {
       // A clone keeps the source layer's own paints, effects and layout.
       if (type !== "CLONE") applyCreateProperties(node, spec);
       if (type === "TEXT" && typeof spec.textStyleId === "string") await applyTextStyleAsync(node, spec.textStyleId);
+      if (type !== "CLONE" && typeof spec.paintStyleId === "string" && typeof node.setFillStyleIdAsync === "function") {
+        try { await node.setFillStyleIdAsync(spec.paintStyleId); } catch (_) { /* keep the literal colour */ }
+      }
       parent.appendChild(node);
       if (type === "CLONE" && "layoutPositioning" in node && spec.layoutPositioning !== "ABSOLUTE") {
         try { node.layoutPositioning = "AUTO"; } catch (_) {}

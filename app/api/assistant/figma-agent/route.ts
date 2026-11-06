@@ -356,7 +356,7 @@ function collectSourceTextInventory(nodes: unknown[]): Array<{ name: string; tex
   return result;
 }
 
-function compactResourceList(value: unknown, limit = 50): Array<Record<string, string>> {
+function compactResourceList(value: unknown, limit = 50): Array<Record<string, string | number>> {
   if (!Array.isArray(value)) return [];
   return value.slice(0, limit).flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
@@ -365,7 +365,12 @@ function compactResourceList(value: unknown, limit = 50): Array<Record<string, s
     return [{ id: item.id.slice(0, 300), name: item.name.slice(0, 120),
       ...(typeof item.type === "string" ? { type: item.type.slice(0, 40) } : {}),
       ...(typeof item.collectionName === "string" ? { collectionName: item.collectionName.slice(0, 100) } : {}),
-      ...(typeof item.collectionId === "string" ? { collectionId: item.collectionId.slice(0, 300) } : {}) }];
+      ...(typeof item.collectionId === "string" ? { collectionId: item.collectionId.slice(0, 300) } : {}),
+      // Style metrics used to bind generated layers to the file's own text/paint styles.
+      ...(typeof item.color === "string" && /^#[0-9A-Fa-f]{6}$/.test(item.color) ? { color: item.color.toUpperCase() } : {}),
+      ...(typeof item.fontSize === "number" && Number.isFinite(item.fontSize) ? { fontSize: item.fontSize } : {}),
+      ...(typeof item.fontFamily === "string" ? { fontFamily: item.fontFamily.slice(0, 100) } : {}),
+      ...(typeof item.fontStyle === "string" ? { fontStyle: item.fontStyle.slice(0, 100) } : {}) }];
   });
 }
 function compactCanvas(value: unknown): Record<string, unknown> {
@@ -376,7 +381,7 @@ function compactCanvas(value: unknown): Record<string, unknown> {
     ? canvas.nodes.slice(0, 20).map((node) => compactNode(node, state)).filter((node): node is CanvasNode => !!node)
     : [];
   const rawStyles = canvas.styles && typeof canvas.styles === "object" && !Array.isArray(canvas.styles) ? canvas.styles as Record<string, unknown> : {};
-  const styles = { paint: compactResourceList(rawStyles.paint), text: compactResourceList(rawStyles.text),
+  const styles = { paint: compactResourceList(rawStyles.paint, 100), text: compactResourceList(rawStyles.text, 100),
     effect: compactResourceList(rawStyles.effect), grid: compactResourceList(rawStyles.grid) };
   const variableCollections = Array.isArray(canvas.variableCollections) ? canvas.variableCollections.slice(0, 30).flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
