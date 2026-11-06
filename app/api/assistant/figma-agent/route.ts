@@ -627,18 +627,20 @@ export async function POST(request: Request) {
     brain = { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: Date.now() - brainStarted };
   }
   // Persist the run before model work starts so a fast completion cannot race a late INSERT.
-  await startTaskRun({ id: taskRunId, projectKey: taskScope, title: "Figma task", requestSummary: parsedInput.data.prompt, retrieval: taskRetrieval });
+  const taskRunStarted = startTaskRun({ id: taskRunId, projectKey: taskScope, title: "Figma task", requestSummary: parsedInput.data.prompt, retrieval: taskRetrieval });
 
   const scopeInstructions = componentSelection
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   // A verified spec from this project (structure only) steers whichever model `auto` picks
   // toward the same block choices that already passed the Figma quality gate.
-  const verifiedExample = await verifiedExamplePromise;
+  const [verifiedExample] = await Promise.all([verifiedExamplePromise, taskRunStarted]);
   // Speed first: the planner waits at most 6 s for the sub-agent notes (they run in parallel
   // with brain retrieval). Waiting up to 40 s was idle time on every run.
   const agentBrief = await Promise.race([agentBriefPromise,
-    new Promise<AgentBrief>((resolve) => setTimeout(() => resolve(fallbackBrief), PLANNER_AGENT_WAIT_MS))]);
+    // The deadline counts from when the agents started, not from here: brain retrieval and the
+    // run insert already ran in parallel with them, so a slow insert no longer adds 6 s more.
+    new Promise<AgentBrief>((resolve) => setTimeout(() => resolve(fallbackBrief), Math.max(0, agentsStartedAt + PLANNER_AGENT_WAIT_MS - Date.now())))]);
   const agentsMs = Date.now() - agentsStartedAt;
   const exampleInstructions = verifiedExample
     ? "\nVERIFIED TEAM EXAMPLE — the block structure of an earlier output that passed UX Direct's quality gate. Texts are replaced by <source text>. Follow its way of choosing sections and blocks for similar content; never copy it, and use only this screen's real content: " + verifiedExample
