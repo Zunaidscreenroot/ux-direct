@@ -329,15 +329,30 @@ export function checkContentPreservation(source: CanvasTree, output: CanvasTree,
       });
     }
     const graphicTypes = [...GRAPHIC_TYPES];
-    const graphics = (tree: CanvasTree) => tree.nodes.filter(node => graphicTypes.includes(node.type) || node.imageFill).length;
-    const sourceGraphics = graphics(source);
-    const outputGraphics = graphics(output);
+    const graphicNodes = (tree: CanvasTree) => tree.nodes.filter(node => graphicTypes.includes(node.type) || node.imageFill);
+    const sourceGraphics = graphicNodes(source).length;
+    const outputGraphics = graphicNodes(output).length;
+    // Name the dropped graphics by their nearest named container ("arrow-right", "Tabs/Vector 193").
+    const label = (node: FlatNode) => {
+      const named = [node.parent, node.parent?.parent].find(p => p && !/^(frame|group|vector)\b/i.test(p.name));
+      return (named ? named.name + "/" : "") + node.name;
+    };
+    const remaining = new Map<string, number>();
+    for (const node of graphicNodes(output)) remaining.set(label(node), (remaining.get(label(node)) || 0) + 1);
+    const droppedNames: string[] = [];
+    for (const node of graphicNodes(source)) {
+      const key = label(node);
+      const left = remaining.get(key) || 0;
+      if (left > 0) remaining.set(key, left - 1);
+      else if (!droppedNames.includes(key)) droppedNames.push(key);
+    }
     // Logos, chevrons and status icons are content: losing more than a fifth of them is a failure.
     if (sourceGraphics >= 2 && outputGraphics < Math.ceil(sourceGraphics * 0.8)) {
       issues.push({
         severity: "high",
         issue: "Icons, logos or graphics from the source were dropped.",
-        evidence: "Source has " + sourceGraphics + " icon/graphic layer(s); output has " + outputGraphics + ".",
+        evidence: "Source has " + sourceGraphics + " icon/graphic layer(s); output has " + outputGraphics + "." +
+          (droppedNames.length ? " Missing e.g. " + droppedNames.slice(0, 6).map(n => '"' + n.slice(0, 40) + '"').join(", ") + "." : ""),
         fix: "Keep each icon, chevron, status mark and graphic from the source, reusing component instances where they exist.",
       });
     }

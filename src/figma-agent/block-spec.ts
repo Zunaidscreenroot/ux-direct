@@ -165,7 +165,7 @@ export function collectSourceTokens(canvas: Record<string, unknown>, componentId
   const seen = new Set<string>();
   const root = asRec(arr(canvas.nodes)[0]);
   const walk = (node: Rec, insideInstance: boolean, depth: number) => {
-    if (depth > 8 || texts.length >= 60) return;
+    if (depth > 12 || texts.length >= 60) return;
     // Text inside instances belongs to the component, not the screen's own type scale.
     if (node.type === "TEXT" && !insideInstance && typeof node.fontSize === "number" && Number.isFinite(node.fontSize)) {
       const weight = clean(node.fontStyle, 40) || "Regular";
@@ -947,12 +947,22 @@ export function sourceFallbackSpec(canvas: Record<string, unknown>): Rec | null 
   const visible = (node: Rec | null): node is Rec => !!node && node.visible !== false;
   const kids = (node: Rec) => arr(node.children).map(asRec).filter(visible);
   const textOf = (node: Rec) => (node.type === "TEXT" ? clean(node.text, 1200) : "");
+  // A horizontal row of 2–5 single-label items (tab components) is one tabs block, not
+  // separate sections. The active tab is the fully opaque label.
+  const tabItems = (node: Rec): { items: string[]; active: number } | null => {
+    const children = kids(node);
+    if (node.layoutMode !== "HORIZONTAL" || children.length < 2 || children.length > 5) return null;
+    const labels = children.map((c) => kids(c).filter((d) => d.type === "TEXT"));
+    if (!labels.every((l) => l.length === 1 && clean(l[0].text, 40))) return null;
+    const active = labels.findIndex((l) => (typeof l[0].opacity === "number" ? l[0].opacity : 1) >= 0.99);
+    return { items: labels.map((l) => clean(l[0].text, 40)), active: Math.max(0, active) };
+  };
   // Flatten structural wrappers (e.g. "Screen body") so each real group becomes a section.
   const groups: Rec[] = [];
   const addGroups = (nodes: Rec[], depth: number) => {
     for (const node of nodes) {
       const children = kids(node);
-      if (depth < 2 && node.type !== "INSTANCE" && children.length >= 2 && children.every((c) => c.type !== "TEXT") && !node.fillColors && !node.strokeColors) {
+      if (depth < 2 && node.type !== "INSTANCE" && children.length >= 2 && children.every((c) => c.type !== "TEXT") && !node.fillColors && !node.strokeColors && !tabItems(node)) {
         addGroups(children, depth + 1);
       } else {
         groups.push(node);
@@ -962,8 +972,10 @@ export function sourceFallbackSpec(canvas: Record<string, unknown>): Rec | null 
   addGroups(kids(root), 0);
 
   const blocksOf = (node: Rec, depth: number, out: Rec[]) => {
-    if (depth > 6 || out.length >= 24) return;
+    if (depth > 10 || out.length >= 24) return;
     if (node.type === "TEXT") { const text = textOf(node); if (text) out.push({ type: "text", text }); return; }
+    const tabs = tabItems(node);
+    if (tabs) { out.push({ type: "tabs", items: tabs.items, active: tabs.active }); return; }
     const children = kids(node);
     const texts = children.filter((c) => c.type === "TEXT").map(textOf).filter(Boolean);
     const filled = Array.isArray(node.fillColors) && node.fillColors.length > 0;
@@ -988,8 +1000,10 @@ export function sourceFallbackSpec(canvas: Record<string, unknown>): Rec | null 
     const blocks: Rec[] = [];
     blocksOf(group, 0, blocks);
     if (!blocks.length) continue;
-    const fill = Array.isArray(group.fillColors) ? hex(group.fillColors[0]) : null;
-    const card = (fill && fill !== rootFill) || Array.isArray(group.strokeColors);
+    // Component cards often carry their fill on the first inner frame, not the instance.
+    const surfaceNode = [group, kids(group)[0]].find((n) => n && (Array.isArray(n.fillColors) || Array.isArray(n.strokeColors))) ?? group;
+    const fill = Array.isArray(surfaceNode.fillColors) ? hex(surfaceNode.fillColors[0]) : null;
+    const card = (fill && fill !== rootFill) || Array.isArray(surfaceNode.strokeColors);
     sections.push({ name, surface: card ? "card" : "plain", blocks });
   }
   if (sections.length > 8) sections.length = 8;

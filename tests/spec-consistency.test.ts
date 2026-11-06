@@ -147,3 +147,13 @@ test("later variations get a deterministic different direction with the same con
   assert.equal(third.sections[2].blocks[0].type, "stat_row");
   assert.ok(JSON.stringify(third).includes("₹8,450") && JSON.stringify(third).includes("12 mo"), "content kept");
 });
+
+test("a wireframe request gets a greyscale theme even on the source fallback", async () => {
+  const { stabilizeBlockSpec } = await import("../src/figma-agent/spec-consistency");
+  const canvas = { nodes: [{ id: "1", name: "S", type: "FRAME", fillColors: ["#121212"], children: [{ id: "2", name: "Pay button", type: "FRAME", fillColors: ["#2E7DEA"] }] }] };
+  const out = stabilizeBlockSpec({ sections: [], theme: { primary: "#FF0000" } }, canvas, "make a wireframe of this");
+  const theme = out.spec.theme as Record<string, unknown>;
+  assert.equal(theme.background, "#FFFFFF");
+  assert.equal(theme.primary, "#3F3F46", "no brand or model colour");
+  assert.equal(out.themeLocked, true);
+});

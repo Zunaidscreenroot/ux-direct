@@ -41,7 +41,7 @@ function indexById(nodes: RecordLike[], out = new Map<string, RecordLike>(), dep
 
 /** sourceById: a CLONE copies its source layer, so the source layer's own texts count as present. */
 function collectText(nodes: RecordLike[], output: string[] = [], depth = 0, sourceById?: Map<string, RecordLike>): string[] {
-  if (depth > 8) return output;
+  if (depth > 12) return output;
   for (const node of nodes) {
     // Hidden or fully transparent layers are not visible content.
     if (node.visible === false || node.opacity === 0) continue;
