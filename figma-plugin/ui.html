@@ -1682,7 +1682,20 @@
           stage("creating", "Building editable layout · " + completedElementCount + "/" + plannedNodeCount + " native layers…");
         }
       }
-      await createPlanChildren(createdFrameId, plan.elements, 0);
+      if (plan.elements.length) {
+        // One round trip for the whole tree; the per-frame path is kept for older plugin code.
+        stage("creating", "Building " + plannedNodeCount + " native layers in one pass…");
+        let treeResult = null;
+        try {
+          treeResult = await runNativeCanvasCommand("write-canvas", {
+            confirm: true, operation: "create-tree", target: "node", parentNodeId: createdFrameId, elements: plan.elements
+          }, 180000);
+        } catch (treeError) {
+          if (!/Unsupported canvas write operation/i.test(String(treeError && treeError.message || treeError))) throw treeError;
+        }
+        if (treeResult && treeResult.ok) completedElementCount += Number(treeResult.createdCount) || 0;
+        else await createPlanChildren(createdFrameId, plan.elements, 0);
+      }
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [createdFrameId] }, 90000);
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "zoom-to-nodes", nodeIds: [createdFrameId] }, 90000);
 
