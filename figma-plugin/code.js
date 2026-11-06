@@ -3173,7 +3173,7 @@ async function uxdTryFont(family, styles) {
   var realFamily = known ? known.family : family;
   for (var i = 0; i < styles.length; i++) {
     if (known && known.styles.indexOf(styles[i]) < 0) continue;
-    try { await figma.loadFontAsync({ family: realFamily, style: styles[i] }); return { family: realFamily, style: styles[i] }; } catch (_) {}
+    try { await uxdEnsureFont({ family: realFamily, style: styles[i] }); return { family: realFamily, style: styles[i] }; } catch (_) {}
   }
   return null;
 }
@@ -3196,11 +3196,50 @@ function uxdStyleCandidates(weight, italic) {
   if (weight === "regular") out.unshift("Italic");
   return out;
 }
+// Fonts this plugin session already loaded. Skipping the real loadFontAsync for them keeps the
+// apply phase of a direct edit free of network waits, so Figma records it as ONE undo step.
+var UXD_LOADED_FONTS = new Set();
+function uxdFontKey(font) { return font && typeof font === "object" ? font.family + "\u0000" + font.style : ""; }
+async function uxdEnsureFont(font) {
+  var key = uxdFontKey(font);
+  if (!key || UXD_LOADED_FONTS.has(key)) return;
+  await figma.loadFontAsync(font);
+  UXD_LOADED_FONTS.add(key);
+}
 async function uxdLoadTextFonts(node) {
   var length = typeof node.characters === "string" ? node.characters.length : 0;
   var fonts = length && typeof node.getRangeAllFontNames === "function" ? node.getRangeAllFontNames(0, length)
     : (node.fontName && typeof node.fontName === "object" ? [node.fontName] : []);
-  for (var i = 0; i < fonts.length; i++) await figma.loadFontAsync(fonts[i]);
+  for (var i = 0; i < fonts.length; i++) await uxdEnsureFont(fonts[i]);
+}
+// Load every font a direct edit will need BEFORE the first change. Font loading waits on the
+// network; when it happens between two changes Figma splits the edit into separate undo steps
+// (e.g. "24px bold" needed two Cmd+Z). Best effort: a font missed here is still loaded later.
+async function uxdPrewarmDirectEditFonts(plan) {
+  var needsList = plan.some(function (step) { return step.op.set && ("fontWeight" in step.op.set || "italic" in step.op.set || "fontFamily" in step.op.set); });
+  if (needsList) await uxdFontList();
+  for (var p = 0; p < plan.length; p++) {
+    var step = plan[p];
+    if (!step.op.set) continue;
+    var key = Object.keys(step.op.set)[0];
+    var value = step.op.set[key];
+    for (var n = 0; n < step.nodes.length && n < 200; n++) {
+      var node = step.nodes[n];
+      if (!node || node.type !== "TEXT") continue;
+      try { await uxdLoadTextFonts(node); } catch (_) { continue; }
+      if (key !== "fontWeight" && key !== "italic" && key !== "fontFamily") continue;
+      var segments = uxdFontSegments(node);
+      for (var s = 0; s < segments.length; s++) {
+        var current = segments[s].fontName && typeof segments[s].fontName === "object" ? segments[s].fontName : { family: "Inter", style: "Regular" };
+        var italicNow = /italic|oblique/i.test(current.style);
+        if (key === "fontFamily") {
+          await uxdTryFont(value, [current.style].concat(uxdStyleCandidates(uxdWeightOf(current.style), italicNow), ["Regular"]));
+        } else {
+          await uxdTryFont(current.family, uxdStyleCandidates(key === "fontWeight" ? value : uxdWeightOf(current.style), key === "italic" ? value : italicNow));
+        }
+      }
+    }
+  }
 }
 function uxdFontSegments(node) {
   var length = typeof node.characters === "string" ? node.characters.length : 0;
@@ -3570,6 +3609,7 @@ async function localApplyDirectEdits(payload) {
     if (resolved.error) throw new Error(resolved.error);
     plan.push({ op: ops[i], nodes: resolved.nodes });
   }
+  await uxdPrewarmDirectEditFonts(plan);
   if (typeof figma.commitUndo === "function") figma.commitUndo();
   var applied = [], notes = [], errors = [];
   for (var p = 0; p < plan.length; p++) {
