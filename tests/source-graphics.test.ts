@@ -141,3 +141,22 @@ test("geometry repair never squashes copied graphics in a crowded row", () => {
   assert.equal(clone?.width, 59, "clone keeps its source width");
   assert.ok(Number(title?.width) < 160, "the text gives way instead");
 });
+
+test("graphics next to repeated texts stay on their own card", () => {
+  const card = (i: number, y: number): N => ({ id: "9:" + i, name: "Card " + i, type: "FRAME", x: 16, y, width: 328, height: 120, fillColors: ["#FFFFFF"], cornerRadius: 12, children: [
+    { id: "9:" + i + "1", name: "Title", type: "TEXT", x: 16, y: 16, width: 160, height: 20, text: "Personal Loan" },
+    { id: "9:" + i + "2", name: "logo", type: "GROUP", x: 260, y: 16, width: 48, height: 20, children: [{ id: "9:" + i + "3", name: "Vector", type: "VECTOR", x: 0, y: 0, width: 48, height: 20 }] },
+    { id: "9:" + i + "4", name: "Amount", type: "TEXT", x: 16, y: 60, width: 160, height: 20, text: "₹" + i + "0,000" },
+  ] });
+  const src = { nodes: [{ id: "9:0", name: "Loans", type: "FRAME", x: 0, y: 0, width: 360, height: 400, fillColors: ["#F6F7F9"], children: [card(1, 20), card(2, 160)] }], components: [] };
+  const spec = { summary: "x", frame: { name: "Loans" }, sections: [1, 2].map((i) => ({ name: "Card " + i, surface: "card", blocks: [
+    { type: "heading", title: "Personal Loan" }, { type: "stat", value: "₹" + i + "0,000" },
+  ] })) };
+  const expansion = expandBlockSpec(spec, src, { sourceCanvas: src, allowClones: true });
+  const sections = expansion.plan!.elements.filter((n) => /Card/.test(n.name));
+  for (const [index, section] of sections.entries()) {
+    const clones: string[] = [];
+    walk([section], (n) => { if (n.type === "CLONE") clones.push(String(n.sourceNodeId)); });
+    assert.deepEqual(clones, ["9:" + (index + 1) + "2"], "card " + (index + 1) + " gets its own logo");
+  }
+});

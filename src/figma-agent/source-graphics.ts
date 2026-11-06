@@ -172,7 +172,12 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
 
   const allTexts = descendants(root).filter((d) => d.type === "TEXT" && d.text);
   const sourceCount = new Map<string, number>();
-  for (const t of allTexts) sourceCount.set(norm(t.text), (sourceCount.get(norm(t.text)) || 0) + 1);
+  const sourceOrdinal = new Map<string, number>();
+  for (const t of allTexts) {
+    const k = norm(t.text);
+    sourceOrdinal.set(t.id, sourceCount.get(k) || 0);
+    sourceCount.set(k, (sourceCount.get(k) || 0) + 1);
+  }
   const usedSourceIds = new Set<string>();
   (function markUsed(nodes: NativeNode[]) {
     for (const n of nodes) {
@@ -202,29 +207,41 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
     const own = new Set(descendants(graphic).map((d) => d.id));
     const ownTexts = descendants(graphic).filter((d) => d.type === "TEXT" && d.text).map((d) => norm(d.text));
     const refs = indexOutput(elements);
-    const outTextCount = new Map<string, number>();
+    // Repeated texts ("Personal Loan" on every card) are matched by occurrence: the k-th one in
+    // the source is the k-th one in the output, so each card's graphics stay on their own card.
+    const outByText = new Map<string, OutRef[]>();
     for (const r of refs) if (r.node.type === "TEXT" && typeof r.node.text === "string") {
-      const k = norm(r.node.text); outTextCount.set(k, (outTextCount.get(k) || 0) + 1);
+      const k = norm(r.node.text); outByText.set(k, [...(outByText.get(k) || []), r]);
     }
-    // Badge, chip, tab and button labels are no anchor: graphics put inside those pills
-    // squeezed the label to one letter per line (Test #1 retest).
-    const inPill = (key: string) => {
-      const ref = refs.find((r) => r.node.type === "TEXT" && typeof r.node.text === "string" && norm(r.node.text) === key);
-      return !!ref && ref.ancestors.some(isPillLike);
+    const outRefFor = (d: SrcNode): OutRef | null => {
+      const key = norm(d.text);
+      const list = outByText.get(key);
+      if (!list || list.length !== (sourceCount.get(key) || 0)) return null;
+      return list[sourceOrdinal.get(d.id) ?? -1] ?? null;
     };
-    // Walk up from the graphic until an ancestor holds a text that is unique in both trees.
+    const insideSourceParent = (d: SrcNode) => {
+      for (let p: SrcNode | null = graphic.parent; p; p = p.parent) if (p === d.parent) return true;
+      return false;
+    };
+    // Badge, chip, tab and button labels are no anchor (graphics put inside those pills squeezed
+    // the label), except a small icon that sat inside that same pill in the source.
+    const allowed = (d: SrcNode, ref: OutRef) => !ref.ancestors.some(isPillLike) ||
+      (Math.max(graphic.rect.w, graphic.rect.h) <= 20 && insideSourceParent(d));
+    // Walk up from the graphic until an ancestor holds a text that maps to one output text.
     let anchor: SrcNode | null = null;
+    let anchorRef: OutRef | null = null;
     for (let scope = graphic.parent, hops = 0; scope && hops < 5 && !anchor; scope = scope.parent, hops += 1) {
-      const candidates = descendants(scope).filter((d) => d.type === "TEXT" && d.text && !own.has(d.id) &&
-        sourceCount.get(norm(d.text)) === 1 && outTextCount.get(norm(d.text)) === 1 && !inPill(norm(d.text)));
+      const candidates = descendants(scope).flatMap((d) => {
+        if (d.type !== "TEXT" || !d.text || own.has(d.id)) return [];
+        const ref = outRefFor(d);
+        return ref && allowed(d, ref) ? [{ d, ref }] : [];
+      });
       const cx = graphic.rect.x + graphic.rect.w / 2, cy = graphic.rect.y + graphic.rect.h / 2;
-      candidates.sort((a, b) => Math.hypot(a.rect.x + a.rect.w / 2 - cx, a.rect.y + a.rect.h / 2 - cy) -
-        Math.hypot(b.rect.x + b.rect.w / 2 - cx, b.rect.y + b.rect.h / 2 - cy));
-      anchor = candidates[0] ?? null;
+      const dist = (n: SrcNode) => Math.hypot(n.rect.x + n.rect.w / 2 - cx, n.rect.y + n.rect.h / 2 - cy);
+      candidates.sort((a, b) => dist(a.d) - dist(b.d));
+      if (candidates[0]) { anchor = candidates[0].d; anchorRef = candidates[0].ref; }
     }
-    if (!anchor) { result.unplaced.push(graphic.name); continue; }
-    const anchorRef = refs.find((r) => r.node.type === "TEXT" && typeof r.node.text === "string" && norm(r.node.text) === norm(anchor!.text));
-    if (!anchorRef) { result.unplaced.push(graphic.name); continue; }
+    if (!anchor || !anchorRef) { result.unplaced.push(graphic.name); continue; }
 
     const clone: NativeNode = {
       type: "CLONE", name: graphic.name.slice(0, 80) || "Source graphic", sourceNodeId: graphic.id,
@@ -353,8 +370,11 @@ function restoreButtons(elements: NativeNode[], root: SrcNode, theme: BlockTheme
     const index = siblings.indexOf(node);
     if (index < 0) continue;
     const inRow = parent?.layoutMode === "HORIZONTAL";
-    const labelNode: NativeNode = { ...node, color: theme.onPrimary, textAlignHorizontal: "CENTER", textAutoResize: "WIDTH_AND_HEIGHT", layoutSizingHorizontal: "HUG", layoutGrow: 0 };
-    const width = inRow ? Math.ceil(labelNode.width + 32) : node.width;
+    // The label keeps its natural one-line width; a narrower slot made it wrap ("Pay / no / w").
+    const fontSize = num(node.fontSize) ?? 14;
+    const labelWidth = Math.ceil(Math.max(num(node.width) ?? 0, node.text.length * fontSize * 0.6 + 4));
+    const labelNode: NativeNode = { ...node, width: labelWidth, color: theme.onPrimary, textAlignHorizontal: "CENTER", textAutoResize: "WIDTH_AND_HEIGHT", layoutSizingHorizontal: "HUG", layoutGrow: 0 };
+    const width = inRow ? labelWidth + 32 : Math.max(node.width, labelWidth + 32);
     const button: NativeNode = {
       type: "FRAME", name: node.text.slice(0, 60) + " button", x: 0, y: 0, width, height: 44,
       layoutMode: "HORIZONTAL", itemSpacing: 8, paddingTop: 10, paddingRight: 16, paddingBottom: 10, paddingLeft: 16,
