@@ -207,3 +207,31 @@ test("a hug badge grows for a cloned icon instead of wrapping its label (finding
   assert.notEqual(labelNode?.textAutoResize, "HEIGHT", "label is not turned into a wrapping text");
   assert.ok(Number(badge?.width) >= 46 + 10 + 8 + 20, "badge grows to fit");
 });
+
+test("a donut left of a stat column joins the stats row before both stats (finding 48)", () => {
+  const src = { nodes: [{ id: "6:1", name: "Loans", type: "FRAME", x: 0, y: 0, width: 360, height: 300, fillColors: ["#FFFFFF"], children: [
+    { id: "6:2", name: "Loan card", type: "FRAME", x: 16, y: 16, width: 328, height: 200, fillColors: ["#FFFFFF"], cornerRadius: 12, children: [
+      { id: "6:3", name: "Loan Graph", type: "INSTANCE", x: 16, y: 90, width: 59, height: 59, children: [
+        { id: "6:4", name: "Track", type: "ELLIPSE", x: 0, y: 0, width: 59, height: 59 },
+        { id: "6:5", name: "Arc", type: "ELLIPSE", x: 0, y: 0, width: 59, height: 59 }] },
+      { id: "6:6", name: "Loan Amount", type: "TEXT", x: 90, y: 100, width: 90, height: 15, text: "Loan Amount" },
+      { id: "6:7", name: "Amount", type: "TEXT", x: 90, y: 119, width: 90, height: 17, text: "₹12,000" },
+      { id: "6:8", name: "Outstanding", type: "TEXT", x: 200, y: 100, width: 90, height: 15, text: "Outstanding" },
+      { id: "6:9", name: "Value", type: "TEXT", x: 200, y: 119, width: 90, height: 17, text: "₹1,07,649" },
+    ] },
+  ] }], components: [] };
+  const s = { summary: "x", frame: { name: "Loans" }, sections: [
+    { name: "Loan", surface: "card", blocks: [
+      { type: "stat_row", items: [{ label: "Loan Amount", value: "₹12,000" }, { label: "Outstanding", value: "₹1,07,649" }] },
+    ] },
+  ], learningCandidate: null };
+  const expansion = expandBlockSpec(s, src, { sourceCanvas: src });
+  assert.ok(expansion.plan, expansion.errors.join("; "));
+  let row: N | undefined;
+  walk(expansion.plan!.elements as N[], (n, _d, p) => { if (n.type === "CLONE" && n.name === "Loan Graph") row = p ?? undefined; });
+  assert.ok(row, "donut cloned");
+  assert.equal(row!.layoutMode, "HORIZONTAL");
+  const names = (row!.children ?? []).map((c) => String(c.name));
+  assert.equal(names[0], "Loan Graph", "donut comes first: " + names.join(", "));
+  assert.ok(names.some((n) => n.includes("Loan Amount")) && names.some((n) => n.includes("Outstanding")), "both stats stay in the same row: " + names.join(", "));
+});
