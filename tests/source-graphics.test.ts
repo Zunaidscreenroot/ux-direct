@@ -160,3 +160,50 @@ test("graphics next to repeated texts stay on their own card", () => {
     assert.deepEqual(clones, ["9:" + (index + 1) + "2"], "card " + (index + 1) + " gets its own logo");
   }
 });
+
+test("a chevron or logo beside a stat column goes into the row, not inside the column (finding 38)", () => {
+  const src = { nodes: [{ id: "5:1", name: "Loans", type: "FRAME", x: 0, y: 0, width: 360, height: 300, fillColors: ["#FFFFFF"], children: [
+    { id: "5:2", name: "Loan card", type: "FRAME", x: 16, y: 16, width: 328, height: 200, fillColors: ["#FFFFFF"], cornerRadius: 12, children: [
+      { id: "5:3", name: "Title", type: "TEXT", x: 16, y: 16, width: 160, height: 20, text: "Personal Loan" },
+      { id: "5:4", name: "Loan ID", type: "TEXT", x: 16, y: 40, width: 160, height: 16, text: "DMI1234567890" },
+      { id: "5:5", name: "Lender logo", type: "VECTOR", x: 250, y: 0, width: 56, height: 14 },
+      { id: "5:6", name: "Loan Amount", type: "TEXT", x: 16, y: 100, width: 100, height: 15, text: "Loan Amount" },
+      { id: "5:7", name: "Amount", type: "TEXT", x: 16, y: 119, width: 100, height: 17, text: "₹12,000" },
+      { id: "5:8", name: "Outstanding", type: "TEXT", x: 170, y: 100, width: 100, height: 15, text: "Outstanding" },
+      { id: "5:9", name: "Value", type: "TEXT", x: 170, y: 119, width: 100, height: 17, text: "₹1,07,649" },
+      { id: "5:10", name: "Chevron", type: "VECTOR", x: 300, y: 84, width: 12, height: 12 },
+    ] },
+  ] }], components: [] };
+  const s = { summary: "x", frame: { name: "Loans" }, sections: [
+    { name: "Loan", surface: "card", blocks: [
+      { type: "heading", title: "Personal Loan", subtitle: "DMI1234567890" },
+      { type: "stat_row", items: [{ label: "Loan Amount", value: "₹12,000" }, { label: "Outstanding", value: "₹1,07,649" }] },
+    ] },
+  ], learningCandidate: null };
+  const expansion = expandBlockSpec(s, src, { sourceCanvas: src });
+  assert.ok(expansion.plan, expansion.errors.join("; "));
+  const parents = new Map<string, N | null>();
+  walk(expansion.plan!.elements as N[], (n, _d, p) => { if (n.type === "CLONE") parents.set(String(n.name), p); });
+  const chevronParent = parents.get("Chevron");
+  assert.ok(chevronParent, "chevron cloned");
+  assert.equal(chevronParent!.layoutMode, "HORIZONTAL", "chevron sits in the horizontal row, not in a vertical stat column");
+  const logoParent = parents.get("Lender logo");
+  assert.ok(logoParent, "logo cloned");
+  assert.equal(logoParent!.layoutMode, "HORIZONTAL", "logo sits beside the heading, not between title and subtitle");
+});
+
+test("a hug badge grows for a cloned icon instead of wrapping its label (finding 37)", () => {
+  const plan = { summary: "x", frame: { name: "F", width: 360, height: 200, layoutMode: "VERTICAL" }, elements: [
+    { type: "FRAME", name: "Status badge · Current", x: 0, y: 0, width: 74, height: 24, layoutMode: "HORIZONTAL", itemSpacing: 8,
+      paddingLeft: 10, paddingRight: 10, paddingTop: 4, paddingBottom: 4, layoutSizingHorizontal: "HUG", primaryAxisSizingMode: "AUTO", children: [
+        { type: "TEXT", name: "Badge label", x: 10, y: 4, width: 46, height: 16, text: "Current", textAutoResize: "WIDTH_AND_HEIGHT" },
+        { type: "CLONE", name: "Functional Icons", sourceNodeId: "1:9", x: 64, y: 7, width: 10, height: 10, layoutSizingHorizontal: "FIXED", layoutSizingVertical: "FIXED" },
+      ] },
+  ] };
+  const out = normalizePlan(plan, { nodes: [] }, { trustedSections: true }) as { elements: N[] };
+  let badge: N | undefined, labelNode: N | undefined;
+  walk(out.elements, (n) => { if (String(n.name).startsWith("Status badge")) badge = n; if (n.name === "Badge label") labelNode = n; });
+  assert.equal(labelNode?.width, 46, "label keeps its single-line width");
+  assert.notEqual(labelNode?.textAutoResize, "HEIGHT", "label is not turned into a wrapping text");
+  assert.ok(Number(badge?.width) >= 46 + 10 + 8 + 20, "badge grows to fit");
+});

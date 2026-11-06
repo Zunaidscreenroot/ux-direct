@@ -237,7 +237,9 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
         return ref && allowed(d, ref) ? [{ d, ref }] : [];
       });
       const cx = graphic.rect.x + graphic.rect.w / 2, cy = graphic.rect.y + graphic.rect.h / 2;
-      const dist = (n: SrcNode) => Math.hypot(n.rect.x + n.rect.w / 2 - cx, n.rect.y + n.rect.h / 2 - cy);
+      // Vertical distance counts double: a text in the same row is a better anchor than one
+      // straight below (a top-right logo anchored to a stat label in the next row; finding 38).
+      const dist = (n: SrcNode) => Math.hypot((n.rect.x + n.rect.w / 2 - cx) / 2, n.rect.y + n.rect.h / 2 - cy);
       candidates.sort((a, b) => dist(a.d) - dist(b.d));
       if (candidates[0]) { anchor = candidates[0].d; anchorRef = candidates[0].ref; }
     }
@@ -282,6 +284,62 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
       const up = refs.find((r) => r.node === parent);
       if (!up) { result.unplaced.push(graphic.name); continue; }
       target = up;
+    }
+    // A graphic fully to the left or right of its anchor with no vertical overlap (a chevron at a
+    // row's right edge, a logo at the top-right of a card header) belongs beside the anchor's
+    // column, not inside it: inserting it into the vertical stack put the chevron above the
+    // "Outstanding" value and the logo under the title (Test #1, finding 38).
+    const besideColumn = !sideBySide && (g.x >= a.x + a.w - 1 || g.x + g.w <= a.x + 1);
+    if (besideColumn && target.parent && target.parent.layoutMode === "VERTICAL") {
+      for (let i = target.ancestors.length - 1, hops = 0; i >= 0 && hops < 3; i -= 1, hops += 1) {
+        const anc = target.ancestors[i];
+        if (isPillLike(anc) || (isCardLike(anc) && anc.layoutMode !== "HORIZONTAL")) break;
+        if (anc.layoutMode !== "HORIZONTAL") continue;
+        const column = target.ancestors[i + 1] ?? target.node;
+        const columnRef = refs.find((r) => r.node === column);
+        if (columnRef && columnRef.depth + 1 <= MAX_PLAN_DEPTH) {
+          const row = anc.children ?? [];
+          const at = row.indexOf(column);
+          const right = g.x + g.w / 2 > a.x + a.w / 2;
+          if (at >= 0) {
+            // Right-side graphics go to the row's end (after a status badge); left ones to the column's left.
+            if (right) row.push(clone); else row.splice(at, 0, clone);
+            result.clones += 1;
+            usedSourceIds.add(graphic.id);
+            if (ownTexts.length && card) dropDuplicateTexts(card, ownTexts, clone);
+          }
+        }
+        break;
+      }
+      // No row to join (a heading stack straight in a card): wrap the column and the graphic in one.
+      const column = target.parent;
+      const columnRef = refs.find((r) => r.node === column);
+      if (!usedSourceIds.has(graphic.id) && columnRef && columnRef.parent && !isCardLike(column) && !isPillLike(column)
+        && columnRef.depth + 2 <= MAX_PLAN_DEPTH) {
+        const host = columnRef.parent;
+        const list = host.children ?? [];
+        const at = list.indexOf(column);
+        if (at >= 0 && host.layoutMode === "VERTICAL") {
+          const gap = 8;
+          const rowWidth = host.width - (num(host.paddingLeft) ?? 0) - (num(host.paddingRight) ?? 0);
+          column.width = Math.max(24, rowWidth - clone.width - gap);
+          column.layoutSizingHorizontal = "FILL";
+          column.layoutGrow = 1;
+          const right = g.x + g.w / 2 > a.x + a.w / 2;
+          list.splice(at, 1, {
+            type: "FRAME", name: (column.name || "Column").slice(0, 70) + " row", x: 0, y: 0, width: rowWidth,
+            height: Math.max(column.height, clone.height), layoutMode: "HORIZONTAL", itemSpacing: gap,
+            paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0,
+            primaryAxisSizingMode: "FIXED", counterAxisSizingMode: "AUTO", primaryAxisAlignItems: "MIN", counterAxisAlignItems: "MIN",
+            layoutSizingHorizontal: "FILL", layoutSizingVertical: "HUG", noFill: true,
+            children: right ? [column, clone] : [clone, column],
+          });
+          result.clones += 1;
+          usedSourceIds.add(graphic.id);
+          if (ownTexts.length && card) dropDuplicateTexts(card, ownTexts, clone);
+        }
+      }
+      if (usedSourceIds.has(graphic.id)) continue;
     }
     const host = target.parent;
     const siblings = siblingsOf(target, elements);
