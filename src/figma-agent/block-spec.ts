@@ -14,6 +14,8 @@
  *  - `custom` accepts a raw native FRAME/TEXT/... node for anything no block covers.
  */
 
+import { restoreSourceFidelity, SOURCE_GRAPHIC_BUDGET } from "./source-graphics";
+
 type Rec = Record<string, unknown>;
 export type NativeNode = Rec & { type: string; name: string; width: number; height: number; children?: NativeNode[] };
 
@@ -36,8 +38,10 @@ export type BlockExpansion = {
   blockCount: number;
 };
 
-/** normalizePlan keeps at most 75 nodes and depth 0–4; stay inside both. */
+/** Layers the model's blocks may expand to; source graphic clones get the rest of PLAN_NODE_LIMIT. */
 export const BLOCK_NODE_BUDGET = 75;
+/** normalizePlan, the plan schema and the plugin all accept at most this many nodes (depth 0–4). */
+export const PLAN_NODE_LIMIT = 140;
 const MAX_DEPTH = 4;
 const FONT = "Inter";
 
@@ -992,7 +996,7 @@ export function isBlockSpec(value: unknown): boolean {
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
 }
 
-export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean } = {}): BlockExpansion {
+export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null } = {}): BlockExpansion {
   const spec = asRec(value) ?? {};
   const sourceNodes = arr(canvas.nodes);
   const source = asRec(sourceNodes[0]) ?? {};
@@ -1070,10 +1074,22 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   }
   const fitted = fitDepth(elements, 0, b.warnings);
   elements.splice(0, elements.length, ...fitted);
-  const nodeCount = countNodes(elements);
-  if (nodeCount > BLOCK_NODE_BUDGET) {
-    errors.push("The spec expands to " + nodeCount + " native layers, over the " + BLOCK_NODE_BUDGET + "-layer budget. Merge rows into lists, drop decorative blocks, and keep every source text.");
+  const renderedCount = countNodes(elements);
+  if (renderedCount > BLOCK_NODE_BUDGET) {
+    errors.push("The spec expands to " + renderedCount + " native layers, over the " + BLOCK_NODE_BUDGET + "-layer budget. Merge rows into lists, drop decorative blocks, and keep every source text.");
+  } else {
+    // Logos, icons, charts and images are not in the block spec: clone them from the source.
+    const fidelity = restoreSourceFidelity(elements, options.sourceCanvas ?? canvas, theme, {
+      budget: Math.min(SOURCE_GRAPHIC_BUDGET, PLAN_NODE_LIMIT - renderedCount - 10),
+      headerComponentId: b.source?.header?.componentId ?? null,
+    });
+    if (fidelity.clones || fidelity.restoredButtons) {
+      b.warnings.push("Kept " + fidelity.clones + " source graphic(s)" + (fidelity.replacedRings ? " (" + fidelity.replacedRings + " real chart(s) replaced generated rings)" : "") +
+        (fidelity.restoredButtons ? " and restored " + fidelity.restoredButtons + " source button(s)" : "") + ".");
+    }
+    if (fidelity.unplaced.length) b.warnings.push("Could not place " + fidelity.unplaced.length + " source graphic(s): " + fidelity.unplaced.slice(0, 5).join(", ") + ".");
   }
+  const nodeCount = countNodes(elements);
 
   const contentHeight = rootPad[0] + rootPad[2] + elements.reduce((sum, node) => sum + node.height, 0) + Math.max(0, elements.length - 1) * gap;
   const requestedHeight = typeof rawFrame.height === "number" ? rawFrame.height : sourceHeight || 800;
