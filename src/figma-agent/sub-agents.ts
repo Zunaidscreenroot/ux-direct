@@ -49,7 +49,7 @@ export function subAgentsEnabled(): boolean {
 
 function subAgentTimeoutMs(): number {
   const value = Number(process.env.UXD_SUB_AGENT_TIMEOUT_MS);
-  return Number.isFinite(value) && value >= 5000 ? value : 45000;
+  return Number.isFinite(value) && value >= 5000 ? Math.min(value, 60000) : 35000;
 }
 
 const AGENT_RULES = "You are one sub-agent in a team; another model will design the screen from your notes. Report only what the request, the source text list and the screenshot show. If something is unclear, say \"unknown\" rather than guessing. Return one JSON object only, no markdown.";
@@ -92,7 +92,7 @@ function sharedContext(input: SubAgentInput, extra: Rec = {}): string {
     designScope: input.designScope,
     selectedNode: input.selectedNode,
     sourceTexts: input.sourceTexts.slice(0, 80),
-    screenshot: input.renderedScreen ? "attached" : "not available",
+    screenshot: input.renderedScreen ? "attached to the UX analyst only" : "not available",
     ...extra,
   });
 }
@@ -103,18 +103,22 @@ async function runAgent(
   system: string,
   user: string,
   accept: (data: Rec) => string | null,
+  options: { signal: AbortSignal; withImage: boolean },
 ): Promise<{ run: SubAgentRun; data: Rec | null }> {
   const started = Date.now();
+  const image = options.withImage ? input.renderedScreen : null;
   try {
     const result = await callFigmaJsonModel({
       system: AGENT_RULES + "\n" + system,
-      user: userContent(user, input.renderedScreen),
-      hasVisionInput: Boolean(input.renderedScreen),
+      user: userContent(user, image),
+      hasVisionInput: Boolean(image),
       maxTokens: 1800,
       temperature: 0.1,
       title: "UX Direct sub-agent: " + agent,
       origin: input.origin,
       timeoutMs: subAgentTimeoutMs(),
+      signal: options.signal,
+      maxAttempts: 1,
       anyObject: true,
       accept,
     });
@@ -155,16 +159,28 @@ export async function runSubAgents(input: SubAgentInput): Promise<AgentBrief> {
   const componentIds = new Set(componentList.map((component) => component.id).filter((id): id is string => typeof id === "string"));
   const roleNote = { role: input.role.label, roleFocus: input.role.persona, keywordDomainHint: keywordDomain.domain.id };
 
-  const [detector, analyst, scout] = await Promise.all([
-    runAgent("detector", input, DETECTOR_SYSTEM, sharedContext(input, { keywordDomainHint: keywordDomain.domain.id }),
-      (data) => (str(data.domain) || str(data.userGoal) ? null : "missing domain and userGoal")),
-    runAgent("analyst", input, ANALYST_SYSTEM, sharedContext(input, roleNote),
-      (data) => (Array.isArray(data.hierarchy) || Array.isArray(data.changes) ? null : "missing hierarchy and changes")),
-    componentIds.size
-      ? runAgent("scout", input, SCOUT_SYSTEM, sharedContext(input, { components: componentList }),
-        (data) => (Array.isArray(data.matches) ? null : "missing matches"))
-      : Promise.resolve(null),
-  ]);
+  // One hard deadline for the whole stage: when it passes, every in-flight agent call is
+  // aborted and the planner starts with whatever came back. Each agent makes one call only,
+  // and only the analyst gets the screenshot, so the stage adds one vision request, not three.
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), subAgentTimeoutMs());
+  const text = { signal: deadline.signal, withImage: false };
+  let detector: AgentResult, analyst: AgentResult, scout: AgentResult;
+  try {
+    [detector, analyst, scout] = await Promise.all([
+      runAgent("detector", input, DETECTOR_SYSTEM, sharedContext(input, { keywordDomainHint: keywordDomain.domain.id }),
+        (data) => (str(data.domain) || str(data.userGoal) ? null : "missing domain and userGoal"), text),
+      runAgent("analyst", input, ANALYST_SYSTEM, sharedContext(input, roleNote),
+        (data) => (Array.isArray(data.hierarchy) || Array.isArray(data.changes) ? null : "missing hierarchy and changes"),
+        { signal: deadline.signal, withImage: true }),
+      componentIds.size
+        ? runAgent("scout", input, SCOUT_SYSTEM, sharedContext(input, { components: componentList }),
+          (data) => (Array.isArray(data.matches) ? null : "missing matches"), text)
+        : Promise.resolve(null),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 
   return composeBrief(input, keywordDomain, detector, analyst, scout, componentIds);
 }

@@ -81,3 +81,36 @@ test("sub-agents run in parallel and a failed agent only drops its notes", async
     globalThis.fetch = realFetch;
   }
 });
+
+test("a hanging sub-agent is aborted at the shared deadline and never blocks the planner", async () => {
+  process.env.ACTIVE_CHAT_PROVIDER = "freellmapi";
+  process.env.FREELLMAPI_BASE_URL = "https://freellmapi.test/v1";
+  process.env.FREELLMAPI_API_KEY = "test-key";
+  process.env.UXD_SUB_AGENT_TIMEOUT_MS = "5000";
+  const realFetch = globalThis.fetch;
+  const imagesSent: boolean[] = [];
+  let calls = 0;
+  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    calls += 1;
+    imagesSent.push(String(init?.body || "").includes("image_url"));
+    // Never answers until aborted, like a stalled upstream.
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    });
+  }) as typeof fetch;
+  const started = Date.now();
+  try {
+    const brief = await runSubAgents({ prompt: "make a wireframe", role: detectTaskRole("make a wireframe"), designScope: "selected_screen_or_frame",
+      selectedNode: { name: "Loan", type: "FRAME", width: 360, height: 800 }, sourceTexts: SOURCE,
+      components: [{ id: "10:1", name: "Button" }], renderedScreen: "data:image/png;base64,AAAA", origin: "https://ux-direct.test" });
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 7000, "stage stopped at its deadline, took " + elapsed + "ms");
+    assert.equal(calls, 3, "one call per agent, no retries");
+    assert.equal(imagesSent.filter(Boolean).length, 1, "only the UX analyst sends the screenshot");
+    assert.ok(brief.runs.every((run) => !run.ok));
+    assert.match(brief.instructions, /Wireframe designer/, "planner still gets the deterministic role");
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.UXD_SUB_AGENT_TIMEOUT_MS;
+  }
+});

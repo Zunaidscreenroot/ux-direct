@@ -627,7 +627,10 @@ export async function POST(request: Request) {
   // A verified spec from this project (structure only) steers whichever model `auto` picks
   // toward the same block choices that already passed the Figma quality gate.
   const verifiedExample = await verifiedExamplePromise;
-  const agentBrief = await agentBriefPromise;
+  // Belt and braces: the sub-agent stage has its own hard deadline, but the planner never
+  // waits on it for more than 40 s whatever happens inside.
+  const agentBrief = await Promise.race([agentBriefPromise,
+    new Promise<AgentBrief>((resolve) => setTimeout(() => resolve(fallbackBrief), 40000))]);
   const agentsMs = Date.now() - agentsStartedAt;
   const exampleInstructions = verifiedExample
     ? "\nVERIFIED TEAM EXAMPLE — the block structure of an earlier output that passed UX Direct's quality gate. Texts are replaced by <source text>. Follow its way of choosing sections and blocks for similar content; never copy it, and use only this screen's real content: " + verifiedExample
