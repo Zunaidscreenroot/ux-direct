@@ -263,7 +263,7 @@ function runtime() {
     if (message.error) throw new Error(message.error);
     return message.result;
   }
-  return { apply, make, screen, card, title, body, button, label, hidden, page };
+  return { apply, make, screen, card, title, body, button, label, hidden, page, figma };
 }
 
 test("direct edits change real node properties in code.js", async () => {
@@ -293,6 +293,21 @@ test("direct edits change real node properties in code.js", async () => {
   assert.equal(r.card.strokeWeight, 1);
   await r.apply("make the background #F5F5F5", [r.title]);
   assert.equal(Math.round(r.card.fills[0].color.r * 255), 0xF5, "background of a selected text layer is its parent");
+});
+
+test("a multi-part text edit loads every font before the first change, so it is one undo step", async () => {
+  const r = runtime();
+  const events: string[] = [];
+  const realLoad = r.figma.loadFontAsync;
+  r.figma.loadFontAsync = async (f: any) => { events.push("load " + f.style); return realLoad(f); };
+  r.figma.commitUndo = () => { events.push("commit"); };
+  await r.apply("make the title 24px bold", [r.card]);
+  assert.equal(r.title.fontSize, 24);
+  assert.deepEqual(plain(r.title.fontName), { family: "Inter", style: "Bold" });
+  const first = events.indexOf("commit");
+  const last = events.lastIndexOf("commit");
+  assert.ok(first >= 0 && last > first, "edit is wrapped in commits: " + events.join(", "));
+  assert.deepEqual(events.slice(first + 1, last).filter((e) => e.startsWith("load")), [], "no font loads between the commits: " + events.join(", "));
 });
 
 test("padding and spacing add auto layout when the frame has none", async () => {
