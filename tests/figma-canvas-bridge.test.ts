@@ -85,7 +85,7 @@ test("bridge authenticates server-issued commands and strictly validates write p
 test("native plugin checks the approved file before canvas access and caps reads", () => {
   assert.ok(plugin.includes('assertUxDirectFileScope("read canvas")'));
   assert.ok(plugin.includes('assertUxDirectFileScope("write canvas")'));
-  assert.ok(plugin.includes('Math.min(8, Number.isInteger(payload.maxDepth)'));
+  assert.ok(plugin.includes('Math.min(12, Number.isInteger(payload.maxDepth)'));
   assert.ok(plugin.includes('Math.min(500, Number.isInteger(payload.maxNodes)'));
   assert.ok(plugin.includes('type === "run-canvas-command"'));
   assert.ok(plugin.includes('function findPageNode(id)'));

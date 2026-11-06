@@ -342,7 +342,7 @@ function compactRecoveryCanvas(canvas: Record<string, unknown>): Record<string, 
 function collectSourceTextInventory(nodes: unknown[]): Array<{ name: string; text: string }> {
   const result: Array<{ name: string; text: string }> = [];
   const visit = (items: unknown[], depth = 0) => {
-    if (depth > 8 || result.length >= 80) return;
+    if (depth > 12 || result.length >= 80) return;
     for (const value of items) {
       if (!value || typeof value !== "object" || Array.isArray(value) || result.length >= 80) continue;
       const node = value as Record<string, unknown>;
@@ -1060,6 +1060,9 @@ export async function POST(request: Request) {
       // The fallback is the source's own content, so a subjective quality finding must not block it.
       if (candidate.plan && (candidate.stage === "ok" || candidate.stage === "quality")) {
         attemptLog.push({ model: "source-fallback", result: "passed" });
+        // Say why the model answers were not used (timeout, parse error, schema, quality gate).
+        const reasons = [...new Set(errors.map((entry) => entry.replace(/\s+/g, " ").slice(0, 160)))].slice(0, 3);
+        if (reasons.length) stabilized.spec.summary = String(stabilized.spec.summary || "") + " Model attempts: " + reasons.join(" | ");
         return respond({ candidate, spec: stabilized.spec, learningCandidate: null, servedModel: "source-fallback",
           isRecovery: true, finishReason: "fallback", modelIndex: models.length - 1, themeLocked: stabilized.themeLocked,
           repairedTexts: 0, sourceFallback: true });

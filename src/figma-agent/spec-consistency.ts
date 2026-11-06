@@ -67,7 +67,7 @@ export function sourcePalette(canvas: Rec): Rec {
   const accentFills: Tally = new Map();
   const surfaceFills: Tally = new Map();
   const visit = (node: Rec, depth: number) => {
-    if (depth > 8) return;
+    if (depth > 12) return;
     const fill = Array.isArray(node.fillColors) ? hex(node.fillColors[0]) : null;
     const name = typeof node.name === "string" ? node.name : "";
     if (node.type === "TEXT") bump(textFills, fill);

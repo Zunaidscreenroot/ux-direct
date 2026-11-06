@@ -1527,7 +1527,7 @@
             console.warn("[uxd-task-run] final outcome was not confirmed:", reason);
             return "\nTask outcome logging could not be confirmed (" + reason + ").";
           }
-          return result.lessonStatus ? "\nBrain learning: " + String(result.lessonStatus) + "." : "";
+          return result.lessonStatus ? "\nBrain learning: " + String(result.lessonStatus) + (result.lessonStatus === "stored" && outcome === "failed" ? " (failure lesson, not an example)" : "") + "." : "";
         } catch (error) {
           console.warn("[uxd-task-run] final outcome logging failed:", String(error && error.message || error).slice(0, 160));
           return "\nTask outcome logging could not be confirmed (" + String(error && error.message || error).slice(0, 120) + ").";
@@ -1537,7 +1537,7 @@
       stage("scanning", "Scanning selected screen, nested layers, text and styles…");
       // Deep read: card internals (logos, icons, charts) must be visible to keep them in the variation.
       const canvas = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 8, maxNodes: 400, includeStyles: true, includeVariables: true, includeComponents: true
+        scope: "selection", maxDepth: 12, maxNodes: 400, includeStyles: true, includeVariables: true, includeComponents: true
       }, 90000);
       const selectedNodes = Array.isArray(canvas && canvas.nodes) ? canvas.nodes : [];
       const expectsSelection = /\b(selected|selection|this frame|this screen|current frame|variation|variant|duplicate|redesign this|improve this)\b/i.test(prompt);
@@ -1705,7 +1705,7 @@
       // Full-depth read without collapsing instances: header/icon instance texts and nested
       // card content must be visible, or the lint cannot prove the source content was kept.
       const verified = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 8, maxNodes: 500, includeStyles: true, includeVariables: true
+        scope: "selection", maxDepth: 12, maxNodes: 500, includeStyles: true, includeVariables: true
       }, 90000);
       const verifiedNode = verified && Array.isArray(verified.nodes)
         ? verified.nodes.find(function (node) { return node.id === createdFrameId; })
@@ -2434,7 +2434,7 @@
         ? "Select the text layer(s), or the frame that contains them, then ask again."
         : "Select the frame whose layers should be renamed.");
       stage("scanning", "Reading the selected layers…");
-      const tree = await localTask("read-tree", { maxDepth: 8, maxNodes: 500 });
+      const tree = await localTask("read-tree", { maxDepth: 12, maxNodes: 500 });
       const items = [];
       flattenTree(tree.nodes, function (node, parentNode, insideInstance) {
         if (node.visible === false) return;
@@ -2483,7 +2483,7 @@
     async function runAuditTask(kind, prompt, stage) {
       if (!selectedIds().length) throw new Error("Select the screen (or several screens of a flow) to review.");
       stage("scanning", "Reading every layer in the selection…");
-      const tree = await localTask("read-tree", { maxDepth: 8, maxNodes: kind === "hygiene" ? 800 : 400 });
+      const tree = await localTask("read-tree", { maxDepth: 12, maxNodes: kind === "hygiene" ? 800 : 400 });
       const roots = (tree.nodes || []).slice(0, 6);
       const screens = [];
       if (kind === "ux-audit") {

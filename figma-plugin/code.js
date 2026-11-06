@@ -1171,7 +1171,7 @@ async function readCanvasCommand(payload) {
   assertUxDirectFileScope("read canvas");
   payload = payload || {};
   var scope = payload.scope === "current-page" ? "current-page" : "selection";
-  var maxDepth = Math.max(0, Math.min(8, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
+  var maxDepth = Math.max(0, Math.min(12, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
   var maxNodes = Math.max(1, Math.min(500, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
   var isSearch = (typeof payload.queryName === "string" && payload.queryName.trim()) ||
     (typeof payload.queryType === "string" && payload.queryType.trim());
@@ -2913,7 +2913,7 @@ var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
 var UXD_LOCAL_IMAGE_MAX_BYTES = 12 * 1024 * 1024;
 async function localReadTree(payload) {
-  var maxDepth = Math.max(0, Math.min(8, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 6));
+  var maxDepth = Math.max(0, Math.min(12, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 6));
   var maxNodes = Math.max(1, Math.min(800, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 500));
   var source = figma.currentPage.selection;
   if (Array.isArray(payload.nodeIds) && payload.nodeIds.length) {
