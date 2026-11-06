@@ -182,6 +182,12 @@ export function structuralExample(spec: unknown): Rec | null {
 
 export type VerifiedRun = { plan?: unknown; metadata?: unknown };
 
+/**
+ * Bumped whenever the verification lint gets stricter. Runs verified under an older,
+ * looser lint (e.g. before graphics/CTA checks) are never served as team examples.
+ */
+export const VERIFIED_LINT_VERSION = 2;
+
 /** Pick the best verified spec for this scope: same selection kind, highest quality, newest first. */
 export function pickVerifiedExample(rows: VerifiedRun[], designScope: string): Rec | null {
   const candidates = rows.flatMap((row) => {
@@ -189,6 +195,7 @@ export function pickVerifiedExample(rows: VerifiedRun[], designScope: string): R
     const meta = asRec(row.metadata) ?? {};
     // Source-fallback rebuilds are never a model example, whatever their outcome.
     if (!plan || meta.planFormat !== "blocks" || meta.repairedTexts || meta.sourceFallback === true || meta.model === "source-fallback") return [];
+    if (typeof meta.lintVersion !== "number" || meta.lintVersion < VERIFIED_LINT_VERSION) return [];
     const example = structuralExample(plan);
     if (!example) return [];
     const score = typeof meta.qualityScore === "number" ? meta.qualityScore : 0;

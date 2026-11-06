@@ -100,9 +100,9 @@ test("verified examples keep structure but never another screen's text", () => {
   for (const leaked of ["₹8,450", "PL12345678", "Pay EMI", "Due 05 Dec", "Current"]) assert.ok(!text.includes(leaked), "leaked " + leaked);
   assert.ok(text.includes('"percent":60'), "numbers that carry meaning survive");
   const rows = [
-    { plan: spec, metadata: { planFormat: "blocks", designScope: "selected_component_or_card", qualityScore: 100 } },
-    { plan: spec, metadata: { planFormat: "blocks", designScope: "selected_screen_or_frame", qualityScore: 90, repairedTexts: 2 } },
-    { plan: { ...spec, sections: spec.sections.slice(0, 1) }, metadata: { planFormat: "blocks", designScope: "selected_screen_or_frame", qualityScore: 80 } },
+    { plan: spec, metadata: { lintVersion: 2, planFormat: "blocks", designScope: "selected_component_or_card", qualityScore: 100 } },
+    { plan: spec, metadata: { lintVersion: 2, planFormat: "blocks", designScope: "selected_screen_or_frame", qualityScore: 90, repairedTexts: 2 } },
+    { plan: { ...spec, sections: spec.sections.slice(0, 1) }, metadata: { lintVersion: 2, planFormat: "blocks", designScope: "selected_screen_or_frame", qualityScore: 80 } },
   ];
   const picked = pickVerifiedExample(rows, "selected_screen_or_frame");
   assert.equal((picked?.sections as unknown[]).length, 1, "same scope wins; repaired runs are not examples");

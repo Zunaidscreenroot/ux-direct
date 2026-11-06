@@ -49,7 +49,7 @@ export function normalizeUxAudit(value: unknown): UxAudit | null {
   const rawScore = Number(data.score ?? data.overallScore);
   const score = Number.isFinite(rawScore) ? Math.max(0, Math.min(100, Math.round(rawScore <= 10 ? rawScore * 10 : rawScore))) : 0;
   return {
-    summary: text(data.summary ?? data.overview, 600) || findings.length + " UX issue(s) found.",
+    summary: text(data.summary ?? data.overview, 2000) || findings.length + " UX issue(s) found.",
     score,
     strengths: Array.isArray(data.strengths) ? data.strengths.map((item) => text(item, 200)).filter(Boolean).slice(0, 3) : [],
     findings,
@@ -62,8 +62,9 @@ export function formatUxAudit(audit: UxAudit, screenshotCount: number, screenCou
   lines.push("");
   audit.findings.forEach((finding, index) => {
     const where = [finding.screen, finding.element].filter(Boolean).join(" › ");
-    lines.push((index + 1) + ". **" + finding.severity.toUpperCase() + "** · " + finding.heuristic + (where ? " · " + where : "") +
-      "\n   " + finding.issue + "\n   Fix: " + finding.fix);
+    // Number inside the bold run: the plugin's markdown restarts "1." lists at each wrapped item.
+    lines.push("**" + (index + 1) + ". " + finding.severity.toUpperCase() + "** · " + finding.heuristic + (where ? " · " + where : "") +
+      "\n" + finding.issue + "\nFix: " + finding.fix, "");
   });
   if (!screenshotCount) lines.push("", "Note: no screenshot was available, so this audit is based on the layer structure only.");
   return lines.join("\n");

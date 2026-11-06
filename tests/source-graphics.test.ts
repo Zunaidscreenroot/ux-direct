@@ -101,3 +101,28 @@ test("plans with clones pass the pre-write quality audit", async () => {
   const quality = auditDesignPlanQuality(normalized as any, canvas, "Improve hierarchy and visual clarity");
   assert.ok(quality.passed, JSON.stringify(quality.findings));
 });
+
+test("the source back icon replaces the drawn arrow, and layers bind to the file's own styles", () => {
+  const src = { nodes: [{ id: "9:1", name: "Screen", type: "FRAME", x: 0, y: 0, width: 360, height: 640, fillColors: ["#F6F7F9"], children: [
+    { id: "9:2", name: "Top bar", type: "FRAME", x: 0, y: 0, width: 360, height: 56, children: [
+      { id: "9:3", name: "arrow-left", type: "VECTOR", x: 16, y: 18, width: 20, height: 20 },
+      { id: "9:4", name: "Title", type: "TEXT", x: 48, y: 16, width: 200, height: 24, text: "My Loans" },
+    ] },
+    { id: "9:5", name: "Body", type: "TEXT", x: 16, y: 80, width: 300, height: 20, text: "Two active loans" },
+  ] }], components: [], styles: {
+    text: [{ id: "S:body", name: "Body/Regular", fontSize: 14, fontFamily: "Inter", fontStyle: "Regular" }],
+    paint: [{ id: "S:bg", name: "Surface/Background", color: "#F6F7F9" }],
+  } };
+  const s = { summary: "Loans overview with a clear header.", sections: [
+    { name: "Header", blocks: [{ type: "app_bar", title: "My Loans", back: true }] },
+    { name: "Summary", blocks: [{ type: "text", text: "Two active loans" }] },
+    { name: "More", blocks: [{ type: "text", text: "Pull to refresh" }] },
+  ] };
+  const expansion = expandBlockSpec(s, src, { sourceCanvas: src });
+  const flat: N[] = [];
+  walk(expansion.plan!.elements as N[], (node) => flat.push(node));
+  assert.ok(flat.some((n) => n.type === "CLONE" && n.sourceNodeId === "9:3"), "back icon cloned");
+  assert.ok(!flat.some((n) => n.type === "TEXT" && n.text === "←"), "drawn arrow removed");
+  const body = flat.find((n) => n.type === "TEXT" && n.text === "Two active loans")!;
+  assert.equal(body.textStyleId, "S:body");
+});

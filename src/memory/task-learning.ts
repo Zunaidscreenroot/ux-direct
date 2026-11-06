@@ -4,6 +4,7 @@ import { neonRequest } from "./neon-rest";
 import { saveBrainFeedback } from "./shared-brain";
 import type { TaskProject } from "@/src/core/types";
 import { containsSensitiveMaterial, referencesUnstatedClient, sanitizeInlineLearningCandidate, type InlineLearningCandidate } from "./inline-learning";
+import { VERIFIED_LINT_VERSION } from "@/src/figma-agent/spec-consistency";
 
 export type FigmaFailureCategory =
   | "file-scope"
@@ -238,7 +239,9 @@ export function buildVerifiedTaskLesson(run: VerifiedTaskRun): VerifiedTaskLesso
   if (content.length > 600 || containsSensitiveMaterial(content) || containsNodeId(content) || referencesUnstatedClient(candidate, taskContext)) return null;
   const relevance = assessBrainRelevance(candidate.title, content, safeScope);
   if (!relevance.eligible || relevance.score < 0.5) return null;
-  return { memoryType, title: candidate.title, content, tags: [...new Set(candidate.keywords)].sort().slice(0, 20), scope: safeScope };
+  // Approved lessons carry the lint version they passed, so older looser ones can be told apart.
+  const keywords = memoryType === "approved_pattern" ? [...candidate.keywords.slice(0, 19), "lint-v" + VERIFIED_LINT_VERSION] : candidate.keywords;
+  return { memoryType, title: candidate.title, content, tags: [...new Set(keywords)].sort().slice(0, 20), scope: safeScope };
 }
 
 /** Capture only lessons supported by a verified result or a categorized execution failure. */

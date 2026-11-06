@@ -177,6 +177,21 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
   for (const graphic of graphics) {
     if (result.clones >= budget) { result.unplaced.push(graphic.name); continue; }
     if (usedSourceIds.has(graphic.id)) continue;
+    // A source back arrow (small, top-left) replaces the renderer's "←" glyph.
+    if (graphic.rect.y < 120 && graphic.rect.x < 48 && Math.max(graphic.rect.w, graphic.rect.h) <= 48) {
+      const back = indexOutput(elements).find((r) => r.node.type === "TEXT" && r.node.text === "←" && String(r.node.name).startsWith("Back"));
+      if (back) {
+        const host = back.parent ? back.parent.children! : elements;
+        host.splice(host.indexOf(back.node), 1, {
+          type: "CLONE", name: graphic.name.slice(0, 80) || "Back", sourceNodeId: graphic.id, x: 0, y: 0,
+          width: Math.max(1, Math.round(graphic.rect.w)), height: Math.max(1, Math.round(graphic.rect.h)),
+          layoutSizingHorizontal: "FIXED", layoutSizingVertical: "FIXED",
+        });
+        result.clones += 1;
+        usedSourceIds.add(graphic.id);
+        continue;
+      }
+    }
     const own = new Set(descendants(graphic).map((d) => d.id));
     const ownTexts = descendants(graphic).filter((d) => d.type === "TEXT" && d.text).map((d) => norm(d.text));
     const refs = indexOutput(elements);

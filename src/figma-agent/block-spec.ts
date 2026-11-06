@@ -996,6 +996,46 @@ export function sourceFallbackSpec(canvas: Record<string, unknown>): Rec | null 
   return sections.length ? { summary: "Source-preserving layout: the model response could not be used, so UX Direct rebuilt the screen natively from its own layers.", sections, learningCandidate: null } : null;
 }
 
+/**
+ * Bind generated layers to the file's own styles: a TEXT layer takes a local text style with
+ * the same size (±1px) and weight class, and any exact colour match takes the paint style.
+ * Hygiene checks otherwise report every generated layer as hard-coded.
+ */
+function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: string[]) {
+  if (!styles) return;
+  const textStyles = arr(styles.text).map(asRec).filter((x): x is Rec => !!x && typeof x.id === "string" && typeof x.fontSize === "number");
+  const paintByColor = new Map<string, string>();
+  for (const style of arr(styles.paint).map(asRec)) {
+    if (style && typeof style.id === "string" && typeof style.color === "string" && !paintByColor.has(style.color.toUpperCase())) paintByColor.set(style.color.toUpperCase(), style.id);
+  }
+  let texts = 0, paints = 0;
+  const visit = (nodes: NativeNode[]) => {
+    for (const node of nodes) {
+      if (node.type === "TEXT" && typeof node.textStyleId !== "string" && textStyles.length) {
+        const size = typeof node.fontSize === "number" ? node.fontSize : 14;
+        const bold = isBoldWeight(String(node.fontStyle ?? "Regular"));
+        const fits = textStyles.filter((st) => Math.abs(Number(st.fontSize) - size) <= 1 && isBoldWeight(String(st.fontStyle ?? "Regular")) === bold);
+        const pick = fits.find((st) => st.fontFamily === node.fontFamily && Number(st.fontSize) === size) ??
+          fits.find((st) => Number(st.fontSize) === size) ?? fits[0];
+        if (pick) {
+          node.textStyleId = pick.id;
+          node.fontSize = Number(pick.fontSize);
+          if (typeof pick.fontFamily === "string") node.fontFamily = pick.fontFamily;
+          if (typeof pick.fontStyle === "string") node.fontStyle = pick.fontStyle;
+          texts += 1;
+        }
+      }
+      if (node.type !== "CLONE" && node.type !== "INSTANCE" && typeof node.color === "string" && typeof node.paintStyleId !== "string") {
+        const id = paintByColor.get(node.color.toUpperCase());
+        if (id) { node.paintStyleId = id; paints += 1; }
+      }
+      if (node.children) visit(node.children);
+    }
+  };
+  visit(elements);
+  if (texts || paints) warnings.push("Bound " + texts + " text layer(s) and " + paints + " fill(s) to the file's own styles.");
+}
+
 export function isBlockSpec(value: unknown): boolean {
   const rec = asRec(value);
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
@@ -1096,6 +1136,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     if (fidelity.unplaced.length && options.allowClones === false) b.warnings.push(fidelity.unplaced.length + " source graphic(s) were not copied: this plugin build cannot copy layers. Re-import the latest UX Direct plugin zip.");
     else if (fidelity.unplaced.length) b.warnings.push("Could not place " + fidelity.unplaced.length + " source graphic(s): " + fidelity.unplaced.slice(0, 5).join(", ") + ".");
   }
+  bindFileStyles(elements, asRec(canvas.styles), b.warnings);
   const nodeCount = countNodes(elements);
 
   const contentHeight = rootPad[0] + rootPad[2] + elements.reduce((sum, node) => sum + node.height, 0) + Math.max(0, elements.length - 1) * gap;
