@@ -3008,6 +3008,31 @@ function uxdTextNodes(node) {
   if (node.type === "TEXT") return [node];
   return uxdDescendants(node, function (c) { return c.type === "TEXT" && c.visible !== false; });
 }
+function uxdInside(node, root) {
+  for (var p = node; p; p = p.parent) if (p === root) return true;
+  return false;
+}
+function uxdOffsetY(node, root) {
+  var y = 0;
+  for (var p = node; p && p !== root; p = p.parent) y += Number(p.y) || 0;
+  return y;
+}
+function uxdPickOne(root, candidates) {
+  var inRoot = candidates.filter(function (n) { return uxdInside(n, root); });
+  if (inRoot.length <= 1) return inRoot[0] || null;
+  var screenLevel = /\b(screen|page|header|app ?bar|nav ?bar|navigation|top ?bar|toolbar)\b/i;
+  var preferred = inRoot.filter(function (n) {
+    for (var p = n; p && p !== root.parent; p = p.parent) if (screenLevel.test(String(p.name || ""))) return true;
+    return false;
+  });
+  var pool = preferred.length ? preferred : inRoot;
+  pool.sort(function (a, b) {
+    var dy = uxdOffsetY(a, root) - uxdOffsetY(b, root);
+    if (Math.abs(dy) > 1) return dy;
+    return (Number(b.fontSize) || 0) - (Number(a.fontSize) || 0);
+  });
+  return pool[0];
+}
 function uxdResolveTargets(roots, op) {
   var nodes = roots.slice();
   if (op.noun) {
@@ -3034,12 +3059,23 @@ function uxdResolveTargets(roots, op) {
     // A selected component part ("the button" with the button itself selected) is the target.
     if (!matched.length && roots.every(function (r) { return r.parent && r.parent.type !== "PAGE"; })) matched = roots.slice();
     if (!matched.length) return { needsModel: true, reason: "no layer named like \"" + op.noun + "\" in the selection" };
+    // "the title" (singular) is one layer per selected root: the screen/header one, else the topmost.
+    if (op.single === true && matched.length > roots.length) {
+      matched = roots.map(function (root) { return uxdPickOne(root, matched); }).filter(Boolean);
+    }
     nodes = matched;
   }
   if (op.target === "text") {
     var texts = [];
     nodes.forEach(function (n) { uxdTextNodes(n).forEach(function (t) { if (texts.indexOf(t) < 0) texts.push(t); }); });
     if (!texts.length) return { error: "There is no text layer in the selection." };
+    // Find/replace only touches the layers that contain the text.
+    var replace = op.set && op.set.replace;
+    if (replace && typeof replace.from === "string") {
+      var needle = replace.from.toLowerCase();
+      texts = texts.filter(function (t) { return String(t.characters || "").toLowerCase().indexOf(needle) >= 0; });
+      if (!texts.length) return { error: "\"" + replace.from + "\" is not in the selection." };
+    }
     return { nodes: texts };
   }
   if (op.target === "bg") {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { runHygieneCheck, formatHygieneReport } from "@/src/figma-agent/hygiene-check";
 import { callFigmaJsonModel, type JsonModelContent } from "@/src/figma-agent/json-model-call";
 import { normalizeUxAudit, formatUxAudit, compactAuditCanvas } from "@/src/figma-agent/ux-audit-review";
+import { auditImageSchema } from "@/src/figma-agent/audit-input";
 import { isAllowedPluginOrigin, pluginCorsHeaders, pluginOptions } from "@/src/figma-agent/route-cors";
 
 export const runtime = "nodejs";
@@ -12,7 +13,6 @@ export async function OPTIONS(request: Request) {
   return pluginOptions(request);
 }
 
-const imageSchema = z.string().max(52000).regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/);
 
 /**
  * Review the selected screen(s).
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     kind: z.enum(["ux", "hygiene"]),
     prompt: z.string().trim().min(1).max(4000),
     canvas: z.unknown(),
-    screens: z.array(z.object({ id: z.string().max(100), name: z.string().max(200), image: imageSchema.nullable().optional() }).strict()).max(6).optional(),
+    screens: z.array(z.object({ id: z.string().max(100), name: z.string().max(200), image: auditImageSchema.nullable().optional() }).strict()).max(6).optional(),
     styleCounts: z.object({ paint: z.number().int().min(0), text: z.number().int().min(0), variables: z.number().int().min(0) }).partial().optional(),
   }).strict().safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Review input is invalid.", details: parsed.error.issues }, { status: 400, headers });

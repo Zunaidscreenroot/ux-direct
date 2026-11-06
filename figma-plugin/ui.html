@@ -1876,6 +1876,12 @@
       const ctx = context || {};
       const types = Array.isArray(ctx.selectionTypes) ? ctx.selectionTypes : [];
       if (!original || !types.length || original.length > 300) return null;
+      // Find/replace copy: 'change the screen title from "A" to "B"', 'rename "A" to "B"', 'replace "A" with "B"'.
+      const fromTo = /^\s*(?:please\s+|pls\s+)?(?:change|update|edit|rename|replace|make)\s+(?:the\s+|this\s+)?(?:(?:screen|page|header|card|button|cta)\s+)?(?:title|text|label|heading|headline|copy|name|button|cta)?\s*(?:text\s+)?from\s+"([^"]+)"\s+(?:to|with|into)\s+"([^"]*)"\s*[.!]?\s*$/i.exec(original) ||
+        /^\s*(?:please\s+|pls\s+)?(?:rename|change|replace)\s+"([^"]+)"\s+(?:to|with|into|as)\s+"([^"]*)"\s*[.!]?\s*$/i.exec(original);
+      if (fromTo && fromTo[1].trim()) {
+        return { ops: [{ target: "text", set: { replace: { from: fromTo[1], to: fromTo[2] } }, label: "Replaced \"" + fromTo[1] + "\"" }] };
+      }
       if (/\b(screens?|flows?|variations?|versions?|dark mode|light mode|themes?|wireframes?|redesign|improve|better|modern|cleaner|premium|similar|inspired|like the|look like|consistent|hygiene|audit|review|generate|image of|photo of|picture of|translate|rewrite|shorter|longer|tone)\b/i.test(original)) return null;
       const allText = types.every(function (t) { return t === "TEXT"; });
       const ops = [];
@@ -1906,7 +1912,7 @@
       const N = "(-?\\d+(?:\\.\\d+)?)";
       const SEP = "(?:\\s*[=:]\\s*|\\s+(?:(?:to|of|ko|is|as|at|by|ka|ki|ke|kar|karke|ke\\s+liye)\\s+)*)";
       const clauses = rest.split(/\s*(?:,|;|\n|&|\+|\band\b|\baur\b|\bthen\b|\bphir\b|\balso\b)\s*/i);
-      let inherited = { noun: null, text: false };
+      let inherited = { noun: null, text: false, single: false };
       const finalRest = [];
       clauses.forEach(function (clause) {
         const before = ops.length;
@@ -1918,11 +1924,20 @@
         const textHint = /\b(text|texts|font|fonts|typography|copy|words|letters|likha\w*)\b/i.test(clause) || (noun && DIRECT_TEXT_NOUNS.includes(noun));
         const bgHint = /\b(background|bg|backdrop|fill)\b/i.test(clause);
         if (noun && DIRECT_TEXT_NOUNS.includes(noun) && allText) noun = null;
-        if (!noun && !textHint && !bgHint && clause.trim() && !/\b(this|it|isko|ise|selection|selected)\b/i.test(clause)) { noun = inherited.noun; }
+        let inheritedNoun = false;
+        if (!noun && !textHint && !bgHint && clause.trim() && !/\b(this|it|isko|ise|selection|selected)\b/i.test(clause)) { noun = inherited.noun; inheritedNoun = !!noun; }
         const clauseText = textHint || (!bgHint && !noun && inherited.text);
         const colorKind = bgHint ? "bg" : clauseText || allText ? "text" : "self";
         const kindFor = function (base) { return base === "color" ? colorKind : base; };
-        const pushNoun = function (op) { if (noun) op.noun = noun; op.kind = kindFor(op.kind); return op; };
+        // "the title" means one layer; "titles" / "all titles" means every match.
+        let nounWord = "";
+        DIRECT_EDIT_NOUNS.forEach(function (entry) {
+          const hit = entry[0] === noun && !nounWord ? new RegExp("\\b(?:" + entry[1] + ")\\b", "i").exec(clause) : null;
+          if (hit) nounWord = hit[0];
+        });
+        const singleNoun = inheritedNoun ? inherited.single === true
+          : !!nounWord && !/s$/i.test(nounWord) && !/\b(all|every|each|sab|sabhi|saare|sare)\b/i.test(clause);
+        const pushNoun = function (op) { if (noun) { op.noun = noun; if (singleNoun) op.single = true; } op.kind = kindFor(op.kind); return op; };
         const add = function (kind, set, label) { return pushNoun({ kind: kind, set: set, label: label }); };
         const act = function (action, label, extra) { return pushNoun(Object.assign({ kind: "self", action: action, label: label }, extra || {})); };
         const times = function (word) { const map = { two: 2, three: 3, four: 4, five: 5, do: 2, teen: 3, char: 4 }; return map[String(word || "").toLowerCase()] || Number(word) || 1; };
@@ -2137,7 +2152,7 @@
         const nounWords = /^(buttons?|btns?|ctas?|icons?|cards?|headers?|navbar|nav|bars?|top|app|navigation|footers?|tab|tabs|bottom|images?|photos?|pictures?|banners?|thumbnails?|avatars?|dividers?|separators?|inputs?|fields?|search|dropdowns?|chips?|badges?|tags?|list|rows?|cells?|modals?|dialogs?|sheets?|popups?|titles?|headings?|headlines?|sub|subtitles?|subheadings?|labels?|captions?|helper|body|descriptions?|paragraphs?|links?|prices?|amounts?)$/;
         const unknown = leftover.filter(function (word) { return !DIRECT_EDIT_FILLER.has(word) && !nounWords.test(word); });
         if (unknown.length) finalRest.push.apply(finalRest, unknown);
-        if (ops.length > before) inherited = { noun: noun, text: clauseText };
+        if (ops.length > before) inherited = { noun: noun, text: clauseText, single: singleNoun };
       });
       if (finalRest.length || !ops.length) return null;
       ops.forEach(function (op) {
