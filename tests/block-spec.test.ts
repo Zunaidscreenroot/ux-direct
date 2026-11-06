@@ -385,3 +385,14 @@ test("amounts and IDs never wrap mid-token (finding 59)", async () => {
     assert.ok(Number(n.width) >= Math.ceil(String(n.text).length * Number(n.fontSize) * 0.56), n.text + " fits on one line");
   }
 });
+
+test("a spec with more than 8 sections is merged, not rejected (top block-spec failure)", async () => {
+  const { expandBlockSpec: expand } = await import("../src/figma-agent/block-spec");
+  const canvas = { nodes: [{ id: "1", name: "S", type: "FRAME", width: 360, height: 800, children: [] }], components: [] };
+  const sections = Array.from({ length: 11 }, (_, i) => ({ name: "S" + i, surface: i % 3 === 0 ? "card" : "plain", blocks: [{ type: "text", text: "Item " + i }] }));
+  const exp = expand({ summary: "x", sections, learningCandidate: null }, canvas, {});
+  assert.ok(exp.plan, exp.errors.join("; "));
+  assert.ok((exp.plan.elements as unknown[]).length <= 8);
+  const text = JSON.stringify(exp.plan);
+  for (let i = 0; i < 11; i += 1) assert.ok(text.includes('"Item ' + i + '"'), "kept Item " + i);
+});

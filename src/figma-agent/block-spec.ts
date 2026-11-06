@@ -39,7 +39,7 @@ export type BlockExpansion = {
 };
 
 /** Layers the model's blocks may expand to; source graphic clones get the rest of PLAN_NODE_LIMIT. */
-export const BLOCK_NODE_BUDGET = 75;
+export const BLOCK_NODE_BUDGET = 105;
 /** normalizePlan, the plan schema and the plugin all accept at most this many nodes (depth 0–4). */
 export const PLAN_NODE_LIMIT = 140;
 const MAX_DEPTH = 4;
@@ -415,6 +415,31 @@ function inferBlockType(block: Rec): string {
 }
 
 /** Blocks may arrive as plain strings or under other keys; normalize them to block records. */
+/**
+ * More than 8 sections used to reject the whole spec (the top model-side failure). Instead the
+ * smallest neighbouring pair is merged into one plain section, a card section becoming a card
+ * block inside it, until 8 remain. Content and order are kept.
+ */
+function mergeExtraSections(sections: Rec[]): Rec[] {
+  const out = [...sections];
+  const asBlocks = (section: Rec): Rec[] => {
+    const surface = clean(section.surface ?? section.style, 20).toLowerCase();
+    const blocks = sectionBlocks(section);
+    if (surface === "card") return [{ type: "card", title: section.title, name: section.name, blocks }];
+    const title = clean(section.title, 160);
+    return title && title !== clean(section.name, 160) ? [{ type: "heading", title }, ...blocks] : blocks;
+  };
+  while (out.length > 8) {
+    let best = 1;
+    for (let i = 1; i < out.length; i += 1) {
+      if (sectionBlocks(out[i - 1]).length + sectionBlocks(out[i]).length < sectionBlocks(out[best - 1]).length + sectionBlocks(out[best]).length) best = i;
+    }
+    const a = out[best - 1], b = out[best];
+    out.splice(best - 1, 2, { name: clean(a.name ?? a.title, 80) || "Section", blocks: [...asBlocks(a), ...asBlocks(b)] });
+  }
+  return out;
+}
+
 function sectionBlocks(section: Rec): Rec[] {
   const raw = section.blocks ?? section.children ?? section.items ?? section.content ?? section.rows ?? section.elements;
   if (Array.isArray(raw)) {
@@ -886,7 +911,7 @@ function expandBlock(ctx: Ctx, block: Rec, width: number, depth: number): Native
   }
   if (type === "list") {
     // Rows go straight into the parent (no list wrapper) so lists inside cards stay within depth.
-    const rows = arr(block.items ?? block.rows).map((item) => asRec(item) ?? (typeof item === "string" ? { label: item } : null)).filter((x): x is Rec => !!x).slice(0, 12);
+    const rows = arr(block.items ?? block.rows).map((item) => asRec(item) ?? (typeof item === "string" ? { label: item } : null)).filter((x): x is Rec => !!x).slice(0, 20);
     const nodes: NativeNode[] = [];
     rows.forEach((row) => {
       const node = expandLeaf(ctx, { chevron: block.chevron, ...row }, "row", width, depth);
@@ -1093,7 +1118,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   const errors: string[] = [];
   const elements: NativeNode[] = [];
   let blockCount = 0;
-  const sections = arr(spec.sections).map(asRec).filter((x): x is Rec => !!x);
+  const sections = mergeExtraSections(arr(spec.sections).map(asRec).filter((x): x is Rec => !!x));
   if (!sections.length) errors.push("sections must be a non-empty array of {name, blocks:[...]}.");
   for (const [index, section] of sections.slice(0, 8).entries()) {
     const blocks = sectionBlocks(section);
@@ -1116,7 +1141,6 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     }
     elements.push(b.vstack(name, content, kids, { gap: 12 }));
   }
-  if (sections.length > 8) errors.push("Use at most 8 sections; merge related ones.");
   // Too few sections: split plain multi-block sections rather than rejecting a usable spec.
   while (elements.length > 0 && elements.length < 3) {
     const index = elements.findIndex((node) => node.noFill === true && node.layoutMode === "VERTICAL" && (node.children?.length ?? 0) >= 2);
@@ -1225,7 +1249,7 @@ export const BLOCK_SPEC_CONTRACT = [
   "- card {title?, subtitle?, badge?: {text, tone}, blocks:[...]}  — a card inside a plain section (cards do not nest)",
   "- component {componentId, name, instanceProperties?, height?}  — a REAL design-system component; componentId must be an exact id from canvas.components; prefer this for buttons, inputs, tabs, nav, list items when the file has them",
   "- custom {node: native FRAME/TEXT/RECTANGLE/ELLIPSE tree with type,name,width,height,color,...}  — escape hatch ONLY for something no block can express; keep it small",
-  "tone values: success|warning|danger|info|neutral. Budget: about 15–30 blocks, max 75 native layers after rendering.",
+  "tone values: success|warning|danger|info|neutral. Budget: about 15–35 blocks, max 105 native layers after rendering.",
   "Copy every meaningful source string (labels, amounts, dates, statuses, actions) into block fields exactly as written. Put content in the block that matches its meaning (amount → stat or row value, status → badge/status, % paid ring → progress_ring).",
 ].join("\n");
 
