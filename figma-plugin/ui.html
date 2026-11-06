@@ -1534,7 +1534,12 @@
         }
       }
 
-      stage("scanning", "Scanning selected screen, nested layers, text and styles…");
+      stage("scanning", "Scanning and rendering the selected screen…");
+      // Speed: the screenshot export starts at the same time as the layer read (both are local).
+      const preIds = selectedIds();
+      const earlyCapture = preIds.length === 1 ? captureRenderedNodePreview(preIds[0]).catch(function (error) {
+        return { dataUrl: null, scale: 0, warning: String(error && error.message || error).slice(0, 200) };
+      }) : null;
       // Deep read: card internals (logos, icons, charts) must be visible to keep them in the variation.
       const canvas = await runNativeCanvasCommand("read-canvas", {
         scope: "selection", maxDepth: 12, maxNodes: 400, includeStyles: true, includeVariables: true, includeComponents: true
@@ -1555,7 +1560,9 @@
       }
 
       stage("capturing", "Rendering the selected screen…");
-      const renderedCapture = sourceNode && sourceNode.id
+      const renderedCapture = earlyCapture && sourceNode && sourceNode.id === preIds[0]
+        ? await earlyCapture
+        : sourceNode && sourceNode.id
         ? await captureRenderedNodePreview(sourceNode.id)
         : { dataUrl: null, scale: 0, warning: "No selected node ID was available for image export." };
       const renderedScreen = renderedCapture.dataUrl;
@@ -1570,7 +1577,8 @@
       stage("brain", "Connecting to UX Direct Brain and resolving project context…");
       stage("memory", "Searching shared memories and Knowledge Base patterns…");
       stage("planning", "Analysing rendered appearance and native layers together…");
-
+      const localReadMs = Date.now() - taskStartedAt;
+      const serverStartedAt = Date.now();
       const response = await fetch(API + "/api/assistant/figma-agent", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
@@ -1579,6 +1587,7 @@
           ...(designOptions && designOptions.variation ? { variation: designOptions.variation } : {}) })
       });
       const payload = await response.json().catch(function () { return {}; });
+      const serverMs = Date.now() - serverStartedAt;
       if (!response.ok || payload.ok !== true || !payload.plan || !Array.isArray(payload.plan.elements)) {
         const extra = Array.isArray(payload.details) ? " " + payload.details.map(function (detail) { return typeof detail === "string" ? detail : detail && typeof detail === "object" ? (Array.isArray(detail.path) && detail.path.length ? detail.path.join(".") + ": " : "") + String(detail.message || "Invalid input") : String(detail); }).join(" | ") : "";
         throw new Error((payload.error || "UX Direct could not plan the design.") + extra);
@@ -1614,6 +1623,7 @@
         rootX = free.x; rootY = free.y;
       }
       stage("creating", "Creating a separate editable variation; the original stays untouched…");
+      const buildStartedAt = Date.now();
       try {
       const rootResult = await runNativeCanvasCommand("write-canvas", {
         confirm: true, operation: "create-elements", target: "current-page",
@@ -1701,6 +1711,8 @@
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [createdFrameId] }, 90000);
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "zoom-to-nodes", nodeIds: [createdFrameId] }, 90000);
 
+      const buildMs = Date.now() - buildStartedAt;
+      const checksStartedAt = Date.now();
       stage("verifying", "Checking the final native layer tree and frame bounds…");
       // Read to the maximum supported depth so nested native FRAMEs are included.
       // The previous depth-2 read made otherwise-valid nested designs look incomplete.
@@ -1736,6 +1748,7 @@
           ? "Native structure/read-back and structural lint passed; post-variation visual QA disabled as requested."
           : "Structural lint blocked the variation: " + lint.text,
         lint.passed ? "" : lint.text);
+      const timingLine = "\nTiming: " + formatRunTiming(localReadMs, serverMs, payload, buildMs, Date.now() - checksStartedAt, Date.now() - taskStartedAt);
       if (lint.passed) stage("done", "Variation created · native structure read-back passed");
       else stage("error", "Variation created · structural lint found issues to fix");
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
@@ -1744,7 +1757,7 @@
         '\n\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory +
         visualNote +
         (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') +
-        '\nThe source frame was preserved. The new variation is selected on the canvas.' +
+        '\nThe source frame was preserved. The new variation is selected on the canvas.' + timingLine +
         (lint.passed
           ? '\nThe generated variation is ready for manual review.'
           : '\nThis variation is NOT accepted yet: fix the issues above or ask UX Direct to retry.');
@@ -1768,6 +1781,22 @@
      * Moves a new frame off any existing top-level frame on the page: first to the right along
      * the source row, then (if the row is crowded) below everything. Never lands on a frame.
      */
+    /** One line that says where a run's time went, so slow runs can be fixed stage by stage. */
+    function formatRunTiming(localMs, serverMs, payload, buildMs, checksMs, totalMs) {
+      const s = function (ms) { return (Math.max(0, Number(ms) || 0) / 1000).toFixed(1) + "s"; };
+      const gen = payload && payload.generation || {};
+      const parts = [];
+      if (payload && payload.brain && Number.isFinite(payload.brain.latencyMs)) parts.push("brain " + s(payload.brain.latencyMs));
+      if (payload && payload.agents && Number.isFinite(payload.agents.latencyMs)) parts.push("agents " + s(payload.agents.latencyMs));
+      if (Number.isFinite(gen.preModelMs)) parts.push("pre-model " + s(gen.preModelMs));
+      const attempts = Array.isArray(gen.attemptTimes) ? gen.attemptTimes : [];
+      attempts.slice(0, 6).forEach(function (a) {
+        parts.push(String(a.attempt || "model").slice(0, 60) + " " + s(a.ms) + (a.outcome && a.outcome !== "ok" ? " (failed)" : ""));
+      });
+      return "read+render " + s(localMs) + " · server " + s(serverMs) + (parts.length ? " [" + parts.join(", ") + "]" : "") +
+        " · build " + s(buildMs) + " · checks " + s(checksMs) + " · total " + s(totalMs);
+    }
+
     async function findFreeCanvasSpot(x, y, width, height) {
       let page = null;
       try {
