@@ -316,6 +316,8 @@
     const pendingCanvasCommands = new Map();
     // Matches the backend limit for renderedScreen/sourceImage/outputImage data URLs.
     const RENDERED_IMAGE_MAX_CHARS = 1500000;
+    // Features this build's code.js executes; the server only emits what the plugin can run.
+    const PLUGIN_CAPABILITIES = ["clone"];
     // All native reads/writes share one FIFO so background status checks and design-generation
     // steps cannot race the bridge's single in-flight canvas command slot.
     let nativeCanvasCommandTail = Promise.resolve();
@@ -1573,7 +1575,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning })
+        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning, capabilities: PLUGIN_CAPABILITIES })
       });
       const payload = await response.json().catch(function () { return {}; });
       if (!response.ok || payload.ok !== true || !payload.plan || !Array.isArray(payload.plan.elements)) {
@@ -1734,6 +1736,13 @@
         if (taskRunId) {
           await finalizeTaskOutcome("failed", String(error && error.message || error || "Native Figma task failed"),
             String(error && error.message || error || "Native Figma task failed"));
+        }
+        // A half-built variation is not a result: remove it (UX Direct-created layers only).
+        if (createdFrameId) {
+          const removed = await localTask("delete-created", { nodeIds: [createdFrameId] }).then(function () { return true; }, function () { return false; });
+          if (removed && error && typeof error.message === "string") {
+            error.message += " The partial variation was removed; the source frame is untouched.";
+          }
         }
         throw error;
       }

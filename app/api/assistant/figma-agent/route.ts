@@ -496,6 +496,8 @@ export async function POST(request: Request) {
     renderedScreen: z.string().max(RENDERED_IMAGE_MAX_CHARS).nullable().optional(),
     referenceImage: z.string().max(250000).nullable().optional(),
     visualCaptureWarning: z.string().max(400).optional(),
+    /** Plugin build features; plugins without "clone" cannot run CLONE elements (older zips). */
+    capabilities: z.array(z.string().trim().max(40)).max(20).optional(),
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
   if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
@@ -512,6 +514,7 @@ export async function POST(request: Request) {
   // Uncompacted read-back: carries image fills, corner radii and deep icon layers for source fidelity.
   const rawSourceCanvas = parsedInput.data.canvas && typeof parsedInput.data.canvas === "object" && !Array.isArray(parsedInput.data.canvas)
     ? parsedInput.data.canvas as Record<string, unknown> : null;
+  const pluginCanClone = (parsedInput.data.capabilities ?? []).includes("clone");
   const selectedRoot = Array.isArray(canvas.nodes) && canvas.nodes[0] && typeof canvas.nodes[0] === "object"
     ? canvas.nodes[0] as Record<string, unknown> : {};
   const selectedName = typeof selectedRoot.name === "string" ? selectedRoot.name : "";
@@ -665,7 +668,7 @@ export async function POST(request: Request) {
     let planInput: unknown = candidateInput;
     let blockSpec: BlockSpecInfo | null = null;
     if (isBlockSpec(candidateInput)) {
-      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas });
+      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone });
       blockSpec = { blocks: expansion.blockCount, nodes: expansion.nodeCount, warnings: expansion.warnings };
       if (!expansion.plan) {
         const issues = expansion.errors.slice(0, 4).join("; ");

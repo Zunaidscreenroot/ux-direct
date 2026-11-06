@@ -50,6 +50,10 @@ type FlatNode = {
   clips: boolean;
   /** Ids of ancestors that clip content, nearest first, with their rects. */
   clipAncestors: Array<{ id: string; rect: Rect }>;
+  parent: FlatNode | null;
+  filled: boolean;
+  radius: number;
+  imageFill: boolean;
 };
 
 type CanvasTree = { nodes: FlatNode[]; truncated: boolean; texts: string[] };
@@ -87,7 +91,7 @@ export function flattenCanvas(canvas: unknown, rootId?: string): CanvasTree {
   const out: FlatNode[] = [];
   const texts: string[] = [];
   let unexpanded = false;
-  function walk(value: unknown, parentX: number, parentY: number, isRoot: boolean, clipAncestors: FlatNode["clipAncestors"]) {
+  function walk(value: unknown, parentX: number, parentY: number, isRoot: boolean, clipAncestors: FlatNode["clipAncestors"], parent: FlatNode | null = null) {
     const node = record(value);
     if (!node || typeof node.id !== "string" || typeof node.type !== "string") return;
     if (node.visible === false) return;
@@ -115,13 +119,17 @@ export function flattenCanvas(canvas: unknown, rootId?: string): CanvasTree {
       absolute: node.layoutPositioning === "ABSOLUTE",
       clips: node.clipsContent === true,
       clipAncestors,
+      parent,
+      filled: Array.isArray(node.fillColors) && node.fillColors.length > 0,
+      radius: num(node.cornerRadius) ?? 0,
+      imageFill: node.imageFill === true,
     };
     out.push(flat);
     // A depth-limited or collapsed read lists childCount without the children themselves.
     if ((num(node.childCount) || 0) > 0 && !(Array.isArray(node.children) && node.children.length)) unexpanded = true;
     if (Array.isArray(node.children)) {
       const nextClips = flat.clips && rect ? [{ id: flat.id, rect }, ...clipAncestors] : clipAncestors;
-      for (const child of node.children) walk(child, absX, absY, false, nextClips);
+      for (const child of node.children) walk(child, absX, absY, false, nextClips, flat);
     }
   }
   if (root) walk(root, 0, 0, true, []);
@@ -318,18 +326,57 @@ export function checkContentPreservation(source: CanvasTree, output: CanvasTree,
       });
     }
     const graphicTypes = [...GRAPHIC_TYPES];
-    const sourceGraphics = count(source, graphicTypes);
-    const outputGraphics = count(output, graphicTypes);
-    if (sourceGraphics >= 2 && outputGraphics < Math.ceil(sourceGraphics / 2)) {
+    const graphics = (tree: CanvasTree) => tree.nodes.filter(node => graphicTypes.includes(node.type) || node.imageFill).length;
+    const sourceGraphics = graphics(source);
+    const outputGraphics = graphics(output);
+    // Logos, chevrons and status icons are content: losing more than a fifth of them is a failure.
+    if (sourceGraphics >= 2 && outputGraphics < Math.ceil(sourceGraphics * 0.8)) {
       issues.push({
         severity: "high",
-        issue: "Most icons and graphics from the source were dropped.",
+        issue: "Icons, logos or graphics from the source were dropped.",
         evidence: "Source has " + sourceGraphics + " icon/graphic layer(s); output has " + outputGraphics + ".",
         fix: "Keep each icon, chevron, status mark and graphic from the source, reusing component instances where they exist.",
       });
     }
   }
+  if (mode === "full" && !output.truncated) {
+    const lost = downgradedButtons(source, output);
+    if (lost.length) {
+      issues.push({
+        severity: "high",
+        issue: lost.length + " source button(s) are no longer buttons in the output.",
+        evidence: "Not a filled button any more: " + lost.slice(0, 5).map(text => '"' + text.slice(0, 30) + '"').join(", ") + ".",
+        fix: "Keep each source call to action as a filled button; do not turn it into a text link.",
+      });
+    }
+  }
   return { content, issues };
+}
+
+/** A filled, rounded container holding exactly one text: how buttons look in a read-back. */
+function buttonLabels(tree: CanvasTree): Set<string> {
+  const labels = new Set<string>();
+  const textsByParent = new Map<FlatNode, FlatNode[]>();
+  for (const node of tree.nodes) {
+    if (node.type !== "TEXT" || !node.text.trim()) continue;
+    for (let p = node.parent, hops = 0; p && hops < 3; p = p.parent, hops += 1) {
+      const list = textsByParent.get(p) || [];
+      list.push(node);
+      textsByParent.set(p, list);
+    }
+  }
+  for (const [container, texts] of textsByParent) {
+    const h = container.rect?.h ?? 0;
+    if (texts.length === 1 && container.filled && container.radius > 0 && h >= 24 && h <= 64) labels.add(texts[0].text.trim().toLowerCase());
+  }
+  return labels;
+}
+
+function downgradedButtons(source: CanvasTree, output: CanvasTree): string[] {
+  const kept = buttonLabels(output);
+  const outputTexts = new Set(output.nodes.filter(n => n.type === "TEXT").map(n => n.text.trim().toLowerCase()));
+  // Only labels still present as text count: a missing label is already a missing-text finding.
+  return [...buttonLabels(source)].filter(label => outputTexts.has(label) && !kept.has(label));
 }
 
 const SEVERITY_ORDER: Record<LintSeverity, number> = { high: 0, medium: 1, low: 2 };

@@ -1001,7 +1001,7 @@ export function isBlockSpec(value: unknown): boolean {
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
 }
 
-export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null } = {}): BlockExpansion {
+export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean } = {}): BlockExpansion {
   const spec = asRec(value) ?? {};
   const sourceNodes = arr(canvas.nodes);
   const source = asRec(sourceNodes[0]) ?? {};
@@ -1085,14 +1085,16 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   } else {
     // Logos, icons, charts and images are not in the block spec: clone them from the source.
     const fidelity = restoreSourceFidelity(elements, options.sourceCanvas ?? canvas, theme, {
-      budget: Math.min(SOURCE_GRAPHIC_BUDGET, PLAN_NODE_LIMIT - renderedCount - 10),
+      // Older plugin builds cannot run CLONE elements: they still get the button restore.
+      budget: options.allowClones === false ? 0 : Math.min(SOURCE_GRAPHIC_BUDGET, PLAN_NODE_LIMIT - renderedCount - 10),
       headerComponentId: b.source?.header?.componentId ?? null,
     });
     if (fidelity.clones || fidelity.restoredButtons) {
       b.warnings.push("Kept " + fidelity.clones + " source graphic(s)" + (fidelity.replacedRings ? " (" + fidelity.replacedRings + " real chart(s) replaced generated rings)" : "") +
         (fidelity.restoredButtons ? " and restored " + fidelity.restoredButtons + " source button(s)" : "") + ".");
     }
-    if (fidelity.unplaced.length) b.warnings.push("Could not place " + fidelity.unplaced.length + " source graphic(s): " + fidelity.unplaced.slice(0, 5).join(", ") + ".");
+    if (fidelity.unplaced.length && options.allowClones === false) b.warnings.push(fidelity.unplaced.length + " source graphic(s) were not copied: this plugin build cannot copy layers. Re-import the latest UX Direct plugin zip.");
+    else if (fidelity.unplaced.length) b.warnings.push("Could not place " + fidelity.unplaced.length + " source graphic(s): " + fidelity.unplaced.slice(0, 5).join(", ") + ".");
   }
   const nodeCount = countNodes(elements);
 
