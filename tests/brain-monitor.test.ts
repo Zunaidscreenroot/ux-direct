@@ -14,6 +14,7 @@ test("aggregates outcomes, retrieval, learning and stuck runs without leaking te
     { outcome: "attempted", retrieval: { status: "complete", memoryIds: ["a"] }, updated_at: "2026-11-06T10:00:00Z", created_at: "2026-11-06T10:00:00Z" },
   ], now);
   assert.deepEqual(report.outcomes, { verified: 1, failed: 1, attempted: 1 });
+  assert.deepEqual(report.bySource, { "figma-agent": { verified: 1, failed: 1 }, unknown: { attempted: 1 } });
   assert.equal(report.stuckAttempted, 1);
   assert.equal(report.retrieval.zeroMemoryRuns, 1);
   assert.equal(report.retrieval.avgMemories, 1);

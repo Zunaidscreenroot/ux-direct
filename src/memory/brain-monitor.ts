@@ -20,6 +20,7 @@ export type TaskRunRow = {
 export type BrainMonitorReport = {
   window: number;
   outcomes: Record<string, number>;
+  bySource: Record<string, Record<string, number>>;
   stuckAttempted: number;
   retrieval: { byStatus: Record<string, number>; avgMemories: number | null; avgChunks: number | null; zeroMemoryRuns: number };
   learning: { byLessonStatus: Record<string, number>; lessonRate: number | null };
@@ -40,6 +41,7 @@ const safeKey = (value: unknown, fallback: string) =>
 
 export function buildBrainMonitorReport(rows: TaskRunRow[], now = Date.now()): BrainMonitorReport {
   const outcomes: Record<string, number> = {};
+  const bySource: Record<string, Record<string, number>> = {};
   const byStatus: Record<string, number> = {};
   const byLessonStatus: Record<string, number> = {};
   const memories: number[] = [];
@@ -52,6 +54,8 @@ export function buildBrainMonitorReport(rows: TaskRunRow[], now = Date.now()): B
   for (const row of rows) {
     const outcome = safeKey(row.outcome, "unknown");
     bump(outcomes, outcome);
+    const source = safeKey(rec(row.metadata).source, "unknown");
+    bump(bySource[source] ??= {}, outcome);
     const updated = typeof row.updated_at === "string" ? Date.parse(row.updated_at) : NaN;
     const created = typeof row.created_at === "string" ? Date.parse(row.created_at) : updated;
     if (Number.isFinite(updated)) lastRunAt = Math.max(lastRunAt, updated);
@@ -84,6 +88,7 @@ export function buildBrainMonitorReport(rows: TaskRunRow[], now = Date.now()): B
   return {
     window: rows.length,
     outcomes,
+    bySource,
     stuckAttempted,
     retrieval: { byStatus, avgMemories: avg(memories), avgChunks: avg(chunks), zeroMemoryRuns },
     learning: { byLessonStatus, lessonRate: finalized ? Math.round(withLesson / finalized * 100) / 100 : null },
