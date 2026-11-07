@@ -92,7 +92,7 @@ test("cooldowns follow Retry-After, daily quota, bad keys and dead models", () =
   assert.equal(cooldownFor(429, "Rate limit reached", "12", now), now + 12_000);
   assert.equal(cooldownFor(429, "You exceeded your requests per day quota", null, now), Date.UTC(2026, 10, 8));
   assert.equal(cooldownFor(401, "invalid key", null, now), now + 3600_000);
-  assert.equal(cooldownFor(404, "model not found", null, now), now + 6 * 3600_000);
+  assert.equal(cooldownFor(404, "model not found", null, now), now + 24 * 3600_000);
   assert.equal(cooldownFor(413, "Request too large", null, now), null);
   assert.equal(cooldownFor(503, "overloaded", null, now), now + 30_000);
   assert.equal(cooldownFor(400, "bad json schema", null, now), null);
@@ -126,4 +126,28 @@ test("gateway mode defaults to fallback and 'only' needs no FreeLLMAPI key or UR
   assert.ok(freeLlmApiShouldFallBack(530));
   assert.ok(freeLlmApiShouldFallBack(429));
   assert.equal(freeLlmApiShouldFallBack(400), false);
+});
+
+test("tiers handle new model names by size and ultra/nano signals", async () => {
+  const { modelSizeB } = await import("../src/llm-gateway/catalog");
+  assert.equal(modelSizeB("qwen3-235b-a22b"), 235);
+  assert.equal(modelSizeB("nvidia/nemotron-3-ultra-550b-a55b:free"), 550);
+  assert.equal(modelTier("nvidia/nemotron-3-ultra-550b-a55b:free"), "strong");
+  assert.equal(modelTier("nvidia/nemotron-3.5-super-vl:free"), "strong");
+  assert.equal(modelTier("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"), "fast");
+  assert.equal(modelTier("liquid/lfm-3-1.7b:free"), "fast");
+  assert.equal(modelTier("google/gemma-4-31b-it:free"), "medium");
+  assert.equal(modelTier("gemini-3.7-flash"), "strong");
+  assert.equal(modelTier("openai/gpt-oss-20b"), "fast");
+  assert.ok(modelSupportsVision("nvidia/nemotron-3.5-super-vl:free"));
+});
+
+test("detected free models replace stale defaults, strongest first", async () => {
+  const { pickDetectedModels } = await import("../src/llm-gateway/router");
+  const picked = pickDetectedModels(["gemini-3.5-flash", "gemini-2.0-flash"], ["gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-pro-preview"]);
+  assert.equal(picked[0], "gemini-3.5-flash");
+  assert.ok(picked.includes("gemini-3.6-flash"));
+  assert.ok(!picked.includes("gemini-2.0-flash"));
+  assert.equal(picked[picked.length - 1], "gemini-2.5-flash-lite");
+  assert.deepEqual(pickDetectedModels(["a"], []), ["a"]);
 });
