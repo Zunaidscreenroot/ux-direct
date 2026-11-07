@@ -2450,6 +2450,11 @@
           return { kind: "icon", mode: "auto" };
         }
       }
+      // Style lock across screens (no model): "check consistency", "make these screens consistent", "style lock".
+      if ((count > 0 && /\bstyle[ -]?lock\b/i.test(text)) || (count >= 2 && (/\bconsisten(t|cy)\b|\bek (jaise|jaisa)\b|\bsame (style|look)\b[^.]{0,30}\b(screens?|all)\b|\bmatch(ing)?\b[^.]{0,20}\b(styles?|look)\b[^.]{0,20}\bacross\b/i.test(text)))) {
+        const fixIt = /\b(fix|make|apply|lock|align|match|karo|kar do|set)\b|\bstyle[ -]?lock\b/i.test(text) && !/\b(check|find|show|report|list|audit|kya|batao)\b/i.test(text);
+        return { kind: "consistency", fix: fixIt };
+      }
       // Realistic sample data (no model): "fill with realistic data", "dummy data bhar do", "use sample Indian names".
       if (count > 0 && !/lorem/i.test(text) && (
         /\b(fill|populate|add|put|use|replace|generate)\b[^.]{0,40}\b(realistic|real|dummy|sample|mock|fake|demo|test|indian)\b[^.]{0,20}\b(data|content|values|details|numbers|names|amounts)\b/i.test(text) ||
@@ -2891,6 +2896,33 @@
     }
     // uxd-design-rules:end
 
+    // uxd-consistency:start
+    function describeConsistencyFinding(f) {
+      const what = { radius: "corner radius", padding: "padding", gap: "gap", fill: "fill colour", label: "text" }[f.kind] || f.kind;
+      return "- **" + f.element + "** " + what + ": " + f.found.slice(0, 3).join(", ") + " → " + f.expected +
+        " (" + f.layers + " layer(s)" + (f.screens.length ? " on " + f.screens.join(", ") : "") + ")";
+    }
+    async function runConsistencyTask(task, stage) {
+      stage("scanning", task.fix ? "Locking styles across the selected screens…" : "Comparing the selected screens…");
+      const result = await localTask("consistency", { fix: Boolean(task.fix) }, 120000);
+      const findings = result.findings || [];
+      stage("done", "Consistency " + (task.fix ? "fix" : "check") + " complete · no model needed");
+      if (!findings.length) return "The " + result.screens.length + " screens are consistent: the same elements share radius, padding, gap and fill, and button labels are written the same way.";
+      const lines = findings.slice(0, 12).map(describeConsistencyFinding);
+      if (task.fix && result.fixed > 0) {
+        const snapshot = result.snapshot;
+        recordChange("Style lock (" + result.fixed + ")", function () {
+          return localTask("restore-props", { items: snapshot }, 120000).then(function (restore) {
+            return restore.restored + " change(s) restored" + (restore.changedSince ? ", " + restore.changedSince + " left as you edited them" : "");
+          });
+        });
+        return "Locked styles across " + result.screens.length + " screens: " + result.fixed + " value(s) set to the most common one.\n" + lines.join("\n") +
+          "\n\nEach element was matched by layer name. Revert puts every value back.";
+      }
+      return "Found " + findings.length + " inconsistency(ies) across " + result.screens.length + " screens (most common value wins):\n" + lines.join("\n") +
+        (findings.length > 12 ? "\n- …and " + (findings.length - 12) + " more" : "") + "\n\nSay **fix consistency** to apply the most common value everywhere (Revert available).";
+    }
+    // uxd-consistency:end
     async function runIconTask(task, stage) {
       const ids = selectedIds();
       if (!ids.length) throw new Error("Select the buttons, rows or icon to change.");
@@ -3205,6 +3237,7 @@
       if (task.kind === "fill-data") return runFillDataTask(task, stage);
       if (task.kind === "icon") return runIconTask(task, stage);
       if (task.kind === "design-rules") return runDesignRulesTask(task, stage);
+      if (task.kind === "consistency") return runConsistencyTask(task, stage);
       if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);
       if (task.kind === "flow-variations" || task.kind === "screen-variations" || task.kind === "states-pack") return runVariationsTask(task, prompt, stage);
       throw new Error("Unknown quick task.");
