@@ -293,3 +293,14 @@ test("a filled source CTA demoted to an outline button is filled again (finding 
   assert.equal(buttons.length, 3);
   for (const b of buttons) { assert.ok(!/secondary/i.test(String(b.name)), String(b.name)); assert.equal(b.strokeColor, undefined); }
 });
+
+test("a filled source CTA turned into a chip becomes a filled button again (finding 62)", () => {
+  const spec3 = { summary: "Loan cards.", sections: [1, 2, 3].map((i) => ({ name: "Loan " + i, surface: "card", blocks: [
+    { type: "text", text: "Loan ID SLC00" + i }, { type: "chips", items: ["Pay now"] }] })), learningCandidate: null };
+  const exp = expandBlockSpec(spec3, canvas, { sourceCanvas: canvas });
+  assert.ok(exp.plan, exp.errors.join("; "));
+  const parents: N[] = [];
+  walk(exp.plan.elements as N[], (node, _d, parent) => { if (node.type === "TEXT" && node.text === "Pay now" && parent) parents.push(parent); });
+  assert.ok(parents.length >= 3);
+  for (const p of parents) { assert.match(String(p.name), /Pay now button/); assert.ok(Number(p.height) >= 44); }
+});

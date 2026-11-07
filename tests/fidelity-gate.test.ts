@@ -104,3 +104,29 @@ test("wireframes also mark reused source component instances (finding 52)", () =
   assert.ok(code.includes('if (type === "INSTANCE" && spec.monochrome && typeof spec.monochrome === "object") await monochromeClone(node, spec.monochrome);'));
   assert.ok(code.includes("delete solid.boundVariables"), "variable-bound colours are unbound");
 });
+
+test("a squeezed row keeps amounts on one line (finding 59, model path)", () => {
+  const canvas = { nodes: [{ id: "r", name: "Screen", type: "FRAME", x: 0, y: 0, width: 360, height: 700, children: [] }], components: [] };
+  const plan = normalizePlan({ frame: { name: "W", width: 360 }, elements: [{ type: "FRAME", name: "Card", width: 328, height: 80, layoutMode: "VERTICAL", children: [
+    { type: "FRAME", name: "Row", width: 200, height: 40, layoutMode: "HORIZONTAL", itemSpacing: 8, children: [
+      { type: "CLONE", name: "Logo", sourceNodeId: "9:9", width: 60, height: 20 },
+      { type: "TEXT", name: "Label", text: "Outstanding amount", width: 140, height: 20, fontSize: 14 },
+      { type: "TEXT", name: "Value", text: "₹12,000", width: 90, height: 20, fontSize: 14 }] }] }] }, canvas) as { elements: N[] };
+  const found: N[] = [];
+  const walkAll = (nodes: N[]) => nodes.forEach((n) => { if (n.text === "₹12,000") found.push(n); walkAll((n.children as N[]) || []); });
+  walkAll(plan.elements);
+  assert.ok(Number(found[0]?.width) >= Math.ceil(7 * 14 * 0.56), "amount width " + found[0]?.width);
+});
+
+test("a row whose rigid parts are too wide wraps instead of failing preflight (finding 65)", async () => {
+  const { auditDesignPlanQuality } = await import("../src/figma-agent/design-plan-quality");
+  const canvas = { nodes: [{ id: "r", name: "Screen", type: "FRAME", x: 0, y: 0, width: 360, height: 700, children: [
+    { id: "t", type: "TEXT", name: "t", text: "DMI1234567890", x: 0, y: 0, width: 100, height: 20 }] }], components: [] };
+  const plan = normalizePlan({ frame: { name: "W", width: 360 }, elements: [{ type: "FRAME", name: "Card", width: 328, height: 120, layoutMode: "VERTICAL", children: [
+    { type: "FRAME", name: "Card header", width: 296, height: 40, layoutMode: "HORIZONTAL", itemSpacing: 12, primaryAxisSizingMode: "FIXED", children: [
+      { type: "CLONE", name: "Logo", sourceNodeId: "9:9", width: 120, height: 32 },
+      { type: "TEXT", name: "ID", text: "DMI1234567890", width: 150, height: 20, fontSize: 16 },
+      { type: "CLONE", name: "Badge", sourceNodeId: "9:8", width: 90, height: 24 }] }] }] }, canvas) as { elements: N[] };
+  const report = auditDesignPlanQuality(plan, canvas, "improve this screen");
+  assert.ok(!report.findings.some((f) => f.code === "fixed-layout-overflow"), JSON.stringify(report.findings));
+});

@@ -3157,6 +3157,17 @@ function uxdResolveTargets(roots, op) {
       texts = texts.filter(function (t) { return String(t.characters || "").toLowerCase().indexOf(needle) >= 0; });
       if (!texts.length) return { error: "\"" + replace.from + "\" is not in the selection." };
     }
+    // "the title" inside a matched header frame is its largest text, not the back arrow too.
+    if (op.single === true && op.set && typeof op.set.text === "string" && texts.length > nodes.length) {
+      texts = nodes.map(function (n) {
+        return uxdTextNodes(n).slice().sort(function (a, b) { return (Number(b.fontSize) || 0) - (Number(a.fontSize) || 0); })[0];
+      }).filter(Boolean);
+    }
+    // Setting one new text on many layers is never what "change the text to X" means: hand it to
+    // the model, which can tell which layer is meant (finding 66).
+    if (op.set && typeof op.set.text === "string" && texts.length > 1) {
+      return { needsModel: true, reason: "the new text would replace " + texts.length + " different text layers" };
+    }
     return { nodes: texts };
   }
   if (op.target === "bg") {

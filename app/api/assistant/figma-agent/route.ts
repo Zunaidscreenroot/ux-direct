@@ -25,6 +25,13 @@ export const dynamic = "force-dynamic";
 
 /** Longest the planner waits for the sub-agent brief before planning without it. */
 const PLANNER_AGENT_WAIT_MS = 6000;
+const BRAIN_WAIT_MS = 5000;
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out after " + ms + "ms")), ms);
+    promise.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
+  });
+}
 const API_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 function allowedOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
@@ -606,14 +613,16 @@ export async function POST(request: Request) {
   let taskRetrieval: RetrievalRecord = { status: "degraded", memoryIds: [], chunkIds: [], chars: 0 };
   const brainStarted = Date.now();
   try {
-    const retrieved = await retrieveBrainContext({
+    // Usually 0.5–3 s; a cold Neon/R2 path once took 12.9 s (finding 64). Cap it so the model
+    // call is never held up: past the cap the run continues without brain context.
+    const retrieved = await withTimeout(retrieveBrainContext({
       query: buildBrainQuery({ prompt: parsedInput.data.prompt, frameName: selectedName, designScope,
         nodes: Array.isArray(canvas.nodes) ? canvas.nodes : [] }),
       scopeKeys: resolveBrainScopes(parsedInput.data.prompt + "\n" + JSON.stringify(canvas.nodes).slice(0, 1500)),
       limit: 6,
       maxChars: 6000,
       includeKnowledge: true,
-    });
+    }), BRAIN_WAIT_MS);
     brain = {
       contextText: retrieved.contextText.slice(0, 7000),
       status: retrieved.retrieval.status,

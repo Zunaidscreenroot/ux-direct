@@ -504,11 +504,22 @@ function restoreButtons(elements: NativeNode[], root: SrcNode, theme: BlockTheme
     const parent = ref.parent;
     // A filled brand-colour CTA in the source stays a filled primary button; a model that
     // demoted it to an outline pill lost the screen's main action (finding 62).
-    if (parent && /secondary button/i.test(parent.name) && strong.has(norm(node.text)) && (parent.children?.length ?? 0) === 1) {
+    // Also a CTA the model turned into a chip or status pill (finding 62).
+    const pill = parent && /\b(chip|status badge|badge)\b/i.test(parent.name);
+    if (parent && (/secondary button/i.test(parent.name) || pill) && strong.has(norm(node.text)) && (parent.children?.length ?? 0) === 1) {
       parent.name = node.text.slice(0, 60) + " button";
       parent.color = theme.primaryFill;
       delete parent.strokeColor; delete parent.strokeWeight;
       node.color = theme.onPrimary;
+      if (pill) {
+        parent.cornerRadius = theme.radius;
+        parent.height = Math.max(num(parent.height) ?? 0, 44);
+        parent.paddingTop = 10; parent.paddingBottom = 10; parent.paddingLeft = 16; parent.paddingRight = 16;
+        parent.primaryAxisAlignItems = "CENTER"; parent.counterAxisAlignItems = "CENTER";
+        parent.counterAxisSizingMode = "FIXED"; parent.layoutSizingVertical = "FIXED";
+        node.fontSize = Math.max(num(node.fontSize) ?? 0, 15);
+        node.fontStyle = "Semi Bold";
+      }
       result.restoredButtons += 1;
       continue;
     }

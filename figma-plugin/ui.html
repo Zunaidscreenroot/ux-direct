@@ -1965,14 +1965,21 @@
       // Whole-prompt edits with free text values (quotes may contain "and").
       eat(/\breplace\s+"([^"]+)"\s+(?:with|by|to)\s+"([^"]*)"/gi, function (_m, from, to) { return { kind: "text", set: { replace: { from: from, to: to } }, label: "Replaced \"" + from + "\"" }; });
       eat(/"([^"]+)"\s+(?:ko|को)\s+"([^"]*)"\s+(?:se\s+)?(?:replace|badal|badlo|kar)\w*(?:\s+(?:do|de|dijiye|karo))?/gi, function (_m, from, to) { return { kind: "text", set: { replace: { from: from, to: to } }, label: "Replaced \"" + from + "\"" }; });
-      eat(/\b(?:change|set|update|edit|make)\s+(?:the\s+|this\s+)?(?:text|label|title|heading|copy|button text|cta text|cta)(?:\s+text)?\s+(?:to|as|into|=|:)\s+"([^"]+)"/gi, function (_m, value) { return { kind: "text", set: { text: value }, label: "Text set" }; });
-      eat(/\b(?:text|label|title|heading|copy)\s+(?:should\s+(?:say|read|be)|says?|=|:)\s+"([^"]+)"/gi, function (_m, value) { return { kind: "text", set: { text: value }, label: "Text set" }; });
+      // "the title" / "the button text" names ONE layer: without the noun, a frame selection had
+      // every text in it overwritten (finding 66).
+      const textNounOp = function (word, value) {
+        const w = String(word || "").toLowerCase();
+        const noun = /title|heading/.test(w) ? "title" : /button|cta/.test(w) ? "button" : /label/.test(w) ? "label" : null;
+        return Object.assign({ kind: "text", set: { text: value }, label: "Text set" }, noun ? { noun: noun, single: true } : {});
+      };
+      eat(/\b(?:change|set|update|edit|make)\s+(?:the\s+|this\s+)?(text|label|title|heading|copy|button text|cta text|cta)(?:\s+text)?\s+(?:to|as|into|=|:)\s+"([^"]+)"/gi, function (_m, word, value) { return textNounOp(word, value); });
+      eat(/\b(text|label|title|heading|copy)\s+(?:should\s+(?:say|read|be)|says?|=|:)\s+"([^"]+)"/gi, function (_m, word, value) { return textNounOp(word, value); });
       eat(/\b(?:rename|name)\s+(?:this|it|the layer|this layer|the frame|layer|frame)?\s*(?:to|as)\s+"?([^"]+?)"?\s*$/i, function (_m, value) { return { kind: "self", set: { name: value.trim() }, label: "Renamed to \"" + value.trim() + "\"" }; });
       eat(/^\s*(?:is\s*ko|isko|ise)?\s*"?([^"]+?)"?\s+naam\s+(?:do|de|dijiye|rakho|rakh do)\s*$/i, function (_m, value) { return { kind: "self", set: { name: value.trim() }, label: "Renamed to \"" + value.trim() + "\"" }; });
       const colorWords = new RegExp("^\\s*" + directColorPattern() + "\\s*$", "i");
-      eat(/\b(?:change|set|update)\s+(?:the\s+|this\s+)?(?:text|label|title|heading|copy)\s+to\s+(?!")([^,;]+?)\s*$/i, function (m, value) {
+      eat(/\b(?:change|set|update)\s+(?:the\s+|this\s+)?(text|label|title|heading|copy)\s+to\s+(?!")([^,;]+?)\s*$/i, function (m, word, value) {
         if (colorWords.test(value) || /\b(bold|italic|bigger|smaller|size|\d+\s*(px|pt)?|upper ?case|lower ?case|cent(er|re)|left|right)\b/i.test(value)) return false;
-        return { kind: "text", set: { text: value.trim() }, label: "Text set" };
+        return textNounOp(word, value.trim());
       });
       if (/"/.test(rest)) return null;
 
