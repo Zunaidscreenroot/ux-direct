@@ -168,22 +168,39 @@ export function clearBriefCache(): void {
   BRIEF_CACHE.clear();
 }
 
-/** Cached wrapper; only a brief where at least one agent succeeded is cached. */
-export async function runSubAgents(input: SubAgentInput): Promise<AgentBrief> {
+/**
+ * Cached wrapper; only a brief where at least one agent succeeded is cached.
+ * `waitMs` returns early with the agents that have answered by then (finding: the planner
+ * waited the full 6 s and then used none of them because the vision analyst was slower).
+ * The remaining agents keep running to their own deadline and the full brief fills the cache,
+ * so the next variation or retry of the same frame gets every note instantly.
+ */
+export async function runSubAgents(input: SubAgentInput, options: { waitMs?: number } = {}): Promise<AgentBrief> {
   const key = briefCacheKey(input);
   const hit = BRIEF_CACHE.get(key);
   if (hit && Date.now() - hit.at < BRIEF_TTL_MS) {
     return { ...hit.brief, runs: hit.brief.runs.map((run) => ({ ...run, ms: 0, cached: true })) };
   }
-  const brief = await runSubAgentsUncached(input);
-  if (brief.runs.some((run) => run.ok)) {
-    if (BRIEF_CACHE.size >= BRIEF_CACHE_SIZE) BRIEF_CACHE.delete(BRIEF_CACHE.keys().next().value as string);
-    BRIEF_CACHE.set(key, { at: Date.now(), brief });
-  }
-  return brief;
+  const stage = startSubAgents(input);
+  const full = stage.full.then((brief) => {
+    if (brief.runs.some((run) => run.ok)) {
+      if (BRIEF_CACHE.size >= BRIEF_CACHE_SIZE) BRIEF_CACHE.delete(BRIEF_CACHE.keys().next().value as string);
+      BRIEF_CACHE.set(key, { at: Date.now(), brief });
+    }
+    return brief;
+  });
+  const waitMs = Number(options.waitMs);
+  if (!Number.isFinite(waitMs) || waitMs <= 0) return full;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const early = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), waitMs); });
+  const first = await Promise.race([full, early]);
+  clearTimeout(timer);
+  if (first) return first;
+  full.catch(() => undefined);
+  return stage.partial();
 }
 
-async function runSubAgentsUncached(input: SubAgentInput): Promise<AgentBrief> {
+function startSubAgents(input: SubAgentInput): { full: Promise<AgentBrief>; partial: () => AgentBrief } {
   const keywordDomain = detectDomain(input.prompt, input.sourceTexts);
   const componentList = input.components.slice(0, 40).map((component) => ({
     id: component.id, name: component.name, ...(component.properties ? { properties: component.properties } : {}),
@@ -192,29 +209,37 @@ async function runSubAgentsUncached(input: SubAgentInput): Promise<AgentBrief> {
   const roleNote = { role: input.role.label, roleFocus: input.role.persona, keywordDomainHint: keywordDomain.domain.id };
 
   // One hard deadline for the whole stage: when it passes, every in-flight agent call is
-  // aborted and the planner starts with whatever came back. Each agent makes one call only,
-  // and only the analyst gets the screenshot, so the stage adds one vision request, not three.
+  // aborted. Each agent makes one call only, and only the analyst gets the screenshot,
+  // so the stage adds one vision request, not three.
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), subAgentTimeoutMs());
   const text = { signal: deadline.signal, withImage: false };
-  let detector: AgentResult, analyst: AgentResult, scout: AgentResult;
-  try {
-    [detector, analyst, scout] = await Promise.all([
-      runAgent("detector", input, DETECTOR_SYSTEM, sharedContext(input, { keywordDomainHint: keywordDomain.domain.id }),
-        (data) => (str(data.domain) || str(data.userGoal) ? null : "missing domain and userGoal"), text),
-      runAgent("analyst", input, ANALYST_SYSTEM, sharedContext(input, roleNote),
-        (data) => (Array.isArray(data.hierarchy) || Array.isArray(data.changes) ? null : "missing hierarchy and changes"),
-        { signal: deadline.signal, withImage: true }),
-      componentIds.size
-        ? runAgent("scout", input, SCOUT_SYSTEM, sharedContext(input, { components: componentList }),
-          (data) => (Array.isArray(data.matches) ? null : "missing matches"), text)
-        : Promise.resolve(null),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-
-  return composeBrief(input, keywordDomain, detector, analyst, scout, componentIds);
+  const startedAt = Date.now();
+  const slots: { detector?: AgentResult; analyst?: AgentResult; scout?: AgentResult } = {};
+  const hasScout = componentIds.size > 0;
+  const track = <K extends keyof typeof slots>(name: K, promise: Promise<AgentResult>) =>
+    promise.then((result) => { slots[name] = result; return result; });
+  const full = Promise.all([
+    track("detector", runAgent("detector", input, DETECTOR_SYSTEM, sharedContext(input, { keywordDomainHint: keywordDomain.domain.id }),
+      (data) => (str(data.domain) || str(data.userGoal) ? null : "missing domain and userGoal"), text)),
+    track("analyst", runAgent("analyst", input, ANALYST_SYSTEM, sharedContext(input, roleNote),
+      (data) => (Array.isArray(data.hierarchy) || Array.isArray(data.changes) ? null : "missing hierarchy and changes"),
+      { signal: deadline.signal, withImage: true })),
+    track("scout", hasScout
+      ? runAgent("scout", input, SCOUT_SYSTEM, sharedContext(input, { components: componentList }),
+        (data) => (Array.isArray(data.matches) ? null : "missing matches"), text)
+      : Promise.resolve(null)),
+  ]).then(([detector, analyst, scout]) => composeBrief(input, keywordDomain, detector, analyst, scout, componentIds))
+    .finally(() => clearTimeout(timer));
+  // Agents still running at the planner's wait are reported as pending, not as failures.
+  const pending = (agent: SubAgentRun["agent"]): AgentResult =>
+    ({ run: { agent, ok: false, ms: Date.now() - startedAt, error: "still running at planner wait" }, data: null });
+  const partial = () => composeBrief(input, keywordDomain,
+    slots.detector !== undefined ? slots.detector : pending("detector"),
+    slots.analyst !== undefined ? slots.analyst : pending("analyst"),
+    slots.scout !== undefined ? slots.scout : hasScout ? pending("scout") : null,
+    componentIds);
+  return { full, partial };
 }
 
 type AgentResult = { run: SubAgentRun; data: Rec | null } | null;

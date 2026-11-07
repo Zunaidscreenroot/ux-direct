@@ -597,7 +597,7 @@ export async function POST(request: Request) {
       selectedNode: { name: selectedName, type: selectedType, width: selectedWidth, height: selectedHeight },
       sourceTexts, components: Array.isArray(canvas.components) ? canvas.components as Array<Record<string, unknown>> : [],
       renderedScreen, origin: new URL(request.url).origin,
-    }).catch(() => fallbackBrief)
+    }, { waitMs: PLANNER_AGENT_WAIT_MS }).catch(() => fallbackBrief)
     : Promise.resolve(fallbackBrief);
   const agentsStartedAt = Date.now();
   // Independent of brain retrieval, so both lookups run at the same time.
@@ -649,7 +649,7 @@ export async function POST(request: Request) {
   const agentBrief = await Promise.race([agentBriefPromise,
     // The deadline counts from when the agents started, not from here: brain retrieval and the
     // run insert already ran in parallel with them, so a slow insert no longer adds 6 s more.
-    new Promise<AgentBrief>((resolve) => setTimeout(() => resolve(fallbackBrief), Math.max(0, agentsStartedAt + PLANNER_AGENT_WAIT_MS - Date.now())))]);
+    new Promise<AgentBrief>((resolve) => setTimeout(() => resolve(fallbackBrief), Math.max(0, agentsStartedAt + PLANNER_AGENT_WAIT_MS + 500 - Date.now())))]);
   const agentsMs = Date.now() - agentsStartedAt;
   const exampleInstructions = verifiedExample
     ? "\nVERIFIED TEAM EXAMPLE — the block structure of an earlier output that passed UX Direct's quality gate. Texts are replaced by <source text>. Follow its way of choosing sections and blocks for similar content; never copy it, and use only this screen's real content: " + verifiedExample

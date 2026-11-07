@@ -1979,8 +1979,8 @@ async function writeCanvasCommand(payload, options) {
       // coordinates while laying them out and may make a broken plan look verified.
       // Absolute overlays and free-positioned children keep their local coordinates.
       if (!inAutoLayout || spec.layoutPositioning === "ABSOLUTE") {
-        node.x = Number.isFinite(spec.x) ? Math.max(-10000, Math.min(10000, spec.x)) : 0;
-        node.y = Number.isFinite(spec.y) ? Math.max(-10000, Math.min(10000, spec.y)) : i * (height + 24);
+        node.x = Number.isFinite(spec.x) ? Math.max(-100000, Math.min(100000, spec.x)) : 0;
+        node.y = Number.isFinite(spec.y) ? Math.max(-100000, Math.min(100000, spec.y)) : i * (height + 24);
       }
       created.push(nodeSummary(node));
     }
