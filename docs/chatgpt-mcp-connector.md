@@ -26,7 +26,7 @@ Never commit these values or paste them into source control. Keep the connection
 2. Set the server URL to `https://ux-direct.zunaid-cb7.workers.dev/api/mcp` and choose OAuth when prompted.
 3. Start the connection. ChatGPT should discover the OAuth metadata and open the UX Direct authorization page.
 4. Enter the current `UX_DIRECT_MCP_CONNECTION_CODE`, review the listed access, select the consent checkbox, and authorize.
-5. Back in ChatGPT, verify the connector exposes tools such as `ux_direct_status`, `ux_direct_uxaudit_status`, and `ux_direct_uxaudit_discover_site`.
+5. Back in ChatGPT, verify the connector exposes tools such as `ux_direct_status`, `ux_direct_brain_search`, and `ux_direct_plan_task`.
 
 The initial authorization grants the configured UX Direct scopes. UX Audit screenshot audits and benchmarking can incur OpenRouter model charges. Learning/approval tools can write to the shared product database; reusable lessons should remain drafts until the owner explicitly approves them.
 

@@ -55,6 +55,8 @@
     .message.user { align-items:flex-end; }
     .message.assistant { align-items:flex-start; }
     .message-role { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; font-weight:700; letter-spacing:.4px; padding:0 3px; }
+    .bubble details.tech { margin-top:6px; opacity:.75; font-size:11px; }
+    .bubble details.tech summary { cursor:pointer; }
     .bubble { max-width:95%; padding:10px 12px; border-radius:14px; font-size:12px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
     .user .bubble { background:var(--figma-color-bg-secondary,#f3f3f3); border:1px solid var(--figma-color-border,#e6e6e6); border-bottom-right-radius:5px; }
     .assistant .bubble { max-width:100%; padding:2px 3px 4px; border:0; background:transparent; }
@@ -288,7 +290,6 @@
     let providerHealthy = false;
     let figmaBridgeHealthy = false;
     let brainHealthy = null;
-    let auditHealthy = null;
     let chatgptState = "unknown";
     let nativeHealthReport = null;
     let nativeHealthRunning = false;
@@ -587,8 +588,6 @@
         figmaBridgeHealthy ? "This plugin session is sending fresh heartbeats." : "The plugin bridge is unavailable or the session is stale.", figmaBridgeHealthy);
       renderService("brain", "Shared Knowledge Base", brainHealthy === true ? "Connected" : brainHealthy === false ? "Unavailable" : "Not checked",
         brainHealthy === true ? "Approved UX Direct memories are reachable." : brainHealthy === false ? "Chat may continue with reduced context; brain diagnostics are unavailable." : "Waiting for provider diagnostics.", brainHealthy);
-      renderService("audit", "UX Audit service", auditHealthy === true ? "Connected" : auditHealthy === false ? "Unavailable" : "Not checked",
-        auditHealthy === true ? "UX Audit endpoint is reachable." : auditHealthy === false ? "UX Audit could not be reached." : "Waiting for service diagnostics.", auditHealthy);
       const chatHealthy = chatgptState === "connected";
       renderService("chatgpt", "ChatGPT monitor · MCP", chatHealthy ? "Active" : chatgptState === "idle" ? "Idle" : "Not verified",
         chatHealthy ? "Recent authenticated ChatGPT activity was detected." : chatgptState === "idle" ? "No MCP request in the recent activity window. The in-Figma cockpit does not depend on ChatGPT to send design requests." : "Connection activity has not been confirmed.", chatgptState === "connected" ? true : chatgptState === "idle" ? null : false);
@@ -770,11 +769,9 @@
           const data = await results[1].value.json();
           providerHealthy = data.connected === true;
           brainHealthy = data.brain && typeof data.brain.reachable === "boolean" ? data.brain.reachable : null;
-          auditHealthy = data.uxAudit && typeof data.uxAudit.reachable === "boolean" ? data.uxAudit.reachable : null;
         } else {
           providerHealthy = false;
           brainHealthy = null;
-          auditHealthy = null;
         }
         if (results[2].status === "fulfilled" && results[2].value.ok) {
           const data = await results[2].value.json();
@@ -906,6 +903,34 @@
       return output.join("");
     }
 
+    // uxd-short-reply:start
+    // Replies stay short and plain: run diagnostics (timing, models, lint/read-back notes) fold
+    // into a collapsed "Details" line, and backend architecture names never reach the designer.
+    var UXD_TECH_LINE = /^\s*(Timing:|Generation model:|Design model:|Model:|UX Direct Brain|Post-variation visual QA|Native structure|Native layer|Structural lint|Visual capture note:|Visual QA|Lint:|Read-back|Routed via|Served by|Attempts?:|Task run|Task outcome|Brain learning|Brain:|Memory:)/i;
+    function uxdScrubArchitecture(text) {
+      return String(text || "")
+        .replace(/\b(?:the\s+)?UX\s+Director\s+agency\b/gi, "UX Direct")
+        .replace(/\bagency\s*(?:\(([^)]*)\))?/gi, function (_, inner) { return inner ? "parallel pass (" + inner + ")" : "parallel pass"; })
+        .replace(/\b(?:UX|UI|Content|Design)\s+Leads?\b(?:\s+—\s+[^,.;\n]+)?/g, "UX Direct")
+        .replace(/\bspecialist(?:\s+designers?)?s?\b/gi, "UX Direct")
+        .replace(/\bsub-?agents?\b/gi, "checks")
+        .replace(/·\s*[A-Za-z-]+(?:\s+[A-Za-z-]+)?\s+designer:\s*/g, "· ")
+        .replace(/\b(?:Header|Navigation|Form|Data-viz|Information|Interaction|Status|Product)\s+designer\b/g, "section")
+        .replace(/\bUX writer\b/g, "copy");
+    }
+    function renderReplyHtml(content) {
+      var visible = [], tech = [];
+      String(content || "").replace(/\r\n?/g, "\n").split("\n").forEach(function (line) {
+        (UXD_TECH_LINE.test(line) ? tech : visible).push(line);
+      });
+      var main = uxdScrubArchitecture(visible.join("\n").replace(/\n{3,}/g, "\n\n").trim());
+      var details = tech.length
+        ? '<details class="tech"><summary>Details</summary>' + renderMarkdownHtml(uxdScrubArchitecture(tech.join("\n"))) + "</details>"
+        : "";
+      return renderMarkdownHtml(main) + details;
+    }
+    // uxd-short-reply:end
+
     function appendMessage(role, content, options = {}) {
       $("welcome").hidden = true;
       const row = document.createElement("article");
@@ -915,7 +940,7 @@
       label.textContent = role === "user" ? "YOU" : "UX DIRECT";
       const bubble = document.createElement("div");
       bubble.className = "bubble";
-      bubble.innerHTML = renderMarkdownHtml(content || "");
+      bubble.innerHTML = role === "user" ? renderMarkdownHtml(content || "") : renderReplyHtml(content || "");
       if (options.error) bubble.classList.add("error");
       row.append(label, bubble);
       $("chatLog").appendChild(row);
@@ -1083,6 +1108,13 @@
         const result = await response.json().catch(function () { return {}; });
         return response.ok && result.ok === true && Array.isArray(result.issues) ? result : null;
       } catch (_) { return null; }
+    }
+
+    /** One plain sentence for the most serious lint issue. */
+    function uxdLintHeadline(lint) {
+      var issues = Array.isArray(lint && lint.issues) ? lint.issues : [];
+      var top = issues.find(function (i) { return i && i.severity === "high"; }) || issues[0];
+      return top && top.issue ? String(top.issue) : "a quality check failed.";
     }
 
     function formatLintIssues(issues) {
@@ -1888,8 +1920,8 @@
         sourceRootId: sourceNode && sourceNode.id, outputRootId: createdFrameId,
         state: designOptions && designOptions.state ? designOptions.state : undefined
       });
-      let visualNote = "\n\nPost-variation visual QA disabled as requested; native layer read-back passed." +
-        "\n" + lint.text;
+      let visualNote = "\nPost-variation visual QA disabled as requested; native layer read-back passed." +
+        "\n" + String(lint.text || "").split("\n").map(function (line) { return /^\s*Structural lint/i.test(line) ? line : "Structural lint · " + line; }).join("\n");
       visualNote += await finalizeTaskOutcome(lint.passed ? "verified" : "failed",
         lint.passed
           ? "Native structure/read-back and structural lint passed; post-variation visual QA disabled as requested. " + lint.text
@@ -1900,20 +1932,16 @@
       else stage("error", "Variation created · structural lint found issues to fix");
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
       if (createMode) {
-        return 'Created a new screen "' + frameName + '" with ' + completedElementCount + ' native layers from your prompt, using this file\'s components where they fit. ' +
-          String(plan.summary || "") + '\n\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory + visualNote + timingLine +
-          '\nIt is selected on the canvas. Next: **add icons**, **fill with realistic data**, **fix hygiene**, or **add empty, loading and error states**.' +
-          (lint.passed ? '' : '\nThis screen is NOT accepted yet: fix the issues above or ask UX Direct to retry.');
+        return 'Created **' + frameName + '**. ' + String(plan.summary || "") +
+          (lint.passed ? '' : '\n**Not ready yet:** ' + uxdLintHeadline(lint) + ' Say **retry** to fix it.') +
+          '\nNext: **add icons**, **fill with realistic data** or **add states**.' +
+          '\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory + visualNote + timingLine;
       }
-      return 'Created "' + frameName + '" as a separate editable Figma variation with ' +
-        completedElementCount + ' native layers. ' + String(plan.summary || "The variation is ready for review.") +
-        '\n\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory +
+      return 'Created **' + frameName + '** next to the original. ' + String(plan.summary || "") +
+        (lint.passed ? '' : '\n**Not ready yet:** ' + uxdLintHeadline(lint) + ' Say **retry** to fix it.') +
+        '\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory +
         visualNote +
-        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') +
-        '\nThe source frame was preserved. The new variation is selected on the canvas.' + timingLine +
-        (lint.passed
-          ? '\nThe generated variation is ready for manual review.'
-          : '\nThis variation is NOT accepted yet: fix the issues above or ask UX Direct to retry.');
+        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') + timingLine;
       } catch (error) {
         if (taskRunId) {
           await finalizeTaskOutcome("failed", String(error && error.message || error || "Native Figma task failed"),
@@ -3234,7 +3262,7 @@
         const reply = appendMessage("assistant", "Reverting…");
         try {
           const text = await revertEntries(entries, function (state, status) { setProcessState(state, status); reply.bubble.textContent = status; });
-          reply.bubble.innerHTML = renderMarkdownHtml(text);
+          reply.bubble.innerHTML = renderReplyHtml(text);
           button.textContent = "Reverted";
         } catch (error) {
           reply.bubble.textContent = "Could not revert. " + String(error && error.message || error);
@@ -3333,7 +3361,7 @@
             if (assistantMessage) { assistantMessage.bubble.textContent = status; }
           });
           if (answer) {
-            assistantMessage.bubble.innerHTML = renderMarkdownHtml(answer);
+            assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
             chatHistory.push({ role: "assistant", content: answer });
             await sendTelemetry("Direct edit completed", "success", "UX Direct applied a deterministic Figma edit without a model.", {
               durationMs: Date.now() - startedAt, selectedCount: (currentSelection.selection || []).length, model: "direct-edit"
@@ -3344,7 +3372,7 @@
           const planned = await executeNativeActionPlan(prompt, function (status) {
             if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
           });
-          assistantMessage.bubble.innerHTML = renderMarkdownHtml(planned);
+          assistantMessage.bubble.innerHTML = renderReplyHtml(planned);
           chatHistory.push({ role: "assistant", content: planned });
           return;
         }
@@ -3354,7 +3382,7 @@
           const answer = await runQuickTask(quickTask, prompt, function (status) {
             if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
           });
-          assistantMessage.bubble.innerHTML = renderMarkdownHtml(answer);
+          assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
           chatHistory.push({ role: "assistant", content: answer });
           await sendTelemetry("Quick task completed", "success", "UX Direct completed a Figma quick task: " + quickTask.kind + ".", {
             durationMs: Date.now() - startedAt, selectedCount: (currentSelection.selection || []).length, model: "quick-task:" + quickTask.kind
@@ -3367,7 +3395,7 @@
           const answer = await executeNativeActionPlan(prompt, function (status) {
             if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
           });
-          assistantMessage.bubble.innerHTML = renderMarkdownHtml(answer);
+          assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
           chatHistory.push({ role: "assistant", content: answer });
           await sendTelemetry("Native Figma editing completed", "success", "UX Direct planned and executed native Figma editing operations, then verified the selected tree.", {
             durationMs: Date.now() - startedAt, selectedCount: (currentSelection.selection || []).length, model: "figma-native-actions"
@@ -3383,7 +3411,7 @@
               $("conversation").scrollTop = $("conversation").scrollHeight;
             }
           });
-          assistantMessage.bubble.innerHTML = renderMarkdownHtml(answer);
+          assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
           chatHistory.push({ role: "assistant", content: answer });
           await sendTelemetry("Figma design-agent task completed", "success", "UX Direct generated a native layout, executed Figma Plugin API commands, and verified the selected variation.", {
             durationMs: Date.now() - startedAt,
@@ -3411,7 +3439,7 @@
         assistantMessage = appendMessage("assistant", "");
         typingRow.remove();
         const answer = await streamAssistantResponse(response, function (_delta, current) {
-          assistantMessage.bubble.innerHTML = renderMarkdownHtml(current);
+          assistantMessage.bubble.innerHTML = renderReplyHtml(current);
           $("conversation").scrollTop = $("conversation").scrollHeight;
         });
         if (!answer.trim()) {
