@@ -224,6 +224,8 @@ test("light/dark mode switches in place: neutrals flip, brand hue kept, contrast
   assert.equal(already.already, 1, "a light screen is already light");
   const beforeScreen = JSON.stringify(r.screen.fills);
   const beforeTitle = JSON.stringify(r.title.fills);
+  // Real Figma node proxies are not extensible ("Cannot add property ..., object is not extensible").
+  Object.preventExtensions(r.title);
   const result = await run("apply-theme", { target: "dark" });
   assert.ok(result.changed >= 2);
   const lum = (c: any) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
@@ -259,4 +261,18 @@ test("names fix renames generic containers by role and leaves real names alone",
   assert.equal(row.name, "Row / Next due");
   assert.equal(r.stack.name, "Rows", "a real name is kept");
   assert.equal(result.counts.names, 2);
+});
+
+test("text without an exact style binds the nearest same-weight style within 1px, and Revert restores the size", async () => {
+  const r = runtime();
+  const small = r.make({ type: "TEXT", name: "Badge", characters: "Overdue", fontSize: 19, fontName: { family: "Inter", style: "Bold" } }, r.screen);
+  const odd = r.make({ type: "TEXT", name: "Pay", characters: "Pay now", fontSize: 20.72, fontName: { family: "Inter", style: "Bold" } }, r.screen);
+  const regular = r.make({ type: "TEXT", name: "Body", characters: "Body", fontSize: 20, fontName: { family: "Inter", style: "Regular" } }, r.screen);
+  const far = r.make({ type: "TEXT", name: "Big", characters: "Big", fontSize: 24, fontName: { family: "Inter", style: "Bold" } }, r.screen);
+  const result = await r.fix(["tokens"]);
+  assert.equal(small.textStyleId, "T:h2", "19px Bold takes the 20px Bold style");
+  assert.equal(odd.textStyleId, "T:h2", "20.72px Bold takes the 20px Bold style");
+  assert.equal(regular.textStyleId, "", "a different weight is never forced");
+  assert.equal(far.textStyleId, "", "more than 1px away stays unstyled");
+  for (const prop of ["fontSize", "textStyleId"]) assert.ok(result.snapshot.some((item: any) => item.id === small.id && item.prop === prop), "snapshot has " + prop);
 });

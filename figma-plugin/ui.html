@@ -1985,6 +1985,8 @@
         stage("creating", "Applying the file's colour and text styles and the spacing grid…");
         await localTask("apply-hygiene-fixes", { groups: ["tokens", "spacing", "names"] }, 120000);
       } catch (_) { /* styling is a bonus pass; the build itself already succeeded */ }
+      // Repeated cards and rows become one local component plus instances (reuse, like Claude in Figma).
+      try { await localTask("componentize-repeats", { rootId: createdFrameId }, 60000); } catch (_) { /* bonus pass */ }
 
       const buildMs = Date.now() - buildStartedAt;
       const checksStartedAt = Date.now();
@@ -2341,7 +2343,9 @@
         });
         // "add a primary button": place an instance of a matching component from this file, no model.
         eat(/^\s*(?:please\s+|pls\s+)?(?:add|insert|place|put)\s+(?:a\s+|an\s+|one\s+|another\s+|new\s+)*((?:(?!(?:to|on|in|into|onto|for|with|of|the|this|and|shadows?|gradients?|blur|grids?|padding|spacing|gap|radius|colou?rs?|fills?|text|copy|label|states?|screens?|pages?|flows?|variations?|versions?)\b)[a-z][\w-]*\s+){0,3})(button|icon|chip|badge|toggle|switch|checkbox|radio|input|text ?field|field|search ?bar|dropdown|tab|card|divider|avatar|tag)s?(?:\s+(?:here|below|at\s+the\s+(?:bottom|end)|(?:to|in|into)\s+(?:this|the|selected)\s+(?:screen|frame|card|section|container)))?\s*$/gi, function (_m, quals, kind) {
-          const op = act("insertComponent", "Inserted " + kind.toLowerCase(), { component: kind.toLowerCase().replace(/\s+/g, ""), qualifiers: String(quals || "").trim().toLowerCase().split(/\s+/).filter(Boolean) });
+          const op = act("insertComponent", "Inserted " + kind.toLowerCase(), { component: kind.toLowerCase().replace(/\s+/g, ""), qualifiers: String(quals || "").trim().toLowerCase().split(/\s+/).filter(Boolean),
+            // "add another loan card": duplicate the last existing one in its list, like Cmd+D.
+            another: /\b(another|one\s+more|ek\s+aur|aur\s+ek)\b/i.test(_m) });
           delete op.noun; delete op.single;
           return op;
         });

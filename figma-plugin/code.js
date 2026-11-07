@@ -2975,7 +2975,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire", "learn-baseline", "learn-corrections", "apply-theme", "restore-theme-modes"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire", "learn-baseline", "learn-corrections", "apply-theme", "restore-theme-modes", "componentize-repeats"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -3843,10 +3843,50 @@ function uxdContentInset(parent, except) {
   var best = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || a - b; })[0];
   return best !== undefined && Number(best) <= 48 ? Number(best) : 0;
 }
+// Existing layers in the selection that already are the asked thing ("Loan Card" for "loan card"):
+// layer name, or its main component's name, has the kind and every qualifier.
+async function uxdExistingMatches(root, kind, qualifiers) {
+  if (!root || !("findAll" in root)) return [];
+  var words = [kind.replace(/field$/, " field")].concat(qualifiers).map(function (w) { return w.replace(/\s+/g, "").toLowerCase(); });
+  function fits(name) {
+    var flat = String(name || "").toLowerCase().replace(/[\s_\-\/]+/g, "");
+    return words.every(function (w) { return flat.indexOf(w) >= 0; });
+  }
+  var found = [];
+  var all = root.findAll(function (n) { return n.visible !== false && n.type !== "TEXT" && n.type !== "VECTOR"; });
+  for (var i = 0; i < all.length && i < 2000; i++) {
+    var n = all[i];
+    // Inside another match (or an instance) it is part of that thing, not a sibling.
+    var inside = false;
+    for (var p = n.parent; p && p !== root; p = p.parent) { if (p.type === "INSTANCE" || found.indexOf(p) >= 0) { inside = true; break; } }
+    if (inside) continue;
+    var name = n.name;
+    if (!fits(name) && n.type === "INSTANCE") {
+      try { var main = await n.getMainComponentAsync(); if (main) name = (main.parent && main.parent.type === "COMPONENT_SET" ? main.parent.name : main.name); } catch (_) {}
+    }
+    if (fits(name)) found.push(n);
+  }
+  return found;
+}
 async function uxdInsertComponent(roots, op) {
   var kind = String(op.component || "button");
   var qualifiers = (Array.isArray(op.qualifiers) ? op.qualifiers : []).map(String).filter(function (q) { return q.length > 1; });
   var root = roots[0];
+  // "add another loan card" (or a list that already repeats it): duplicate the last one in its own list,
+  // so it lands beside its siblings instead of in a new wrapper at the screen root.
+  var existing = await uxdExistingMatches(root, kind, qualifiers);
+  if (existing.length && (op.another === true || existing.length >= 2)) {
+    var byParent = new Map();
+    existing.forEach(function (n) { byParent.set(n.parent, (byParent.get(n.parent) || []).concat([n])); });
+    var group = Array.from(byParent.values()).sort(function (a, b) { return b.length - a.length; })[0];
+    var last = group.slice().sort(function (a, b) { return a.parent.children.indexOf(a) - b.parent.children.indexOf(b); })[group.length - 1];
+    var copy = last.clone();
+    var host = last.parent;
+    host.insertChild(host.children.indexOf(last) + 1, copy);
+    if (!("layoutMode" in host) || host.layoutMode === "NONE") { copy.x = last.x; copy.y = last.y + last.height + 12; }
+    figma.currentPage.selection = [copy];
+    return "added another \"" + last.name + "\" after the last one";
+  }
   var parent = root.type === "INSTANCE" || !("appendChild" in root) ? root.parent : root;
   var component = await uxdFindComponent(roots, kind, qualifiers);
   if (!component) throw new Error("No " + kind + " component found in this screen or on this page. Create or import one, then try again.");
@@ -4096,6 +4136,79 @@ function uxdRestoreKey(prop, value) {
   if (prop === "annotations") return JSON.stringify(uxdCleanAnnotations(value));
   return JSON.stringify(value);
 }
+// uxd-componentize:start
+// Claude-in-Figma habit: repeated items (loan cards, list rows) are one component plus instances.
+// Runs on a frame UX Direct just built: sibling frames with the same structure become a local
+// component (the first one) and instances carrying each copy's own text, fills and visibility.
+function uxdShapeKey(node, depth) {
+  if (depth > 6) return "…";
+  var key = node.type + (node.layoutMode && node.layoutMode !== "NONE" ? ":" + node.layoutMode : "");
+  if (node.type === "INSTANCE") return key;
+  if (!("children" in node)) return key;
+  return key + "(" + node.children.map(function (c) { return uxdShapeKey(c, depth + 1); }).join(",") + ")";
+}
+function uxdPairedNodes(a, b, out) {
+  out.push([a, b]);
+  if ("children" in a && "children" in b && a.type !== "INSTANCE" && a.children.length === b.children.length) {
+    for (var i = 0; i < a.children.length; i++) uxdPairedNodes(a.children[i], b.children[i], out);
+  }
+  return out;
+}
+async function localComponentizeRepeats(payload) {
+  var root = payload && payload.rootId ? await figma.getNodeByIdAsync(String(payload.rootId)) : figma.currentPage.selection[0];
+  if (!root || !("findAll" in root) || typeof figma.createComponentFromNode !== "function") return { ok: true, components: 0, instances: 0 };
+  var components = 0, instances = 0;
+  var parents = [root].concat(root.findAll(function (n) { return n.type === "FRAME" && n.children && n.children.length >= 2; }));
+  for (var p = 0; p < parents.length && components < 6; p++) {
+    var parent = parents[p];
+    if (!parent || parent.removed || !("children" in parent)) continue;
+    var groups = {};
+    parent.children.forEach(function (child) {
+      if (child.type !== "FRAME" || child.visible === false) return;
+      var size = child.findAll ? child.findAll(function () { return true; }).length : 0;
+      if (size < 3 || !child.findAll(function (n) { return n.type === "TEXT"; }).length) return;
+      var key = uxdShapeKey(child, 0) + "|" + Math.round(child.width);
+      (groups[key] = groups[key] || []).push(child);
+    });
+    for (var key in groups) {
+      var group = groups[key];
+      if (group.length < 2) continue;
+      var first = group[0];
+      var index = parent.children.indexOf(first);
+      var component = figma.createComponentFromNode(first);
+      if (!component || component.type !== "COMPONENT") continue;
+      component.name = String(component.name || "Item").replace(/\s*\d+$/, "").slice(0, 60) || "Item";
+      components++;
+      for (var g = 1; g < group.length; g++) {
+        var copy = group[g];
+        var instance = component.createInstance();
+        var at = parent.children.indexOf(copy);
+        parent.insertChild(at, instance);
+        ["layoutSizingHorizontal", "layoutSizingVertical", "layoutGrow", "layoutAlign"].forEach(function (prop) {
+          try { if (prop in copy) instance[prop] = copy[prop]; } catch (_) {}
+        });
+        var pairs = uxdPairedNodes(copy, instance, []);
+        for (var k = 0; k < pairs.length; k++) {
+          var src = pairs[k][0], dst = pairs[k][1];
+          try {
+            if (src.visible !== dst.visible) dst.visible = src.visible;
+            if ("fills" in src && JSON.stringify(src.fills) !== JSON.stringify(dst.fills) && src.fills !== figma.mixed) dst.fills = src.fills;
+            if (src.type === "TEXT" && dst.type === "TEXT" && src.characters !== dst.characters) {
+              await uxdLoadTextFonts(dst);
+              dst.characters = src.characters;
+            }
+          } catch (_) {}
+        }
+        instance.name = copy.name;
+        copy.remove();
+        instances++;
+      }
+      void index;
+    }
+  }
+  return { ok: true, components: components, instances: instances };
+}
+// uxd-componentize:end
 async function localRestoreProps(payload) {
   var items = Array.isArray(payload.items) ? payload.items.slice(0, 3000) : [];
   var restored = 0, changedSince = 0, missing = 0;
@@ -4193,7 +4306,34 @@ function uxdMatchTextStyle(node, styles) {
     return { style: style, lhGap: lhGap, lsGap: lsGap };
   }).filter(function (x) { return x.lhGap <= 2 && x.lsGap <= 0.5; });
   scored.sort(function (a, b) { return (a.lhGap + a.lsGap) - (b.lhGap + b.lsGap) || String(a.style.name).localeCompare(String(b.style.name)); });
-  return scored.length ? scored[0].style : null;
+  if (scored.length) return scored[0].style;
+  // No exact style: the nearest one of the same family and weight within 1px (10px Bold → 11px Bold,
+  // 11.72px → 12px). It changes the size by at most 1px, so it is marked "near" and fully snapshotted.
+  var weight = uxdFontWeight(node.fontName.style);
+  var near = styles.filter(function (style) {
+    return style.fontName && style.fontName.family === node.fontName.family && uxdFontWeight(style.fontName.style) === weight &&
+      /italic/i.test(style.fontName.style) === /italic/i.test(node.fontName.style) &&
+      Math.abs(style.fontSize - node.fontSize) <= 1.01 &&
+      (style.textCase === undefined || node.textCase === undefined || style.textCase === node.textCase || style.textCase === "ORIGINAL");
+  }).map(function (style) {
+    var lh = uxdLineHeightPx(style.lineHeight, style.fontSize);
+    var lhGap = nodeLh === null || lh === null ? 0 : Math.abs(lh - nodeLh);
+    return { style: style, lhGap: lhGap, gap: Math.abs(style.fontSize - node.fontSize) * 2 + lhGap / 4 };
+  }).filter(function (x) { return x.lhGap <= 4; });
+  near.sort(function (a, b) { return a.gap - b.gap || String(a.style.name).localeCompare(String(b.style.name)); });
+  return near.length ? { id: near[0].style.id, name: near[0].style.name, fontName: near[0].style.fontName, fontSize: near[0].style.fontSize, near: true } : null;
+}
+function uxdFontWeight(style) {
+  var s = String(style || "").toLowerCase().replace(/[\s_-]+/g, "");
+  if (/thin|hairline/.test(s)) return 100;
+  if (/extralight|ultralight/.test(s)) return 200;
+  if (/light/.test(s)) return 300;
+  if (/semibold|demibold/.test(s)) return 600;
+  if (/extrabold|ultrabold/.test(s)) return 800;
+  if (/black|heavy/.test(s)) return 900;
+  if (/bold/.test(s)) return 700;
+  if (/medium/.test(s)) return 500;
+  return 400;
 }
 function uxdTextBackground(node) {
   for (var parent = node.parent; parent && parent.type !== "PAGE"; parent = parent.parent) {
@@ -4284,6 +4424,8 @@ async function localApplyTheme(payload) {
   var isAlready = rootBg.every(function (l) { return l !== null && (toLight ? l > 0.5 : l < 0.2); });
   if (!modes.length && isAlready) already = roots.length;
   else {
+    // Figma node proxies are not extensible: keep pending text fills in a Map, never on the node.
+    var pendingFills = new Map();
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];
       var isText = node.type === "TEXT";
@@ -4295,16 +4437,16 @@ async function localApplyTheme(payload) {
         });
         if (JSON.stringify(next) === JSON.stringify(node[prop])) return;
         uxdSnapProp(node, prop);
-        if (isText && prop === "fills") return node.__uxdPending = next;
+        if (isText && prop === "fills") { pendingFills.set(node, next); return; }
         node[prop] = next;
         changed++;
       });
     }
     // Text needs its fonts loaded before fills change.
     for (var t = 0; t < nodes.length; t++) {
-      if (!nodes[t].__uxdPending) continue;
-      try { await uxdLoadTextFonts(nodes[t]); nodes[t].fills = nodes[t].__uxdPending; changed++; } catch (_) {}
-      delete nodes[t].__uxdPending;
+      var pending = pendingFills.get(nodes[t]);
+      if (!pending) continue;
+      try { await uxdLoadTextFonts(nodes[t]); nodes[t].fills = pending; changed++; } catch (_) {}
     }
   }
   // Contrast pass: any text below 4.5:1 on its background goes to the mode's text colour.
@@ -4534,6 +4676,8 @@ async function localApplyHygieneFixes(payload) {
           if (!match) continue;
           await uxdLoadTextFonts(text);
           if (match.fontName) await figma.loadFontAsync(match.fontName);
+          // A near style changes size/line height slightly: snapshot them so Revert is exact.
+          if (match.near) ["fontName", "fontSize", "lineHeight", "letterSpacing"].forEach(function (prop) { uxdSnapProp(text, prop); });
           uxdSnapProp(text, "textStyleId");
           if (typeof text.setTextStyleIdAsync === "function") await text.setTextStyleIdAsync(match.id);
           else text.textStyleId = match.id;
@@ -5616,6 +5760,7 @@ async function runLocalTask(message) {
     else if (message.op === "fill-realistic-data") result = await localFillRealisticData(payload);
     else if (message.op === "restore-texts") result = await localRestoreTexts(payload);
     else if (message.op === "restore-props") result = await localRestoreProps(payload);
+    else if (message.op === "componentize-repeats") result = await localComponentizeRepeats(payload);
     else if (message.op === "find-icon-targets") result = await localFindIconTargets(payload);
     else if (message.op === "insert-icons") result = await localInsertIcons(payload);
     else if (message.op === "section-state") result = await localSectionState(payload);

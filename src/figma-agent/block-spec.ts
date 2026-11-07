@@ -149,6 +149,47 @@ export function resolveTheme(raw: unknown, sourceBackground: string | null, sour
   return theme;
 }
 
+const THEME_ROLES: Array<[keyof BlockTheme, RegExp]> = [
+  ["background", /\b(background|bg|canvas|screen)\b/i], ["surface", /\b(surface|card|container|elevated|panel)\b/i],
+  ["surfaceAlt", /\b(surface ?(alt|2|variant|secondary)|subtle|track)\b/i], ["border", /\b(border|stroke|divider|outline|line)\b/i],
+  ["text", /\b(text|on[- ]?surface|foreground|fg)\b.*\b(primary|default|high)?\b/i], ["muted", /\b(muted|secondary text|text ?secondary|subtle text|caption|placeholder)\b/i],
+  ["primary", /\b(primary|brand|accent)\b/i], ["success", /\b(success|positive|green|current)\b/i],
+  ["warning", /\b(warning|caution|amber|orange)\b/i], ["danger", /\b(danger|error|negative|red|delinquent|overdue)\b/i], ["info", /\b(info|informative|blue)\b/i],
+];
+
+function colorDistance(a: string, b: string): number {
+  const [r1, g1, b1] = rgb(a), [r2, g2, b2] = rgb(b);
+  return Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2) / 255;
+}
+
+/**
+ * Move the theme onto the file's own paint styles, so generated fills bind to styles instead of
+ * staying raw hex (benchmark gap 1): a token within an imperceptible distance of a file colour takes
+ * that colour, and a token with no near colour takes the style named for its role (Surface, Border,
+ * Success...) when that style has about the same lightness, so contrast and dark/light stay intact.
+ */
+export function snapThemeToStyles(theme: BlockTheme, styles: Rec | null): BlockTheme {
+  const paints = arr(styles?.paint).map(asRec).filter((x): x is Rec => !!x && typeof x.color === "string" && !!hex(x.color))
+    .map((x) => ({ name: String(x.name ?? ""), color: hex(x.color)! }));
+  if (!paints.length) return theme;
+  const out: BlockTheme = { ...theme };
+  for (const [key, role] of THEME_ROLES) {
+    const current = out[key];
+    if (typeof current !== "string") continue;
+    let best: string | null = null, bestDist = 0.06;
+    for (const p of paints) { const d = colorDistance(current, p.color); if (d < bestDist) { bestDist = d; best = p.color; } }
+    if (!best && key !== "background" && key !== "primary") {
+      const leaf = (name: string) => name.split("/").slice(-2).join(" ");
+      const named = paints.find((p) => role.test(leaf(p.name)) && !/\b(button|btn|badge|chip|input|hover|pressed|disabled)\b/i.test(p.name) &&
+        Math.abs(luminance(p.color) - luminance(current)) <= 0.12);
+      if (named) best = named.color;
+    }
+    if (best) (out as Record<string, unknown>)[key] = best;
+  }
+  out.primaryFill = out.primaryFill === theme.primary ? out.primary : out.primaryFill;
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Source design-system tokens
 // ---------------------------------------------------------------------------
@@ -379,10 +420,18 @@ class Builder {
     return node;
   }
 
-  /** Free-positioned frame (for rings and other layered indicators). */
-  canvas(name: string, width: number, height: number, children: NativeNode[]): NativeNode {
+  /**
+   * Fixed box for layered indicators (rings, bar tracks): an Auto Layout frame whose decoration layers
+   * are ABSOLUTE children and whose `flow` children (the ring's value) are laid out and centred by it,
+   * so nothing overlaps in flow and the box still counts as Auto Layout (benchmark pattern).
+   */
+  canvas(name: string, width: number, height: number, children: NativeNode[], flow: NativeNode[] = [], align: "MIN" | "CENTER" = "CENTER"): NativeNode {
     this.count += 1;
-    return { type: "FRAME", name, x: 0, y: 0, width, height, layoutMode: "NONE", noFill: true, layoutSizingHorizontal: "FIXED", layoutSizingVertical: "FIXED", children };
+    for (const child of children) if (!flow.includes(child)) { child.layoutPositioning = "ABSOLUTE"; child.layoutSizingHorizontal = "FIXED"; child.layoutSizingVertical = "FIXED"; }
+    return { type: "FRAME", name, x: 0, y: 0, width, height, layoutMode: "HORIZONTAL", itemSpacing: 0,
+      paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0,
+      primaryAxisSizingMode: "FIXED", counterAxisSizingMode: "FIXED", primaryAxisAlignItems: align, counterAxisAlignItems: "CENTER",
+      noFill: true, layoutSizingHorizontal: "FIXED", layoutSizingVertical: "FIXED", children };
   }
 
   private paint(node: NativeNode, fill: string | null, radius?: number, stroke?: string) {
@@ -517,7 +566,34 @@ function percent(value: unknown): number {
 // Expansion
 // ---------------------------------------------------------------------------
 
-type Ctx = { b: Builder; t: BlockTheme; bg: string; componentIds: Set<string>; skeleton?: boolean };
+type BadgeComponent = { id: string; prop: string; options: string[]; textProp: string | null; height: number };
+type Ctx = { b: Builder; t: BlockTheme; bg: string; componentIds: Set<string>; skeleton?: boolean; badge?: BadgeComponent | null;
+  /** Improve only: the source's own texts, so the renderer never adds copy the source did not have. */
+  sourceTexts?: Set<string> | null };
+
+const TONE_OPTIONS: Record<string, RegExp> = {
+  success: /^(success|positive|current|active|paid|completed?|approved|on ?track|green)$/i,
+  danger: /^(danger|error|negative|delinquent|overdue|failed|rejected|critical|red)$/i,
+  warning: /^(warning|caution|due|pending|due soon|at risk|amber|orange|yellow)$/i,
+  info: /^(info|informative|new|blue)$/i,
+  neutral: /^(neutral|default|inactive|closed|matured|grey|gray)$/i,
+};
+
+/** The file's status chip / badge component set, so badges are instances of it instead of drawn pills. */
+function findBadgeComponent(components: unknown): BadgeComponent | null {
+  for (const raw of arr(components)) {
+    const c = asRec(raw);
+    if (!c || typeof c.id !== "string" || !/\b(badge|chip|status|label|tag|pill|lozenge)s?\b/i.test(String(c.name ?? ""))) continue;
+    if (/\b(button|input|field|nav|tab ?bar|card|list)\b/i.test(String(c.name))) continue;
+    if (typeof c.height === "number" && c.height > 40) continue;
+    const props = asRec(c.properties) ?? {};
+    const variant = Object.entries(props).find(([, def]) => asRec(def)?.type === "VARIANT" && arr(asRec(def)?.options).length >= 2);
+    if (!variant) continue;
+    const textProp = Object.entries(props).find(([, def]) => asRec(def)?.type === "TEXT")?.[0] ?? null;
+    return { id: c.id, prop: variant[0], options: arr(asRec(variant[1])?.options).map(String), textProp, height: typeof c.height === "number" ? c.height : 24 };
+  }
+  return null;
+}
 
 function toneColor(t: BlockTheme, kind: ReturnType<typeof tone>): string {
   return kind === "neutral" ? t.muted : t[kind];
@@ -544,6 +620,23 @@ function skeletonNode(ctx: Ctx, block: Rec, W: number): NativeNode {
 
 function badgeNode(ctx: Ctx, textValue: string, kind: ReturnType<typeof tone>): NativeNode {
   const { b, t } = ctx;
+  const comp = ctx.badge;
+  if (comp) {
+    const exact = comp.options.find((o) => o.trim().toLowerCase() === textValue.trim().toLowerCase());
+    const byTone = exact ?? comp.options.find((o) => TONE_OPTIONS[kind]?.test(o.trim()));
+    if (byTone) {
+      b.count += 1;
+      const node: NativeNode = { type: "INSTANCE", name: label(textValue, "Status badge"), componentId: comp.id, x: 0, y: 0,
+        width: Math.ceil(textWidth(textValue, 12) + 20), height: comp.height, layoutSizingHorizontal: "HUG",
+        instanceProperties: { [comp.prop]: byTone } };
+      // The variant gives the colour; the label keeps the screen's own word ("Overdue" on a Delinquent chip).
+      if (!exact) {
+        if (comp.textProp) node.instanceProperties = { [comp.prop]: byTone, [comp.textProp]: textValue };
+        else node.textOverrides = { __title: textValue };
+      }
+      return node;
+    }
+  }
   const color = toneColor(t, kind);
   const fill = mix(t.surface, color, t.dark ? 0.22 : 0.12);
   const txt = b.text("Badge label", textValue, 400, { size: 12, weight: "Medium", color, bg: fill, hug: true });
@@ -572,7 +665,7 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       const title = clean(block.title ?? block.text, 120);
       if (!title) return null;
       const left: NativeNode[] = [];
-      if (block.back !== false && (block.back === true || block.back === undefined && depth <= 1)) {
+      if (block.back !== false && (block.back === true || block.back === undefined && depth <= 1 && (!ctx.sourceTexts || ctx.sourceTexts.has("←")))) {
         left.push(b.text("Back", "←", 40, { size: 20, color: t.text, bg, hug: true }));
       }
       const actionText = clean(block.action, 30);
@@ -694,15 +787,19 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       const arc = { type: "ELLIPSE", name: "Progress " + Math.round(pct) + "%", x: 0, y: 0, width: size, height: size, color: toneColor(t, tone(block.tone)) === t.muted ? t.primary : toneColor(t, tone(block.tone)),
         arcData: { startingAngle: start, endingAngle: start + Math.max(0.02, (pct / 100) * Math.PI * 2), innerRadius: 0.78 } } as NativeNode;
       b.count += 2;
-      const centerText = clean(block.center ?? block.centerText, 12) || Math.round(pct) + "%";
-      const pctNode = b.text("Progress value", centerText, size, { size: 15, weight: "Semi Bold", color: t.text, bg, align: "CENTER" });
-      // The ring is an absolute canvas: a hugging token ("80%") would sit at x=0 over the stroke.
-      pctNode.width = size;
-      pctNode.x = 0;
-      pctNode.textAutoResize = "HEIGHT";
-      pctNode.layoutSizingHorizontal = "FIXED";
-      pctNode.y = Math.round((size - pctNode.height) / 2);
-      const ring = b.canvas("Progress ring", size, size, [track, arc, pctNode]);
+      const explicitCenter = clean(block.center ?? block.centerText, 12);
+      // Improve: a default "80%" the source never showed is invented copy, so the ring stays label-free.
+      const centerText = explicitCenter || (!ctx.sourceTexts || ctx.sourceTexts.has(textKey(Math.round(pct) + "%")) ? Math.round(pct) + "%" : "");
+      const pctNode = centerText ? b.text("Progress value", centerText, size, { size: 15, weight: "Semi Bold", color: t.text, bg, align: "CENTER" }) : null;
+      if (pctNode) {
+        // The value spans the ring box and is centred by its Auto Layout, never over the stroke.
+        pctNode.width = size;
+        pctNode.x = 0;
+        pctNode.textAutoResize = "HEIGHT";
+        pctNode.layoutSizingHorizontal = "FIXED";
+        pctNode.y = Math.round((size - pctNode.height) / 2);
+      }
+      const ring = b.canvas("Progress ring", size, size, pctNode ? [track, arc, pctNode] : [track, arc], pctNode ? [pctNode] : []);
       const lbl = clean(block.label ?? block.title, 120);
       const caption = clean(block.caption ?? block.subtitle, 200);
       if (!lbl && !caption) return ring;
@@ -727,7 +824,7 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       }
       const fillColor = tone(block.tone) === "neutral" ? t.primary : toneColor(t, tone(block.tone));
       const fill = b.rect("Progress fill", Math.max(4, (W * pct) / 100), 8, fillColor, { cornerRadius: 4 });
-      const barTrack = b.canvas("Progress track", W, 8, [fill]);
+      const barTrack = b.canvas("Progress track", W, 8, [fill], [fill], "MIN");
       delete barTrack.noFill;
       barTrack.color = t.dark ? t.surfaceAlt : t.border;
       barTrack.cornerRadius = 4;
@@ -963,7 +1060,7 @@ function expandCard(ctx: Ctx, block: Rec, width: number, depth: number, nameFall
     const headerKids = [titleNode, badgeNodeValue].filter((x): x is NativeNode => !!x);
     kids.push(headerKids.length > 1 ? b.hstack("Card header", inner, headerKids, { gap: 12, justify: "SPACE_BETWEEN", align: "MIN" }) : headerKids[0]);
   }
-  const cardBlocks = alignRowLeading(arr(block.blocks ?? block.children ?? block.items ?? block.content).map(asRec).filter((x): x is Rec => !!x));
+  const cardBlocks = groupCardMetrics(alignRowLeading(arr(block.blocks ?? block.children ?? block.items ?? block.content).map(asRec).filter((x): x is Rec => !!x)));
   for (let index = 0; index < cardBlocks.length; index += 1) {
     const rec = cardBlocks[index];
     const type = blockType(rec);
@@ -985,6 +1082,34 @@ function expandCard(ctx: Ctx, block: Rec, width: number, depth: number, nameFall
   if (!kids.length) return null;
   const name = clean(block.name, 80) || (title ? label(title, "Card") : nameFallback);
   return b.vstack(name, width, kids, { gap: 12, pad: [16, 16, 16, 16], fill: t.surface, radius: t.radius, stroke: t.border });
+}
+
+/**
+ * Models often emit a card's metrics as loose blocks: 2–3 adjacent `stat` blocks become one stat_row
+ * (side by side, like the source), and 2–3 adjacent `row` blocks right after a ring become one list,
+ * so the ring | metrics pairing applies whatever shape the spec used.
+ */
+function groupCardMetrics(blocks: Rec[]): Rec[] {
+  const out: Rec[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const type = blockType(blocks[i]) || inferBlockType(blocks[i]);
+    if (type === "stat") {
+      let j = i;
+      while (j < blocks.length && (blockType(blocks[j]) || inferBlockType(blocks[j])) === "stat") j++;
+      if (j - i >= 2 && j - i <= 3) {
+        out.push({ type: "stat_row", items: blocks.slice(i, j).map((st) => ({ label: st.label ?? st.title, value: st.value ?? st.amount ?? st.text, caption: st.caption })) });
+        i = j - 1;
+        continue;
+      }
+    }
+    if (type === "row" && out.length && (blockType(out[out.length - 1]) || inferBlockType(out[out.length - 1])) === "progress_ring") {
+      let j = i;
+      while (j < blocks.length && (blockType(blocks[j]) || inferBlockType(blocks[j])) === "row") j++;
+      if (j - i >= 2 && j - i <= 3) { out.push({ type: "list", items: blocks.slice(i, j) }); i = j - 1; continue; }
+    }
+    out.push(blocks[i]);
+  }
+  return out;
 }
 
 function singleButton(block: Rec): Rec | null {
@@ -1098,6 +1223,111 @@ function fitDepth(nodes: NativeNode[], depth: number, warnings: string[]): Nativ
     out.push(node);
   }
   return out;
+}
+
+/**
+ * Final row checks on the rendered tree (any block, any screen):
+ * - SPACE_BETWEEN ignores the gap, so a row with a growing label put its value and badge flush
+ *   ("₹8,450Paid"): such rows use MIN, the growing child already pushes the rest to the end.
+ * - A text squeezed in a row below its longest word wraps letter by letter ("Loa/n/Am/oun/t"):
+ *   that row becomes a vertical stack (label over value) instead.
+ */
+function polishRows(nodes: NativeNode[], warnings: string[]) {
+  let stacked = 0;
+  const visit = (node: NativeNode) => {
+    const kids = node.children ?? [];
+    kids.forEach(visit);
+    if (node.type !== "FRAME" || node.layoutMode !== "HORIZONTAL" || !kids.length) return;
+    const flow = kids.filter((c) => c.layoutPositioning !== "ABSOLUTE");
+    if (node.primaryAxisAlignItems === "SPACE_BETWEEN" && flow.some((c) => c.layoutGrow === 1)) node.primaryAxisAlignItems = "MIN";
+    if (node.layoutWrap === "WRAP" || flow.length < 2) return;
+    const inner = node.width - Number(node.paddingLeft ?? 0) - Number(node.paddingRight ?? 0) - Math.max(0, flow.length - 1) * Number(node.itemSpacing ?? 0);
+    const grows = flow.filter((c) => c.layoutGrow === 1 || c.layoutSizingHorizontal === "FILL");
+    const fixed = flow.filter((c) => !grows.includes(c)).reduce((sum, c) => sum + c.width, 0);
+    const share = grows.length ? (inner - fixed) / grows.length : 0;
+    const crushed = grows.some((c) => {
+      if (c.type !== "TEXT" || typeof c.text !== "string" || c.text.trim().length <= 3) return false;
+      const size = typeof c.fontSize === "number" ? c.fontSize : 14;
+      const longest = c.text.split(/\s+/).reduce((m, w) => Math.max(m, textWidth(w, size)), 0);
+      return share < Math.min(longest, size * 2.5);
+    });
+    if (!crushed) return;
+    node.layoutMode = "VERTICAL";
+    node.itemSpacing = 4;
+    node.primaryAxisAlignItems = "MIN";
+    node.counterAxisAlignItems = "MIN";
+    node.primaryAxisSizingMode = "AUTO";
+    node.counterAxisSizingMode = "FIXED";
+    node.layoutSizingVertical = "HUG";
+    for (const c of flow) {
+      c.layoutGrow = 0;
+      if (c.type === "TEXT") { c.layoutSizingHorizontal = "FILL"; c.textAutoResize = "HEIGHT"; c.width = node.width; c.height = textHeight(String(c.text ?? ""), Number(c.fontSize ?? 14), node.width); }
+    }
+    node.height = Number(node.paddingTop ?? 0) + Number(node.paddingBottom ?? 0) + flow.reduce((sum, c) => sum + c.height, 0) + Math.max(0, flow.length - 1) * 4;
+    stacked += 1;
+  };
+  nodes.forEach(visit);
+  if (stacked) warnings.push("Stacked " + stacked + " row(s) whose label had no room to stay on one line.");
+}
+
+/**
+ * Keep the type scale to at most `max` sizes (benchmark: ≤ 5): repeatedly fold the rarer of the two
+ * closest sizes into the other. Texts whose size changes drop a text style that no longer fits.
+ */
+function capTypeScale(elements: NativeNode[], max: number, warnings: string[]) {
+  const texts: NativeNode[] = [];
+  const visit = (nodes: NativeNode[]) => { for (const n of nodes) { if (n.type === "TEXT" && typeof n.fontSize === "number") texts.push(n); if (n.children && n.type !== "INSTANCE") visit(n.children); } };
+  visit(elements);
+  let folded = 0;
+  for (;;) {
+    const counts = new Map<number, number>();
+    for (const t of texts) counts.set(t.fontSize as number, (counts.get(t.fontSize as number) ?? 0) + 1);
+    const sizes = [...counts.keys()].sort((a, b) => a - b);
+    if (sizes.length <= max) break;
+    let bi = 0;
+    for (let i = 1; i < sizes.length - 1; i++) if (sizes[i + 1] - sizes[i] < sizes[bi + 1] - sizes[bi]) bi = i;
+    const [a, c] = [sizes[bi], sizes[bi + 1]];
+    const [from, to] = (counts.get(a)! <= counts.get(c)!) ? [a, c] : [c, a];
+    for (const t of texts) if (t.fontSize === from) {
+      t.fontSize = to; delete t.textStyleId;
+      if (t.textAutoResize === "WIDTH_AND_HEIGHT") t.width = Math.ceil(textWidth(String(t.text ?? ""), to));
+      t.height = textHeight(String(t.text ?? ""), to, Number(t.width));
+      folded += 1;
+    }
+  }
+  if (folded) warnings.push("Folded " + folded + " text(s) into a " + max + "-step type scale.");
+}
+
+/** Recompute hug heights bottom-up after a layout change (flow children only). */
+function relayout(node: NativeNode): number {
+  const kids = node.children ?? [];
+  kids.forEach(relayout);
+  if (node.type !== "FRAME" || !kids.length || node.layoutSizingVertical === "FIXED") return node.height;
+  const flow = kids.filter((c) => c.layoutPositioning !== "ABSOLUTE");
+  const pt = Number(node.paddingTop ?? 0), pb = Number(node.paddingBottom ?? 0), gap = Number(node.itemSpacing ?? 0);
+  if (node.layoutMode === "VERTICAL") node.height = pt + pb + flow.reduce((s, c) => s + c.height, 0) + Math.max(0, flow.length - 1) * gap;
+  else if (node.layoutMode === "HORIZONTAL" && node.layoutWrap !== "WRAP") node.height = pt + pb + flow.reduce((m, c) => Math.max(m, c.height), 0);
+  return node.height;
+}
+
+/** Tighten an over-tall render: card padding 16→12, stack gaps 12→8, two stacked buttons side by side. */
+function compactToBudget(elements: NativeNode[]) {
+  const visit = (node: NativeNode) => {
+    (node.children ?? []).forEach(visit);
+    if (node.type !== "FRAME") return;
+    if (node.layoutMode === "VERTICAL" && node.name === "Actions") {
+      const buttons = (node.children ?? []).filter((c) => /button/i.test(String(c.name)) && c.layoutMode === "HORIZONTAL");
+      if (buttons.length === 2 && node.children!.length === 2 && buttons.every((c) => textWidth(String(c.children?.[0]?.text ?? ""), 15) + 32 <= node.width / 2 - 6)) {
+        node.layoutMode = "HORIZONTAL"; node.itemSpacing = 12; node.counterAxisAlignItems = "CENTER";
+        node.primaryAxisSizingMode = "FIXED"; node.counterAxisSizingMode = "AUTO";
+        buttons.forEach((c) => { c.layoutGrow = 1; c.width = Math.floor((node.width - 12) / 2); });
+      }
+    }
+    if (node.layoutMode === "VERTICAL" && Number(node.itemSpacing) >= 12) node.itemSpacing = 8;
+    if (!node.noFill && Number(node.paddingTop) === 16 && Number(node.paddingBottom) === 16) { node.paddingTop = 12; node.paddingBottom = 12; }
+  };
+  elements.forEach(visit);
+  elements.forEach(relayout);
 }
 
 function countNodes(nodes: NativeNode[]): number {
@@ -1263,10 +1493,17 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   const sourceFill = Array.isArray(source.fillColors) ? hex(source.fillColors[0]) : null;
   const rawFrame = asRec(spec.frame) ?? {};
   const ctaFill = options.monochrome ? null : sourceCtaFill(options.sourceCanvas ?? canvas);
-  const theme = resolveTheme(spec.theme ?? rawFrame.theme, hex(rawFrame.backgroundColor) ?? sourceFill, ctaFill);
+  const theme = snapThemeToStyles(resolveTheme(spec.theme ?? rawFrame.theme, hex(rawFrame.backgroundColor) ?? sourceFill, ctaFill), asRec(canvas.styles));
   const componentIds = new Set(arr(canvas.components).map((c) => asRec(c)?.id).filter((id): id is string => typeof id === "string"));
   const b = new Builder(theme, collectSourceTokens(canvas, componentIds));
-  const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds, skeleton: options.skeleton === true };
+  const improveSource = asRec(arr((options.sourceCanvas ?? canvas).nodes)[0]);
+  const sourceTexts = improveSource && arr(improveSource.children).length ? (() => {
+    const set = new Set<string>();
+    const walkTexts = (n: Rec, d: number) => { if (d > 14) return; if (n.type === "TEXT" && typeof n.text === "string") set.add(textKey(n.text)); for (const c of arr(n.children)) { const r = asRec(c); if (r) walkTexts(r, d + 1); } };
+    walkTexts(improveSource, 0);
+    return set.size ? set : null;
+  })() : null;
+  const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds, skeleton: options.skeleton === true, badge: options.monochrome ? null : findBadgeComponent(canvas.components), sourceTexts };
 
   const sourceWidth = typeof source.width === "number" ? source.width : 0;
   const sourceHeight = typeof source.height === "number" ? source.height : 0;
@@ -1358,10 +1595,24 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     if (fidelity.unplaced.length && options.allowClones === false) b.warnings.push(fidelity.unplaced.length + " source graphic(s) were not copied: this plugin build cannot copy layers. Re-import the latest UX Direct plugin zip.");
     else if (fidelity.unplaced.length) b.warnings.push("Could not place " + fidelity.unplaced.length + " source graphic(s): " + fidelity.unplaced.slice(0, 5).join(", ") + ".");
   }
+  capTypeScale(elements, 5, b.warnings);
+  polishRows(elements, b.warnings);
+  elements.forEach(relayout);
   bindFileStyles(elements, asRec(canvas.styles), b.warnings);
   const nodeCount = countNodes(elements);
 
-  const contentHeight = rootPad[0] + rootPad[2] + elements.reduce((sum, node) => sum + node.height, 0) + Math.max(0, elements.length - 1) * gap;
+  let rootGap = gap;
+  const measure = () => rootPad[0] + rootPad[2] + elements.reduce((sum, node) => sum + node.height, 0) + Math.max(0, elements.length - 1) * rootGap;
+  // Improve keeps the source screen's height budget: when the render runs over by more than 10%,
+  // tighten spacing on the grid and put two stacked actions side by side before letting it grow.
+  const budget = sourceHeight > 0 && typeof rawFrame.height !== "number" && arr(source.children).length > 0 ? sourceHeight : 0;
+  if (budget && measure() > budget * 1.1) {
+    rootGap = Math.min(rootGap, 12);
+    compactToBudget(elements);
+    if (measure() > budget * 1.1) b.warnings.push("The improved screen is " + Math.round(measure()) + "px tall against the source's " + budget + "px: the spec adds content the source did not have.");
+  }
+  const gapUsed = rootGap;
+  const contentHeight = measure();
   const requestedHeight = typeof rawFrame.height === "number" ? rawFrame.height : sourceHeight || 800;
   const fits = contentHeight <= requestedHeight;
   const frame: Rec = {
@@ -1371,7 +1622,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     width: frameWidth,
     height: Math.round(Math.max(360, Math.min(4096, fits ? requestedHeight : contentHeight))),
     backgroundColor: theme.background,
-    layoutMode: "VERTICAL", itemSpacing: gap,
+    layoutMode: "VERTICAL", itemSpacing: gapUsed,
     paddingTop: rootPad[0], paddingRight: rootPad[1], paddingBottom: rootPad[2], paddingLeft: rootPad[3],
     primaryAxisAlignItems: "MIN", counterAxisAlignItems: "MIN",
     primaryAxisSizingMode: fits ? "FIXED" : "AUTO", counterAxisSizingMode: "FIXED",
