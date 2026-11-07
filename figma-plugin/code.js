@@ -4805,10 +4805,6 @@ function uxdNormText(value) {
   return String(value || "").toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
     .replace(/\s+/g, " ").trim().replace(/[.,:;!?…]+$/, "");
 }
-function uxdInsideInstance(node, stop) {
-  for (var p = node; p && p !== stop; p = p.parent) if (p.type === "INSTANCE") return true;
-  return false;
-}
 async function localRestoreMissingTexts(payload) {
   var source = await figma.getNodeByIdAsync(String(payload.sourceRootId || ""));
   var output = await figma.getNodeByIdAsync(String(payload.outputRootId || ""));
@@ -4840,7 +4836,7 @@ async function localRestoreMissingTexts(payload) {
     if (parentName) {
       target = output.findAll(function (n) {
         return n.name === parentName && typeof n.appendChild === "function" &&
-          (n.type === "FRAME" || n.type === "COMPONENT" || n.type === "GROUP") && !uxdInsideInstance(n, output);
+          (n.type === "FRAME" || n.type === "COMPONENT" || n.type === "GROUP") && !uxdInsideInstance(n);
       })[0] || null;
     }
     var clone = candidate.clone();
