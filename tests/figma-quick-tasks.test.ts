@@ -305,3 +305,21 @@ test("copy rewrite drops punctuation-only edits unless the request is about punc
   assert.deepEqual(normalizeTextEdits("rewrite", updates, items, "", "rewrite the text on this screen to be clearer").map((e) => e.id), ["b"]);
   assert.deepEqual(normalizeTextEdits("rewrite", updates, items, "", "remove the full stops").map((e) => e.id), ["a", "b"]);
 });
+
+test("copy rewrite keeps the screen title and tab label widths unless asked", () => {
+  const items = [
+    { id: "a", type: "TEXT", name: "Manage Loans", parent: "App bar", text: "Manage Loans" },
+    { id: "b", type: "TEXT", name: "Tab label · Others", parent: "Tab · Others", text: "Others" },
+    { id: "c", type: "TEXT", name: "Stat label", parent: "Stat · Charges Due", text: "Charges Due" },
+    { id: "d", type: "TEXT", name: "Tab label · Closed", parent: "Tab · Closed", text: "Closed" },
+  ];
+  const updates = { updates: [
+    { ref: "t1", text: "Loan Management" }, { ref: "t2", text: "Other Loans" },
+    { ref: "t3", text: "Amount Due" }, { ref: "t4", text: "Closed ✓" },
+  ] };
+  assert.deepEqual(normalizeTextEdits("rewrite", updates, items, "", "rewrite the text on this screen to be clearer").map((e) => e.id), ["c", "d"]);
+  assert.deepEqual(normalizeTextEdits("rewrite", updates, items, "", "make the title and tabs clearer, longer is fine").map((e) => e.id), ["a", "b", "c", "d"]);
+  // The title inside an instance's own frame is still caught by matching the screen name.
+  const nested = [{ id: "a", type: "TEXT", name: "Text", parent: "Left", text: "Manage Loans" }];
+  assert.deepEqual(normalizeTextEdits("rewrite", { updates: [{ ref: "t1", text: "Loan Management" }] }, nested, "", "make it clearer", "Manage Loans"), []);
+});

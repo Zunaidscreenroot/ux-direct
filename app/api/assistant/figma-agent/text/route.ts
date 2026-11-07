@@ -59,6 +59,7 @@ async function handleTextTask(request: Request): Promise<Response> {
       "Do not invent facts (prices, dates, names) that the request did not give. Realistic sample content is allowed only when the request asks for it.",
       "Do not change IDs, account or reference numbers, amounts, percentages or dates unless the request is about them, and do not add words that a nearby layer already shows.",
       "When the request is to make copy clearer or better, apply this rubric: plain everyday words over jargon or internal terms (say what a charge or status means for the user); alerts state the consequence and the action to take; keep titles and buttons verb-led or as short as the source, never turn a clear title into a vaguer noun phrase; one idea per line.",
+      "A label above an amount names what the amount is (\"Overdue\" → \"Overdue amount\"). Leave the screen title and tab labels as they are unless the request names them; never make a tab, chip or button label noticeably longer.",
       "A change must change wording. Never return an edit that only adds or removes punctuation, capitalisation or spacing; leave that layer out instead.",
       "Only return layers whose text really changes. Refer to each layer by its ref (t1, t2, …) exactly as given.",
       'Return JSON only: {"summary": string, "updates": [{"ref": "t1", "text": "the new full text"}]}.',
@@ -79,7 +80,7 @@ async function handleTextTask(request: Request): Promise<Response> {
     temperature: mode === "rewrite" ? 0.5 : 0.2,
     system,
     user: JSON.stringify({ request: prompt, screen: parsed.data.screenName || "", layers: modelLayers(mode, items) }),
-    accept: (data, raw) => normalizeTextEdits(mode, data, items, raw, prompt).length ? null : "returned no usable edits for the selected layers",
+    accept: (data, raw) => normalizeTextEdits(mode, data, items, raw, prompt, parsed.data.screenName).length ? null : "returned no usable edits for the selected layers",
   });
   if (!result.ok) {
     // Renaming has a model-free fallback; rewriting copy does not.
@@ -94,7 +95,7 @@ async function handleTextTask(request: Request): Promise<Response> {
       details: result.errors,
     }, { status: result.status, headers });
   }
-  const edits = normalizeTextEdits(mode, result.data, items, result.raw, prompt);
+  const edits = normalizeTextEdits(mode, result.data, items, result.raw, prompt, parsed.data.screenName);
   return NextResponse.json({
     ok: true, mode, edits, model: result.model,
     summary: typeof result.data.summary === "string" ? result.data.summary.slice(0, 400) : "",
