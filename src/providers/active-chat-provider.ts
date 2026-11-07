@@ -1,6 +1,17 @@
 /** Base URL used with FREELLMAPI_TRANSPORT=vpc; the VPC Service decides the real target, this host only fills Host. */
 export const FREELLMAPI_VPC_BASE_URL = "http://localhost:31415/v1";
 
+/** Sentinel base URL for UX Direct's own in-Worker gateway (src/llm-gateway); providerFetch never sends it to the network. */
+export const UXD_GATEWAY_BASE_URL = "https://uxd-gateway.internal/v1";
+
+export type LlmGatewayMode = "off" | "fallback" | "primary" | "only";
+
+/** UXD_LLM_GATEWAY: how the own gateway and FreeLLMAPI share the work (see provider-fetch.ts). Default: fallback. */
+export function llmGatewayMode(env: Record<string, string | undefined> = process.env): LlmGatewayMode {
+  const value = (env.UXD_LLM_GATEWAY || "").trim().toLowerCase();
+  return value === "off" || value === "primary" || value === "only" ? value : "fallback";
+}
+
 export type ChatProviderId = "openrouter" | "freellmapi" | "invalid";
 
 export type ActiveChatProvider = {
@@ -78,19 +89,23 @@ export function getActiveChatProvider(
     // FREELLMAPI_TUNNEL_URL (secret, synced from the self-hosted tunnel) wins over the static base URL.
     // FREELLMAPI_TRANSPORT=vpc: reach the Mac over the FREELLMAPI_VPC binding (named tunnel, no public URL).
     const viaVpc = env.FREELLMAPI_TRANSPORT?.trim().toLowerCase() === "vpc";
-    const baseUrl = viaVpc
-      ? FREELLMAPI_VPC_BASE_URL
-      : trimTrailingSlashes(env.FREELLMAPI_TUNNEL_URL?.trim() || env.FREELLMAPI_BASE_URL?.trim() || "");
+    // UXD_LLM_GATEWAY=only: the own gateway answers everything, so no FreeLLMAPI URL or key is needed.
+    const gatewayOnly = llmGatewayMode(env) === "only";
+    const baseUrl = gatewayOnly
+      ? UXD_GATEWAY_BASE_URL
+      : viaVpc
+        ? FREELLMAPI_VPC_BASE_URL
+        : trimTrailingSlashes(env.FREELLMAPI_TUNNEL_URL?.trim() || env.FREELLMAPI_BASE_URL?.trim() || "");
     const model = env.FREELLMAPI_CHAT_MODEL?.trim() || "auto";
     const visionModel = env.FREELLMAPI_VISION_MODEL?.trim() || "auto";
-    const urlError = viaVpc ? undefined : validateFreeLlmApiBaseUrl(baseUrl, env);
-    const configurationError = urlError || (!apiKey
+    const urlError = viaVpc || gatewayOnly ? undefined : validateFreeLlmApiBaseUrl(baseUrl, env);
+    const configurationError = gatewayOnly ? undefined : urlError || (!apiKey
       ? "FreeLLMAPI is selected, but FREELLMAPI_API_KEY is missing. Use the unified key from your FreeLLMAPI dashboard."
       : undefined);
     return {
       id: "freellmapi",
-      label: "FreeLLMAPI",
-      apiKey,
+      label: gatewayOnly ? "UX Direct gateway" : "FreeLLMAPI",
+      apiKey: apiKey || (gatewayOnly ? "uxd-gateway" : ""),
       baseUrl,
       model,
       visionModel,
