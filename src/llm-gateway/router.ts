@@ -5,6 +5,7 @@ import {
   type ProviderDef, type Tier,
 } from "./catalog";
 import { readModelUsage, writeCalls, type CallRecord, type ModelUsage } from "./call-log";
+import { ROLE_ROUTES, chainRank, nextTurn, resetRotation, seatFor, type SeatRole } from "./roles";
 
 /**
  * UX Direct's own free-model router, running inside the Worker (no Mac, no tunnel).
@@ -16,25 +17,15 @@ import { readModelUsage, writeCalls, type CallRecord, type ModelUsage } from "./
 type Env = Record<string, string | undefined>;
 type AiBinding = { run(model: string, input: Record<string, unknown>): Promise<unknown> };
 
-export type GatewayRole =
-  | "default" | "chat" | "fast-retry" | "classifier" | "planner" | "section-designer" | "critic" | "writer";
+export type { GatewayRole } from "./roles";
 
-type RolePolicy = { tiers: Tier[]; lowLatency: boolean; attemptTimeoutMs: number };
+/** Routing policy per seat (see roles.ts for the model map). */
+export const ROLE_POLICIES = ROLE_ROUTES;
 
-export const ROLE_POLICIES: Record<GatewayRole, RolePolicy> = {
-  default: { tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 75_000 },
-  planner: { tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 80_000 },
-  "section-designer": { tiers: ["strong", "medium", "fast"], lowLatency: true, attemptTimeoutMs: 40_000 },
-  critic: { tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 60_000 },
-  writer: { tiers: ["medium", "strong", "fast"], lowLatency: true, attemptTimeoutMs: 40_000 },
-  classifier: { tiers: ["fast", "medium", "strong"], lowLatency: true, attemptTimeoutMs: 25_000 },
-  chat: { tiers: ["fast", "medium", "strong"], lowLatency: true, attemptTimeoutMs: 25_000 },
-  "fast-retry": { tiers: ["fast", "medium", "strong"], lowLatency: true, attemptTimeoutMs: 40_000 },
-};
-
-export function resolveRole(headers: Headers, body: Record<string, unknown>): GatewayRole {
-  const explicit = (headers.get("x-uxd-agent-role") || "").trim().toLowerCase();
-  if (explicit in ROLE_POLICIES) return explicit as GatewayRole;
+/** The seat a request routes as: explicit X-UXD-Agent-Role (aliases allowed), else chat/default heuristics. */
+export function resolveRole(headers: Headers, body: Record<string, unknown>): SeatRole {
+  const seat = seatFor(headers.get("x-uxd-agent-role") || "");
+  if (seat) return seat;
   if ((headers.get("x-freellm-task-type") || "").toLowerCase() === "chat") return "fast-retry";
   const model = typeof body.model === "string" ? body.model : "";
   if (model === "auto:fast") return "chat";
@@ -78,7 +69,7 @@ const DISCOVERY_TTL_MS = 6 * 60 * 60 * 1000;
 const slot = (provider: string, model: string) => provider + "/" + model;
 
 export function resetGatewayStateForTests() {
-  cooldowns.clear(); localHits.clear(); discovered.clear(); usageCache = null; keyCursor = 0;
+  cooldowns.clear(); localHits.clear(); discovered.clear(); usageCache = null; keyCursor = 0; resetRotation();
 }
 
 async function usageMap(): Promise<Map<string, ModelUsage>> {
@@ -110,6 +101,8 @@ export function cooldownFor(status: number, message: string, retryAfter: string 
     if (/per[\s_-]?day|daily|requests per day|RPD|quota.*day|day.*quota/i.test(message)) return Math.min(nextUtcMidnight(now), now + 12 * 3600_000);
     return now + (Number.isFinite(retrySeconds) ? Math.min(Math.max(retrySeconds, 5), 3600) * 1000 : 60_000);
   }
+  // Model exists but is outside the free tier (Mistral large/medium): skip it for a day.
+  if ((status === 403 || status === 401 || status === 429) && /subscription tier|not available (in|on|for) your|paid (plan|tier|version)|unavailable for free/i.test(message)) return now + 24 * 3600_000;
   if (status === 401 || status === 403) return now + 3600_000;
   if (status === 404 || (status === 400 && /model.*(not|does not|doesn't) (exist|found|support)|unknown model|decommissioned|deprecated|no longer available/i.test(message))) return now + 24 * 3600_000;
   if (status === 402) return now + 6 * 3600_000;
@@ -185,7 +178,7 @@ export function hasImages(body: Record<string, unknown>): boolean {
 /** Pure ranking step (exported for tests). */
 export function rankCandidates(input: {
   providers: Array<{ provider: ProviderDef; models: string[] }>;
-  role: GatewayRole;
+  role: SeatRole;
   promptTokens: number;
   vision: boolean;
   usage: Map<string, ModelUsage>;
@@ -195,12 +188,22 @@ export function rankCandidates(input: {
   now?: number;
   random?: () => number;
   maxAttempts?: number;
+  /** Rotation index for the seat's primary pool (spreads parallel calls across providers). */
+  turn?: number;
 }): Candidate[] {
   const now = input.now ?? Date.now();
   const random = input.random ?? Math.random;
   const policy = ROLE_POLICIES[input.role];
+  const turn = input.turn ?? 0;
   const list: Candidate[] = [];
   for (const { provider, models } of input.providers) {
+    if ((input.cooldowns.get(provider.id + "/*") ?? 0) > now) continue;
+    // Account-wide daily allowance (OpenRouter: 50 free calls a day across every :free model).
+    if (provider.accountRpd) {
+      let today = 0;
+      for (const [key, row] of input.usage) if (key.startsWith(provider.id + "/")) today += row.today;
+      if (today >= Math.floor(provider.accountRpd * 0.9)) continue;
+    }
     for (const model of models) {
       if (input.pinned && (input.pinned.model !== model || (input.pinned.provider && input.pinned.provider !== provider.id))) continue;
       const key = slot(provider.id, model);
@@ -219,7 +222,9 @@ export function rankCandidates(input: {
       const calls = usage?.calls24h ?? 0;
       const success = ((usage?.ok24h ?? 0) + 2) / (calls + 2.5);
       const latencySeconds = (usage?.avgLatencyMs ?? 0) / 1000;
-      const score = (3 - tierIndex) * 100
+      const rank = chainRank(policy, provider.id, model, turn);
+      const score = (40 - Math.min(rank, 40)) * 50
+        + (3 - tierIndex) * 40
         + success * 60
         - latencySeconds * (policy.lowLatency ? 4 : 0.8)
         - (minuteUse / limits.rpm) * 20
@@ -236,7 +241,7 @@ export function rankCandidates(input: {
     const index = pool.findIndex((candidate) => candidate.provider.id !== last);
     ordered.push(pool.splice(index >= 0 ? index : 0, 1)[0]);
   }
-  return ordered.slice(0, input.maxAttempts ?? 5);
+  return ordered.slice(0, input.maxAttempts ?? policy.maxAttempts);
 }
 
 // ---------- provider calls ----------
@@ -270,6 +275,24 @@ function sse(text: string, model: string): string {
     + "data: " + JSON.stringify({ object: "chat.completion.chunk", model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }) + "\n\ndata: [DONE]\n\n";
 }
 
+/** Answer text from a Workers AI result: chat (`choices`), legacy (`response`) or Responses API (`output`). */
+export function workersAiText(result: Record<string, unknown> | null | undefined): unknown {
+  if (!result) return "";
+  const choices = Array.isArray(result.choices) ? result.choices as Array<{ message?: { content?: unknown } }> : null;
+  if (choices) return choices[0]?.message?.content;
+  if (result.response !== undefined && result.response !== null) return result.response;
+  if (typeof result.output_text === "string") return result.output_text;
+  if (Array.isArray(result.output)) {
+    const parts: string[] = [];
+    for (const item of result.output as Array<{ type?: string; content?: Array<{ type?: string; text?: unknown }> }>) {
+      if (item?.type !== "message" || !Array.isArray(item.content)) continue;
+      for (const part of item.content) if (typeof part?.text === "string") parts.push(part.text);
+    }
+    return parts.join("");
+  }
+  return "";
+}
+
 async function callWorkersAi(model: string, body: Record<string, unknown>, signal: AbortSignal): Promise<AttemptOutcome> {
   const ai = aiBinding();
   if (!ai) return { ok: false, status: 503, message: "AI binding missing", retryAfter: null };
@@ -277,16 +300,16 @@ async function callWorkersAi(model: string, body: Record<string, unknown>, signa
     const record = message as { role?: unknown; content?: unknown };
     return { role: String(record.role || "user"), content: textOf(record.content) };
   });
-  const run = ai.run(model, {
-    messages,
-    max_tokens: Math.min(typeof body.max_tokens === "number" ? body.max_tokens : 4_096, 4_096),
-    ...(typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
-  });
+  const maxTokens = Math.min(typeof body.max_tokens === "number" ? body.max_tokens : 4_096, 4_096);
+  const temperature = typeof body.temperature === "number" ? { temperature: body.temperature } : {};
+  // gpt-oss on Workers AI speaks the Responses API ("input"); the rest take chat "messages".
+  const run = /gpt-oss/.test(model)
+    ? ai.run(model, { input: messages, max_output_tokens: maxTokens, reasoning: { effort: "low" }, ...temperature })
+    : ai.run(model, { messages, max_tokens: maxTokens, ...temperature });
   const aborted = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error("timed out")), { once: true }));
   try {
     const result = await Promise.race([run, aborted]) as Record<string, unknown>;
-    const choices = Array.isArray(result?.choices) ? result.choices as Array<{ message?: { content?: unknown } }> : null;
-    const raw = choices ? choices[0]?.message?.content : result?.response;
+    const raw = workersAiText(result);
     const text = typeof raw === "string" ? raw : raw && typeof raw === "object" ? JSON.stringify(raw) : "";
     if (!text.trim()) return { ok: false, status: 502, message: "empty answer", retryAfter: null };
     const usage = (result?.usage || undefined) as Usage | undefined;
@@ -400,13 +423,14 @@ export async function gatewayChatCompletion(rawBody: string, headers: Headers, s
     Promise.all(providers.map(async (provider) => ({ provider, models: await providerModels(provider, env) }))),
     usageMap(),
   ]);
-  const maxAttempts = Math.max(1, Math.min(8, Number(env.UXD_GW_MAX_ATTEMPTS) || 5));
+  const maxAttempts = Math.max(1, Math.min(10, Number(env.UXD_GW_MAX_ATTEMPTS) || policy.maxAttempts));
+  const turn = nextTurn(role);
   let candidates = rankCandidates({
     providers: withModels, role, promptTokens: estimatePromptTokens(body), vision: hasImages(body),
-    usage, cooldowns, localHits, pinned, maxAttempts,
+    usage, cooldowns, localHits, pinned, maxAttempts, turn,
   });
   if (!candidates.length && pinned && !headers.get("x-uxd-gateway-strict")) {
-    candidates = rankCandidates({ providers: withModels, role, promptTokens: estimatePromptTokens(body), vision: hasImages(body), usage, cooldowns, localHits, maxAttempts });
+    candidates = rankCandidates({ providers: withModels, role, promptTokens: estimatePromptTokens(body), vision: hasImages(body), usage, cooldowns, localHits, maxAttempts, turn });
   }
   if (!candidates.length) {
     const response = failure(503, providers.length
@@ -462,6 +486,8 @@ export async function gatewayChatCompletion(rawBody: string, headers: Headers, s
     lastStatus = outcome.status || 504;
     const until = cooldownFor(outcome.status, outcome.message, outcome.retryAfter);
     if (until) cooldowns.set(key, until);
+    // Account-wide daily cap hit: the whole provider is out until it resets.
+    if (until && outcome.status === 429 && /free-models-per-day|per[\s_-]?day.*(account|key)/i.test(outcome.message)) cooldowns.set(provider.id + "/*", until);
     records.push({ ...base, ok: false, httpStatus: outcome.status, latencyMs, error: outcome.message, ...(until ? { cooldownUntil: new Date(until).toISOString() } : {}) });
     errors.push(key + ": " + (outcome.status ? "HTTP " + outcome.status + " " : "") + outcome.message.slice(0, 140));
     // Some free models reject JSON mode with a 400/422: retry the same model once without it.

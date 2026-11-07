@@ -24,6 +24,8 @@ export type ProviderDef = {
   /** Per-model request limits (free tier, approximate). Used with 85% headroom. */
   rpm: number;
   rpd?: number;
+  /** Daily allowance for the whole account/key across all models (OpenRouter free tier). */
+  accountRpd?: number;
   /** Largest prompt the free tier accepts in one call (tokens; TPM/context caps). */
   maxInputTokens: number;
   /** Largest completion the provider accepts; a bigger max_tokens is clamped. */
@@ -52,12 +54,13 @@ export const PROVIDERS: ProviderDef[] = [
   {
     id: "openrouter", label: "OpenRouter (free)", baseUrl: "https://openrouter.ai/api/v1", keyEnv: ["OPENROUTER_API_KEY"],
     models: ["nvidia/nemotron-3-ultra-550b-a55b:free", "nvidia/nemotron-3.5-super-vl:free", "google/gemma-4-31b-it:free", "dots-studio/dots-3-note-preview:free"],
-    rpm: 20, rpd: 50, maxInputTokens: 100_000, maxOutputTokens: 32_000, discover: true,
+    rpm: 20, rpd: 50, accountRpd: 50, maxInputTokens: 100_000, maxOutputTokens: 32_000, discover: true,
   },
   {
     id: "mistral", label: "Mistral", baseUrl: "https://api.mistral.ai/v1", keyEnv: ["MISTRAL_API_KEY"],
-    // Ids from the account's own free-tier rate-limit table (admin.mistral.ai/plateforme/limits); large-2512 has the biggest TPM.
-    models: ["mistral-large-2512", "ministral-14b-2512", "mistral-medium-latest", "mistral-small-2603"],
+    // Free tier serves codestral and ministral only; large/medium answer 403 "not available in your
+    // subscription tier" (live check 2026-11-07). 1 request/second per model.
+    models: ["mistral-code-latest", "ministral-14b-2512", "ministral-8b-2512", "ministral-3b-2512"],
     rpm: 50, maxInputTokens: 100_000, maxOutputTokens: 32_000,
   },
   {
@@ -78,7 +81,8 @@ export const PROVIDERS: ProviderDef[] = [
   {
     // Cloudflare Workers AI through the existing AI binding: no key, ~10k free neurons a day.
     id: "workers-ai", label: "Workers AI", baseUrl: "workers-ai://binding", keyEnv: [],
-    models: ["@cf/meta/llama-4-scout-17b-16e-instruct", "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/qwen/qwen3-30b-a3b-fp8", "@cf/mistralai/mistral-small-3.1-24b-instruct"],
+    // FreeLLMAPI served nemotron-3-120b, gpt-oss-20b, qwq-32b and deepseek-r1-distill from the same account.
+    models: ["@cf/openai/gpt-oss-120b", "@cf/nvidia/nemotron-3-120b-a12b", "@cf/openai/gpt-oss-20b", "@cf/meta/llama-4-scout-17b-16e-instruct", "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/qwen/qwq-32b", "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"],
     rpm: 30, maxInputTokens: 20_000, maxOutputTokens: 4_096,
   },
 ];
