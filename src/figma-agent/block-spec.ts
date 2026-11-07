@@ -609,7 +609,8 @@ function findBadgeComponent(components: unknown): BadgeComponent | null {
  */
 export function findButtonComponent(components: unknown, kitButtonId?: string | null, kitProps?: Record<string, string | boolean> | null): ButtonComponent | null {
   const list = arr(components).map(asRec).filter((c): c is Rec => !!c && typeof c.id === "string");
-  const okHeight = (c: Rec) => typeof c.height !== "number" || c.height >= 32 && c.height <= 64;
+  // Up to 72px: some kits draw the button with its own touch padding.
+  const okHeight = (c: Rec) => typeof c.height !== "number" || c.height >= 32 && c.height <= 72;
   if (kitButtonId) {
     const kit = list.find((c) => c.id === kitButtonId);
     // Only variant values: a text property would be the first screen's label.
@@ -1091,6 +1092,15 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
         const entries = Object.entries(props).filter((e): e is [string, string | boolean] => typeof e[1] === "string" || typeof e[1] === "boolean").slice(0, 30);
         if (entries.length) node.instanceProperties = Object.fromEntries(entries);
       }
+      // The block's own words go into the instance (its largest text, or texts by layer name); a
+      // placeholder the component ships with ("Text", "Label") is hidden, never shown as content.
+      const overrides: Record<string, string> = {};
+      const named = asRec(block.texts ?? block.textOverrides);
+      if (named) for (const [key, value] of Object.entries(named).slice(0, 20)) if (typeof value === "string" && value.trim()) overrides[key.slice(0, 120)] = value.slice(0, 500);
+      const title = clean(block.text ?? block.label ?? block.title, 200);
+      if (title) overrides.__title = title;
+      if (Object.keys(overrides).length) node.textOverrides = overrides;
+      node.hidePlaceholderTexts = true;
       return node;
     }
     case "custom": {

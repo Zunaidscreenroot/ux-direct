@@ -132,3 +132,21 @@ test("the journey kit button keeps the first screen's variant, not its label", (
   const found = findButtonComponent([{ id: "5:5", name: "Button", height: 48, properties: { Type: { type: "VARIANT", options: ["Primary", "Secondary"] }, Label: { type: "TEXT" } } }], "5:5", { Type: "Primary", Label: "Pay now", State: "Default" });
   assert.deepEqual(found, { id: "5:5", height: 48, instanceProperties: { Type: "Primary", State: "Default" } });
 });
+
+test("a component block carries its own words and hides the component's placeholder copy", () => {
+  const canvas = createModeCanvas({ nodes: [], components: [{ id: "30:3", name: "Chip", width: 120, height: 32 }] }, { width: 360, height: 800 }, "create confirm screen");
+  const out = expandBlockSpec({ summary: "Confirm the payment.", frame: { name: "Confirm" }, sections: [
+    { name: "Details", surface: "card", blocks: [{ type: "component", componentId: "30:3", text: "Delinquent" }] },
+  ] }, canvas, { create: true });
+  assert.ok(out.plan, out.errors.join("; "));
+  const chip = all(out.plan!.elements as N[]).find((n) => n.type === "INSTANCE" && n.componentId === "30:3");
+  assert.ok(chip);
+  assert.deepEqual(chip!.textOverrides, { __title: "Delinquent" });
+  assert.equal(chip!.hidePlaceholderTexts, true);
+});
+
+test("a kit button drawn with touch padding (up to 72px) is still the file's button", () => {
+  const found = findButtonComponent([{ id: "5:5", name: "Benchmark / Button", height: 67, properties: { Variant: { type: "VARIANT", options: ["Primary", "Secondary"] } } }]);
+  assert.equal(found?.id, "5:5");
+  assert.deepEqual(found?.instanceProperties, { Variant: "Primary" });
+});

@@ -358,6 +358,7 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
           .map(([key, value]) => [key.slice(0, 120), value.slice(0, 500)]);
         if (entries.length) normalized.textOverrides = Object.fromEntries(entries);
       }
+      if (item.hidePlaceholderTexts === true) normalized.hidePlaceholderTexts = true;
       // Wireframes also recolour reused source components (the app bar), not only clones (finding 52).
       const mono = monochromeOf(item);
       if (mono) normalized.monochrome = mono;

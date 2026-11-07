@@ -1986,7 +1986,7 @@
       // new, so Revert (delete) also undoes this.
       try {
         stage("creating", "Applying the file's colour and text styles and the spacing grid…");
-        await localTask("apply-hygiene-fixes", { groups: ["tokens", "spacing", "names"] }, 120000);
+        await localTask("apply-hygiene-fixes", { groups: ["tokens", "spacing", "names"], keepRootFill: !!(designOptions && designOptions.keepFrameFill) }, 120000);
       } catch (_) { /* styling is a bonus pass; the build itself already succeeded */ }
       // Repeated cards and rows become one local component plus instances (reuse, like Claude in Figma).
       try { await localTask("componentize-repeats", { rootId: createdFrameId }, 60000); } catch (_) { /* bonus pass */ }
@@ -3311,6 +3311,12 @@
       if (tied.some(function (f) { return f !== pick && !related(f, pick); })) return null;
       return { name: pick.name, texts: pick.texts };
     }
+    const FACT_TEXT = /[₹$€£]\s?\d|\b\d{1,3}(,\d{2,3})+\b|\b[A-Z]{2,}\d{4,}\b|\b\d{1,2}\s+[A-Z][a-z]{2}\b/;
+    function carriesFacts(node) {
+      let hit = false;
+      flattenTree(node.children, function (n) { if (!hit && n.type === "TEXT" && typeof n.text === "string" && FACT_TEXT.test(n.text)) hit = true; });
+      return hit;
+    }
     function journeyKitFrom(root, prompt) {
       if (!root) return "";
       const focus = focusItem(root, prompt);
@@ -3319,15 +3325,18 @@
       const topBar = Array.isArray(root.children) && root.children[0] && root.children[0].type === "INSTANCE" && Number(root.children[0].y || 0) <= 8 ? root.children[0].mainComponentId : "";
       flattenTree(root.children, function (node, _parent, insideInstance) {
         if (insideInstance || node.type !== "INSTANCE" || !node.mainComponentId || seen[node.mainComponentId] || node.mainComponentId === topBar || kit.length >= 8) return;
+        // A content card (a loan, an order, a contact) holds one item's values; placed again it shows
+        // whichever item the component defaults to, so later screens build the item from blocks.
+        if (carriesFacts(node)) return;
         seen[node.mainComponentId] = true;
         kit.push("\"" + String(node.name || "Component").slice(0, 40) + "\" (componentId " + node.mainComponentId + ")");
       });
       const facts = (focus ? focus.texts : screenFacts(root).map(function (t) { return t.text; }))
-        .filter(function (t) { return /[₹$€£]\s?\d|\b\d{1,3}(,\d{2,3})+\b|\b[A-Z]{2,}\d{4,}\b|\b\d{1,2}\s+[A-Z][a-z]{2}\b/.test(t) && t.length <= 40; });
+        .filter(function (t) { return FACT_TEXT.test(t) && t.length <= 40; });
       return "SHARED KIT: this screen belongs to one journey. Use the same frame width, background colour, gutter, app bar component and type scale as the screen \"" + String(root.name).slice(0, 60) + "\" (its app bar shows THIS screen's own title, not that screen's name)" +
         (Number(root.width) ? " (" + Math.round(root.width) + "px wide)" : "") + (kit.length ? ", and reuse exactly these components from it: " + kit.join(", ") + "." : ".") +
         " Every step after the first has the same app bar with a back arrow, and its primary action is the same full-width primary button at the bottom." +
-        (focus ? "\nTHE ITEM THIS JOURNEY IS ABOUT (use its values, not the other items on that screen): " + focus.texts.slice(0, 14).join(" · ") + "." : "") +
+        (focus ? "\nTHE ITEM THIS JOURNEY IS ABOUT (use its values, not the other items on that screen; where a step shows it, build a summary card from blocks with these values): " + focus.texts.slice(0, 14).join(" · ") + "." : "") +
         (facts.length ? "\nSHARED FACTS (the same across every screen of the journey; never change these values): " + facts.slice(0, 10).join(" · ") + "." : "");
     }
     // The exact app bar and primary button instances of a journey's screen, so every later screen
@@ -3351,7 +3360,7 @@
       flattenTree(kids, function (node, _parent, insideInstance) {
         if (insideInstance || node.type !== "INSTANCE" || !node.mainComponentId || (kit.header && node.mainComponentId === kit.header.id)) return;
         const h = Number(node.height) || 0, w = Number(node.width) || 0;
-        if (h < 32 || h > 64 || w < W * 0.5) return;
+        if (h < 32 || h > 72 || w < W * 0.5) return;
         const label = /\b(button|btn|cta|primary)\b/i.test(String(node.name || ""));
         if (!label || /\b(secondary|outline|ghost|tertiary|text|link)\b/i.test(String(node.name || ""))) return;
         if (!best || w > Number(best.width)) best = node;
@@ -3374,8 +3383,9 @@
       if (gutter >= 8 && gutter <= 40) kit.gutter = Math.round(gutter);
       const bg = Array.isArray(root.fillColors) ? String(root.fillColors[0] || "") : "";
       if (/^#[0-9a-f]{6}$/i.test(bg)) kit.background = bg.toUpperCase();
+      const plainFill = !!kit.background && root.fillStyled !== true && root.variableBound !== true;
       const frame = W >= 200 && H >= 200 ? { width: Math.round(Math.min(2400, W)), height: Math.round(Math.max(640, Math.min(1400, H))) } : null;
-      return { kit: Object.keys(kit).length ? kit : null, frame: frame };
+      return { kit: Object.keys(kit).length ? kit : null, frame: frame, plainFill: plainFill };
     }
     async function wireScreens(ids, stage, replaceOn) {
       if (ids.length < 2) return null;
@@ -3413,7 +3423,7 @@
               stage("creating", "Screen " + (index + 1) + "/" + total + " · " + name + (attempt ? " (retry)" : "") + " · " + status);
             }, { placement: slot, exactPlacement: true, frameName: name, forceCreate: true, onCreated: function (frameId) { id = frameId; },
               kit: parts && (parts.kit || step.title) ? Object.assign({}, parts.kit || {}, step.title ? { title: String(step.title).slice(0, 120) } : {}) : null,
-              frame: parts && parts.frame || null });
+              frame: parts && parts.frame || null, keepFrameFill: !!(parts && parts.plainFill) });
           } catch (error) {
             // A frame that was created and then failed checks is kept; only a missing screen is retried.
             if (attempt === 1 && !id) failed.push(name + ": " + String(error && error.message || error).slice(0, 120));

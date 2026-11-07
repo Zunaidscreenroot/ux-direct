@@ -382,7 +382,14 @@ test("an empty selection after Revert falls back to the last target, and duplica
 });
 
 test("generated frames get the file's styles and the spacing grid before verification", () => {
-  const at = ui.indexOf('await localTask("apply-hygiene-fixes", { groups: ["tokens", "spacing", "names"] }, 120000);');
+  const at = ui.indexOf('await localTask("apply-hygiene-fixes", { groups: ["tokens", "spacing", "names"], keepRootFill: !!(designOptions && designOptions.keepFrameFill) }, 120000);');
   assert.ok(at > 0, "post-build style pass exists");
   assert.ok(at < ui.indexOf('stage("verifying", "Checking the final native layer tree and frame bounds…");'), "it runs before the final read-back");
+});
+
+test("journey kit never lists content cards for reuse, and keeps a plain entry background unstyled", () => {
+  assert.ok(ui.includes("if (carriesFacts(node)) return;"), "cards holding an item's values are not reused as components");
+  assert.ok(ui.includes("keepFrameFill: !!(parts && parts.plainFill)"), "journey screens pass the entry's fill mode");
+  assert.ok(code.includes("if (payload.keepRootFill === true)"), "hygiene keeps the root fill unstyled when asked");
+  assert.ok(code.includes("if (type === \"INSTANCE\" && spec.hidePlaceholderTexts === true) hidePlaceholderTexts(node);"));
 });
