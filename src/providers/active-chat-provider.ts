@@ -187,10 +187,10 @@ export function figmaRoutingHeaders(provider: ActiveChatProvider, options: { fas
 
 /** Agency seats the own gateway routes on (model map: src/llm-gateway/roles.ts). */
 export type AgentRole =
-  | "director" | "lead" | "ux-designer" | "ui-designer" | "reviewer" | "researcher" | "content-writer"
+  | "director" | "lead" | "ux-designer" | "ui-designer" | "researcher" | "content-writer"
   | "accessibility" | "design-system" | "qa"
   | "chat" | "fast-retry" | "classifier"
-  | "planner" | "section-designer" | "critic" | "writer";
+  | "planner" | "section-designer" | "critic" | "reviewer" | "writer";
 
 /** Per-attempt timeout; the first FreeLLMAPI attempt also covers a host cold start. */
 export function figmaAttemptTimeoutMs(provider: ActiveChatProvider, attemptIndex: number, firstMs: number, laterMs: number): number {

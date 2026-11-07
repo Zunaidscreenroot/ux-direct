@@ -1,6 +1,10 @@
 /**
  * Which free model each agency seat uses, with a deep fallback chain.
  *
+ * Agency shape (Zunaid, 2026-11-07): Director → UX Lead → one UX designer + one UI designer, split by
+ * task type. The Lead reviews both designers' work and the Director reviews the Lead's final, so
+ * Director and Lead get the strongest models on different providers from the designers.
+ *
  * Every seat names a primary pool (rotated per call, so parallel designers start on different
  * providers) and an ordered fallback list across other providers. Anything configured but not
  * named still serves as a last resort through the tier ranking. Entries are "provider/regex" and
@@ -21,12 +25,12 @@ import type { Tier } from "./catalog";
 
 export type GatewayRole =
   // agency seats
-  | "director" | "lead" | "ux-designer" | "ui-designer" | "reviewer" | "researcher" | "content-writer"
+  | "director" | "lead" | "ux-designer" | "ui-designer" | "researcher" | "content-writer"
   | "accessibility" | "design-system" | "qa"
   // utility
   | "classifier" | "chat" | "fast-retry" | "default"
   // older names, kept as aliases
-  | "planner" | "section-designer" | "critic" | "writer";
+  | "planner" | "section-designer" | "critic" | "reviewer" | "writer";
 
 export type RoleRoute = {
   /** What the seat does (shown in the Models tab and the plan doc). */
@@ -65,38 +69,32 @@ const MI_3 = "mistral/ministral-3b";
 const ZAI = "zai/glm";
 const CEREBRAS = "cerebras/gpt-oss-120b|qwen-3-235b";
 
-export const ROLE_ROUTES: Record<Exclude<GatewayRole, "planner" | "section-designer" | "critic" | "writer">, RoleRoute> = {
+export const ROLE_ROUTES: Record<Exclude<GatewayRole, "planner" | "section-designer" | "critic" | "reviewer" | "writer">, RoleRoute> = {
   director: {
-    purpose: "UX Director: reads the brief, sets the strategy and quality bar, accepts or sends work back.",
-    tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 80_000, maxAttempts: 7,
-    primary: [GEM_PRO, GROQ_120],
-    fallback: [GEM_FLASH, WAI_120, OR_ULTRA, CEREBRAS, WAI_NEMO, GROQ_KIMI, MI_CODE, WAI_QWQ, ZAI],
+    purpose: "UX Director: takes the project, sets strategy and the quality bar, gives the final review of the Lead's work.",
+    tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 90_000, maxAttempts: 7,
+    // Strongest free judgement, on providers the designers do not start on.
+    primary: [GEM_PRO, OR_ULTRA],
+    fallback: [GEM_FLASH, OR_VL, GROQ_KIMI, GROQ_120, CEREBRAS, WAI_120, WAI_NEMO, MI_CODE, ZAI],
   },
   lead: {
-    purpose: "UX Lead: splits a screen into sections, briefs designers, merges their output.",
+    purpose: "UX Lead: breaks the brief into UX and UI tasks, reviews every UX and UI deliverable, sends fixes back, hands the final to the Director.",
     tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 80_000, maxAttempts: 7,
-    primary: [GROQ_120, GEM_FLASH],
-    fallback: [WAI_120, CEREBRAS, WAI_NEMO, GEM_PRO, OR_ULTRA, MI_CODE, WAI_QWQ, ZAI],
+    // Reviews designers' work, so it starts on other quotas (Gemini/OpenRouter) than they do (Groq/Workers AI).
+    primary: [GEM_FLASH, OR_ULTRA],
+    fallback: [GEM_PRO, OR_VL, GROQ_KIMI, GROQ_120, CEREBRAS, WAI_120, WAI_NEMO, MI_CODE, ZAI],
   },
   "ux-designer": {
-    purpose: "UX designer: structure, hierarchy, flows and states for one section (JSON spec).",
-    tiers: ["strong", "medium", "fast"], lowLatency: true, attemptTimeoutMs: 45_000, maxAttempts: 7,
-    // Kept off Gemini/OpenRouter first so the reviewer of the same section runs on other quotas.
-    primary: [WAI_120, GROQ_120, WAI_NEMO],
-    fallback: [CEREBRAS, MI_CODE, GEM_FLASH, GROQ_QWEN, WAI_QWQ, OR_GEMMA, MI_14, ZAI],
+    purpose: "UX designer: research, synthesis, audit, benchmarking, flows and wireframes.",
+    tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 60_000, maxAttempts: 7,
+    primary: [GROQ_120, WAI_120],
+    fallback: [WAI_NEMO, CEREBRAS, MI_CODE, WAI_QWQ, GROQ_QWEN, GEM_FLASH, OR_GEMMA, MI_14, ZAI],
   },
   "ui-designer": {
-    purpose: "UI designer: visual treatment, spacing, type and component choice for one section.",
-    tiers: ["strong", "medium", "fast"], lowLatency: true, attemptTimeoutMs: 45_000, maxAttempts: 7,
-    primary: [GEM_FLASH, WAI_NEMO, GROQ_120],
-    fallback: [WAI_120, CEREBRAS, MI_CODE, GROQ_QWEN, OR_GEMMA, WAI_LLAMA70, MI_14, ZAI],
-  },
-  reviewer: {
-    purpose: "Reviewer: checks each section as it lands (parallel to designers), lists concrete fixes, re-reviews.",
-    tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 60_000, maxAttempts: 7,
-    // A different provider from the designers' primaries, so it is not marking its own homework.
-    primary: [GEM_FLASH, OR_ULTRA],
-    fallback: [GEM_PRO, OR_VL, GROQ_KIMI, GROQ_120, CEREBRAS, WAI_120, WAI_NEMO, MI_CODE, WAI_QWQ, ZAI],
+    purpose: "UI designer: visual design on approved wireframes, components, type, colour, spacing.",
+    tiers: ["strong", "medium", "fast"], lowLatency: true, attemptTimeoutMs: 50_000, maxAttempts: 7,
+    primary: [WAI_120, GROQ_120, WAI_NEMO],
+    fallback: [MI_CODE, CEREBRAS, GROQ_KIMI, GROQ_QWEN, GEM_FLASH, OR_GEMMA, WAI_LLAMA70, MI_14, ZAI],
   },
   researcher: {
     purpose: "Researcher: domain, user and pattern research from the knowledge base; long context.",
@@ -158,7 +156,9 @@ export const ROLE_ROUTES: Record<Exclude<GatewayRole, "planner" | "section-desig
 export const ROLE_ALIASES: Record<string, keyof typeof ROLE_ROUTES> = {
   planner: "lead",
   "section-designer": "ux-designer",
-  critic: "reviewer",
+  // There is no separate reviewer seat: the UX Lead reviews, the Director gives the final review.
+  critic: "lead",
+  reviewer: "lead",
   writer: "content-writer",
   "ux-director": "director",
   "ux-lead": "lead",
