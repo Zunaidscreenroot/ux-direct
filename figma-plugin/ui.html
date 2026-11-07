@@ -2499,6 +2499,11 @@
         const fixIt = /\b(fix|make|apply|lock|align|match|karo|kar do|set)\b|\bstyle[ -]?lock\b/i.test(text) && !/\b(check|find|show|report|list|audit|kya|batao)\b/i.test(text);
         return { kind: "consistency", fix: fixIt };
       }
+      // Developer handoff (no model): "add handoff notes", "annotate for dev"; "wire the prototype", "connect these screens".
+      if (count > 0 && /\b(handoff|hand-off|dev ?notes?|annotat(e|ions?)|spec (notes?|sheet)|redlines?)\b/i.test(text)) return { kind: "handoff" };
+      if (count >= 2 && /\b(prototype|wire|link|connect)\b[^.]{0,30}\b(prototype|screens?|flow|buttons?|together)\b|\b(auto[ -]?wire|jod do|link karo)\b/i.test(text)) {
+        return { kind: "prototype-wire", fix: !/\b(check|preview|show|list|kya|batao|which|plan)\b/i.test(text) };
+      }
       // Detached-instance rescue (no model): "find detached components", "relink detached instances".
       if (count > 0 && /\b(detach(ed)?|re-?link|re-?attach)\b/i.test(text) && /\b(detach(ed)?|instances?|components?|copies)\b/i.test(text)) {
         const relink = /\b(re-?link|re-?attach|rescue|fix|replace|restore|karo|kar do)\b/i.test(text) && !/\b(check|find|show|report|list|kya|batao)\b/i.test(text);
@@ -3000,6 +3005,46 @@
         (ready ? "\n\nSay **relink detached components** to swap the " + ready + " ready one(s) back to live instances (Revert available)." : "");
     }
     // uxd-detached:end
+    // uxd-handoff:start
+    function revertSnapshot(label, snapshot) {
+      recordChange(label, function () {
+        return localTask("restore-props", { items: snapshot }, 120000).then(function (restore) {
+          return restore.restored + " change(s) restored" + (restore.changedSince ? ", " + restore.changedSince + " left as you edited them" : "");
+        });
+      });
+    }
+    async function runHandoffTask(stage) {
+      stage("creating", "Adding handoff notes for developers…");
+      const result = await localTask("handoff-notes", {}, 120000);
+      const notes = result.notes || [];
+      stage("done", "Handoff notes added · no model needed");
+      if (!notes.length) return "No handoff notes were added. This Figma version may not support annotations on these layers.";
+      if ((result.snapshot || []).length) revertSnapshot("Handoff notes (" + notes.length + ")", result.snapshot);
+      const counts = {};
+      notes.forEach(function (n) { counts[n.kind] = (counts[n.kind] || 0) + 1; });
+      return "Added " + notes.length + " handoff note(s) as native Figma annotations: " +
+        Object.keys(counts).map(function (k) { return counts[k] + " " + k + (counts[k] > 1 ? "s" : ""); }).join(", ") +
+        ". Each one shows measured size, radius, padding and colour, and the states to build.\n" +
+        notes.slice(0, 8).map(function (n) { return "- **" + n.name + "**: " + n.note; }).join("\n") +
+        "\n\nOpen Dev Mode to see them. Running it again replaces only UX Direct's notes. Revert removes them.";
+    }
+    async function runPrototypeWireTask(task, stage) {
+      stage("creating", task.fix ? "Wiring buttons between the selected screens…" : "Planning prototype links…");
+      const result = await localTask("prototype-wire", { fix: Boolean(task.fix) }, 120000);
+      const links = result.links || [];
+      stage("done", "Prototype " + (task.fix ? "wired" : "plan ready") + " · no model needed");
+      if (!links.length) return "No buttons could be matched to a screen. Name buttons after the screen they open (e.g. \"Pay now\" → \"Pay\"), or use Back / Continue.";
+      const lines = links.slice(0, 15).map(function (l) {
+        return "- " + l.screen + ": **" + l.label + "** → " + (l.action === "BACK" ? "back" : l.to) + (task.fix && !l.done ? " (failed)" : "");
+      }).join("\n");
+      if (task.fix) {
+        if ((result.snapshot || []).length) revertSnapshot("Prototype links (" + result.snapshot.length + ")", result.snapshot);
+        return "Wired " + (result.snapshot || []).length + " button(s) on click, with a dissolve transition:\n" + lines +
+          "\n\nButtons that already had an interaction were left alone. Press Present to try it. Revert removes these links.";
+      }
+      return "Planned " + links.length + " link(s):\n" + lines + "\n\nSay **wire the prototype** to apply them.";
+    }
+    // uxd-handoff:end
     async function runIconTask(task, stage) {
       const ids = selectedIds();
       if (!ids.length) throw new Error("Select the buttons, rows or icon to change.");
@@ -3318,6 +3363,8 @@
       if (task.kind === "design-rules") return runDesignRulesTask(task, stage);
       if (task.kind === "consistency") return runConsistencyTask(task, stage);
       if (task.kind === "detached") return runDetachedTask(task, stage);
+      if (task.kind === "handoff") return runHandoffTask(stage);
+      if (task.kind === "prototype-wire") return runPrototypeWireTask(task, stage);
       if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);
       if (task.kind === "flow-variations" || task.kind === "screen-variations" || task.kind === "states-pack") return runVariationsTask(task, prompt, stage);
       throw new Error("Unknown quick task.");
