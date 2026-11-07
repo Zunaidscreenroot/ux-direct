@@ -179,3 +179,29 @@ test("variation creation skips post-write model QA while retaining deterministic
   assert.ok(variationFlow.includes("post-variation visual QA disabled as requested"), "The completion message states that model QA was intentionally skipped.");
   assert.ok(variationFlow.includes('stage("done", "Variation created · native structure read-back passed")'));
 });
+
+test("almost-JSON from free models is repaired: prose, comments, trailing commas, <think>, wrappers, bare sections", async () => {
+  const { extractPlanJson } = await import("../src/figma-agent/extract-plan-json");
+  const messy = [
+    "<think>Plan the layout {first header} then cards.</think>",
+    "Here is the improved screen spec:",
+    "{",
+    '  "summary": "Cleaner loans screen", // short',
+    '  "sections": [',
+    '    { "name": "Header", "blocks": [{ "type": "app_bar", "title": "Manage loans // EMI" },] }, /* hero next */',
+    '    { "name": "Actions", "blocks": [{ "type": "button", "label": "Pay now" }], },',
+    "  ],",
+    "}",
+    "Let me know if you need changes.",
+  ].join("\n");
+  const plan = extractPlanJson(messy) as { summary: string; sections: Array<{ blocks: Array<{ title?: string }> }> };
+  assert.equal(plan.summary, "Cleaner loans screen");
+  assert.equal(plan.sections.length, 2);
+  assert.equal(plan.sections[0].blocks[0].title, "Manage loans // EMI", "comment markers inside strings are kept");
+
+  const wrapped = extractPlanJson('{"spec": {"sections": [{"name": "A", "blocks": [{"type": "text", "text": "Hi"}]}]}}') as { sections: unknown[] };
+  assert.equal(wrapped.sections.length, 1);
+  const bare = extractPlanJson('[{"name": "A", "blocks": [{"type": "text", "text": "Hi"}]}]') as { sections: unknown[] };
+  assert.equal(bare.sections.length, 1);
+  assert.equal(extractPlanJson("I could not design this screen."), null);
+});

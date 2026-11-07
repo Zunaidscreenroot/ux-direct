@@ -15,19 +15,61 @@ function isPlanObject(value: unknown): value is NativePlanLike {
   return Array.isArray(value.sections) && !("elements" in value) && ("summary" in value || "frame" in value || value.sections.length > 0);
 }
 
+const WRAPPER_KEYS = ["parsed", "json", "output", "content", "text", "arguments", "input",
+  "plan", "spec", "blockSpec", "block_spec", "design", "screen", "result", "data", "response"];
+
+/** A bare array of sections ({name, blocks}) is a block spec without its wrapper. */
+function asPlan(value: unknown): unknown {
+  if (isPlanObject(value)) return value;
+  if (Array.isArray(value) && value.length && value.every((item) => isRecord(item) && (Array.isArray(item.blocks) || Array.isArray(item.children)))) {
+    return { sections: value };
+  }
+  if (isRecord(value)) {
+    for (const key of WRAPPER_KEYS) {
+      const found = extractPlanJson(value[key]);
+      if (found !== null) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * Free models often return almost-JSON: // or /* *\/ comments and trailing commas. Repair those outside string literals and parse again (2026-11-07: a 4.7k-char
+ * compact answer with finish_reason=stop was thrown away as "no extractable design JSON").
+ */
+export function parseLenientJson(input: string): unknown {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  const text = input;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (inString) {
+      out += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      else if (char === "\n") out = out.slice(0, -1) + "\\n";
+      continue;
+    }
+    if (char === '"') { inString = true; out += char; continue; }
+    if (char === "/" && text[i + 1] === "/") { while (i < text.length && text[i] !== "\n") i += 1; continue; }
+    if (char === "/" && text[i + 1] === "*") { const end = text.indexOf("*/", i + 2); i = end < 0 ? text.length : end + 1; continue; }
+    // Trailing comma before a closing bracket (outside strings only).
+    if (char === "}" || char === "]") out = out.replace(/,\s*$/, "");
+    out += char;
+  }
+  return JSON.parse(out) as unknown;
+}
+
 function parseJsonText(input: string): unknown {
-  const text = input.trim().replace(/^\uFEFF/, "");
+  // Reasoning models may put a <think> block (with braces of its own) before the answer.
+  const text = input.trim().replace(/^\uFEFF/, "").replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
   if (!text) return null;
 
   try {
-    const direct = JSON.parse(text) as unknown;
-    if (isPlanObject(direct)) return direct;
-    if (isRecord(direct)) {
-      for (const key of ["parsed", "json", "output", "content", "text", "arguments", "input"]) {
-        const found = extractPlanJson(direct[key]);
-        if (found !== null) return found;
-      }
-    }
+    const direct = asPlan(JSON.parse(text) as unknown);
+    if (direct !== null) return direct;
   } catch {
     // The provider may have wrapped JSON in a markdown fence or a short preamble.
   }
@@ -38,8 +80,8 @@ function parseJsonText(input: string): unknown {
     .trim();
   if (unfenced !== text) {
     try {
-      const fenced = JSON.parse(unfenced) as unknown;
-      if (isPlanObject(fenced)) return fenced;
+      const fenced = asPlan(JSON.parse(unfenced) as unknown);
+      if (fenced !== null) return fenced;
     } catch {
       // Continue with balanced-object extraction.
     }
@@ -63,12 +105,12 @@ function parseJsonText(input: string): unknown {
       else if (char === "}") {
         depth -= 1;
         if (depth === 0) {
-          try {
-            const candidate = JSON.parse(text.slice(start, index + 1)) as unknown;
-            if (isPlanObject(candidate)) return candidate;
-          } catch {
-            break;
-          }
+          const slice = text.slice(start, index + 1);
+          let candidate: unknown = null;
+          try { candidate = JSON.parse(slice) as unknown; }
+          catch { try { candidate = parseLenientJson(slice); } catch { candidate = null; } }
+          const plan = candidate === null ? null : asPlan(candidate);
+          if (plan !== null) return plan;
           break;
         }
       }
