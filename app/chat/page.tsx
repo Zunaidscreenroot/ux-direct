@@ -35,6 +35,18 @@ type ModelsPayload = {
   missingProviders: Array<{ id: string; label: string; secret: string }>;
 };
 
+type BudgetPayload = {
+  generatedAt: string; resetsAt: string;
+  requests: { limit: number; used: number; remaining: number; coveredModels: number; totalModels: number };
+  tokens: { limit: number; usedOnLimited: number; remaining: number; usedToday: number; coveredModels: number; totalModels: number };
+  last24h: { calls: number; ok: number; tokens: number; promptTokens: number; completionTokens: number };
+  pace: { callsPerHour: number; tokensPerHour: number; projected24hCalls: number; projected24hTokens: number; hoursUntilRequestsOut: number | null };
+  hourly: Array<{ hour: string; calls: number; tokens: number }>;
+  roles: Array<{ seat: string; label: string; calls: number; ok: number; tokens: number; promptTokens: number; completionTokens: number; share: number; topModel: string; sources: string[] }>;
+  providers: Array<{ id: string; label: string; source: string; accountRpd?: number; callsToday: number; tokensToday: number; models: Array<{ model: string; rpd?: number; tpd?: number; callsToday: number; tokensToday: number; requestsLeft?: number; tokensLeft?: number }> }>;
+  notes: string[];
+};
+
 const HISTORY_KEY = "ux-direct-command-chat-v1";
 const ACCESS_KEY_STORAGE = "ux-direct-command-key";
 const ACCESS_HEADER = "X-UXD-Command-Key";
@@ -55,6 +67,7 @@ const MODEL_TABS: Array<{ id: ModelsTab; label: string }> = [
 ];
 const LIST_PAGE = 6;
 const formatTokens = (value: number) => value >= 1_000_000 ? (value / 1_000_000).toFixed(1) + "M" : value >= 1000 ? (value / 1000).toFixed(1) + "k" : String(value);
+const percent = (used: number, limit: number) => limit ? Math.min(100, Math.round(used / limit * 100)) : 0;
 const formatMs = (value: number) => value >= 1000 ? (value / 1000).toFixed(1) + "s" : value + "ms";
 // Skeleton only: planned command-center sections, not implemented yet.
 const COMING_NEXT = ["Context files", "Brain training", "Quality reports"];
@@ -88,6 +101,8 @@ export default function CommandCenter() {
   const [modelData, setModelData] = useState<Partial<Record<ModelsTab, ModelsPayload>>>({});
   const [moreBusy, setMoreBusy] = useState(false);
   const [modelHours, setModelHours] = useState(24);
+  const [budget, setBudget] = useState<BudgetPayload | null>(null);
+  const [budgetBusy, setBudgetBusy] = useState(false);
   const [providerCheck, setProviderCheck] = useState<{ busy: boolean; message?: string; results?: Array<{ provider: string; model: string; ok: boolean; status: number; latencyMs: number; error?: string }> }>({ busy: false });
   const [dataBusy, setDataBusy] = useState(false);
   const [dataError, setDataError] = useState("");
@@ -163,11 +178,24 @@ export default function CommandCenter() {
     }
   }, [fetchView]);
 
+  const loadBudget = useCallback(async () => {
+    setBudgetBusy(true);
+    try {
+      const result = await fetchView("view=models-budget");
+      if (result) setBudget(result as BudgetPayload);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : "Could not load the budget.");
+    } finally {
+      setBudgetBusy(false);
+    }
+  }, [fetchView]);
+
   useEffect(() => {
     if (!historyReady) return;
     if (activeTab === "activity" && !activity) void loadActivity();
     if (activeTab === "models" && !modelData.models) void loadModelTab("models", modelHours);
-  }, [activeTab, historyReady, activity, modelData.models, modelHours, loadActivity, loadModelTab]);
+    if (activeTab === "models" && !budget && !budgetBusy) void loadBudget();
+  }, [activeTab, historyReady, activity, modelData.models, modelHours, loadActivity, loadModelTab, budget, budgetBusy, loadBudget]);
 
   function openModelTab(tab: ModelsTab) {
     setModelTab(tab);
@@ -418,6 +446,75 @@ export default function CommandCenter() {
           </div>
           {lockPanel}
           {dataError && <div className="ud-chat-error" role="alert">{dataError}</div>}
+          {budget && <div className="ud-budget">
+            <div className="ud-budget-head"><div className="ud-cc-section">Free budget today</div><button className="ud-secondary-button" onClick={() => void loadBudget()} disabled={budgetBusy}>{budgetBusy ? "Refreshing…" : "Refresh"}</button></div>
+            <div className="ud-budget-cards">
+              <div className="ud-budget-card">
+                <span>Requests today</span>
+                <b>{budget.requests.remaining.toLocaleString()} <em>left</em></b>
+                <div className="ud-budget-bar"><i style={{ width: percent(budget.requests.used, budget.requests.limit) + "%" }} /></div>
+                <small>{budget.requests.used.toLocaleString()} used of {budget.requests.limit.toLocaleString()} · {budget.requests.coveredModels}/{budget.requests.totalModels} models publish a daily limit</small>
+              </div>
+              <div className="ud-budget-card">
+                <span>Tokens today</span>
+                <b>{formatTokens(budget.tokens.usedToday)} <em>used</em></b>
+                <div className="ud-budget-bar"><i style={{ width: percent(budget.tokens.usedOnLimited, budget.tokens.limit) + "%" }} /></div>
+                <small>Published token caps: {formatTokens(budget.tokens.remaining)} left of {formatTokens(budget.tokens.limit)} ({budget.tokens.coveredModels}/{budget.tokens.totalModels} models). The rest have no published token cap.</small>
+              </div>
+              <div className="ud-budget-card">
+                <span>Last 24 hours</span>
+                <b>{formatTokens(budget.last24h.tokens)} <em>tokens</em></b>
+                <small>{budget.last24h.calls.toLocaleString()} calls · {budget.last24h.calls ? Math.round(budget.last24h.ok / budget.last24h.calls * 100) : 0}% ok · in {formatTokens(budget.last24h.promptTokens)} / out {formatTokens(budget.last24h.completionTokens)}</small>
+              </div>
+              <div className="ud-budget-card">
+                <span>Pace (last 3 h)</span>
+                <b>{formatTokens(budget.pace.tokensPerHour)} <em>tokens/h</em></b>
+                <small>{budget.pace.callsPerHour} calls/h · 24 h at this pace: {formatTokens(budget.pace.projected24hTokens)} tokens, {budget.pace.projected24hCalls.toLocaleString()} calls · {budget.pace.hoursUntilRequestsOut !== null ? "requests run out in ~" + budget.pace.hoursUntilRequestsOut + " h" : "requests last until the reset"}</small>
+              </div>
+            </div>
+            <details className="ud-budget-acc">
+              <summary>By role (last 24 h) <span>{budget.roles.length} roles</span></summary>
+              {budget.roles.length ? <div className="ud-cc-table-wrap"><table className="ud-cc-table">
+                <thead><tr><th>Role</th><th>Tokens</th><th>Share</th><th>Calls</th><th>In / out</th><th>Most used model</th></tr></thead>
+                <tbody>{budget.roles.map((row) => <tr key={row.seat} title={row.sources.length ? "Also counts: " + row.sources.join(", ") : ""}>
+                  <td><strong>{row.label}</strong><small>{row.seat}</small></td>
+                  <td>{formatTokens(row.tokens)}</td>
+                  <td><div className="ud-budget-share"><i style={{ width: row.share + "%" }} /></div><small>{row.share}%</small></td>
+                  <td>{row.calls}{row.calls - row.ok ? <small className="ud-cc-error-text">{row.calls - row.ok} failed</small> : null}</td>
+                  <td>{formatTokens(row.promptTokens)} / {formatTokens(row.completionTokens)}</td>
+                  <td><small>{row.topModel || "—"}</small></td>
+                </tr>)}</tbody>
+              </table></div> : <p className="ud-cc-empty">No calls in the last 24 hours.</p>}
+            </details>
+            <details className="ud-budget-acc">
+              <summary>By provider and model (today) <span>{budget.providers.length} providers</span></summary>
+              <div className="ud-cc-list">{budget.providers.map((provider) => <article className="ud-cc-row" key={provider.id}>
+                <div className="ud-cc-row-top"><strong>{provider.label}</strong><span className="ud-status-pill muted">{provider.callsToday} calls · {formatTokens(provider.tokensToday)} tokens{provider.accountRpd ? " · " + Math.max(0, provider.accountRpd - provider.callsToday) + "/" + provider.accountRpd + " left" : ""}</span></div>
+                <small>{provider.source}</small>
+                <div className="ud-cc-table-wrap"><table className="ud-cc-table">
+                  <thead><tr><th>Model</th><th>Requests today</th><th>Tokens today</th></tr></thead>
+                  <tbody>{provider.models.map((model) => <tr key={model.model}>
+                    <td><strong>{model.model}</strong></td>
+                    <td>{model.callsToday}{model.rpd ? " / " + model.rpd.toLocaleString() : provider.accountRpd ? " (shared)" : " / unknown"}</td>
+                    <td>{formatTokens(model.tokensToday)}{model.tpd ? " / " + formatTokens(model.tpd) : " / unknown"}</td>
+                  </tr>)}</tbody>
+                </table></div>
+              </article>)}</div>
+            </details>
+            <details className="ud-budget-acc">
+              <summary>Hour by hour (last 24 h)</summary>
+              {budget.hourly.length ? <div className="ud-budget-hours">{(() => {
+                const max = Math.max(1, ...budget.hourly.map((row) => row.tokens));
+                return budget.hourly.map((row) => <div key={row.hour} title={new Date(row.hour).toLocaleString() + " · " + row.calls + " calls · " + row.tokens.toLocaleString() + " tokens"}>
+                  <i style={{ height: Math.max(2, Math.round(row.tokens / max * 100)) + "%" }} /><small>{new Date(row.hour).getHours()}</small>
+                </div>);
+              })()}</div> : <p className="ud-cc-empty">No calls in the last 24 hours.</p>}
+            </details>
+            <details className="ud-budget-acc">
+              <summary>Where these numbers come from</summary>
+              <ul className="ud-budget-notes">{budget.notes.map((note) => <li key={note}>{note}</li>)}<li>Resets at {new Date(budget.resetsAt).toLocaleString()}.</li></ul>
+            </details>
+          </div>}
           {models && <div className="ud-cc-stats">
             <div><b>{models.totals.calls}</b><span>Calls ({models.window})</span></div>
             <div><b>{models.totals.calls ? Math.round(models.totals.ok / models.totals.calls * 100) : 0}%</b><span>Success</span></div>
