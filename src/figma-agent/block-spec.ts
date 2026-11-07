@@ -14,7 +14,7 @@
  *  - `custom` accepts a raw native FRAME/TEXT/... node for anything no block covers.
  */
 
-import { restoreSourceFidelity, SOURCE_GRAPHIC_BUDGET } from "./source-graphics";
+import { restoreSourceFidelity, sourceCtaFill, SOURCE_GRAPHIC_BUDGET } from "./source-graphics";
 
 type Rec = Record<string, unknown>;
 export type NativeNode = Rec & { type: string; name: string; width: number; height: number; children?: NativeNode[] };
@@ -123,14 +123,16 @@ function primaryPair(primary: string, requested: string | null, fallback: string
   return { primaryFill: primary, onPrimary: ensureContrast(requested && !light ? requested : fallback, primary) };
 }
 
-export function resolveTheme(raw: unknown, sourceBackground: string | null): BlockTheme {
+export function resolveTheme(raw: unknown, sourceBackground: string | null, sourcePrimary: string | null = null): BlockTheme {
   const input = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Rec : {};
   const background = hex(input.background) || hex(input.backgroundColor) || sourceBackground || "#F7F8FA";
   const dark = luminance(background) < 0.25;
   const base = dark ? DARK : LIGHT;
   const pick = (key: keyof typeof base) => (typeof base[key] === "string" ? (hex(input[key]) || base[key]) : base[key]) as string;
   const surface = pick("surface");
-  const primary = pick("primary");
+  // The source's own filled CTA colour beats both the model's guess and the dark default
+  // (#6EA8FF with dark text read as a pale lavender "Pay now" on dark screens).
+  const primary = sourcePrimary || pick("primary");
   const radiusInput = typeof input.radius === "number" && Number.isFinite(input.radius) ? input.radius : base.radius;
   const text = ensureContrast(pick("text"), surface, 7);
   const theme: BlockTheme = {
@@ -1103,7 +1105,8 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   const source = asRec(sourceNodes[0]) ?? {};
   const sourceFill = Array.isArray(source.fillColors) ? hex(source.fillColors[0]) : null;
   const rawFrame = asRec(spec.frame) ?? {};
-  const theme = resolveTheme(spec.theme ?? rawFrame.theme, hex(rawFrame.backgroundColor) ?? sourceFill);
+  const ctaFill = options.monochrome ? null : sourceCtaFill(options.sourceCanvas ?? canvas);
+  const theme = resolveTheme(spec.theme ?? rawFrame.theme, hex(rawFrame.backgroundColor) ?? sourceFill, ctaFill);
   const componentIds = new Set(arr(canvas.components).map((c) => asRec(c)?.id).filter((id): id is string => typeof id === "string"));
   const b = new Builder(theme, collectSourceTokens(canvas, componentIds));
   const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds };

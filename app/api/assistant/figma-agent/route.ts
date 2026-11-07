@@ -25,6 +25,9 @@ export const dynamic = "force-dynamic";
 
 /** Longest the planner waits for the sub-agent brief before planning without it. */
 const PLANNER_AGENT_WAIT_MS = 6000;
+// Approved memory_type values with design value (brain monitor, 2026-11-07). design_decision is left
+// out: its only row is a client-scope note.
+const FIGMA_MEMORY_TYPES = ["approved_pattern", "failure_pattern", "coaching_rule", "quality_heuristic", "domain_principle"];
 const BRAIN_WAIT_MS = 5000;
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -623,6 +626,9 @@ export async function POST(request: Request) {
       // smallest part of it. Give the planner up to 12 memories / ~16k chars of team knowledge.
       limit: 12,
       maxChars: 16000,
+      // Design memories only: policy and workflow rows ("Automatic Learning Policy", ownership
+      // contracts) were the most-retrieved memories yet carry no design guidance.
+      memoryTypes: FIGMA_MEMORY_TYPES,
       includeKnowledge: true,
     }), BRAIN_WAIT_MS);
     brain = {
