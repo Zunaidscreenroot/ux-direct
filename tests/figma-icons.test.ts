@@ -256,3 +256,23 @@ test("rows with label and value in one text use the label part for the icon", as
   assert.equal(part("₹9,450"), "");
   assert.equal(part("Pay now"), "");
 });
+
+test("'add icons to these rows' includes label+value rows and makes room in absolute rows, with exact Revert", async () => {
+  const classify = classifier();
+  assert.deepEqual(classify("add icons to these rows", { selectionTypes: ["FRAME"] }), { kind: "icon", mode: "auto", rows: true });
+  const t = (id: string, characters: string) => ({ id, type: "TEXT", characters, fontSize: 14, fills: [], x: 16, y: 16, width: 140, height: 20, visible: true });
+  const mk = (id: string, characters: string) => ({ id, type: "FRAME", name: "Row " + id, layoutMode: "NONE", width: 312, height: 52, fills: [], children: [t(id + "t", characters)] });
+  const r1: any = mk("1", "EMI  ₹9,450"), r2: any = mk("2", "Next due  05 Dec"), r3: any = mk("3", "Status  On track");
+  const stack: any = { id: "st", type: "FRAME", name: "Stack", layoutMode: "VERTICAL", width: 312, height: 180, children: [r1, r2, r3] };
+  const nodes: Record<string, any> = { st: stack, "1": r1, "2": r2, "3": r3, "1t": r1.children[0], "2t": r2.children[0], "3t": r3.children[0] };
+  const { figma, run } = makeRuntime(nodes);
+  figma.currentPage.selection = [stack];
+  const found = await run("find-icon-targets", { rows: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((x: any) => x.label))), ["EMI", "Next due", "Status"]);
+  const result = await run("insert-icons", { items: found.targets.map((x: any) => ({ targetId: x.id, svg: LUCIDE, name: "calendar" })) });
+  assert.equal(result.inserted.length, 3, JSON.stringify(result.skipped));
+  assert.ok(r1.children[0].x >= 16 + 20, "label shifted right to make room: " + JSON.stringify(r1.children.map((c: any) => [c.name, c.x])));
+  await run("delete-created", { nodeIds: result.createdIds });
+  await run("restore-props", { items: result.restore });
+  assert.equal(r1.children[0].x, 16);
+});

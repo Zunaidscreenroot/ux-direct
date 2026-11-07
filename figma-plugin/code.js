@@ -4711,13 +4711,13 @@ async function localFindIconTargets(payload) {
     if (root.type === "INSTANCE") return;
     uxdDescendants(root, function (c) { return c.type === "FRAME" || c.type === "COMPONENT"; }).forEach(function (c) {
       var info = uxdIconTargetInfo(c);
-      if (info && !info.data) add(info, true);
+      if (info && (!info.data || (payload && payload.rows === true))) add(info, true);
     });
   });
   // Inside a selected screen, icons go on buttons only; rows are used only when the selection
   // has no button at all (e.g. a selected list). A directly selected row still counts.
   var buttons = out.filter(function (t) { return t.button || t.selected; });
-  if (buttons.some(function (t) { return t.button; })) out = buttons;
+  if (!(payload && payload.rows === true) && buttons.some(function (t) { return t.button; })) out = buttons;
   return { ok: true, targets: out.slice(0, 20) };
 }
 function uxdIconColor(target) {
@@ -4823,7 +4823,17 @@ async function localInsertIcons(payload) {
       }
     } else {
       var first = (target.children || []).filter(function (c) { return c.visible !== false; }).reduce(function (min, c) { return Math.min(min, c.x); }, Infinity);
-      if (first < size + 16) { icon.remove(); skipped.push({ id: target.id, name: target.name, reason: "no room before the label; say fix auto layout first" }); continue; }
+      if (first < size + 16) {
+        // Make room: shift the row's content right by the missing space when it still fits in the row.
+        var kids = (target.children || []).filter(function (c) { return c.visible !== false; });
+        var shift = size + 16 - first;
+        var right = kids.reduce(function (max, c) { return Math.max(max, c.x + c.width); }, 0);
+        if (!kids.length || right + shift > target.width - 8 || kids.some(function (c) { return c.locked === true; })) {
+          icon.remove(); skipped.push({ id: target.id, name: target.name, reason: "no room before the label, and the row is too full to shift its content" }); continue;
+        }
+        kids.forEach(function (c) { hidden.push({ id: c.id, prop: "x", before: c.x, after: c.x + shift }); c.x = c.x + shift; });
+        first += shift;
+      }
       target.appendChild(icon);
       icon.x = Math.max(8, first - size - 8); icon.y = Math.round((target.height - size) / 2);
     }

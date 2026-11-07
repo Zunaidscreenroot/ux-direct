@@ -2501,7 +2501,8 @@
           return { kind: "icon", mode: "named", query: query.trim().slice(0, 40) };
         }
         if (/\b(add|insert|put|place|use|give|need)\b[^.]{0,30}\bicons?\b|\bicons?\b[^.]{0,20}\b(lagao|laga do|daalo|daal do|dal do|add karo|chahiye)\b|\b(replace|swap|change)\b[^.]{0,20}\bicons?\b/i.test(text)) {
-          return { kind: "icon", mode: "auto" };
+          // "add icons to these rows": label/value rows inside the selection count too, not only buttons.
+          return /\b(rows?|list|items?|lines?|details?)\b/i.test(text) ? { kind: "icon", mode: "auto", rows: true } : { kind: "icon", mode: "auto" };
         }
       }
       // Style lock across screens (no model): "check consistency", "make these screens consistent", "style lock".
@@ -3070,7 +3071,7 @@
         targets = ids.map(function (id) { return { id: id }; });
       } else {
         stage("scanning", "Finding buttons and rows without icons…");
-        targets = (await localTask("find-icon-targets", {})).targets || [];
+        targets = (await localTask("find-icon-targets", { rows: Boolean(task.rows) })).targets || [];
         // Amounts and dates ("₹1,00,000", "12/05") never name an icon; don't send them.
         targets = targets.filter(function (t) { return !t.label || /\p{L}/u.test(String(t.label)); });
         if (!targets.length) throw new Error("No buttons or rows without an icon were found in the selection. Select a button and say, for example, **add a wallet icon**.");
