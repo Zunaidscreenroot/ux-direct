@@ -68,8 +68,9 @@ test("revert and undo requests never reach a generation path", () => {
 });
 
 test("ui.html wires quick tasks before the native and design paths", () => {
-  const quickIndex = ui.indexOf("const quickTask = classifyQuickTask(");
-  assert.ok(quickIndex > 0 && quickIndex < ui.indexOf("if (isDirectCanvasActionPrompt(prompt))"));
+  const quickIndex = ui.indexOf("const classifiedQuick = classifyQuickTask(");
+  assert.ok(quickIndex > 0 && quickIndex < ui.indexOf("if (!isQuestionTurn && isDirectCanvasActionPrompt(prompt))"));
+  assert.ok(ui.indexOf("const turn = classifyTurn(") < quickIndex, "the conversation intent is read before any tool is chosen");
   for (const path of ["/api/assistant/figma-agent/image", "/api/assistant/figma-agent/text", "/api/assistant/figma-agent/audit"]) {
     assert.ok(ui.includes(path), path + " is called from the plugin");
   }
