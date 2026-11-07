@@ -2918,7 +2918,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -3984,6 +3984,10 @@ async function uxdSetPropValue(node, prop, value) {
   if (prop === "textStyleId" && typeof node.setTextStyleIdAsync === "function") return node.setTextStyleIdAsync(value || "");
   if (prop === "fillStyleId" && typeof node.setFillStyleIdAsync === "function") return node.setFillStyleIdAsync(value || "");
   if (prop === "strokeStyleId" && typeof node.setStrokeStyleIdAsync === "function") return node.setStrokeStyleIdAsync(value || "");
+  if (prop === "effectStyleId" && typeof node.setEffectStyleIdAsync === "function") return node.setEffectStyleIdAsync(value || "");
+  if ((prop === "width" || prop === "height") && typeof node.resize === "function") {
+    return node.resize(prop === "width" ? value : node.width, prop === "height" ? value : node.height);
+  }
   node[prop] = value;
 }
 async function localRestoreProps(payload) {
@@ -4340,6 +4344,63 @@ async function localRestoreTexts(payload) {
   return { ok: true, restored: restored, changedSince: changedSince, missing: missing };
 }
 // uxd-fill-data:end
+// uxd-section-edit:start
+// Section edit on the native action planner: a property state of the selected subtrees before and
+// after the plan, so Revert restores exactly what the plan changed (restore-props + delete-created),
+// and a fingerprint of the layers next to the selection, which must stay identical.
+var UXD_SECTION_PROPS = UXD_DIRECT_SNAP_PROPS.concat(["characters", "visible", "name", "width", "height", "rotation",
+  "layoutSizingHorizontal", "layoutSizingVertical", "layoutGrow", "layoutPositioning", "primaryAxisSizingMode", "counterAxisSizingMode",
+  "textAutoResize", "clipsContent", "strokeAlign", "constraints", "layoutGrids", "fillStyleId", "strokeStyleId", "effectStyleId", "textStyleId",
+  "minWidth", "maxWidth", "minHeight", "maxHeight", "counterAxisSpacing"]);
+function uxdSectionWalk(root, visit, limit) {
+  var count = 0;
+  (function walk(n) {
+    if (count >= limit || !n || n.removed) return;
+    count++; visit(n);
+    (n.children || []).forEach(walk);
+  })(root);
+  return count;
+}
+function uxdNodeState(node) {
+  var state = {};
+  UXD_SECTION_PROPS.forEach(function (prop) {
+    if (!(prop in node)) return;
+    var value = uxdCloneValue(node[prop]);
+    if (value !== undefined) state[prop] = value;
+  });
+  return state;
+}
+function uxdHashString(text) {
+  var h = 2166136261;
+  for (var i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(16);
+}
+async function localSectionState(payload) {
+  var ids = Array.isArray(payload.rootIds) ? payload.rootIds.slice(0, 12) : [];
+  var nodes = {}, order = [], created = [], siblings = {}, truncated = false;
+  var rootSet = {};
+  ids.forEach(function (id) { rootSet[String(id)] = true; });
+  for (var i = 0; i < ids.length; i++) {
+    var root = await figma.getNodeByIdAsync(String(ids[i]));
+    if (!root || root.removed) continue;
+    var seen = uxdSectionWalk(root, function (n) {
+      nodes[n.id] = uxdNodeState(n);
+      order.push(n.id);
+      if (typeof n.getPluginData === "function" && n.getPluginData("uxdCreated") === "1") created.push({ id: n.id, parentId: n.parent ? n.parent.id : "" });
+    }, 1500);
+    if (seen >= 1500) truncated = true;
+    var parent = root.parent;
+    if (!parent || parent.type === "PAGE" || parent.type === "DOCUMENT") continue;
+    (parent.children || []).forEach(function (sib) {
+      if (rootSet[sib.id] || siblings[sib.id]) return;
+      var parts = [];
+      uxdSectionWalk(sib, function (n) { parts.push(n.id + ":" + JSON.stringify(uxdNodeState(n))); }, 1500);
+      siblings[sib.id] = { name: sib.name, hash: uxdHashString(parts.join("|")) };
+    });
+  }
+  return { ok: true, nodes: nodes, order: order, created: created, siblings: siblings, truncated: truncated };
+}
+// uxd-section-edit:end
 // uxd-icons:start
 // Real icons (Lucide via Iconify, resolved by the backend) as native vector layers. No model involved.
 // "find-icon-targets" lists buttons/rows without an icon so the UI can pick icons by label;
@@ -4487,6 +4548,7 @@ async function runLocalTask(message) {
     else if (message.op === "restore-props") result = await localRestoreProps(payload);
     else if (message.op === "find-icon-targets") result = await localFindIconTargets(payload);
     else if (message.op === "insert-icons") result = await localInsertIcons(payload);
+    else if (message.op === "section-state") result = await localSectionState(payload);
     else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
     else if (message.op === "trigger-undo") {
       if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");

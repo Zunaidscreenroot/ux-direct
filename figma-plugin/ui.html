@@ -999,6 +999,11 @@
     function isDirectCanvasActionPrompt(prompt) {
       const text = String(prompt || "").trim();
       if (!text) return false;
+      // Section edit: "make this card cleaner", "simplify the header", "polish this section" edit the
+      // selected part in place through the native planner, never as a new variation.
+      if (/\b(clean(er|up)?|simplif(y|ied)|declutter|tidy|neater|polish|less (busy|cluttered)|breathing room)\b/i.test(text) &&
+          /\b(this|the|selected|that)\s+(?:[\w-]+\s+){0,2}(card|section|row|header|footer|list|tile|widget|component|banner|form|module|block|panel|item|summary|table|chart|group|container|nav(?:bar)?|tab ?bar)s?\b/i.test(text) &&
+          !/\b(screens?|flows?|pages?|variations?|versions?|wireframes?)\b/i.test(text)) return true;
       // A short, broad instruction is a design task, not a one-node patch.
       // This keeps "refine this", "improve hierarchy", and "make this better"
       // on the screenshot-aware variation + visual QA path.
@@ -1326,7 +1331,87 @@
       return link.download;
     }
 
+    // uxd-section-edit:start
+    // Section edit: native action plans only touch the selected subtrees. A property state before and
+    // after the plan gives an exact Revert (restore-props + delete-created) that survives later edits,
+    // and a fingerprint of the layers next to the selection proves they were left identical.
+    const SECTION_SAFE_OPS = ["update-node", "set-fills", "set-effects", "apply-style", "create-elements", "set-layout-grids"];
+    function diffSectionStates(before, after) {
+      const items = [];
+      const beforeIds = new Set(before.order || []);
+      const afterIds = new Set(after.order || []);
+      (before.order || []).forEach(function (id) {
+        const was = before.nodes[id] || {};
+        const now = after.nodes[id];
+        if (!now) return;
+        Object.keys(was).forEach(function (prop) {
+          if (!(prop in now)) return;
+          if (JSON.stringify(was[prop]) !== JSON.stringify(now[prop])) items.push({ id: id, prop: prop, before: was[prop], after: now[prop] });
+        });
+      });
+      const deletedIds = (before.order || []).filter(function (id) { return !afterIds.has(id); });
+      const newIds = (after.order || []).filter(function (id) { return !beforeIds.has(id); });
+      const taggedNew = (after.created || []).filter(function (entry) { return !beforeIds.has(entry.id); });
+      const taggedSet = new Set(taggedNew.map(function (entry) { return entry.id; }));
+      const untaggedNew = newIds.filter(function (id) { return !taggedSet.has(id); });
+      // Only top-level created layers need deleting; their children go with them.
+      const createdIds = taggedNew.filter(function (entry) { return !taggedSet.has(entry.parentId); }).map(function (entry) { return entry.id; });
+      const changedSiblings = Object.keys(before.siblings || {}).filter(function (id) {
+        const now = (after.siblings || {})[id];
+        return !now || now.hash !== before.siblings[id].hash;
+      }).map(function (id) { return before.siblings[id].name || id; });
+      return { items: items, deletedIds: deletedIds, untaggedNew: untaggedNew, createdIds: createdIds, changedSiblings: changedSiblings };
+    }
+    function sectionRevertPlan(before, after, actions) {
+      const diff = before && after ? diffSectionStates(before, after) : null;
+      const snapshotSafe = Boolean(diff) && !before.truncated && !after.truncated && !diff.deletedIds.length && !diff.untaggedNew.length &&
+        diff.createdIds.length <= 20 && (actions || []).every(function (action) { return action && SECTION_SAFE_OPS.includes(action.operation); });
+      return { diff: diff, snapshotSafe: snapshotSafe };
+    }
     async function executeNativeActionPlan(prompt, reportProgress) {
+      let before = null, rootIds = [], planned = [], applied = false;
+      const hooks = { beforeApply: async function (ids, actions) {
+        applied = true; rootIds = ids; planned = actions;
+        before = await localTask("section-state", { rootIds: ids }).catch(function () { return null; });
+      } };
+      let answer = "", failure = null;
+      try { answer = await executeNativeActionPlanCore(prompt, reportProgress, hooks); } catch (error) { failure = error; }
+      if (applied) {
+        const after = before ? await localTask("section-state", { rootIds: rootIds }).catch(function () { return null; }) : null;
+        const plan = sectionRevertPlan(before, after, planned);
+        const label = "Edit: " + prompt.slice(0, 80);
+        if (plan.snapshotSafe) {
+          const items = plan.diff.items.slice();
+          const created = plan.diff.createdIds.slice();
+          if (items.length || created.length) {
+            recordChange(label, async function () {
+              const removed = created.length ? await localTask("delete-created", { nodeIds: created }) : { deleted: [] };
+              const restore = items.length ? await localTask("restore-props", { items: items }) : { restored: 0, changedSince: 0 };
+              return restore.restored + " value(s) restored" + (removed.deleted.length ? ", " + removed.deleted.length + " added layer(s) removed" : "") +
+                (restore.changedSince ? ", " + restore.changedSince + " left as you edited them" : "");
+            });
+          }
+        } else {
+          // Deletes, swaps, reparenting and the like cannot be put back from properties: Figma undo, latest only.
+          recordChange(label, function () {
+            return localTask("commit-undo", {}).catch(function () {})
+              .then(function () { return localTask("trigger-undo", {}); })
+              .then(function () { return "undone with Figma undo"; });
+          }, { mustBeLatest: true });
+        }
+        if (!failure && plan.diff && plan.diff.changedSiblings.length) {
+          answer += "\n\nWARNING: layers outside the selection changed (" + plan.diff.changedSiblings.slice(0, 5).join(", ") +
+            "). A section edit should leave them identical; Revert undoes the whole edit.";
+        } else if (!failure && plan.diff && Object.keys(before.siblings || {}).length) {
+          answer += "\nSection check: the " + Object.keys(before.siblings).length + " layer(s) next to the selection are unchanged.";
+        }
+      }
+      if (failure) throw failure;
+      return answer;
+    }
+    // uxd-section-edit:end
+
+    async function executeNativeActionPlanCore(prompt, reportProgress, hooks) {
       const notify = typeof reportProgress === "function" ? reportProgress : function () {};
       function stage(state, message) { setProcessState(state, message); notify(message); }
       stage("scanning", "Inspecting selected Figma layers, text, layout and styles…");
@@ -1409,11 +1494,8 @@
       stage("creating", "Applying " + actions.length + " validated native Figma action(s)…");
       // Group the whole edit into one Figma undo step so "revert" can undo it in one go.
       await localTask("commit-undo", {}).catch(function () {});
-      recordChange("Edit: " + prompt.slice(0, 80), function () {
-        return localTask("commit-undo", {}).catch(function () {})
-          .then(function () { return localTask("trigger-undo", {}); })
-          .then(function () { return "undone with Figma undo"; });
-      }, { mustBeLatest: true });
+      // The section-edit wrapper records Revert from a before/after state of the selection.
+      await hooks.beforeApply(canvas.nodes.map(function (node) { return node.id; }), actions);
       for (let index = 0; index < actions.length; index += 1) {
         const action = actions[index];
         if (!action || typeof action.operation !== "string") throw new Error("Invalid action at step " + (index + 1) + ".");

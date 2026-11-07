@@ -1,5 +1,6 @@
 import { providerFetch } from "@/src/providers/provider-fetch";
 import { NextResponse } from "next/server";
+import { sectionEditBrief } from "@/src/figma-agent/section-edit";
 import { z } from "zod";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
@@ -358,7 +359,9 @@ export async function POST(request: Request) {
     "COMPONENTS AND PROTOTYPES: add-component-property adds BOOLEAN/TEXT/INSTANCE_SWAP properties to a COMPONENT (or COMPONENT_SET for variants) and links them to an inner layer via linkedNodeId. set-reactions adds prototype interactions (ON_CLICK + NAVIGATE/OVERLAY/BACK/URL with optional transition) only when the user asks for prototyping/flows; destinationId must be an inspected node. set-flow-start marks a top-level frame as a flow start.",
     "Operation count 1–12. Use the least number of actions, prefer one update patch per node, and never return explanatory prose, markdown, unsupported fields, or tool calls.",
     "Native execution is irreversible for some operations. Ask for no confirmation in JSON; the host requires explicit user prompt to execute, and delete-node is allowed only when the request clearly asks to delete/remove.",
-  ].join("\n");
+    // uxd-section-edit: cleanup brief when one card/section is selected (empty string otherwise).
+    sectionEditBrief(input.data.prompt, canvas),
+  ].filter(Boolean).join("\n");
   const userText = JSON.stringify({
     prompt: input.data.prompt, canvas,
     userAttachedImageAvailable: !!referenceImage,
