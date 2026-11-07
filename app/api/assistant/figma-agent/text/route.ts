@@ -60,6 +60,7 @@ async function handleTextTask(request: Request): Promise<Response> {
       "Do not change IDs, account or reference numbers, amounts, percentages or dates unless the request is about them, and do not add words that a nearby layer already shows.",
       "When the request is to make copy clearer or better, apply this rubric: plain everyday words over jargon or internal terms (say what a charge or status means for the user); alerts state the consequence and the action to take; keep titles and buttons verb-led or as short as the source, never turn a clear title into a vaguer noun phrase; one idea per line.",
       "A label next to a number or value says what that value is, not just a bare status word. Leave the screen title and tab labels as they are unless the request names them; never make a tab, chip or button label noticeably longer.",
+      "Do not repeat the screen's topic in its child labels (no \"Privacy settings\" under a Settings title), keep standard abbreviations in dense rows (Qty, ETA, No.), and match the capitalisation style the screen already uses for its labels.",
       "A change must change wording. Never return an edit that only adds or removes punctuation, capitalisation or spacing; leave that layer out instead.",
       "Only return layers whose text really changes. Refer to each layer by its ref (t1, t2, …) exactly as given.",
       'Return JSON only: {"summary": string, "updates": [{"ref": "t1", "text": "the new full text"}]}.',

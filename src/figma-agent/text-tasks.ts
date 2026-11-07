@@ -89,6 +89,61 @@ const SCREEN_TITLE_NAME = /\b(screen|page) ?(title|heading|name)\b/i;
 const SHORT_LABEL_LAYER = /\b(tabs?|segment\w*|chips?|pills?|badges?|buttons?|btn|cta)\b/i;
 const PUNCTUATION_REQUEST = /\b(punctuat\w*|full ?stops?|periods?|commas?|apostroph\w*|quotes?|hyphen\w*)\b/i;
 
+
+// Compact labels that are standard in dense rows; a rewrite keeps them instead of spelling them out ("Qty 1" → "Quantity: 1").
+const STANDARD_ABBREVIATIONS = new Set(["qty", "eta", "emi", "amt", "avg", "approx", "dept", "pcs", "hrs", "hr", "mins", "secs", "est", "incl", "excl", "txn", "dob", "faq", "kyc", "otp", "upi", "gst", "vat", "a/c", "acct", "yr", "yrs", "mo", "km", "kg"]);
+const CASE_REQUEST = /\b(case|capitali[sz]\w*|title case|sentence case|uppercase|lowercase)\b/i;
+const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to", "via", "with", "&"]);
+
+type LabelCase = "title" | "sentence" | null;
+const wordList = (text: string) => text.trim().split(/\s+/).filter((w) => /\p{L}/u.test(w));
+function labelCase(text: string): LabelCase {
+  const words = wordList(text);
+  if (words.length < 2 || words.length > 6) return null;
+  const rest = words.slice(1).filter((w) => !SMALL_WORDS.has(w.toLowerCase()) && !/^\p{Lu}{2,}$/u.test(w));
+  if (!rest.length || !/^\p{Lu}/u.test(words[0])) return null;
+  if (rest.every((w) => /^\p{Lu}/u.test(w))) return "title";
+  if (rest.every((w) => /^\p{Ll}/u.test(w))) return "sentence";
+  return null;
+}
+/** The case most short labels on the screen already use; null when it's unclear. */
+export function dominantLabelCase(texts: string[]): LabelCase {
+  let title = 0, sentence = 0;
+  for (const text of texts) { const c = labelCase(text); if (c === "title") title += 1; else if (c === "sentence") sentence += 1; }
+  if (title + sentence < 2) return null;
+  if (title >= sentence * 2) return "title";
+  if (sentence >= title * 2) return "sentence";
+  return null;
+}
+/** Applies the screen's label case to a short label; proper nouns and acronyms from the screen keep their case. */
+export function applyLabelCase(text: string, target: LabelCase, keep: Set<string>): string {
+  if (!target || wordList(text).length > 6 || /[.!?]\s/.test(text)) return text;
+  let index = 0;
+  return text.replace(/\S+/g, (word) => {
+    if (!/\p{L}/u.test(word)) return word;
+    const first = index === 0;
+    index += 1;
+    if (/^\p{Lu}{2,}/u.test(word) || keep.has(word)) return word;
+    const lower = word.toLowerCase();
+    if (first) return lower.charAt(0).toUpperCase() + lower.slice(1);
+    if (target === "title") return SMALL_WORDS.has(lower) ? lower : lower.charAt(0).toUpperCase() + lower.slice(1);
+    return lower;
+  });
+}
+
+/**
+ * The screen title when no app bar names it: the first of the leading texts set in the largest
+ * size on the screen (a plain header like "Settings" at 20–28 px above the content).
+ */
+export function inferScreenTitleId(items: TextTaskItem[]): string | null {
+  const texts = items.filter((item) => item.type === "TEXT" && (item.text || "").trim());
+  const sizes = texts.map((item) => item.fontSize || 0);
+  const max = Math.max(0, ...sizes);
+  if (max < 18) return null;
+  const leading = texts.slice(0, 5).find((item) => (item.fontSize || 0) === max && wordList(item.text || "").length <= 6);
+  return leading ? leading.id : null;
+}
+
 export function normalizeTextEdits(mode: TextTaskMode, data: unknown, items: TextTaskItem[], raw = "", prompt = "", screenName = ""): TextEdit[] {
   const allowValueEdits = VALUE_EDIT_REQUEST.test(prompt);
   const byRef = new Map(items.map((item, index) => [refFor(index), item]));
@@ -118,6 +173,12 @@ export function normalizeTextEdits(mode: TextTaskMode, data: unknown, items: Tex
 
   const seen = new Set<string>();
   const edits: TextEdit[] = [];
+  const inferredTitleId = mode === "rewrite" ? inferScreenTitleId(items) : null;
+  const titleText = (items.find((item) => item.id === inferredTitleId)?.text || screenName || "").toLowerCase();
+  const titleWords = new Set(titleText.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2).map((w) => w.replace(/s$/, "")));
+  const screenCase = mode === "rewrite" && !CASE_REQUEST.test(prompt) ? dominantLabelCase(items.map((item) => item.text || "")) : null;
+  // Capitalised words that sit mid-label on the screen are names or acronyms; case alignment keeps them.
+  const keepCase = new Set(items.flatMap((item) => (item.text || "").split(/\s+/).slice(1).filter((w) => /^\p{Lu}/u.test(w) && labelCase(item.text || "") !== "title")));
   const push = (source: TextTaskItem, value: string | null) => {
     if (value === null || seen.has(source.id)) return;
     if (mode === "rewrite") {
@@ -131,14 +192,26 @@ export function normalizeTextEdits(mode: TextTaskMode, data: unknown, items: Tex
       // The screen title stays unless the request is about titles (tester: "Manage Loans" → "Loan Management" twice).
       const where = source.name + " " + (source.parent || "") + " " + (source.hint || "");
       const isScreenTitle = SCREEN_TITLE_PARENT.test(source.parent || "") || SCREEN_TITLE_NAME.test(source.name) ||
-        (!!screenName.trim() && squash(source.text || "").toLowerCase() === squash(screenName).toLowerCase());
+        (!!screenName.trim() && squash(source.text || "").toLowerCase() === squash(screenName).toLowerCase()) || source.id === inferredTitleId;
       if (!TITLE_REQUEST.test(prompt) && isScreenTitle) return;
       // Tabs, chips and buttons keep their width: at most ~1.2× the source length ("Others" → "Other Loans" overflows a 3-tab bar).
       const before = squash(source.text || "");
       if (!LONGER_REQUEST.test(prompt) && SHORT_LABEL_LAYER.test(where) && squash(value).length > Math.max(before.length * 1.2, before.length + 2)) return;
       // A copy rewrite never touches IDs, amounts or dates unless the request is about them.
       if (!allowValueEdits && isValueText(source.text || "")) return;
-      edits.push({ id: source.id, value, before: source.text || "" });
+      const tokens = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}/]+/u).filter(Boolean);
+      const oldTokens = tokens(before), newTokens = tokens(value);
+      if (!LONGER_REQUEST.test(prompt)) {
+        // A standard abbreviation is kept, not spelled out.
+        if (oldTokens.some((t) => STANDARD_ABBREVIATIONS.has(t) && !newTokens.includes(t))) return;
+        // A label that only gains the screen's own topic word is redundant ("Privacy" → "Privacy settings" on Settings).
+        const added = newTokens.filter((t) => !oldTokens.includes(t));
+        if (added.length && oldTokens.every((t) => newTokens.includes(t)) && added.every((t) => titleWords.has(t.replace(/s$/, "")))) return;
+      }
+      // One case across the screen's labels: an edited label follows the case most labels already use.
+      const cased = applyLabelCase(value, screenCase, keepCase);
+      if (squash(cased) === before) return;
+      edits.push({ id: source.id, value: cased, before: source.text || "" });
     } else {
       const clean = value.replace(/\s+/g, " ").trim().slice(0, 60);
       if (!clean || clean === source.name) return;
