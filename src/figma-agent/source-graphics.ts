@@ -271,6 +271,16 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
       else if (pastCard) break;
       else if (candidates[0] && !repeatedFallback) repeatedFallback = candidates[0];
     }
+    // The unique text was only found higher up (another row of the card), but a repeated text sat
+    // right beside the graphic ("Personal Loan" next to the lender logo). Use the unique text to
+    // find the right output card, then anchor to that card's own copy of the nearer text, so the
+    // logo lands in the title row rather than above "Outstanding" (tester round 8).
+    if (anchor && anchorRef && repeatedFallback) {
+      const outCard = [...anchorRef.ancestors].reverse().find(isCardLike);
+      const key = norm(repeatedFallback.d.text);
+      const inCard = outCard ? refs.filter((r) => r.node.type === "TEXT" && typeof r.node.text === "string" && norm(r.node.text) === key && r.ancestors.includes(outCard)) : [];
+      if (inCard.length === 1 && allowed(repeatedFallback.d, inCard[0])) { anchor = repeatedFallback.d; anchorRef = inCard[0]; }
+    }
     if ((!anchor || !anchorRef) && repeatedFallback) { anchor = repeatedFallback.d; anchorRef = repeatedFallback.ref; }
     if (!anchor || !anchorRef) { result.unplaced.push(graphic.name); continue; }
 
@@ -407,9 +417,19 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
 function dropDuplicateTexts(card: NativeNode, ownTexts: string[], clone: NativeNode) {
   if (!ownTexts.length) return;
   const wanted = new Set(ownTexts);
+  // The model often merges the chart's separate labels ("60%" and "Paid") into one "60% Paid"
+  // text beside the chart (tester round 8): a text made only of the chart's own words, with a
+  // number among them, is the same label.
+  const ownWords = new Set(ownTexts.flatMap((text) => text.split(" ")).filter(Boolean));
+  const isCopy = (text: string) => {
+    const key = norm(text);
+    if (wanted.has(key)) return true;
+    const words = key.split(" ").filter(Boolean);
+    return words.length >= 2 && words.length <= 4 && /\d/.test(key) && words.every((word) => ownWords.has(word));
+  };
   const prune = (node: NativeNode) => {
     if (!node.children) return;
-    node.children = node.children.filter((child) => child === clone || !(child.type === "TEXT" && typeof child.text === "string" && wanted.has(norm(child.text))));
+    node.children = node.children.filter((child) => child === clone || !(child.type === "TEXT" && typeof child.text === "string" && isCopy(child.text)));
     for (const child of node.children) prune(child);
     node.children = node.children.filter((child) => child.type !== "FRAME" || child === clone || (child.children?.length ?? 0) > 0 || typeof child.color === "string");
   };
