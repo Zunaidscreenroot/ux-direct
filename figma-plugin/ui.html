@@ -3033,7 +3033,7 @@
       stage("creating", task.fix ? "Wiring buttons between the selected screens…" : "Planning prototype links…");
       const result = await localTask("prototype-wire", { fix: Boolean(task.fix) }, 120000);
       const links = result.links || [];
-      stage("done", "Prototype " + (task.fix ? "wired" : "plan ready") + " · no model needed");
+      stage("done", !links.length ? "Prototype · no buttons matched" : "Prototype " + (task.fix ? "wired" : "plan ready") + " · no model needed");
       if (!links.length) return "No buttons could be matched to a screen. Name buttons after the screen they open (e.g. \"Pay now\" → \"Pay\"), or use Back / Continue.";
       const lines = links.slice(0, 15).map(function (l) {
         return "- " + l.screen + ": **" + l.label + "** → " + (l.action === "BACK" ? "back" : l.to) + (task.fix && !l.done ? " (failed)" : "");
