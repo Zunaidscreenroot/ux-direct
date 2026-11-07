@@ -1500,6 +1500,19 @@ function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: st
     }
     return best;
   };
+  // Text colours drawn directly on a surface: its texts, down to the next layer with its own fill.
+  const textsOn = (surface: NativeNode): string[] => {
+    const out: string[] = [];
+    const walk = (nodes: NativeNode[] | undefined) => {
+      for (const child of nodes ?? []) {
+        if (child.type === "TEXT") { if (typeof child.color === "string") out.push(child.color); continue; }
+        if (typeof child.color === "string" && child.noFill !== true) continue;
+        walk(child.children);
+      }
+    };
+    walk(surface.children);
+    return out;
+  };
   let texts = 0, paints = 0;
   const visit = (nodes: NativeNode[]) => {
     for (const node of nodes) {
@@ -1519,7 +1532,9 @@ function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: st
       }
       if (node.type !== "CLONE" && node.type !== "INSTANCE" && typeof node.color === "string" && typeof node.paintStyleId !== "string") {
         const hit = nearestPaint(node.color, loose && node.type !== "TEXT");
-        if (hit) { node.color = hit.color; node.paintStyleId = hit.id; paints += 1; }
+        // A surface's style never costs its own labels contrast (white on a muted button blue).
+        const readable = !hit || node.type === "TEXT" || textsOn(node).every((fg) => contrast(fg, hit.color) >= Math.min(4.5, contrast(fg, String(node.color))));
+        if (hit && readable) { node.color = hit.color; node.paintStyleId = hit.id; paints += 1; }
       }
       if (node.type !== "CLONE" && node.type !== "INSTANCE" && typeof node.strokeColor === "string" && typeof node.strokeStyleId !== "string") {
         const hit = nearestPaint(node.strokeColor, loose);

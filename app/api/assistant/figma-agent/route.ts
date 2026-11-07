@@ -1117,7 +1117,9 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "application/json",
-            ...figmaRoutingHeaders(activeProvider, { fast: isRecovery, role: isRecovery ? "fast-retry" : blockMode ? gatewaySeat(taskOwner(taskRole, parsedInput.data.prompt)) : "planner" }),
+            // The repair pass after a rejected compact spec runs on the designer's full seat (Groq / Workers AI
+            // first), not the fast-retry pool that just failed (2026-11-07: Ministral twice, then the fallback).
+            ...figmaRoutingHeaders(activeProvider, { fast: isRecovery && recoveryAttempt < 2, role: isRecovery && recoveryAttempt < 2 ? "fast-retry" : blockMode ? gatewaySeat(taskOwner(taskRole, parsedInput.data.prompt)) : "planner" }),
             ...(activeProvider.id === "openrouter" ? {
               "HTTP-Referer": new URL(request.url).origin,
               "X-OpenRouter-Title": "UX Direct Figma Agent",
