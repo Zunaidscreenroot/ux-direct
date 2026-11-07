@@ -167,7 +167,7 @@ export function sourceCtaFill(canvas: Rec): string | null {
   return best;
 }
 
-export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme: BlockTheme, options: { budget?: number; headerComponentId?: string | null } = {}): SourceFidelityResult {
+export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme: BlockTheme, options: { budget?: number; headerComponentId?: string | null; contentDropped?: boolean } = {}): SourceFidelityResult {
   const result: SourceFidelityResult = { clones: 0, replacedRings: 0, restoredButtons: 0, unplaced: [] };
   const rootRaw = asRec(Array.isArray(canvas.nodes) ? canvas.nodes[0] : null);
   if (!rootRaw) return result;
@@ -178,7 +178,8 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
     firstChild.raw.mainComponentId === options.headerComponentId ? firstChild.id : null;
 
   restoreButtons(elements, root, theme, result);
-  restoreRepeatedButtons(elements, root, theme, result);
+  // An empty/loading state drops the cards on purpose: their "Pay now" must not come back.
+  if (!options.contentDropped) restoreRepeatedButtons(elements, root, theme, result);
 
   const graphics: SrcNode[] = [];
   collectGraphics(root, headerId, graphics);

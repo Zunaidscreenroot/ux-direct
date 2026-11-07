@@ -113,6 +113,8 @@ export function stateFallbackSpec(sourceSpec: Rec, state: ScreenState, sourceCan
     middle = [{ name: state === "error" ? "Error" : "Success", blocks: [banner] }, ...content];
   }
   const frame = asRec(sourceSpec.frame) ?? {};
-  return { ...sourceSpec, frame: { ...frame, name: (String(frame.name || title) + " · " + STATE_LABELS[state]).slice(0, 80) },
+  // Same naming as the plugin's states pack: "<screen> / Error".
+  const word = state.charAt(0).toUpperCase() + state.slice(1);
+  return { ...sourceSpec, frame: { ...frame, name: (String(frame.name || title) + " / " + word).slice(0, 80) },
     sections: [...chromeTop, ...middle, ...chromeBottom].slice(0, 8) };
 }
