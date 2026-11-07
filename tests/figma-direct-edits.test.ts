@@ -221,7 +221,7 @@ function runtime() {
       locked: false, ...props };
     if (["FRAME", "INSTANCE", "COMPONENT", "GROUP"].includes(n.type)) {
       n.children = []; if (n.type !== "GROUP") { n.layoutMode = n.layoutMode || "NONE"; n.cornerRadius = 0; n.clipsContent = true; n.itemSpacing = 0; n.paddingLeft = 0; n.paddingRight = 0; n.paddingTop = 0; n.paddingBottom = 0; n.primaryAxisAlignItems = "MIN"; n.counterAxisAlignItems = "MIN"; }
-      n.insertChild = (i: number, c: any) => { n.children.splice(n.children.indexOf(c), 1); n.children.splice(i, 0, c); };
+      n.insertChild = (i: number, c: any) => { if (c.parent) c.parent.children.splice(c.parent.children.indexOf(c), 1); c.parent = n; n.children.splice(i, 0, c); };
       n.appendChild = (c: any) => { if (c.parent) c.parent.children.splice(c.parent.children.indexOf(c), 1); attach(n, c); };
       n.findAll = (fn: any) => { const out: any[] = []; const walk = (x: any) => (x.children || []).forEach((c: any) => { if (fn(c)) out.push(c); walk(c); }); walk(n); return out; };
     }
@@ -429,6 +429,22 @@ test("state switch, wrap and component insert run without a model", async () => 
   assert.equal(placed.x, 20, "respects the screen gutter, not the full-width background");
   assert.equal(placed.width, 335, "fills the content width on a mobile screen");
   assert.equal(placed.y, 356, "16px below the lowest content, ignoring the full-bleed background");
+
+  // An auto-layout screen with no padding, whose gutter lives inside full-width sections (finding on #159).
+  const alScreen = r.make({ type: "FRAME", name: "AL screen", width: 360, height: 800, layoutMode: "VERTICAL" });
+  withCriteria(alScreen);
+  const section = r.make({ type: "FRAME", name: "Section", width: 360, height: 300 }, alScreen);
+  r.make({ type: "FRAME", name: "Card", x: 20, width: 320, height: 120 }, section);
+  r.make({ type: "FRAME", name: "Card", x: 20, y: 140, width: 320, height: 120 }, section);
+  r.figma.createFrame = () => r.make({ type: "FRAME", name: "Frame" });
+  await r.apply("add a primary button", [alScreen]);
+  const row = alScreen.children[alScreen.children.length - 1];
+  assert.equal(row.name, "Button row");
+  assert.equal(row.paddingLeft, 20);
+  assert.equal(row.paddingRight, 20);
+  assert.equal(row.layoutSizingHorizontal, "FILL");
+  assert.equal(row.children[0].type, "INSTANCE");
+  assert.equal(row.children[0].layoutSizingHorizontal, "FILL");
 });
 
 test("direct edits return a property snapshot so Revert restores them after later changes", async () => {
