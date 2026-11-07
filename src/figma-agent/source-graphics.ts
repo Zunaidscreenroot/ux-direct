@@ -249,6 +249,8 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
     let anchor: SrcNode | null = null;
     let anchorRef: OutRef | null = null;
     let repeatedFallback: { d: SrcNode; ref: OutRef } | null = null;
+    // The nearest source text at all, even one the model merged into a longer label (no 1:1 map).
+    let nearestText: SrcNode | null = null;
     for (let scope = graphic.parent, hops = 0; scope && hops < 5 && !anchor; scope = scope.parent, hops += 1) {
       const candidates = descendants(scope).flatMap((d) => {
         if (d.type !== "TEXT" || !d.text || own.has(d.id)) return [];
@@ -260,6 +262,10 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
       // straight below (a top-right logo anchored to a stat label in the next row; finding 38).
       const dist = (n: SrcNode) => Math.hypot((n.rect.x + n.rect.w / 2 - cx) / 2, n.rect.y + n.rect.h / 2 - cy);
       candidates.sort((a, b) => dist(a.d) - dist(b.d));
+      if (!nearestText) {
+        const texts = descendants(scope).filter((d) => d.type === "TEXT" && !!d.text && !own.has(d.id)).sort((a, b) => dist(a) - dist(b));
+        nearestText = texts[0] ?? null;
+      }
       // A text that appears once is a safe anchor. A repeated one ("Personal Loan", "Paid") maps by
       // order, which is wrong once the model reorders cards (a 60% donut beside "40% Paid"; finding
       // 56), so it is used only when no unique text is found further up.
@@ -275,11 +281,17 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
     // right beside the graphic ("Personal Loan" next to the lender logo). Use the unique text to
     // find the right output card, then anchor to that card's own copy of the nearer text, so the
     // logo lands in the title row rather than above "Outstanding" (tester round 8).
-    if (anchor && anchorRef && repeatedFallback) {
+    const nearSource = repeatedFallback?.d ?? (nearestText && nearestText !== anchor ? nearestText : null);
+    if (anchor && anchorRef && nearSource) {
       const outCard = [...anchorRef.ancestors].reverse().find(isCardLike);
-      const key = norm(repeatedFallback.d.text);
-      const inCard = outCard ? refs.filter((r) => r.node.type === "TEXT" && typeof r.node.text === "string" && norm(r.node.text) === key && r.ancestors.includes(outCard)) : [];
-      if (inCard.length === 1 && allowed(repeatedFallback.d, inCard[0])) { anchor = repeatedFallback.d; anchorRef = inCard[0]; }
+      const key = norm(nearSource.text);
+      const textsInCard = (match: (text: string) => boolean) => outCard ? refs.filter((r) => r.node.type === "TEXT" && typeof r.node.text === "string" &&
+        match(norm(r.node.text)) && r.ancestors.includes(outCard)) : [];
+      let inCard = textsInCard((text) => text === key);
+      // The model often merges a title and its ID into one label ("Personal Loan DMI123…"); the
+      // logo still belongs beside that merged label, not above the next unique stat (tester, frame 15).
+      if (!inCard.length && key.length >= 4) inCard = textsInCard((text) => text.includes(key));
+      if (inCard.length === 1 && allowed(nearSource, inCard[0])) { anchor = nearSource; anchorRef = inCard[0]; }
     }
     if ((!anchor || !anchorRef) && repeatedFallback) { anchor = repeatedFallback.d; anchorRef = repeatedFallback.ref; }
     if (!anchor || !anchorRef) { result.unplaced.push(graphic.name); continue; }
