@@ -3,6 +3,7 @@ import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openr
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
 import { figmaAttemptTimeoutMs, figmaModelChain, figmaRoutingHeaders, routedVia, shouldRetryWithoutJsonMode, type AgentRole } from "@/src/providers/active-chat-provider";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
+import { parseLenientJson } from "@/src/figma-agent/extract-plan-json";
 
 export type JsonModelContent = string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
 
@@ -43,19 +44,24 @@ export async function callFigmaJsonModel(options: {
   }
   const endpoint = provider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   const models = figmaModelChain(provider, options.hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id));
-  const attempts = models.map((model) => ({ model, jsonMode: true }));
+  const attempts: Array<{ model: string; jsonMode: boolean; fast?: boolean }> = models.map((model) => ({ model, jsonMode: true }));
   const errors: string[] = [];
   const maxAttempts = options.maxAttempts ?? Number.POSITIVE_INFINITY;
+  // FreeLLMAPI's chain is one `auto` entry, so a single slow upstream used to end the task
+  // ("No free model returned a usable answer. auto: timed out" after 90 s, UX audit 2026-11-07).
+  // Quick tasks get one more `auto` attempt with the speed hint; each attempt is capped at 60 s.
+  const freeRetry = provider.id === "freellmapi" && options.maxAttempts === undefined && !options.fast;
+  if (freeRetry) attempts.push({ model: attempts[attempts.length - 1]?.model || "auto", jsonMode: true, fast: true });
   for (let index = 0; index < attempts.length && index < maxAttempts; index++) {
     if (options.signal?.aborted) {
       errors.push("stopped: shared deadline reached");
       break;
     }
-    const { model, jsonMode } = attempts[index];
+    const { model, jsonMode, fast } = attempts[index];
     const controller = new AbortController();
     const abortFromParent = () => controller.abort();
     options.signal?.addEventListener("abort", abortFromParent, { once: true });
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? figmaAttemptTimeoutMs(provider, index, 60000, 45000));
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? (freeRetry ? 60000 : figmaAttemptTimeoutMs(provider, index, 60000, 45000)));
     try {
       const response = await providerFetch(endpoint, {
         method: "POST",
@@ -63,7 +69,7 @@ export async function callFigmaJsonModel(options: {
           Authorization: "Bearer " + provider.apiKey,
           "Content-Type": "application/json",
           Accept: "application/json",
-          ...figmaRoutingHeaders(provider, { fast: options.fast, role: options.role }),
+          ...figmaRoutingHeaders(provider, { fast: options.fast || fast, role: fast && !options.role ? "fast-retry" : options.role }),
           ...(provider.id === "openrouter" ? { "HTTP-Referer": options.origin, "X-OpenRouter-Title": options.title } : {}),
         },
         body: JSON.stringify({
@@ -98,6 +104,7 @@ export async function callFigmaJsonModel(options: {
       const raw = typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? "");
       const decoded = extractJsonObject(message.content) ?? extractJsonObject(message.parsed) ?? extractJsonObject(message.tool_calls)
         ?? (options.anyObject ? parseAnyObject(raw) : null)
+        ?? lenientObject(raw)
         ?? (/^\s*(```(json)?\s*)?\[/i.test(raw) ? {} : null);
       if (!decoded) {
         errors.push(model + ": response contained no JSON object.");
@@ -117,6 +124,20 @@ export async function callFigmaJsonModel(options: {
     }
   }
   return { ok: false, status: 502, error: "No free model returned a usable answer.", errors };
+}
+
+/** Almost-JSON (comments, trailing commas) from a free model, as an object. */
+function lenientObject(raw: string): Record<string, unknown> | null {
+  const text = raw.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed = parseLenientJson(text.slice(start, end + 1));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseAnyObject(raw: string): Record<string, unknown> | null {

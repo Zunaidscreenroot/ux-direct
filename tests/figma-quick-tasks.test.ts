@@ -272,3 +272,23 @@ test("instances that differ by variant get a manual low finding, not the auto-fi
   assert.equal(finding?.severity, "low");
   assert.match(String(finding?.evidence), /"Loan Card" ×3/);
 });
+
+test("copy rewrite drops whitespace-only edits and leaves IDs, amounts and dates alone unless asked", async () => {
+  const { isValueText } = await import("../src/figma-agent/text-tasks");
+  const items = [
+    { id: "a", type: "TEXT", name: "Title", text: "Manage Loans" },
+    { id: "b", type: "TEXT", name: "Product", text: "Personal Loan " },
+    { id: "c", type: "TEXT", name: "Ref", text: "DMI1234567890" },
+    { id: "d", type: "TEXT", name: "Pct", text: "60%" },
+  ];
+  const updates = { updates: [
+    { ref: "t1", text: "Loans Overview" }, { ref: "t2", text: "Personal Loan" },
+    { ref: "t3", text: "DMI 1234567890" }, { ref: "t4", text: "60% Paid" },
+  ] };
+  assert.deepEqual(normalizeTextEdits("rewrite", updates, items, "", "rewrite the copy on this screen to be clearer").map((e) => e.id), ["a"]);
+  assert.deepEqual(normalizeTextEdits("rewrite", updates, items, "", "format the amounts and ids").map((e) => e.id), ["a", "c", "d"]);
+  assert.equal(isValueText("₹1,07,649"), true);
+  assert.equal(isValueText("12 Nov 2026"), true);
+  assert.equal(isValueText("Pay ₹4,500"), false);
+  assert.equal(isValueText("Apply now"), false);
+});

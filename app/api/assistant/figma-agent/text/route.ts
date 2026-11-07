@@ -57,7 +57,8 @@ async function handleTextTask(request: Request): Promise<Response> {
       "Apply the user's request to the given text layers. Keep each layer's role: a button stays a short action label, a title stays a title, a price or number stays exact unless the request asks to change it.",
       "Keep roughly the same length unless the request asks to shorten, expand or add content. Preserve the language unless asked to translate. Preserve line breaks that structure lists.",
       "Do not invent facts (prices, dates, names) that the request did not give. Realistic sample content is allowed only when the request asks for it.",
-      "Only return layers you actually change. Refer to each layer by its ref (t1, t2, …) exactly as given.",
+      "Do not change IDs, account or reference numbers, amounts, percentages or dates unless the request is about them, and do not add words that a nearby layer already shows.",
+      "Only return layers whose text really changes (not just spacing). Refer to each layer by its ref (t1, t2, …) exactly as given.",
       'Return JSON only: {"summary": string, "updates": [{"ref": "t1", "text": "the new full text"}]}.',
     ].join("\n")
     : [
@@ -76,7 +77,7 @@ async function handleTextTask(request: Request): Promise<Response> {
     temperature: mode === "rewrite" ? 0.5 : 0.2,
     system,
     user: JSON.stringify({ request: prompt, screen: parsed.data.screenName || "", layers: modelLayers(mode, items) }),
-    accept: (data, raw) => normalizeTextEdits(mode, data, items, raw).length ? null : "returned no usable edits for the selected layers",
+    accept: (data, raw) => normalizeTextEdits(mode, data, items, raw, prompt).length ? null : "returned no usable edits for the selected layers",
   });
   if (!result.ok) {
     // Renaming has a model-free fallback; rewriting copy does not.
@@ -91,7 +92,7 @@ async function handleTextTask(request: Request): Promise<Response> {
       details: result.errors,
     }, { status: result.status, headers });
   }
-  const edits = normalizeTextEdits(mode, result.data, items, result.raw);
+  const edits = normalizeTextEdits(mode, result.data, items, result.raw, prompt);
   return NextResponse.json({
     ok: true, mode, edits, model: result.model,
     summary: typeof result.data.summary === "string" ? result.data.summary.slice(0, 400) : "",
