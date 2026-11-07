@@ -2917,7 +2917,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -4278,6 +4278,134 @@ async function localRestoreTexts(payload) {
   return { ok: true, restored: restored, changedSince: changedSince, missing: missing };
 }
 // uxd-fill-data:end
+// uxd-icons:start
+// Real icons (Lucide via Iconify, resolved by the backend) as native vector layers. No model involved.
+// "find-icon-targets" lists buttons/rows without an icon so the UI can pick icons by label;
+// "insert-icons" adds each SVG before the label (auto layout) or swaps a selected icon in place.
+// Every created layer is tagged uxdCreated, and a replaced icon is only hidden, so Revert is exact.
+var UXD_ICON_NAME = /\b(icon|ic|glyph|chevron|arrow|svg)\b/i;
+function uxdIsIconLike(node) {
+  if (!node || node.removed) return false;
+  if (["VECTOR", "BOOLEAN_OPERATION", "STAR", "LINE", "POLYGON"].indexOf(node.type) >= 0) return Math.max(node.width || 0, node.height || 0) <= 64;
+  if (["FRAME", "GROUP", "INSTANCE", "COMPONENT"].indexOf(node.type) < 0) return false;
+  var w = node.width || 0, h = node.height || 0;
+  if (w > 64 || h > 64 || w < 8 || h < 8 || Math.abs(w - h) > Math.max(w, h) * 0.25) return false;
+  if (UXD_ICON_NAME.test(String(node.name || ""))) return true;
+  var kids = uxdDescendants(node, function () { return true; });
+  return kids.length > 0 && kids.every(function (c) { return ["VECTOR", "BOOLEAN_OPERATION", "GROUP", "FRAME", "ELLIPSE", "RECTANGLE", "LINE", "POLYGON", "STAR"].indexOf(c.type) >= 0; });
+}
+function uxdInsideInstance(node) {
+  for (var p = node.parent; p && p.type !== "PAGE"; p = p.parent) if (p.type === "INSTANCE") return true;
+  return false;
+}
+function uxdIconTargetInfo(node) {
+  if (["FRAME", "COMPONENT"].indexOf(node.type) < 0 || node.visible === false || node.locked === true) return null;
+  if ((node.height || 0) > 88 || (node.width || 0) < 40 || uxdInsideInstance(node)) return null;
+  var kids = (node.children || []).filter(function (c) { return c.visible !== false; });
+  var texts = kids.filter(function (c) { return c.type === "TEXT"; });
+  if (!texts.length || texts.length > 2 || kids.some(uxdIsIconLike)) return null;
+  var label = String(texts[0].characters || "").trim();
+  if (!label || label.length > 40) return null;
+  var size = typeof texts[0].fontSize === "number" ? texts[0].fontSize : 14;
+  return { id: node.id, name: node.name, label: label, fontSize: size };
+}
+async function localFindIconTargets(payload) {
+  var roots = figma.currentPage.selection.slice();
+  if (!roots.length) throw new Error("Select the buttons, rows or screen that need icons.");
+  var out = [], seen = {};
+  function add(info) { if (info && !seen[info.id] && out.length < 20) { seen[info.id] = 1; out.push(info); } }
+  roots.forEach(function (root) {
+    var self = uxdIconTargetInfo(root);
+    if (self) { add(self); return; }
+    if (root.type === "INSTANCE") return;
+    uxdDescendants(root, function (c) { return c.type === "FRAME" || c.type === "COMPONENT"; }).forEach(function (c) { add(uxdIconTargetInfo(c)); });
+  });
+  return { ok: true, targets: out };
+}
+function uxdIconColor(target) {
+  var sources = target.type === "TEXT" ? [target] : uxdDescendants(target, function (c) { return c.type === "TEXT" && c.visible !== false; });
+  if (uxdIsIconLike(target)) sources = uxdDescendants(target, function (c) { return c.type !== "GROUP" && c.type !== "FRAME"; }).concat(sources);
+  for (var i = 0; i < sources.length; i++) {
+    var lists = [sources[i].strokes, sources[i].fills];
+    for (var j = 0; j < lists.length; j++) {
+      if (!Array.isArray(lists[j])) continue;
+      var solid = lists[j].find(function (p) { return p && p.type === "SOLID" && p.visible !== false; });
+      if (solid) return { r: solid.color.r, g: solid.color.g, b: solid.color.b };
+    }
+  }
+  return { r: 0.12, g: 0.16, b: 0.22 };
+}
+function uxdIconSize(target, requested) {
+  if (requested) return requested;
+  var text = target.type === "TEXT" ? target : (target.children || []).find(function (c) { return c.type === "TEXT"; });
+  var fs = text && typeof text.fontSize === "number" ? text.fontSize : 16;
+  return fs <= 13 ? 16 : fs <= 16 ? 20 : 24;
+}
+function uxdPaintIcon(icon, color) {
+  uxdDescendants(icon, function (c) { return c.type !== "FRAME" && c.type !== "GROUP"; }).forEach(function (v) {
+    try {
+      if (Array.isArray(v.strokes) && v.strokes.length) v.strokes = [{ type: "SOLID", color: color }];
+      if (Array.isArray(v.fills) && v.fills.length) v.fills = [{ type: "SOLID", color: color }];
+    } catch (_) {}
+  });
+}
+async function localInsertIcons(payload) {
+  var items = Array.isArray(payload.items) ? payload.items.slice(0, 20) : [];
+  var inserted = [], skipped = [], created = [], hidden = [];
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i] || {};
+    var target = await figma.getNodeByIdAsync(String(item.targetId || ""));
+    if (!target || target.removed) { skipped.push({ id: item.targetId, reason: "layer no longer exists" }); continue; }
+    if (typeof item.svg !== "string" || item.svg.indexOf("<svg") !== 0) { skipped.push({ id: target.id, name: target.name, reason: "no icon found" }); continue; }
+    var replace = uxdIsIconLike(target);
+    var holder = replace ? target.parent : target;
+    if (!holder || holder.type === "INSTANCE" || uxdInsideInstance(target) || (!replace && target.type === "INSTANCE")) {
+      skipped.push({ id: target.id, name: target.name, reason: "inside a component instance; change the icon in the main component" });
+      continue;
+    }
+    if (!replace && ["FRAME", "COMPONENT"].indexOf(target.type) < 0) {
+      skipped.push({ id: target.id, name: target.name, reason: "select a frame, button or icon" });
+      continue;
+    }
+    var size = replace ? Math.round(Math.max(target.width, target.height)) : uxdIconSize(target, Number(item.size) || 0);
+    var color = uxdIconColor(target);
+    var icon;
+    try { icon = figma.createNodeFromSvg(item.svg); } catch (error) { skipped.push({ id: target.id, name: target.name, reason: "SVG could not be imported" }); continue; }
+    icon.name = "Icon / " + String(item.name || "icon").slice(0, 40);
+    try { icon.fills = []; } catch (_) {}
+    if (icon.width && Math.abs(icon.width - size) > 0.5 && typeof icon.rescale === "function") icon.rescale(size / icon.width);
+    else if (typeof icon.resize === "function") icon.resize(size, size);
+    uxdPaintIcon(icon, color);
+    if (typeof icon.setPluginData === "function") icon.setPluginData("uxdCreated", "1");
+    if (replace) {
+      var index = holder.children.indexOf(target);
+      holder.insertChild(index + 1, icon);
+      if (!uxdHasAutoLayout(holder) || target.layoutPositioning === "ABSOLUTE") {
+        if (target.layoutPositioning === "ABSOLUTE") icon.layoutPositioning = "ABSOLUTE";
+        icon.x = target.x + (target.width - size) / 2; icon.y = target.y + (target.height - size) / 2;
+      }
+      hidden.push({ id: target.id, prop: "visible", before: target.visible !== false, after: false });
+      target.visible = false;
+    } else if (uxdHasAutoLayout(target)) {
+      target.insertChild(0, icon);
+      if (target.counterAxisAlignItems === "MIN" && target.layoutMode === "HORIZONTAL") {
+        hidden.push({ id: target.id, prop: "counterAxisAlignItems", before: "MIN", after: "CENTER" });
+        target.counterAxisAlignItems = "CENTER";
+      }
+    } else {
+      var first = (target.children || []).filter(function (c) { return c.visible !== false; }).reduce(function (min, c) { return Math.min(min, c.x); }, Infinity);
+      if (first < size + 16) { icon.remove(); skipped.push({ id: target.id, name: target.name, reason: "no room before the label; say fix auto layout first" }); continue; }
+      target.appendChild(icon);
+      icon.x = Math.max(8, first - size - 8); icon.y = Math.round((target.height - size) / 2);
+    }
+    created.push(icon.id);
+    inserted.push({ id: icon.id, icon: String(item.name || ""), target: target.name, mode: replace ? "replaced" : "added", size: size });
+  }
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  return { ok: true, inserted: inserted, skipped: skipped, createdIds: created, restore: hidden };
+}
+// uxd-icons:end
 async function runLocalTask(message) {
   var result = null;
   var errorText = null;
@@ -4295,6 +4423,8 @@ async function runLocalTask(message) {
     else if (message.op === "fill-realistic-data") result = await localFillRealisticData(payload);
     else if (message.op === "restore-texts") result = await localRestoreTexts(payload);
     else if (message.op === "restore-props") result = await localRestoreProps(payload);
+    else if (message.op === "find-icon-targets") result = await localFindIconTargets(payload);
+    else if (message.op === "insert-icons") result = await localInsertIcons(payload);
     else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
     else if (message.op === "trigger-undo") {
       if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");

@@ -98,7 +98,7 @@ export async function finishTaskRun(input: {
   }
 }
 
-export type QuickTaskKind = "text" | "image" | "audit";
+export type QuickTaskKind = "text" | "image" | "audit" | "icon";
 
 /**
  * One-row outcome log for quick tasks (text, image, audit) so the brain monitor can see
