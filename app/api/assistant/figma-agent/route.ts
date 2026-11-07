@@ -5,6 +5,7 @@ import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
 import { detectDomain, detectTaskRole, roleInstructions } from "@/src/figma-agent/agent-roles";
 import { runSubAgents, subAgentsEnabled, type AgentBrief } from "@/src/figma-agent/sub-agents";
+import { agencyEnabled, agencyHandlesRole, runAgency, type AgencyResult } from "@/src/figma-agent/agency";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { buildBrainQuery } from "@/src/memory/brain-query";
@@ -845,6 +846,8 @@ export async function POST(request: Request) {
   let inFlight: { attempt: string; startedAt: number } | null = null;
   // Size of the last prompt sent, so a slow model call can be told apart from a huge prompt.
   let promptSize: { textChars: number; approxTokens: number; imageKb: number } | null = null;
+  // UX Director agency report (per-designer timing and outcome), when the agency ran.
+  let agencyReport: (Omit<AgencyResult, "spec"> & { used: boolean; gate?: string }) | null = null;
   const respond = (success: SuccessCandidate) => {
     const { candidate } = success;
     deferTaskWork(recordGeneration(taskRunId, {
@@ -869,6 +872,7 @@ export async function POST(request: Request) {
       consistency: { themeLocked: success.themeLocked ?? false, restoredSourceTexts: success.repairedTexts, verifiedExample: Boolean(verifiedExample) },
       brain: { status: brain.status, memories: brain.memoryCount, knowledgeChunks: brain.knowledgeChunkCount, latencyMs: brain.durationMs },
       agents: { role: taskRole.id, domain: agentBrief.domain.id, domainSource: agentBrief.domainSource, latencyMs: agentsMs, runs: agentBrief.runs },
+      agency: agencyReport,
       visualAnalysis: { imageReceived: !!renderedScreen, layerNodeCount: canvas.nodeCount, warning: parsedInput.data.visualCaptureWarning || null },
       generation: { recoveryAttempted: success.isRecovery, finishReason: success.finishReason, modelIndex: success.modelIndex + 1,
         attempts: attemptLog.length, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt,
@@ -877,6 +881,46 @@ export async function POST(request: Request) {
         prompt: promptSize },
     }, { headers });
   };
+  // UX Director agency: the source screen's sections go to specialist designers in parallel
+  // (small calls), the Director merges them and the same gates check the result. A failed gate
+  // falls through to the monolithic planner below with most of the 200 s budget left.
+  if (agencyEnabled() && blockMode && !createMode && !screenState && !componentSelection && !referenceImage && agencyHandlesRole(taskRole)) {
+    const agencyStarted = Date.now();
+    const agency = await runAgency(canvas, {
+      prompt: parsedInput.data.prompt, role: taskRole,
+      directorBrief: agentBrief.instructions, designRules: designRulesInstructions.trim(),
+      brain: brain.contextText.slice(0, 6000), origin: new URL(request.url).origin,
+    }, { deadlineMs: 45000 }).catch(() => null);
+    if (agency) {
+      const { spec: agencySpec, ...report } = agency;
+      agencyReport = { ...report, used: false };
+      if (agencySpec) {
+        const stabilized = stabilizeBlockSpec({ ...agencySpec, frame: { name: selectedName + " · agency" } }, canvas, parsedInput.data.prompt);
+        let specInput: unknown = applyVariationDirection(stabilized.spec, variationDirection);
+        let candidate = renderCandidate(specInput);
+        let repairedTexts = 0;
+        if (candidate.stage === "quality" && candidate.plan && candidate.quality?.findings.every((finding) => finding.code === "missing-source-content")) {
+          const missing = missingSourceTexts(candidate.plan, canvas, gatePrompt);
+          if (missing.length && missing.length <= MAX_REPAIRED_TEXTS) {
+            const repairedSpec = appendMissingSourceText(specInput, missing);
+            const repaired = renderCandidate(repairedSpec);
+            if (repaired.stage === "ok") { candidate = repaired; specInput = repairedSpec; repairedTexts = missing.length; }
+          }
+        }
+        const models = [...new Set(report.runs.map((run) => run.model).filter(Boolean))];
+        const designed = report.runs.filter((run) => run.outcome === "designed").length;
+        attemptTimes.push({ attempt: "agency (" + designed + "/" + report.runs.length + " sections designed, " + report.concurrency + " parallel)",
+          ms: Date.now() - agencyStarted, outcome: candidate.stage === "ok" ? "ok" : candidate.error.slice(0, 120) });
+        attemptLog.push({ model: "agency: " + (models.join(", ") || "none"), result: candidate.stage === "ok" ? "passed" : candidate.stage + ": " + candidate.error });
+        if (candidate.stage === "ok" && candidate.plan && candidate.quality) {
+          agencyReport = { ...agencyReport, used: true, gate: "ok" };
+          return respond({ candidate, spec: specInput, learningCandidate: null, servedModel: "agency: " + (models.join(", ") || "auto"),
+            isRecovery: false, finishReason: "stop", modelIndex: 0, themeLocked: stabilized.themeLocked, repairedTexts });
+        }
+        agencyReport = { ...agencyReport, gate: candidate.stage + ": " + candidate.error.slice(0, 200) };
+      }
+    }
+  }
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
     const attemptsForModel = 2;
