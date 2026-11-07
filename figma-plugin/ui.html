@@ -1111,8 +1111,24 @@
         if (expanded && Array.isArray(expanded.nodes)) lint = await requestStructuralLint(lintBody(expanded)) || lint;
       }
       if (!lint) return { passed: false, issues: [], text: "Structural lint was unavailable, so overlap, clipping and source content were not verified." };
+      // A few source texts lost by the model: copy the exact source layers back, then lint again.
+      let restoredNote = "";
+      const missing = lint.content && lint.content.partial !== true && Array.isArray(lint.content.missingText) ? lint.content.missingText : [];
+      if (!lint.passed && missing.length >= 1 && missing.length <= 5 && options.sourceRootId && options.outputRootId) {
+        const restore = await localTask("restore-missing-texts", {
+          sourceRootId: options.sourceRootId, outputRootId: options.outputRootId, texts: missing
+        }).catch(function () { return null; });
+        if (restore && Array.isArray(restore.restored) && restore.restored.length) {
+          const reread = await runNativeCanvasCommand("read-canvas", {
+            scope: "selection", nodeIds: [options.outputRootId], maxDepth: 12, maxNodes: 500, includeStyles: true, includeVariables: true
+          }, 90000).catch(function () { return null; });
+          if (reread && Array.isArray(reread.nodes)) lint = await requestStructuralLint(lintBody(reread)) || lint;
+          restoredNote = "\nRestored " + restore.restored.length + " missing source text(s) from the original screen: " +
+            restore.restored.map(function (item) { return '"' + String(item.text).slice(0, 40) + '"'; }).join(", ") + ".";
+        }
+      }
       return { passed: lint.passed === true, issues: lint.issues,
-        text: String(lint.summary || (lint.passed ? "Structural lint passed" : "Structural lint failed")) +
+        text: String(lint.summary || (lint.passed ? "Structural lint passed" : "Structural lint failed")) + restoredNote +
           (lint.passed ? "" : "\n" + formatLintIssues(lint.issues)) };
     }
 
@@ -2455,6 +2471,11 @@
         const fixIt = /\b(fix|make|apply|lock|align|match|karo|kar do|set)\b|\bstyle[ -]?lock\b/i.test(text) && !/\b(check|find|show|report|list|audit|kya|batao)\b/i.test(text);
         return { kind: "consistency", fix: fixIt };
       }
+      // Detached-instance rescue (no model): "find detached components", "relink detached instances".
+      if (count > 0 && /\b(detach(ed)?|re-?link|re-?attach)\b/i.test(text) && /\b(detach(ed)?|instances?|components?|copies)\b/i.test(text)) {
+        const relink = /\b(re-?link|re-?attach|rescue|fix|replace|restore|karo|kar do)\b/i.test(text) && !/\b(check|find|show|report|list|kya|batao)\b/i.test(text);
+        return { kind: "detached", fix: relink };
+      }
       // Realistic sample data (no model): "fill with realistic data", "dummy data bhar do", "use sample Indian names".
       if (count > 0 && !/lorem/i.test(text) && (
         /\b(fill|populate|add|put|use|replace|generate)\b[^.]{0,40}\b(realistic|real|dummy|sample|mock|fake|demo|test|indian)\b[^.]{0,20}\b(data|content|values|details|numbers|names|amounts)\b/i.test(text) ||
@@ -2923,6 +2944,34 @@
         (findings.length > 12 ? "\n- …and " + (findings.length - 12) + " more" : "") + "\n\nSay **fix consistency** to apply the most common value everywhere (Revert available).";
     }
     // uxd-consistency:end
+    // uxd-detached:start
+    async function runDetachedTask(task, stage) {
+      stage("scanning", task.fix ? "Relinking detached components…" : "Looking for detached components…");
+      const result = await localTask("detached-rescue", { fix: Boolean(task.fix) }, 120000);
+      const rows = result.results || [];
+      stage("done", "Detached check complete · no model needed");
+      if (!rows.length) return "No detached components found in the selection. Every frame here is either a live instance or was never a component.";
+      const line = function (r) {
+        return "- **" + r.name + "**" + (r.component ? " → " + r.component : "") +
+          (r.status === "relinked" ? ": relinked" : r.status === "skipped" ? ": left as is, " + r.reason : ": can be relinked");
+      };
+      const lines = rows.slice(0, 15).map(line).join("\n") + (rows.length > 15 ? "\n- …and " + (rows.length - 15) + " more" : "");
+      const created = (result.createdIds || []).slice();
+      if (task.fix && created.length) {
+        const restore = (result.restore || []).slice();
+        recordChange("Relink detached (" + created.length + ")", async function () {
+          const removed = await localTask("delete-created", { nodeIds: created });
+          if (restore.length) await localTask("restore-props", { items: restore });
+          return removed.deleted.length + " instance(s) removed, detached copies shown again";
+        });
+        return "Relinked " + created.length + " detached copy(ies) to their components, with their texts kept as overrides:\n" + lines +
+          "\n\nThe old copies are hidden next to each instance. Delete them when you are happy, or press Revert.";
+      }
+      const ready = rows.filter(function (r) { return r.status === "ready"; }).length;
+      return "Found " + rows.length + " detached component copy(ies):\n" + lines +
+        (ready ? "\n\nSay **relink detached components** to swap the " + ready + " ready one(s) back to live instances (Revert available)." : "");
+    }
+    // uxd-detached:end
     async function runIconTask(task, stage) {
       const ids = selectedIds();
       if (!ids.length) throw new Error("Select the buttons, rows or icon to change.");
@@ -2936,6 +2985,8 @@
       } else {
         stage("scanning", "Finding buttons and rows without icons…");
         targets = (await localTask("find-icon-targets", {})).targets || [];
+        // Amounts and dates ("₹1,00,000", "12/05") never name an icon; don't send them.
+        targets = targets.filter(function (t) { return !t.label || /\p{L}/u.test(String(t.label)); });
         if (!targets.length) throw new Error("No buttons or rows without an icon were found in the selection. Select a button and say, for example, **add a wallet icon**.");
         stage("creating", "Picking icons for " + targets.length + " label(s)…");
         try {
@@ -3238,6 +3289,7 @@
       if (task.kind === "icon") return runIconTask(task, stage);
       if (task.kind === "design-rules") return runDesignRulesTask(task, stage);
       if (task.kind === "consistency") return runConsistencyTask(task, stage);
+      if (task.kind === "detached") return runDetachedTask(task, stage);
       if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);
       if (task.kind === "flow-variations" || task.kind === "screen-variations" || task.kind === "states-pack") return runVariationsTask(task, prompt, stage);
       throw new Error("Unknown quick task.");
