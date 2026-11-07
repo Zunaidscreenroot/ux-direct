@@ -3425,6 +3425,33 @@
         flattenTree(node.children, visit, node, insideInstance || node.type === "INSTANCE");
       });
     }
+    // The selection's own words for a chat question ("what is the overdue amount on the delinquent
+    // loan?"): texts in reading order, grouped by card/row so each value stays with its item.
+    async function selectionTextContext() {
+      const ids = (currentSelection.selection || []).map(function (node) { return node.id; }).filter(Boolean).slice(0, 4);
+      if (!ids.length) return "";
+      const canvas = await runNativeCanvasCommand("read-canvas", { scope: "selection", nodeIds: ids, maxDepth: 12, maxNodes: 900, includeStyles: false, includeVariables: false, includeComponents: false }, 60000).catch(function () { return null; });
+      const roots = canvas && Array.isArray(canvas.nodes) ? canvas.nodes : [];
+      const lines = [];
+      const textsOf = function (node) { const out = []; flattenTree([node], function (n) { if (n.type === "TEXT" && typeof n.text === "string" && n.text.trim()) out.push(n.text.trim().replace(/\s+/g, " ").slice(0, 80)); }); return out; };
+      roots.forEach(function (root) {
+        const W = Number(root.width) || 0;
+        const loose = [];
+        const walk = function (nodes) {
+          (Array.isArray(nodes) ? nodes : []).forEach(function (node) {
+            if (!node) return;
+            if (node.type === "TEXT") { if (node.text && node.text.trim()) loose.push(node.text.trim().replace(/\s+/g, " ").slice(0, 80)); return; }
+            const texts = ["FRAME", "INSTANCE", "GROUP", "COMPONENT"].indexOf(node.type) >= 0 && Number(node.width) < W * 0.97 ? textsOf(node) : [];
+            if (texts.length >= 2 && texts.length <= 30) { lines.push("- " + String(node.name || node.type).slice(0, 40) + ": " + texts.join(" | ")); return; }
+            walk(node.children);
+          });
+        };
+        walk(root.children);
+        lines.unshift("Screen \"" + String(root.name || "").slice(0, 60) + "\"" + (loose.length ? ": " + loose.join(" | ") : ""));
+      });
+      const text = lines.join("\n").slice(0, 3000);
+      return text ? "\n\n[Text on the selected layers, grouped by card/row; answer questions about values from this]\n" + text : "";
+    }
     function firstTexts(node, max) {
       const found = [];
       flattenTree([node], function (item) { if (item.type === "TEXT" && item.text && found.length < max) found.push(String(item.text).slice(0, 60)); });
@@ -4749,9 +4776,10 @@
           return;
         }
 
+        const selectionText = await selectionTextContext().catch(function () { return ""; });
         const messages = chatHistory.map(function (message, index) {
           const copy = { role: message.role, content: message.content };
-          if (index === chatHistory.length - 1 && message.role === "user") copy.content = appendSelectionContext(copy.content);
+          if (index === chatHistory.length - 1 && message.role === "user") copy.content = appendSelectionContext(copy.content) + selectionText;
           return copy;
         });
         const response = await fetch(API + "/api/assistant/chat", {

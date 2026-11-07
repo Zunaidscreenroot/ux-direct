@@ -393,3 +393,8 @@ test("journey kit never lists content cards for reuse, and keeps a plain entry b
   assert.ok(code.includes("if (payload.keepRootFill === true)"), "hygiene keeps the root fill unstyled when asked");
   assert.ok(code.includes("if (type === \"INSTANCE\" && spec.hidePlaceholderTexts === true) hidePlaceholderTexts(node);"));
 });
+
+test("chat questions get the selection's texts grouped by card", () => {
+  assert.ok(ui.includes("async function selectionTextContext()"));
+  assert.ok(ui.includes("copy.content = appendSelectionContext(copy.content) + selectionText;"), "the last user turn carries the selected layers' text");
+});
