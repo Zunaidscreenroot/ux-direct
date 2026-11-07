@@ -1,18 +1,18 @@
 /**
  * UX Direct's studio workflow (backend only; nothing here is shown in plugin replies).
  *
- * Work is split by TASK, not by piece of screen: one screen is designed by one designer so it
- * keeps one mindset (Zunaid, 2026-11-07: four people on four cards broke consistency).
+ * ONE designer builds any one screen, top to bottom, so it keeps one mindset (Zunaid, 2026-11-07:
+ * splitting a screen across people, by card or by UX-then-UI step, broke consistency).
  *
- *   UX Director ─ makes the plan (which steps, in which order, who owns each) and makes the
- *   │             final call (deterministic: every gate passes and quality does not drop).
- *   └ UX Lead   ─ splits the plan into UX and UI steps, reviews the output after EVERY step with
- *     │           a senior mindset, sends concrete feedback; the designer iterates. After the last
- *     │           step the Lead reviews the whole screen once more before the Director's call.
- *     ├ UX Designer ─ research, synthesis, audit, benchmarking, IA, flows, wireframes, and
- *     │               the structure/content/hierarchy of a screen.
- *     └ UI Designer ─ visual design (VD) on a wireframe or screen: theme, emphasis, components.
- *                    On "improve"/"variation" the UX step comes first, then the UI step on its result.
+ *   UX Director ─ routes the task to exactly one designer (deterministic) and makes the final
+ *   │             call: a new version is kept only if every gate passes and it is not worse.
+ *   └ UX Lead   ─ reviews the whole finished screen top to bottom (UX and UI), scores it, sends
+ *     │           concrete notes; the same designer iterates; the Lead re-reviews, until the score
+ *     │           reaches the bar (default 70) or the round/time cap.
+ *     ├ Product Designer ─ master of UX and UI, strongest model: improve, fix, variation on an
+ *     │                    existing UI, and any task that touches both. Gets most of the work.
+ *     ├ UX Designer      ─ wireframes, research, synthesis, audit, IA, flows, content structure.
+ *     └ UI Designer      ─ pure visual/component changes: theme, buttons, components, styles.
  *
  * The model calls carry X-UXD-Agent-Role so the gateway gives each seat its own model chain.
  */
@@ -24,31 +24,44 @@ import type { AgentRole } from "@/src/providers/active-chat-provider";
 
 type Rec = Record<string, unknown>;
 
-export type StudioSeat = "director" | "ux-lead" | "ux-designer" | "ui-designer";
+export type StudioSeat = "director" | "ux-lead" | "product-designer" | "ux-designer" | "ui-designer";
+export type DesignerSeat = "product-designer" | "ux-designer" | "ui-designer";
 
 export interface StudioMember { seat: StudioSeat; title: string; reportsTo: StudioSeat | null; does: string }
 
 export const STUDIO: StudioMember[] = [
   { seat: "director", title: "UX Director", reportsTo: null,
-    does: "Takes the project, decides what kind of work it is and who owns it, and gives the final approval. Thinks like a senior Apple design director, grounded in Norman, Nielsen Norman Group heuristics and the laws of UX." },
+    does: "Takes the project, decides what kind of work it is and which one designer owns it, and makes the final call. Thinks like a senior Apple design director, grounded in Norman, Nielsen Norman Group heuristics and the laws of UX." },
   { seat: "ux-lead", title: "UX Lead", reportsTo: "director",
-    does: "Breaks the work down, hands UX work to the UX Designer and visual work to the UI Designer, and reviews every output with a senior lead's eye before it goes to the Director." },
+    does: "Reviews every finished screen top to bottom, UX and UI alike, scores it, and sends concrete fixes back to the same designer until it meets the bar." },
+  { seat: "product-designer", title: "Product Designer", reportsTo: "ux-lead",
+    does: "Master of both UX and UI: structure, hierarchy, content and visual design together, in one consistent pass. Improves, fixes and makes variations of existing screens." },
   { seat: "ux-designer", title: "UX Designer", reportsTo: "ux-lead",
-    does: "Research, synthesis, audits, benchmarking, information architecture, flows and wireframes; owns a screen's structure, content and hierarchy." },
+    does: "Research, synthesis, audits, benchmarking, information architecture, flows and wireframes; owns structure, content and hierarchy." },
   { seat: "ui-designer", title: "UI Designer", reportsTo: "ux-lead",
-    does: "Visual design on a wireframe or screen: theme, emphasis, components and states, within the file's design system." },
+    does: "Visual and component changes on an existing screen: theme, buttons, components, states and styles, within the file's design system." },
 ];
+
+const member = (seat: StudioSeat) => STUDIO.find((entry) => entry.seat === seat)!;
 
 export function studioReviewEnabled(): boolean {
   return (process.env.UXD_LEAD_REVIEW || "on").trim().toLowerCase() !== "off";
 }
+
+const envInt = (name: string, fallback: number, min: number, max: number) => {
+  const value = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+};
+/** The Lead's pass bar (0-100) and the most review→iteration rounds per screen. */
+export const leadPassScore = () => envInt("UXD_LEAD_PASS", 70, 40, 95);
+export const leadMaxRounds = () => envInt("UXD_LEAD_ROUNDS", 3, 1, 5);
 
 /** Gateway seat (X-UXD-Agent-Role) for each studio seat. */
 export function gatewaySeat(seat: StudioSeat): AgentRole {
   return seat === "ux-lead" ? "lead" : seat;
 }
 
-/** Role-specific knowledge for one seat (UX Director, UX Lead, UX/UI Designer); empty on any failure. */
+/** Role-specific knowledge for one seat; empty on any failure. */
 export async function seatKnowledge(seat: StudioSeat, query: string, domain: string | null, maxChars = 2500): Promise<string> {
   try {
     const pack = await retrieveKnowledge({ query, role: member(seat).title, domain, maxChars, skipIds: ["identity-ux-direct", "identity-voice"] });
@@ -58,39 +71,25 @@ export async function seatKnowledge(seat: StudioSeat, query: string, domain: str
   }
 }
 
-export type StepId = "ux" | "ui";
+const UI_ONLY = /\b(button|buttons|cta|component|components|icon|icons|colou?r|theme|dark mode|light mode|font|typography|radius|corner|shadow|style|styles|spacing|padding)\b/i;
+const STRUCTURE = /\b(flow|layout|structure|hierarchy|content|section|sections|information|ia|reorder|group|journey|wireframe|research|audit)\b/i;
 
-export interface PlanStep { id: StepId; owner: StudioSeat; brief: string }
-
-const UX_BRIEF = "UX step: structure, content order, grouping and hierarchy. One clear goal and one focal point per section, label/value pairs together, the primary action last. Keep the source look; visual polish is the UI step's job.";
-const UI_BRIEF = "UI step: visual design on the UX Designer's structure. Keep the section order, grouping and every text exactly; choose emphasis (which number leads, stat vs row), status tones and badges, block choice for data (% as ring/bar with the real value), button variants (one primary type) and component reuse, within the file's design system and theme.";
-
-/** Director's plan: the steps for this task, in order, each owned by one designer. */
-export function directorPlan(role: TaskRole): PlanStep[] {
-  if (role.id === "restyle") return [{ id: "ui", owner: "ui-designer", brief: UI_BRIEF }];
-  if (role.id === "improve" || role.id === "variation") return [{ id: "ux", owner: "ux-designer", brief: UX_BRIEF }, { id: "ui", owner: "ui-designer", brief: UI_BRIEF }];
-  return [{ id: "ux", owner: "ux-designer", brief: UX_BRIEF }]; // wireframe, content
+/** Director's routing: exactly one designer owns the screen. */
+export function taskOwner(role: TaskRole, prompt = ""): DesignerSeat {
+  if (role.id === "wireframe" || role.id === "content") return "ux-designer";
+  if (role.id === "restyle") return "ui-designer";
+  // A pure visual/component ask on an existing screen goes to the UI Designer; anything that also
+  // touches structure (improve, fix, variation) goes to the Product Designer.
+  if (UI_ONLY.test(prompt) && !STRUCTURE.test(prompt) && role.id !== "variation") return "ui-designer";
+  return "product-designer";
 }
 
-/** Who owns the first step (the planner call). */
-export function taskOwner(role: TaskRole): { owner: StudioSeat; next: StudioSeat | null } {
-  const plan = directorPlan(role);
-  return { owner: plan[0].owner, next: plan[1]?.owner ?? null };
-}
-
-const member = (seat: StudioSeat) => STUDIO.find((entry) => entry.seat === seat)!;
-
-/** Persona line for a step's designer. */
-export function stepPersona(step: PlanStep, followedBy: StudioSeat | null = null): string {
-  return "YOUR SEAT: " + member(step.owner).title + " at UX Direct. " + member(step.owner).does + " " + step.brief +
-    (followedBy ? " The " + member(followedBy).title + " works on your result next, so get the structure right." : "") +
-    " The UX Lead reviews your work after this step, so do it right the first time: no generic filler, no invented content.";
-}
-
-/** Persona line added to the planner's system prompt (the plan's first step). */
-export function designerPersona(role: TaskRole): string {
-  const plan = directorPlan(role);
-  return stepPersona(plan[0], plan[1]?.owner ?? null);
+/** Persona line for the owning designer (added to the planner's system prompt and every iteration). */
+export function designerPersona(role: TaskRole, prompt = ""): string {
+  const seat = taskOwner(role, prompt);
+  return "YOUR SEAT: " + member(seat).title + " at UX Direct. " + member(seat).does +
+    " You alone design this whole screen, top to bottom, with one mindset: repeated cards use the same structure, blocks and emphasis." +
+    " The UX Lead reviews your finished screen and you iterate on the notes, so do it right the first time: keep every source text and value, no generic filler, no invented content.";
 }
 
 export interface LeadNote { severity: "high" | "medium" | "low"; issue: string; fix: string }
@@ -107,9 +106,46 @@ const blockTexts = (value: unknown, out: string[] = []): string[] => {
   return out;
 };
 
-/** What the Lead can see for sure without a model: competing primaries, duplicated content. */
-export function deterministicLeadNotes(spec: Rec): LeadNote[] {
+const norm = (text: string) => text.toLowerCase().replace(/\s+/g, " ").trim();
+
+/** Every text a block spec shows (labels, values, captions, titles), as written. */
+export function specRawTexts(spec: Rec): string[] {
+  const sections = Array.isArray(spec.sections) ? spec.sections as Rec[] : [];
+  return sections.flatMap((section) => blockTexts([section.title, section.badge, section.blocks]));
+}
+
+/** The same texts, normalised for matching. */
+export function specTexts(spec: Rec): string[] {
+  return specRawTexts(spec).map(norm);
+}
+
+/** Source texts the screen no longer shows (exact text, ignoring case and spacing). */
+export function missingFromSpec(spec: Rec, sourceTexts: string[]): string[] {
+  const shown = specTexts(spec);
+  const joined = shown.join("\n");
+  const out: string[] = [];
+  for (const raw of sourceTexts) {
+    const text = norm(raw);
+    if (!text || out.includes(raw)) continue;
+    if (!shown.includes(text) && !joined.includes(text)) out.push(raw);
+  }
+  return out;
+}
+
+/** Texts the previous version showed that the new one dropped (as the previous version wrote them). */
+export function lostTexts(previous: Rec, next: Rec): string[] {
+  return missingFromSpec(next, [...new Set(specRawTexts(previous))]);
+}
+
+/** Amounts, counts, dates and percentages: never allowed to disappear in an iteration. */
+export const isValueText = (text: string) => /[\d₹$€£%]/.test(text);
+
+/** What the Lead can see for sure without a model: missing source content, competing primaries, duplicated content. */
+export function deterministicLeadNotes(spec: Rec, sourceTexts: string[] = []): LeadNote[] {
   const notes: LeadNote[] = [];
+  const missing = sourceTexts.length ? missingFromSpec(spec, sourceTexts) : [];
+  if (missing.length) notes.push({ severity: "high", issue: "Source content missing from the screen (" + missing.length + "): " + missing.slice(0, 8).join(", "),
+    fix: "Put every one of these exact texts back, in the block that matches its meaning (amounts as values, never dropped)." });
   const sections = Array.isArray(spec.sections) ? spec.sections as Rec[] : [];
   const blocks = sections.flatMap((section) => Array.isArray(section.blocks) ? section.blocks as Rec[] : []);
   const buttons = blocks.flatMap((block) => block.type === "button" ? [block] : block.type === "buttons" && Array.isArray(block.items) ? block.items as Rec[] : []);
@@ -131,27 +167,24 @@ export function deterministicLeadNotes(spec: Rec): LeadNote[] {
 }
 
 const LEAD_SYSTEM = [
-  "You are the UX Lead at UX Direct, a senior design lead reviewing your designer's screen before it goes to the UX Director. Think like a senior lead at Apple: one clear goal per screen, ruthless hierarchy, consistency, content first. Be specific; never praise.",
-  "Review the designed screen (a block spec) against the source text list and the user's request. Check: 1) the screen does what the user asked, in the given task role; 2) hierarchy: one focal point per card/section, secondary info quieter; 3) consistency: repeated cards use the same structure and blocks; 4) grouping: label/value pairs together, lists instead of many rows; 5) action priority; 6) right block per content (amount → stat/row value, % → ring/bar with the real value, status → badge); 7) no generic AI filler (invented headings, taglines, decorative text, features not in the source); 8) accessibility: labels present, status not by colour only.",
-  "Only raise issues the designer can fix with the block contract. Return {\"approve\": boolean, \"notes\": [{\"severity\": \"high\"|\"medium\"|\"low\", \"issue\": string, \"fix\": string}]} with at most 5 notes; approve=true when nothing high or medium remains.",
+  "You are the UX Lead at UX Direct, a senior design lead reviewing your designer's finished screen, top to bottom, before it goes to the UX Director. Review UX and UI alike. Think like a senior lead at Apple: one clear goal per screen, ruthless hierarchy, consistency, content first. Be specific; never praise.",
+  "Review the designed screen (a block spec) against the source text list and the user's request. Check: 1) the screen does what the user asked; 2) every source text and value is still shown; 3) hierarchy: one focal point per card/section, secondary info quieter; 4) consistency: repeated cards use the same structure, blocks and emphasis; 5) grouping: label/value pairs together, lists instead of many rows; 6) action priority: one primary action type; 7) right block per content (amount → stat/row value, % → ring/bar with the real value, status → badge); 8) visual: tones, emphasis and components used consistently; 9) no generic AI filler (invented headings, taglines, decorative text, features not in the source); 10) accessibility: labels present, status not by colour only.",
+  "Score the screen 0-100 against a top design agency's bar (70 = ready for the Director). Only raise issues the designer can fix with the block contract. Return {\"score\": number, \"notes\": [{\"severity\": \"high\"|\"medium\"|\"low\", \"issue\": string, \"fix\": string}]} with at most 6 notes, most important first.",
 ].join("\n");
 
-const REVIEW_FOCUS: Record<StepId | "final", string> = {
-  ux: "THIS REVIEW: the UX step. Focus on 1, 2, 3, 4, 5 and 7 (structure, hierarchy, grouping, action order, no filler); the look comes in the next step.",
-  ui: "THIS REVIEW: the UI step. Focus on 2, 3, 5, 6 and 8 (emphasis, consistency, button variants, right block per content, accessibility); the structure was already approved, so flag it only if the UI step broke it.",
-  final: "THIS REVIEW: the final review of the whole screen before the UX Director's call. Check everything; raise only what still needs fixing.",
-};
+export interface LeadReview { notes: LeadNote[]; score: number | null; model?: string; ms: number }
 
-export async function leadReview(spec: Rec, context: { prompt: string; role: TaskRole; sourceTexts: string[]; origin: string; brain: string; knowledge?: string; step?: StepId | "final"; signal?: AbortSignal; timeoutMs: number }): Promise<{ notes: LeadNote[]; model?: string; ms: number }> {
+/** The Lead's top-to-bottom review. A high deterministic note caps the score below the bar. */
+export async function leadReview(spec: Rec, context: { prompt: string; role: TaskRole; sourceTexts: string[]; origin: string; brain: string; knowledge?: string; round?: number; signal?: AbortSignal; timeoutMs: number }): Promise<LeadReview> {
   const started = Date.now();
-  const notes = deterministicLeadNotes(spec);
+  const notes = deterministicLeadNotes(spec, context.sourceTexts);
   const result = await callFigmaJsonModel({
-    system: LEAD_SYSTEM + "\n" + REVIEW_FOCUS[context.step ?? "final"] +
+    system: LEAD_SYSTEM +
       (context.knowledge ? "\nUX LEAD KNOWLEDGE (review checklist and critique format):\n" + context.knowledge.slice(0, 3000) : "") +
       (context.brain ? "\nTEAM KNOWLEDGE (the quality standard):\n" + context.brain.slice(0, context.knowledge ? 2500 : 4000) : ""),
-    user: JSON.stringify({ userRequest: context.prompt, taskRole: context.role.label, sourceTexts: context.sourceTexts.slice(0, 120), designedScreen: { sections: spec.sections } }),
+    user: JSON.stringify({ userRequest: context.prompt, taskRole: context.role.label, reviewRound: context.round ?? 1, sourceTexts: context.sourceTexts.slice(0, 120), designedScreen: { sections: spec.sections } }),
     hasVisionInput: false,
-    maxTokens: 1200,
+    maxTokens: 1400,
     temperature: 0.1,
     title: "UX Direct lead review",
     role: "lead",
@@ -160,10 +193,12 @@ export async function leadReview(spec: Rec, context: { prompt: string; role: Tas
     signal: context.signal,
     maxAttempts: 1,
     anyObject: true,
-    accept: (data) => (Array.isArray(data.notes) || typeof data.approve === "boolean" ? null : "missing notes"),
+    accept: (data) => (Array.isArray(data.notes) || typeof data.score === "number" ? null : "missing notes"),
   }).catch(() => null);
-  if (result && result.ok && Array.isArray(result.data.notes)) {
-    for (const entry of (result.data.notes as unknown[]).slice(0, 5)) {
+  let score: number | null = null;
+  if (result && result.ok) {
+    if (typeof result.data.score === "number" && Number.isFinite(result.data.score)) score = Math.max(0, Math.min(100, Math.round(result.data.score <= 1 ? result.data.score * 100 : result.data.score)));
+    for (const entry of (Array.isArray(result.data.notes) ? result.data.notes as unknown[] : []).slice(0, 6)) {
       if (!entry || typeof entry !== "object") continue;
       const record = entry as Rec;
       const severity = record.severity === "high" || record.severity === "medium" ? record.severity : "low";
@@ -171,51 +206,34 @@ export async function leadReview(spec: Rec, context: { prompt: string; role: Tas
       if (issue) notes.push({ severity, issue, fix: typeof record.fix === "string" ? record.fix.slice(0, 220) : "" });
     }
   }
-  return { notes, model: result && result.ok ? result.model : undefined, ms: Date.now() - started };
+  // Missing content or competing primaries are never "ready", whatever the model scored.
+  if (notes.some((note) => note.severity === "high")) score = Math.min(score ?? 100, leadPassScore() - 15);
+  return { notes, score, model: result && result.ok ? result.model : undefined, ms: Date.now() - started };
 }
 
-/** The step's designer revises the whole screen from the Lead's notes (same designer, same mindset). */
-export async function reviseFromNotes(spec: Rec, notes: LeadNote[], context: { prompt: string; role: TaskRole; step?: PlanStep; sourceTexts: string[]; origin: string; designRules: string; knowledge?: string; signal?: AbortSignal; timeoutMs: number }): Promise<{ spec: Rec | null; model?: string; ms: number; error?: string }> {
+/** Lead's verdict on a review: ready when the score meets the bar and no high note is open. */
+export function leadApproves(review: LeadReview): boolean {
+  if (review.notes.some((note) => note.severity === "high")) return false;
+  if (review.score === null) return !review.notes.some((note) => note.severity === "medium");
+  return review.score >= leadPassScore();
+}
+
+/** The same designer iterates on the whole screen from the Lead's notes. */
+export async function reviseFromNotes(spec: Rec, notes: LeadNote[], context: { prompt: string; role: TaskRole; sourceTexts: string[]; origin: string; designRules: string; knowledge?: string; signal?: AbortSignal; timeoutMs: number }): Promise<{ spec: Rec | null; model?: string; ms: number; error?: string }> {
   const started = Date.now();
-  const owner = context.step?.owner ?? directorPlan(context.role)[0].owner;
   const result = await callFigmaJsonModel({
-    system: [context.step ? stepPersona(context.step) : designerPersona(context.role), context.role.persona, ...context.role.rules.map((rule) => "- " + rule), context.designRules,
+    system: [designerPersona(context.role, context.prompt),
+      context.role.persona, ...context.role.rules.map((rule) => "- " + rule), context.designRules,
       context.knowledge ? "YOUR ROLE KNOWLEDGE:\n" + context.knowledge.slice(0, 2500) : "",
-      "Your UX Lead reviewed your screen. Revise it: fix every high and medium note, keep everything that was fine, keep every source text exactly, never add content the source does not have.",
+      "Your UX Lead reviewed your whole screen top to bottom. Iterate on it: fix every high and medium note, keep everything that was fine, keep every source text and value exactly, keep repeated cards consistent, never add content the source does not have. Return the whole screen.",
       BLOCK_SPEC_CONTRACT].filter(Boolean).join("\n"),
     user: JSON.stringify({ userRequest: context.prompt, sourceTexts: context.sourceTexts.slice(0, 120), yourScreen: { summary: spec.summary, sections: spec.sections },
       leadNotes: notes.filter((note) => note.severity !== "low").map((note) => note.severity + ": " + note.issue + " → " + note.fix) }),
     hasVisionInput: false,
     maxTokens: 6000,
     temperature: 0.15,
-    title: "UX Direct designer revision",
-    role: gatewaySeat(owner),
-    origin: context.origin,
-    timeoutMs: context.timeoutMs,
-    signal: context.signal,
-    maxAttempts: 1,
-    anyObject: true,
-    accept: (data) => (Array.isArray(data.sections) && data.sections.length ? null : "no sections"),
-  }).catch((error: unknown) => ({ ok: false as const, status: 0, error: String(error), errors: [] as string[] }));
-  if (result.ok) return { spec: { ...spec, ...result.data, frame: spec.frame, theme: spec.theme }, model: result.model, ms: Date.now() - started };
-  return { spec: null, ms: Date.now() - started, error: (result.errors?.[0] || result.error || "").slice(0, 160) };
-}
-
-/** A later plan step (the UI step after the UX step): the step's designer works on the approved screen. */
-export async function designStep(spec: Rec, step: PlanStep, context: { prompt: string; role: TaskRole; sourceTexts: string[]; origin: string; designRules: string; brain: string; knowledge?: string; signal?: AbortSignal; timeoutMs: number }): Promise<{ spec: Rec | null; model?: string; ms: number; error?: string }> {
-  const started = Date.now();
-  const result = await callFigmaJsonModel({
-    system: [stepPersona(step), context.role.persona, context.designRules,
-      context.knowledge ? "YOUR ROLE KNOWLEDGE:\n" + context.knowledge.slice(0, 2500) : "",
-      "The UX Lead approved the previous step's screen below. Do your step on it and return the whole screen: keep every source text exactly, keep the section order, never add content the source does not have.",
-      context.brain ? "TEAM KNOWLEDGE (the quality standard):\n" + context.brain.slice(0, 3000) : "",
-      BLOCK_SPEC_CONTRACT].filter(Boolean).join("\n"),
-    user: JSON.stringify({ userRequest: context.prompt, sourceTexts: context.sourceTexts.slice(0, 120), approvedScreen: { summary: spec.summary, sections: spec.sections } }),
-    hasVisionInput: false,
-    maxTokens: 6000,
-    temperature: 0.2,
-    title: "UX Direct " + step.id + " step",
-    role: gatewaySeat(step.owner),
+    title: "UX Direct designer iteration",
+    role: gatewaySeat(taskOwner(context.role, context.prompt)),
     origin: context.origin,
     timeoutMs: context.timeoutMs,
     signal: context.signal,

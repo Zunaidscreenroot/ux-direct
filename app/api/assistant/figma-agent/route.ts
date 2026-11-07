@@ -5,7 +5,7 @@ import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
 import { detectDomain, detectTaskRole, roleInstructions } from "@/src/figma-agent/agent-roles";
 import { runSubAgents, subAgentsEnabled, type AgentBrief } from "@/src/figma-agent/sub-agents";
-import { designerPersona, designStep, directorPlan, leadReview, reviseFromNotes, seatKnowledge, studioReviewEnabled, type PlanStep, type StepId } from "@/src/figma-agent/studio";
+import { designerPersona, isValueText, leadApproves, leadMaxRounds, leadReview, lostTexts, missingFromSpec, reviseFromNotes, seatKnowledge, studioReviewEnabled, taskOwner } from "@/src/figma-agent/studio";
 import { agencyEnabled, agencyHandlesRole, runAgency, truncatedContentNames, type AgencyResult } from "@/src/figma-agent/agency";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
@@ -686,7 +686,7 @@ export async function POST(request: Request) {
     : "";
   const designRulesInstructions = designRulesBlock(parsedInput.data.designRules);
   const stateInstructions = parsedInput.data.state ? "\n" + STATE_BRIEFS[parsedInput.data.state] : "";
-  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + stateInstructions + designRulesInstructions + "\n" + agentBrief.instructions + "\n" + designerPersona(taskRole) + exampleInstructions, brain);
+  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + stateInstructions + designRulesInstructions + "\n" + agentBrief.instructions + "\n" + designerPersona(taskRole, parsedInput.data.prompt) + exampleInstructions, brain);
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its configured free-model chain.
   // Both are bounded by compact retry and the shared generation deadline.
@@ -882,79 +882,81 @@ export async function POST(request: Request) {
         prompt: promptSize },
     }, { headers });
   };
-  // Studio: the Director's plan runs step by step (UX step, then UI step). The planner answer above
-  // is the first step. After EVERY step the UX Lead reviews and the step's designer iterates once;
-  // after the last step the Lead reviews the whole screen again, and the Director makes the final
-  // call: a new version is kept only if every gate passes and quality does not drop.
+  // Studio: one designer (Product, UX or UI Designer, picked by the Director) built the whole screen
+  // in the planner answer above. The UX Lead reviews it top to bottom and scores it; the same
+  // designer iterates on the notes; the Lead re-reviews, until the score meets the bar or the
+  // round/time cap. The Director keeps each new version only if every gate passes, nothing the
+  // previous version showed is lost, and it is not worse.
   const studioPass = async (success: SuccessCandidate): Promise<SuccessCandidate> => {
     if (!studioReviewEnabled() || !blockMode || success.sourceFallback || !isBlockSpec(success.spec) || !success.candidate.quality) return success;
     // Close the designer's timing row first so the review time is not counted as model time.
     if (inFlight) { attemptTimes.push({ attempt: inFlight.attempt, ms: Date.now() - inFlight.startedAt, outcome: "ok" }); inFlight = null; }
+    const studioStarted = Date.now();
     const timeLeft = () => generationDeadlineMs - (Date.now() - generationStartedAt);
     const origin = new URL(request.url).origin;
-    const shared = { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts, origin };
-    const plan = directorPlan(taskRole);
-    // Each seat gets the knowledge for its role (Lead: review checklist, critique format; designers: their craft).
+    // Coverage is judged on the plugin's full read (the compact planner copy cuts deep card texts),
+    // except for a state screen, which drops texts on purpose.
+    const fullSource = screenState ? [] : [...new Set(collectSourceTextInventory(Array.isArray((rawSourceCanvas ?? canvas).nodes) ? (rawSourceCanvas ?? canvas).nodes as unknown[] : []).map((item) => item.text))];
+    const shared = { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts: fullSource.length ? fullSource : sourceTexts, origin };
+    const owner = taskOwner(taskRole, parsedInput.data.prompt);
+    // Each seat gets the knowledge for its role (Lead: review checklist, critique format; designer: its craft).
     const knowledgeQuery = parsedInput.data.prompt + " " + taskRole.label + " " + agentBrief.domain.id;
-    const [leadKnowledge, ...stepKnowledge] = await withTimeout(Promise.all([
+    const [leadKnowledge, designerKnowledge] = await withTimeout(Promise.all([
       seatKnowledge("ux-lead", knowledgeQuery + " review hierarchy consistency critique", agentBrief.domain.id),
-      ...plan.map((step) => seatKnowledge(step.owner, knowledgeQuery + " " + step.brief.slice(0, 120), agentBrief.domain.id)),
-    ]), 4000).catch(() => [""] as string[]);
-    const knowledgeFor = (step: PlanStep) => stepKnowledge[plan.indexOf(step)] || "";
+      seatKnowledge(owner, knowledgeQuery, agentBrief.domain.id),
+    ]), 4000).catch(() => ["", ""]);
     let current = success;
     const models: string[] = [];
-    /** Director's gate on a new version: render, restore up to 3 dropped texts, keep only if not worse. */
-    const directorKeeps = (spec: Record<string, unknown>, label: string, ms: number, model?: string): boolean => {
-      let nextSpec: unknown = spec;
+    // One compact timing row for the whole pass (the plugin shows 6 rows); details go to the log.
+    const ledger: string[] = [];
+    const log = (detail: string) => attemptLog.push({ model: "review", result: detail.slice(0, 400) });
+    const missingNow = (spec: unknown) => fullSource.length ? missingFromSpec(spec as Record<string, unknown>, fullSource).length : 0;
+    /** Director's call on an iteration. */
+    const directorKeeps = (spec: Record<string, unknown>, model?: string): boolean => {
+      const lost = lostTexts(current.spec as Record<string, unknown>, spec);
+      // An iteration may never lose a value (amount, %, date); up to 3 dropped labels are put back.
+      if (lost.length > 3 || lost.some(isValueText)) { log("iteration dropped " + lost.length + " texts (" + lost.slice(0, 4).join(", ") + "); previous version kept"); return false; }
+      let nextSpec: unknown = lost.length ? appendMissingSourceText(spec, lost) : spec;
       let candidate = renderCandidate(nextSpec);
-      let restored = 0;
+      let restored = lost.length;
       if (candidate.stage === "quality" && candidate.plan && candidate.quality?.findings.every((finding) => finding.code === "missing-source-content")) {
         const missing = missingSourceTexts(candidate.plan, canvas, gatePrompt);
         if (missing.length && missing.length <= 3) {
           const repairedSpec = appendMissingSourceText(nextSpec, missing);
           const repaired = renderCandidate(repairedSpec);
-          if (repaired.stage === "ok") { candidate = repaired; nextSpec = repairedSpec; restored = missing.length; }
+          if (repaired.stage === "ok") { candidate = repaired; nextSpec = repairedSpec; restored += missing.length; }
         }
       }
-      const kept = candidate.stage === "ok" && !!candidate.plan && !!candidate.quality && candidate.quality.score >= (current.candidate.quality?.score ?? 0);
-      attemptTimes.push({ attempt: label, ms, outcome: kept ? "ok" : "kept previous version (" + (candidate.stage !== "ok" ? candidate.stage : "lower score") + ")" });
+      const before = missingNow(current.spec);
+      const after = missingNow(nextSpec);
+      const scoreOk = !!candidate.quality && candidate.quality.score >= (current.candidate.quality?.score ?? 0);
+      const kept = candidate.stage === "ok" && !!candidate.plan && !!candidate.quality && (after < before || (after === before && scoreOk));
+      log("iteration " + (kept ? "kept" : "refused") + ": " + (candidate.stage !== "ok" ? candidate.stage + ": " + candidate.error : "missing source " + before + "→" + after + ", score " + (current.candidate.quality?.score ?? "?") + "→" + (candidate.quality?.score ?? "?")) + (restored ? ", restored " + restored : ""));
       if (!kept) return false;
       if (model) models.push(model);
-      attemptLog.push({ model: (model || "auto") + " " + label, result: "passed" });
       current = { ...current, candidate, spec: nextSpec, repairedTexts: current.repairedTexts + restored };
       return true;
     };
-    /** Lead review then one iteration by the step's designer. Returns whether the Lead had notes. */
-    const reviewAndIterate = async (step: PlanStep, focus: StepId | "final", label: string): Promise<number | null> => {
-      if (timeLeft() < 30000) { attemptTimes.push({ attempt: label + " review skipped (time)", ms: 0, outcome: "skipped" }); return null; }
-      const review = await leadReview(current.spec as Record<string, unknown>, { ...shared, brain: brain.contextText, knowledge: leadKnowledge, step: focus,
+    const rounds = leadMaxRounds();
+    let approved = false;
+    for (let round = 1; round <= rounds + 1; round++) {
+      if (timeLeft() < 25000) { ledger.push("time"); break; }
+      const review = await leadReview(current.spec as Record<string, unknown>, { ...shared, brain: brain.contextText, knowledge: leadKnowledge, round,
         timeoutMs: Math.min(25000, Math.floor(timeLeft() / 4)) }).catch(() => null);
-      if (!review) return null;
-      const actionable = review.notes.filter((note) => note.severity !== "low");
-      attemptTimes.push({ attempt: label + " review: " + actionable.length + " fix(es)", ms: review.ms, outcome: "ok" });
-      if (!actionable.length) return 0;
-      if (timeLeft() < 30000) return actionable.length;
-      const revision = await reviseFromNotes(current.spec as Record<string, unknown>, review.notes, { ...shared, step, knowledge: knowledgeFor(step),
-        designRules: designRulesInstructions.trim(), timeoutMs: Math.min(60000, timeLeft() - 15000) });
-      if (!revision.spec) attemptTimes.push({ attempt: label + " iteration", ms: revision.ms, outcome: "kept previous version" });
-      else directorKeeps(revision.spec, label + " iteration", revision.ms, revision.model);
-      return actionable.length;
-    };
-    let lastClean = false;
-    for (let index = 0; index < plan.length; index++) {
-      const step = plan[index];
-      if (index > 0) {
-        if (timeLeft() < 45000) { attemptTimes.push({ attempt: step.id + " step skipped (time)", ms: 0, outcome: "skipped" }); break; }
-        const designed = await designStep(current.spec as Record<string, unknown>, step, { ...shared, designRules: designRulesInstructions.trim(), knowledge: knowledgeFor(step),
-          brain: brain.contextText, timeoutMs: Math.min(60000, timeLeft() - 20000) });
-        if (!designed.spec) { attemptTimes.push({ attempt: step.id + " step", ms: designed.ms, outcome: "kept previous version" }); break; }
-        if (!directorKeeps(designed.spec, step.id + " step", designed.ms, designed.model)) break;
-      }
-      const notes = await reviewAndIterate(step, step.id, step.id);
-      lastClean = notes === 0;
+      if (!review) break;
+      const actionable = review.notes.filter((entry) => entry.severity !== "low");
+      ledger.push((review.score ?? "?") + "%");
+      log("round " + round + " score " + (review.score ?? "?") + " (" + (review.model || "rules") + "): " + (actionable.map((entry) => entry.severity + ": " + entry.issue).join(" | ") || "no fixes"));
+      approved = leadApproves(review);
+      // The last pass is a review only: it confirms the final version for the Director.
+      if (approved || !actionable.length || round > rounds) break;
+      if (timeLeft() < 35000) { ledger.push("time"); break; }
+      const revision = await reviseFromNotes(current.spec as Record<string, unknown>, review.notes, { ...shared, knowledge: designerKnowledge,
+        designRules: designRulesInstructions.trim(), timeoutMs: Math.min(70000, timeLeft() - 25000) });
+      if (!revision.spec) { ledger.push("×"); log("iteration failed: " + (revision.error || "no answer")); break; }
+      ledger.push(directorKeeps(revision.spec, revision.model) ? "→" : "×");
     }
-    // Final full review, unless the last step's review already found nothing to fix on this exact version.
-    if (!lastClean) await reviewAndIterate(plan[plan.length - 1], "final", "final");
+    attemptTimes.push({ attempt: "review " + ledger.join(" ") + (approved ? " ✓" : ""), ms: Date.now() - studioStarted, outcome: "ok" });
     return models.length ? { ...current, servedModel: [success.servedModel, ...models].filter(Boolean).join(", ") } : current;
   };
   // UX Director agency: the source screen's sections go to specialist designers in parallel
