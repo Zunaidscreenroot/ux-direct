@@ -2660,7 +2660,8 @@ async function writeCanvasCommand(payload, options) {
         gaps.push(horizontal ? current.x - (previous.x + previous.width) : current.y - (previous.y + previous.height));
       }
       gaps.sort(function (a, b) { return a - b; });
-      inferredSpacing = Math.max(0, Math.round(gaps[Math.floor((gaps.length - 1) / 2)]));
+      // Lower median, snapped to the 4px grid: loose rows 17px and 21px apart get 16, not 17.
+      inferredSpacing = Math.max(0, Math.round(gaps[Math.floor((gaps.length - 1) / 2)] / 4) * 4);
     } else if (parentIsAutoLayout && typeof wrapParent.itemSpacing === "number") {
       inferredSpacing = wrapParent.itemSpacing;
     }
@@ -3785,11 +3786,22 @@ async function uxdInsertComponent(roots, op) {
     if (!("layoutMode" in parent) || parent.layoutMode === "NONE") { instance.x = root.x; instance.y = root.y + root.height + 16; }
   } else {
     parent.appendChild(instance);
+    var mobile = typeof parent.width === "number" && parent.width <= 480;
     if (!("layoutMode" in parent) || parent.layoutMode === "NONE") {
       var kids = parent.children.filter(function (c) { return c !== instance && c.visible !== false; });
-      var bottom = kids.reduce(function (m, c) { return Math.max(m, c.y + c.height); }, 0);
-      var left = kids.length ? kids.reduce(function (m, c) { return Math.min(m, c.x); }, Infinity) : 16;
+      // A full-bleed background is not content; the button goes below the lowest real layer.
+      var content = kids.filter(function (c) { return !(c.width >= parent.width - 1 && c.height >= parent.height - 1); });
+      var bottom = content.reduce(function (m, c) { return Math.max(m, c.y + c.height); }, 0);
+      // The screen's gutter: the most common left edge among content that does not span the full width
+      // (backgrounds and headers sit at x=0).
+      var counts = {};
+      kids.forEach(function (c) { if (c.x > 0 && c.width < parent.width - 1) counts[Math.round(c.x)] = (counts[Math.round(c.x)] || 0) + 1; });
+      var gutter = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || a - b; })[0];
+      var left = gutter !== undefined ? Number(gutter) : 16;
       instance.x = left; instance.y = bottom + 16;
+      if (mobile && typeof instance.resize === "function" && parent.width - 2 * left > instance.width) instance.resize(parent.width - 2 * left, instance.height);
+    } else if (mobile && parent.layoutMode === "VERTICAL" && "layoutSizingHorizontal" in instance) {
+      instance.layoutSizingHorizontal = "FILL";
     }
   }
   figma.currentPage.selection = [instance];

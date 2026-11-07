@@ -417,6 +417,18 @@ test("state switch, wrap and component insert run without a model", async () => 
   assert.ok(added.y >= 148, "placed below the existing content");
   assert.match(JSON.stringify(result), /from your components/);
   await assert.rejects(r.apply("add a toggle", [r.card]), /No toggle component/);
+
+  // A mobile screen with a 20px gutter: the button lines up with the content and fills the content width.
+  const phone = r.make({ type: "FRAME", name: "Phone", width: 375, height: 800 });
+  withCriteria(phone);
+  r.make({ type: "RECTANGLE", name: "Bg", width: 375, height: 800 }, phone);
+  r.make({ type: "FRAME", name: "Card A", x: 20, y: 80, width: 335, height: 120 }, phone);
+  r.make({ type: "FRAME", name: "Card B", x: 20, y: 220, width: 335, height: 120 }, phone);
+  await r.apply("add a primary button", [phone]);
+  const placed = phone.children[phone.children.length - 1];
+  assert.equal(placed.x, 20, "respects the screen gutter, not the full-width background");
+  assert.equal(placed.width, 335, "fills the content width on a mobile screen");
+  assert.equal(placed.y, 356, "16px below the lowest content, ignoring the full-bleed background");
 });
 
 test("direct edits return a property snapshot so Revert restores them after later changes", async () => {
