@@ -97,7 +97,7 @@ test("missing final content remains invalid and is handled by the route recovery
   assert.ok(route.includes("...figmaMaxTokens(activeProvider, isRecovery ? 6000 : 9000)"), "FreeLLMAPI is uncapped; other providers keep a bounded plan.");
   assert.ok(route.includes("modelIndex === 0 ? firstAttemptMs : 70000") && route.includes("isFreeLlmApi ? FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS : 80000"), "The primary and fallback get useful completion windows.");
   assert.ok(route.includes('model === "openai/gpt-6-luna" ? { provider: { sort: "throughput" }, reasoning: { effort: "low" } } : {}'), "GPT-6 Luna prefers throughput and low reasoning effort for stability.");
-  assert.ok(route.includes("isRecovery ? (isFreeLlmApi ? FREELLMAPI_RECOVERY_TIMEOUT_MS : 45000)") && route.includes("figmaRoutingHeaders(activeProvider, { fast: isRecovery, role: isRecovery ? \"fast-retry\" : \"planner\" })"), "Compact retries have a bounded but useful completion window.");
+  assert.ok(route.includes("isRecovery ? (isFreeLlmApi ? FREELLMAPI_RECOVERY_TIMEOUT_MS : 45000)") && route.includes("figmaRoutingHeaders(activeProvider, { fast: isRecovery, role: isRecovery ? \"fast-retry\" : blockMode ? gatewaySeat(taskOwner(taskRole, parsedInput.data.prompt)) : \"planner\" })"), "Compact retries have a bounded but useful completion window.");
   assert.ok(route.includes("sourceTextInventory: collectSourceTextInventory"), "Compact retries retain a full bounded source-text checklist.");
   assert.ok(route.includes("depth > 4 || state.count >= 60"), "Recovery preserves short text layers nested inside instances/cards.");
   assert.ok(route.includes("at least 30% of all native nodes must be TEXT"), "Prompts require content-rich native layers.");

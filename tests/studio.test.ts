@@ -6,7 +6,7 @@ process.env.FREELLMAPI_BASE_URL = "https://freellmapi.test/v1";
 process.env.FREELLMAPI_API_KEY = "test-key";
 process.env.UXD_LEAD_REVIEW = "on";
 
-import { deterministicLeadNotes, designerPersona, gatewaySeat, leadApproves, lostTexts, missingFromSpec, seatKnowledge, STUDIO, taskOwner } from "../src/figma-agent/studio";
+import { deterministicLeadNotes, designerPersona, gatewaySeat, inventedTexts, leadApproves, lostTexts, missingFromSpec, seatKnowledge, STUDIO, taskOwner } from "../src/figma-agent/studio";
 import { agencyEnabled } from "../src/figma-agent/agency";
 import { detectTaskRole } from "../src/figma-agent/agent-roles";
 
@@ -126,7 +126,7 @@ test("studio route: the loop stops at the round cap and ends on a review", async
   assert.equal(status, 200);
   assert.deepEqual(calls.filter((call) => call.startsWith("iteration")).length, 3);
   assert.equal(calls[calls.length - 1], "lead:60");
-  assert.equal(row, "review 40% → 50% → 55% → 60%");
+  assert.equal(row, "review 40% → 50% → 55% → 60% (below bar)");
 });
 
 test("studio route: an iteration that drops the amounts is refused by the Director", async () => {
@@ -136,6 +136,24 @@ test("studio route: an iteration that drops the amounts is refused by the Direct
   for (const text of ["Credit limit", "₹50,000", "Upcoming EMI", "₹10,000"]) assert.ok(JSON.stringify(body.plan).includes(text), "missing " + text);
   assert.match(row ?? "", /^review 50% ×/);
   assert.doesNotMatch(body.model, /designer-model/);
+});
+
+test("studio route: a flat score stops the loop and the best-scored version ships, flagged below the bar", async () => {
+  iterationMode = "good";
+  const { status, row } = await run([55, 55, 90]);
+  assert.equal(status, 200);
+  assert.equal(calls.filter((call) => call.startsWith("iteration")).length, 1);
+  assert.equal(row, "review 55% → 55% flat (below bar)");
+});
+
+test("studio: merged repeated cards count as lost content; invented text is found", () => {
+  const card = (n: string) => ({ name: "Loan " + n, surface: "card", blocks: [{ type: "list", items: [{ label: "Personal Loan", value: "PL" + n }] }] });
+  const three = { sections: [card("1"), card("2"), card("3")] };
+  const merged = { sections: [{ name: "Loans", surface: "card", title: "Personal Loan", blocks: [{ type: "list", items: [{ label: "PL1" }, { label: "PL2" }, { label: "PL3" }] }] }] };
+  assert.deepEqual(lostTexts(three, merged), ["Personal Loan", "Personal Loan"]);
+  const source = ["Personal Loan", "Personal Loan", "Personal Loan", "PL1", "PL2", "PL3", "Pay now"];
+  assert.equal(missingFromSpec(three, source.slice(0, 6)).length, 0);
+  assert.deepEqual(inventedTexts({ sections: [{ blocks: [{ type: "banner", text: "On schedule" }, { type: "button", label: "Pay now" }] }] }, source), ["On schedule"]);
 });
 
 test("studio: each seat gets its role's knowledge", async () => {

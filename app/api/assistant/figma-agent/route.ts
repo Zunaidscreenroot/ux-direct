@@ -5,7 +5,7 @@ import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
 import { detectDomain, detectTaskRole, roleInstructions } from "@/src/figma-agent/agent-roles";
 import { runSubAgents, subAgentsEnabled, type AgentBrief } from "@/src/figma-agent/sub-agents";
-import { designerPersona, isValueText, leadApproves, leadMaxRounds, leadReview, lostTexts, missingFromSpec, reviseFromNotes, seatKnowledge, studioReviewEnabled, taskOwner } from "@/src/figma-agent/studio";
+import { designerPersona, gatewaySeat, inventedTexts, leadApproves, leadMaxRounds, leadReview, lostTexts, missingFromSpec, reviseFromNotes, seatKnowledge, studioReviewEnabled, taskOwner } from "@/src/figma-agent/studio";
 import { agencyEnabled, agencyHandlesRole, runAgency, truncatedContentNames, type AgencyResult } from "@/src/figma-agent/agency";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
@@ -896,7 +896,8 @@ export async function POST(request: Request) {
     const origin = new URL(request.url).origin;
     // Coverage is judged on the plugin's full read (the compact planner copy cuts deep card texts),
     // except for a state screen, which drops texts on purpose.
-    const fullSource = screenState ? [] : [...new Set(collectSourceTextInventory(Array.isArray((rawSourceCanvas ?? canvas).nodes) ? (rawSourceCanvas ?? canvas).nodes as unknown[] : []).map((item) => item.text))];
+    // Counted, not de-duplicated: three loan cards with the same labels must stay three cards.
+    const fullSource = screenState ? [] : collectSourceTextInventory(Array.isArray((rawSourceCanvas ?? canvas).nodes) ? (rawSourceCanvas ?? canvas).nodes as unknown[] : []).map((item) => item.text);
     const shared = { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts: fullSource.length ? fullSource : sourceTexts, origin };
     const owner = taskOwner(taskRole, parsedInput.data.prompt);
     // Each seat gets the knowledge for its role (Lead: review checklist, critique format; designer: its craft).
@@ -911,34 +912,32 @@ export async function POST(request: Request) {
     const ledger: string[] = [];
     const log = (detail: string) => attemptLog.push({ model: "review", result: detail.slice(0, 400) });
     const missingNow = (spec: unknown) => fullSource.length ? missingFromSpec(spec as Record<string, unknown>, fullSource).length : 0;
-    /** Director's call on an iteration. */
+    /**
+     * Director's call on an iteration: it must keep everything the previous version showed (counted,
+     * so merged cards fail), must not add invented text, must pass every gate on its own (no
+     * restore that dumps texts outside their cards), and must cover the source at least as well.
+     */
     const directorKeeps = (spec: Record<string, unknown>, model?: string): boolean => {
       const lost = lostTexts(current.spec as Record<string, unknown>, spec);
-      // An iteration may never lose a value (amount, %, date); up to 3 dropped labels are put back.
-      if (lost.length > 3 || lost.some(isValueText)) { log("iteration dropped " + lost.length + " texts (" + lost.slice(0, 4).join(", ") + "); previous version kept"); return false; }
-      let nextSpec: unknown = lost.length ? appendMissingSourceText(spec, lost) : spec;
-      let candidate = renderCandidate(nextSpec);
-      let restored = lost.length;
-      if (candidate.stage === "quality" && candidate.plan && candidate.quality?.findings.every((finding) => finding.code === "missing-source-content")) {
-        const missing = missingSourceTexts(candidate.plan, canvas, gatePrompt);
-        if (missing.length && missing.length <= 3) {
-          const repairedSpec = appendMissingSourceText(nextSpec, missing);
-          const repaired = renderCandidate(repairedSpec);
-          if (repaired.stage === "ok") { candidate = repaired; nextSpec = repairedSpec; restored += missing.length; }
-        }
-      }
+      if (lost.length) { log("iteration dropped " + lost.length + " texts (" + lost.slice(0, 4).join(", ") + "); previous version kept"); return false; }
+      const inventedBefore = inventedTexts(current.spec as Record<string, unknown>, fullSource.length ? fullSource : sourceTexts, parsedInput.data.prompt).length;
+      const invented = inventedTexts(spec, fullSource.length ? fullSource : sourceTexts, parsedInput.data.prompt);
+      if (invented.length > inventedBefore) { log("iteration invented text (" + invented.slice(0, 4).join(", ") + "); previous version kept"); return false; }
+      const candidate = renderCandidate(spec);
       const before = missingNow(current.spec);
-      const after = missingNow(nextSpec);
-      const scoreOk = !!candidate.quality && candidate.quality.score >= (current.candidate.quality?.score ?? 0);
-      const kept = candidate.stage === "ok" && !!candidate.plan && !!candidate.quality && (after < before || (after === before && scoreOk));
-      log("iteration " + (kept ? "kept" : "refused") + ": " + (candidate.stage !== "ok" ? candidate.stage + ": " + candidate.error : "missing source " + before + "→" + after + ", score " + (current.candidate.quality?.score ?? "?") + "→" + (candidate.quality?.score ?? "?")) + (restored ? ", restored " + restored : ""));
+      const after = missingNow(spec);
+      const kept = candidate.stage === "ok" && !!candidate.plan && !!candidate.quality && after <= before;
+      log("iteration " + (kept ? "kept" : "refused") + ": " + (candidate.stage !== "ok" ? candidate.stage + ": " + candidate.error : "missing source " + before + "→" + after + ", score " + (current.candidate.quality?.score ?? "?") + "→" + (candidate.quality?.score ?? "?")));
       if (!kept) return false;
       if (model) models.push(model);
-      current = { ...current, candidate, spec: nextSpec, repairedTexts: current.repairedTexts + restored };
+      current = { ...current, candidate, spec };
       return true;
     };
     const rounds = leadMaxRounds();
     let approved = false;
+    // Every reviewed version with its Lead score; the Director ships the best one.
+    const reviewed: Array<{ version: SuccessCandidate; score: number; models: number }> = [];
+    let lastScore: number | null = null;
     for (let round = 1; round <= rounds + 1; round++) {
       if (timeLeft() < 25000) { ledger.push("time"); break; }
       const review = await leadReview(current.spec as Record<string, unknown>, { ...shared, brain: brain.contextText, knowledge: leadKnowledge, round,
@@ -947,16 +946,28 @@ export async function POST(request: Request) {
       const actionable = review.notes.filter((entry) => entry.severity !== "low");
       ledger.push((review.score ?? "?") + "%");
       log("round " + round + " score " + (review.score ?? "?") + " (" + (review.model || "rules") + "): " + (actionable.map((entry) => entry.severity + ": " + entry.issue).join(" | ") || "no fixes"));
+      if (review.score !== null) reviewed.push({ version: current, score: review.score, models: models.length });
       approved = leadApproves(review);
-      // The last pass is a review only: it confirms the final version for the Director.
       if (approved || !actionable.length || round > rounds) break;
+      // An iteration that did not raise the Lead's score stops the loop: more of the same won't help.
+      if (round > 1 && lastScore !== null && review.score !== null && review.score <= lastScore) { ledger.push("flat"); break; }
+      if (review.score !== null) lastScore = review.score;
       if (timeLeft() < 35000) { ledger.push("time"); break; }
       const revision = await reviseFromNotes(current.spec as Record<string, unknown>, review.notes, { ...shared, knowledge: designerKnowledge,
         designRules: designRulesInstructions.trim(), timeoutMs: Math.min(70000, timeLeft() - 25000) });
       if (!revision.spec) { ledger.push("×"); log("iteration failed: " + (revision.error || "no answer")); break; }
-      ledger.push(directorKeeps(revision.spec, revision.model) ? "→" : "×");
+      if (!directorKeeps(revision.spec, revision.model)) { ledger.push("×"); break; }
+      ledger.push("→");
     }
-    attemptTimes.push({ attempt: "review " + ledger.join(" ") + (approved ? " ✓" : ""), ms: Date.now() - studioStarted, outcome: "ok" });
+    // Director's final call: the best-scored reviewed version (the earlier one on a tie).
+    const best = reviewed.reduce<typeof reviewed[number] | null>((top, entry) => (!top || entry.score > top.score ? entry : top), null);
+    if (best && best.version !== current && !approved) {
+      current = best.version;
+      models.length = best.models;
+      log("final: kept the version the Lead scored " + best.score);
+    }
+    const bar = !approved && reviewed.length ? " (below bar)" : approved ? " ✓" : "";
+    attemptTimes.push({ attempt: "review " + ledger.join(" ") + bar, ms: Date.now() - studioStarted, outcome: "ok" });
     return models.length ? { ...current, servedModel: [success.servedModel, ...models].filter(Boolean).join(", ") } : current;
   };
   // UX Director agency: the source screen's sections go to specialist designers in parallel
@@ -1070,7 +1081,7 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "application/json",
-            ...figmaRoutingHeaders(activeProvider, { fast: isRecovery, role: isRecovery ? "fast-retry" : "planner" }),
+            ...figmaRoutingHeaders(activeProvider, { fast: isRecovery, role: isRecovery ? "fast-retry" : blockMode ? gatewaySeat(taskOwner(taskRole, parsedInput.data.prompt)) : "planner" }),
             ...(activeProvider.id === "openrouter" ? {
               "HTTP-Referer": new URL(request.url).origin,
               "X-OpenRouter-Title": "UX Direct Figma Agent",
