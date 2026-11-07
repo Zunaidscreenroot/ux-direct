@@ -108,7 +108,7 @@ export interface AgencyResult {
 }
 
 export function agencyEnabled(): boolean {
-  return (process.env.UXD_AGENCY || "on").trim().toLowerCase() !== "off";
+  return (process.env.UXD_AGENCY || "off").trim().toLowerCase() !== "off";
 }
 
 export function agencyConcurrency(): number {

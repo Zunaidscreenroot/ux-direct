@@ -5,6 +5,7 @@ import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
 import { detectDomain, detectTaskRole, roleInstructions } from "@/src/figma-agent/agent-roles";
 import { runSubAgents, subAgentsEnabled, type AgentBrief } from "@/src/figma-agent/sub-agents";
+import { designerPersona, leadReview, reviseFromNotes, studioReviewEnabled } from "@/src/figma-agent/studio";
 import { agencyEnabled, agencyHandlesRole, runAgency, truncatedContentNames, type AgencyResult } from "@/src/figma-agent/agency";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
@@ -685,7 +686,7 @@ export async function POST(request: Request) {
     : "";
   const designRulesInstructions = designRulesBlock(parsedInput.data.designRules);
   const stateInstructions = parsedInput.data.state ? "\n" + STATE_BRIEFS[parsedInput.data.state] : "";
-  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + stateInstructions + designRulesInstructions + "\n" + agentBrief.instructions + exampleInstructions, brain);
+  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + stateInstructions + designRulesInstructions + "\n" + agentBrief.instructions + "\n" + designerPersona(taskRole) + exampleInstructions, brain);
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its configured free-model chain.
   // Both are bounded by compact retry and the shared generation deadline.
@@ -880,6 +881,44 @@ export async function POST(request: Request) {
         attemptTimes: [...attemptTimes, ...(inFlight ? [{ attempt: inFlight.attempt, ms: Date.now() - inFlight.startedAt, outcome: "ok" }] : [])],
         prompt: promptSize },
     }, { headers });
+  };
+  // Studio review: the UX Lead reviews the designer's whole screen once, the same designer revises
+  // once, and the Director keeps the revision only if every gate passes and quality does not drop.
+  const studioPass = async (success: SuccessCandidate): Promise<SuccessCandidate> => {
+    if (!studioReviewEnabled() || !blockMode || success.sourceFallback || !isBlockSpec(success.spec) || !success.candidate.quality) return success;
+    // Close the designer's timing row first so the review time is not counted as model time.
+    if (inFlight) { attemptTimes.push({ attempt: inFlight.attempt, ms: Date.now() - inFlight.startedAt, outcome: "ok" }); inFlight = null; }
+    const timeLeft = () => generationDeadlineMs - (Date.now() - generationStartedAt);
+    if (timeLeft() < 45000) { attemptTimes.push({ attempt: "review skipped (time)", ms: 0, outcome: "skipped" }); return success; }
+    const spec = success.spec as Record<string, unknown>;
+    const origin = new URL(request.url).origin;
+    const review = await leadReview(spec, { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts, origin,
+      brain: brain.contextText, timeoutMs: Math.min(25000, Math.floor(timeLeft() / 4)) }).catch(() => null);
+    if (!review) return success;
+    const actionable = review.notes.filter((note) => note.severity !== "low");
+    attemptTimes.push({ attempt: "review: " + actionable.length + " fix(es)", ms: review.ms, outcome: "ok" });
+    if (!actionable.length || timeLeft() < 30000) return success;
+    const revision = await reviseFromNotes(spec, review.notes, { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts, origin,
+      designRules: designRulesInstructions.trim(), timeoutMs: Math.min(60000, timeLeft() - 15000) });
+    if (!revision.spec) { attemptTimes.push({ attempt: "revision", ms: revision.ms, outcome: "kept first version" }); return success; }
+    // The revision keeps the reviewed screen's theme (already locked and varied), so no re-lock here.
+    let revisedSpec: unknown = revision.spec;
+    let candidate = renderCandidate(revisedSpec);
+    let restored = 0;
+    if (candidate.stage === "quality" && candidate.plan && candidate.quality?.findings.every((finding) => finding.code === "missing-source-content")) {
+      const missing = missingSourceTexts(candidate.plan, canvas, gatePrompt);
+      if (missing.length && missing.length <= 3) {
+        const repairedSpec = appendMissingSourceText(revisedSpec, missing);
+        const repaired = renderCandidate(repairedSpec);
+        if (repaired.stage === "ok") { candidate = repaired; revisedSpec = repairedSpec; restored = missing.length; }
+      }
+    }
+    const kept = candidate.stage === "ok" && !!candidate.plan && !!candidate.quality && candidate.quality.score >= success.candidate.quality.score;
+    attemptTimes.push({ attempt: "revision", ms: revision.ms, outcome: kept ? "ok" : "kept first version (" + (candidate.stage !== "ok" ? candidate.stage : "lower score") + ")" });
+    if (!kept) return success;
+    attemptLog.push({ model: (revision.model || "auto") + " revision", result: "passed" });
+    return { ...success, candidate, spec: revisedSpec, repairedTexts: success.repairedTexts + restored,
+      servedModel: [success.servedModel, revision.model].filter(Boolean).join(", ") };
   };
   // UX Director agency: the source screen's sections go to specialist designers in parallel
   // (small calls), the Director merges them and the same gates check the result. A failed gate
@@ -1187,8 +1226,8 @@ export async function POST(request: Request) {
           break;
         }
         attemptLog.push({ model: attemptName, result: repairedTexts ? "passed after restoring " + repairedTexts + " source texts" : "passed" });
-        return respond({ candidate, spec: specInput, learningCandidate, servedModel, routed: routedVia(response),
-          isRecovery, finishReason, modelIndex, themeLocked, repairedTexts });
+        return respond(await studioPass({ candidate, spec: specInput, learningCandidate, servedModel, routed: routedVia(response),
+          isRecovery, finishReason, modelIndex, themeLocked, repairedTexts }));
       } catch (error) {
         errors.push(model + (isRecovery ? " compact retry" : "") + ": " +
           (controller.signal.aborted ? "timed out after " + attemptTimeoutMs + "ms before the provider finished the response" : error instanceof Error ? error.message.slice(0, 200) : "request failed"));

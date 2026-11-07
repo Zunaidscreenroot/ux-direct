@@ -1,4 +1,7 @@
 /**
+ * Per-section staffing used only by the optional section pass (UXD_AGENCY=on, off by default).
+ * The live team is STUDIO in studio.ts: Director, UX Lead, one UX Designer, one UI Designer.
+ *
  * UX Direct's design-agency roster: every role the UX Director can staff, how many seats it
  * has, which Lead it reports to, and which gateway model tier (X-UXD-Agent-Role) it runs on.
  *
