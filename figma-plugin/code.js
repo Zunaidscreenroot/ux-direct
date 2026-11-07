@@ -1721,6 +1721,18 @@ async function writeCanvasCommand(payload, options) {
     }
     return frame;
   }
+  // A component placed on a new screen keeps no default copy that reads as a placeholder
+  // ("Text", "Label", "Lorem ipsum"): the layer is hidden instead of shown as content.
+  function hidePlaceholderTexts(instance) {
+    var hidden = 0;
+    instance.findAll(function (child) { return child.type === "TEXT"; }).forEach(function (text) {
+      if (text.visible === false) return;
+      if (/^\s*(text|label|title|heading|subtitle|caption|value|placeholder|button|lorem ipsum.*|text here|your text( here)?)\s*$/i.test(String(text.characters || ""))) {
+        try { text.visible = false; hidden += 1; } catch (_) {}
+      }
+    });
+    return hidden;
+  }
   async function applyInstanceTextOverrides(instance, overrides) {
     if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) return 0;
     var applied = 0;
@@ -1953,6 +1965,7 @@ async function writeCanvasCommand(payload, options) {
       else if (typeof node.resize === "function" && (type !== "INSTANCE" || Number.isFinite(spec.width) || Number.isFinite(spec.height))) node.resize(width, height);
       if (type === "INSTANCE" && spec.instanceProperties) applyInstanceProperties(node, spec.instanceProperties, true);
       if (type === "INSTANCE" && spec.textOverrides) await applyInstanceTextOverrides(node, spec.textOverrides);
+      if (type === "INSTANCE" && spec.hidePlaceholderTexts === true) hidePlaceholderTexts(node);
       if (type === "INSTANCE" && spec.monochrome && typeof spec.monochrome === "object") await monochromeClone(node, spec.monochrome);
       if (type === "VECTOR") {
         if (!Array.isArray(spec.vectorPaths) || spec.vectorPaths.length < 1 || spec.vectorPaths.length > 20) {
@@ -4957,6 +4970,17 @@ async function localApplyHygieneFixes(payload) {
       Object.keys(noStyle).sort(function (a, b) { return noStyle[b] - noStyle[a]; }).slice(0, 4).forEach(function (combo) {
         skip(noStyle[combo] + " text layer(s) at " + combo + ": this file has no text style of that size and weight");
       });
+    }
+  }
+  // A journey screen keeps its background as the journey's first screen has it: that screen's fill
+  // is a plain colour, so binding this one to a style would give the journey two background styles.
+  if (payload.keepRootFill === true) {
+    for (var kr = 0; kr < roots.length; kr++) {
+      var root = roots[kr];
+      if (typeof root.fillStyleId === "string" && root.fillStyleId && typeof root.setFillStyleIdAsync === "function" && UXD_HYGIENE_SNAPSHOT.keys[root.id + "|fillStyleId"]) {
+        var keptFills = uxdCloneValue(root.fills);
+        try { await root.setFillStyleIdAsync(""); root.fills = keptFills; counts.colorStyles = Math.max(0, counts.colorStyles - 1); } catch (_) {}
+      }
     }
   }
   if (typeof figma.commitUndo === "function") figma.commitUndo();
