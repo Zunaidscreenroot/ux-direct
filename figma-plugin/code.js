@@ -3908,7 +3908,10 @@ async function localApplyDirectEdits(payload) {
 var UXD_DIRECT_SNAP_PROPS = ["fills", "strokes", "strokeWeight", "dashPattern", "cornerRadius", "opacity", "effects",
   "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "itemSpacing", "layoutMode", "layoutWrap",
   "primaryAxisAlignItems", "counterAxisAlignItems", "textAlignHorizontal", "textAlignVertical", "fontSize", "fontName",
-  "textCase", "textDecoration", "letterSpacing", "lineHeight", "x", "y"];
+  "textCase", "textDecoration", "letterSpacing", "lineHeight", "x", "y",
+  // Copy, renames and visibility are direct edits too: without them Revert restored "0 values" after
+  // a find/replace or rename (characters must be restored last, so it sits after the font props).
+  "name", "visible", "characters"];
 // uxd-hygiene-fix:start
 // One-click hygiene fixer. Deterministic, no model: every change is computed from live layer properties,
 // so the same selection always gets the same fix. Groups: "spacing" (4px grid + near-symmetric padding),

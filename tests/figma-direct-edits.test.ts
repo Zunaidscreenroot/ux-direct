@@ -489,3 +489,22 @@ test("bulk copy edits are one local find/replace, quotes optional", () => {
   assert.equal(replaceOf("make all buttons rounded"), null);
   assert.equal(replaceOf("make all titles bold"), null);
 });
+
+test("bulk find/replace inside instances is snapshotted and Revert restores the old copy", async () => {
+  const r = runtime();
+  const second = r.make({ type: "INSTANCE", name: "Button / Primary", width: 300, height: 48, y: 160 }, r.card);
+  const label2 = r.make({ type: "TEXT", name: "Button label", characters: "Pay now" }, second);
+  r.label.characters = "Pay now";
+  const result = await r.apply("make all Pay now buttons say Pay EMI", [r.screen]);
+  assert.equal(r.label.characters, "Pay EMI");
+  assert.equal(label2.characters, "Pay EMI");
+  const texts = result.snapshot.filter((item: any) => item.prop === "characters");
+  assert.equal(texts.length, 2, "both instance texts are in the snapshot");
+  const posted: any[] = [];
+  r.figma.ui.postMessage = (m: any) => posted.push(m);
+  await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "u", op: "restore-props", payload: { items: result.snapshot } });
+  const restore = posted.find((m) => m.type === "uxd-local-result").result;
+  assert.equal(restore.restored, 2);
+  assert.equal(r.label.characters, "Pay now");
+  assert.equal(label2.characters, "Pay now");
+});
