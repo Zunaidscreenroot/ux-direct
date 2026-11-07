@@ -142,7 +142,7 @@ test("variation completion and visual review both enforce the deterministic stru
   const flow = ui.slice(ui.indexOf("async function createFigmaDesign("), ui.indexOf("async function captureRenderedNodePreview("));
   assert.ok(flow.includes("await runStructuralLintGate({"), "Variation completion runs the structural lint gate.");
   assert.ok(flow.includes('finalizeTaskOutcome(lint.passed ? "verified" : "failed"'), "A lint failure is never logged as a verified success.");
-  assert.ok(ui.includes('fetch(API + "/api/assistant/figma-agent/lint"'));
+  assert.ok(ui.includes('postJsonWithRules(API + "/api/assistant/figma-agent/lint"'));
   assert.ok(review.includes("runStructuralLint({"), "Visual review merges deterministic findings.");
   assert.ok(review.includes("structuralHigh ? Math.min(validated.data.score, 70)"), "High-severity structural defects cap the score below the gate.");
 });

@@ -2918,7 +2918,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -3914,6 +3914,9 @@ function uxdHygieneNodes(roots, includeInstanceChildren) {
 }
 function uxdSnapToGrid(value) {
   if (typeof value !== "number" || !isFinite(value) || value <= 0 || value === 2) return value;
+  // A file's own spacing scale (design rules) wins over the generic 4px grid.
+  var scale = UXD_ACTIVE_RULES && Array.isArray(UXD_ACTIVE_RULES.spacing) && UXD_ACTIVE_RULES.spacing.length ? UXD_ACTIVE_RULES.spacing : null;
+  if (scale) return uxdNearest(scale, value);
   if (value < 3) return 2;
   return Math.round(value / 4) * 4;
 }
@@ -4098,7 +4101,9 @@ async function localApplyHygieneFixes(payload) {
   if (!roots.length) throw new Error("Select the screen (or layers) to fix first.");
   var nodes = uxdHygieneNodes(roots);
   UXD_HYGIENE_SNAPSHOT = { keys: {}, items: [] };
-  var counts = { spacing: 0, symmetry: 0, repeated: 0, colorVariables: 0, colorStyles: 0, textStyles: 0, contrast: 0, smallText: 0, touchTargets: 0, autoLayout: 0 };
+  UXD_ACTIVE_RULES = uxdReadDesignRules().rules;
+  var minText = UXD_ACTIVE_RULES && typeof UXD_ACTIVE_RULES.minText === "number" ? UXD_ACTIVE_RULES.minText : 12;
+  var counts = { spacing: 0, symmetry: 0, repeated: 0, radius: 0, colorVariables: 0, colorStyles: 0, textStyles: 0, contrast: 0, smallText: 0, touchTargets: 0, autoLayout: 0 };
   var skipped = [];
   function skip(message) { if (skipped.length < 8 && skipped.indexOf(message) < 0) skipped.push(message); }
   var has = function (g) { return groups.indexOf(g) >= 0; };
@@ -4139,6 +4144,14 @@ async function localApplyHygieneFixes(payload) {
         frame.paddingLeft = both; frame.paddingRight = both; counts.symmetry++;
       }
     });
+    // File design rules: corner radii snap to the file's allowed radii (pills and circles excluded).
+    var radii = UXD_ACTIVE_RULES && Array.isArray(UXD_ACTIVE_RULES.radii) && UXD_ACTIVE_RULES.radii.length ? UXD_ACTIVE_RULES.radii : null;
+    if (radii) nodes.forEach(function (n) {
+      if (n.type === "INSTANCE" || n.type === "ELLIPSE" || typeof n.cornerRadius !== "number" || n.cornerRadius <= 0 || uxdBound(n, "cornerRadius")) return;
+      if (n.cornerRadius >= Math.min(n.width, n.height) / 2 - 0.5) return;
+      var r = uxdNearest(radii, n.cornerRadius);
+      if (r !== n.cornerRadius) { uxdSnapProp(n, "cornerRadius"); n.cornerRadius = r; counts.radius++; }
+    });
     // Repeated items (same type + name under one parent) that drifted apart get the most common
     // padding, gap and radius of the group, the same grouping the hygiene check reports.
     var parents = roots.concat(nodes).filter(function (n, i, all) { return Array.isArray(n.children) && n.type !== "INSTANCE" && all.indexOf(n) === i; });
@@ -4174,8 +4187,8 @@ async function localApplyHygieneFixes(payload) {
   if (has("a11y")) {
     for (var a = 0; a < a11yTexts.length; a++) {
       var text = a11yTexts[a];
-      if (typeof text.fontSize === "number" && text.fontSize < 12 && !uxdBound(text, "fontSize") && !(typeof text.textStyleId === "string" && text.textStyleId)) {
-        try { uxdSnapProp(text, "fontSize"); text.fontSize = 12; counts.smallText++; } catch (_) {}
+      if (typeof text.fontSize === "number" && text.fontSize < minText && !uxdBound(text, "fontSize") && !(typeof text.textStyleId === "string" && text.textStyleId)) {
+        try { uxdSnapProp(text, "fontSize"); text.fontSize = minText; counts.smallText++; } catch (_) {}
       }
       var fg = uxdSingleSolid(text.fills);
       var bg = uxdTextBackground(text);
@@ -4246,7 +4259,9 @@ async function localApplyHygieneFixes(payload) {
     return { id: item.node.id, prop: item.prop, before: item.before, after: after === undefined ? null : after };
   });
   UXD_HYGIENE_SNAPSHOT = null;
-  return { ok: true, groups: groups, counts: counts, total: total, checked: nodes.length, skipped: skipped,
+  var usedRules = Boolean(UXD_ACTIVE_RULES);
+  UXD_ACTIVE_RULES = null;
+  return { ok: true, usedRules: usedRules, groups: groups, counts: counts, total: total, checked: nodes.length, skipped: skipped,
     snapshot: snapshot, layoutChanged: counts.autoLayout > 0 };
 }
 // uxd-hygiene-fix:end
@@ -4372,6 +4387,33 @@ async function localRestoreTexts(payload) {
   return { ok: true, restored: restored, changedSince: changedSince, missing: missing };
 }
 // uxd-fill-data:end
+// uxd-design-rules:start
+// Per-file design rules ("DESIGN.md"): stored in the Figma file itself, so everyone on the file shares
+// them. The UI parses the designer's text into {spacing, radii, typeScale, minText, colors, font, tone};
+// the hygiene fixer snaps to the file's own scales instead of the generic 4px grid.
+var UXD_ACTIVE_RULES = null;
+function uxdNearest(list, value) {
+  return list.reduce(function (best, v) { return Math.abs(v - value) < Math.abs(best - value) ? v : best; }, list[0]);
+}
+function uxdReadDesignRules() {
+  var text = "", rules = null;
+  try { text = figma.root.getPluginData("uxdDesignRulesText") || ""; } catch (_) {}
+  try { var raw = figma.root.getPluginData("uxdDesignRules"); rules = raw ? JSON.parse(raw) : null; } catch (_) { rules = null; }
+  return { text: text, rules: rules };
+}
+async function localGetDesignRules() {
+  var current = uxdReadDesignRules();
+  return { ok: true, text: current.text, rules: current.rules };
+}
+async function localSetDesignRules(payload) {
+  var text = typeof payload.text === "string" ? payload.text.slice(0, 4000) : "";
+  var rules = payload.rules && typeof payload.rules === "object" ? payload.rules : null;
+  var previous = uxdReadDesignRules();
+  figma.root.setPluginData("uxdDesignRulesText", text);
+  figma.root.setPluginData("uxdDesignRules", rules ? JSON.stringify(rules).slice(0, 8000) : "");
+  return { ok: true, previous: previous };
+}
+// uxd-design-rules:end
 // uxd-section-edit:start
 // Section edit on the native action planner: a property state of the selected subtrees before and
 // after the plan, so Revert restores exactly what the plan changed (restore-props + delete-created),
@@ -4577,6 +4619,8 @@ async function runLocalTask(message) {
     else if (message.op === "find-icon-targets") result = await localFindIconTargets(payload);
     else if (message.op === "insert-icons") result = await localInsertIcons(payload);
     else if (message.op === "section-state") result = await localSectionState(payload);
+    else if (message.op === "get-design-rules") result = await localGetDesignRules(payload);
+    else if (message.op === "set-design-rules") result = await localSetDesignRules(payload);
     else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
     else if (message.op === "trigger-undo") {
       if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");
