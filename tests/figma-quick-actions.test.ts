@@ -34,7 +34,7 @@ test("quick action: suggestions filter, the typed task reaches the panel once it
   assert.equal(shown.length, 0, "no showUI at load: Figma may be in query mode (Cmd+/ parameter box)");
   let suggestions: string[] = [];
   input()!({ key: "prompt", query: "hyg", result: { setSuggestions: (list: string[]) => { suggestions = list; } } });
-  assert.deepEqual(JSON.parse(JSON.stringify(suggestions)), ["hyg", "fix hygiene", "check hygiene"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(suggestions)), ["fix hygiene", "check hygiene"]);
 
   handlers.run({ command: "", parameters: { prompt: "  fix hygiene  " } });
   assert.equal(shown.length, 1, "the panel opens once the task is entered");

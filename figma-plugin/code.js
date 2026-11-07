@@ -4522,7 +4522,10 @@ function uxdIconTargetInfo(node) {
   var texts = kids.filter(function (c) { return c.type === "TEXT"; });
   if (!texts.length || texts.length > 2 || kids.some(uxdIsIconLike)) return null;
   // A row's label is its first non-value text ("Due" in "Due  ₹1,00,000"), whatever the layer order.
-  var labelText = texts.find(function (t) { return !uxdIsDataValueText(t); }) || texts[0];
+  // Only values here (e.g. "Row · Due" holds "₹1,00,000" directly, its label sits in a nested
+  // "Row text" frame): not a target by itself; uxdNestedRowTarget reads the nested label instead.
+  var labelText = texts.find(function (t) { return !uxdIsDataValueText(t); });
+  if (!labelText) return null;
   var label = String(labelText.characters || "").trim();
   if (!label || label.length > 40) return null;
   var size = typeof labelText.fontSize === "number" ? labelText.fontSize : 14;
@@ -4729,7 +4732,8 @@ var UXD_PENDING_QUICK_PROMPT = "";
 function uxdQuickActionSuggestions(query) {
   var q = String(query || "").trim().toLowerCase();
   var list = UXD_QUICK_ACTION_SUGGESTIONS.filter(function (item) { return !q || item.indexOf(q) >= 0; });
-  return (q && list.indexOf(q) < 0 ? [String(query).trim()] : []).concat(list).slice(0, 10);
+  // Figma already offers the typed text itself (freeform), so only the known tasks are listed.
+  return list.slice(0, 10);
 }
 if (figma.parameters && typeof figma.parameters.on === "function") {
   figma.parameters.on("input", function (event) {
