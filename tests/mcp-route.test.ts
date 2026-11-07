@@ -79,9 +79,10 @@ test("OAuth tool discovery is scope-filtered and execution tools reject read-onl
     const listing = await POST(request({ jsonrpc: "2.0", id: 2, method: "tools/list" }, { key: token }));
     const listed = await listing.json();
     const names = listed.result.tools.map((tool: { name: string }) => tool.name);
-    assert.ok(names.includes("ux_direct_uxaudit_discover_site"));
-    assert.ok(!names.includes("ux_direct_uxaudit_run_benchmark"));
-    const call = await POST(request({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "ux_direct_uxaudit_run_benchmark", arguments: { clientName: "Ujjivan", clientUrl: "https://www.ujjivansfb.bank.in/", competitors: [{ name: "AU", url: "https://www.aubank.in/" }] } } }, { key: token }));
+    assert.ok(names.includes("ux_direct_brain_search"));
+    assert.ok(!names.includes("ux_direct_plan_task"));
+    assert.ok(!names.some((name: string) => name.startsWith("ux_direct_uxaudit_")));
+    const call = await POST(request({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "ux_direct_plan_task", arguments: { task: "Plan a dashboard" } } }, { key: token }));
     const result = await call.json();
     assert.equal(result.result.isError, true);
     assert.match(result.result.content[0].text, /missing required scope ux:execute/);
@@ -138,12 +139,6 @@ test("tool list exposes status, Figma executor, task planning and shared brain o
       "ux_direct_brain_add_eval_case",
       "ux_direct_brain_review_eval_case",
       "ux_direct_brain_run_retrieval_evals",
-      "ux_direct_uxaudit_status",
-      "ux_direct_uxaudit_discover_site",
-      "ux_direct_uxaudit_run_page_audit",
-      "ux_direct_uxaudit_get_session_report",
-      "ux_direct_uxaudit_generate_improved_ia",
-      "ux_direct_uxaudit_run_benchmark",
     ]);
     const brainSave = body.result.tools.find((tool: { name: string }) => tool.name === "ux_direct_brain_save_feedback");
     assert.ok(brainSave.inputSchema.properties.rawFeedback);
