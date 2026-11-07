@@ -695,3 +695,43 @@ test("improve never adds image placeholders the source does not have", () => {
   assert.ok(!texts(out.plan!.elements as N[]).includes("Loan thumbnail"));
   assert.ok(out.warnings.some((w) => /Dropped an image placeholder/.test(w)));
 });
+
+test("card borders bind to a near file paint style, and every gap and padding sits on the 4px grid", () => {
+  const theme = resolveTheme({}, "#0E0F12");
+  const near = (c: string) => "#" + c.slice(1, 5) + ((parseInt(c.slice(5, 7), 16) + 3) % 256).toString(16).padStart(2, "0").toUpperCase();
+  const styles = { paint: [{ id: "S:line", name: "Lines/Divider", color: near(theme.border) }] };
+  const spec = { summary: "x", sections: [
+    { name: "A", blocks: [{ type: "heading", title: "Loans" }] },
+    { name: "B", surface: "card", title: "Loan 1", blocks: [{ type: "row", label: "EMI", value: "₹8,450" }, { type: "button", text: "Pay EMI" }] },
+    { name: "C", blocks: [{ type: "text", text: "End" }] },
+  ], learningCandidate: null };
+  const out = expandBlockSpec(spec, { ...darkCanvas, styles });
+  assert.ok(out.plan, out.errors.join("; "));
+  const strokes: string[] = [];
+  const offGrid: string[] = [];
+  walk(out.plan!.elements as N[], (n) => {
+    if (typeof n.strokeStyleId === "string") strokes.push(n.strokeStyleId);
+    for (const key of ["itemSpacing", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft"]) {
+      const v = n[key];
+      if (typeof v === "number" && v > 0 && v % 4 !== 0) offGrid.push(String(n.name) + "." + key + "=" + v);
+    }
+  });
+  assert.ok(strokes.includes("S:line"), "the card border binds to the near file style: " + strokes.join(","));
+  assert.deepEqual(offGrid, []);
+});
+
+
+test("a create screen's primary button never moves to a file style that costs its label contrast", () => {
+  const spec = { summary: "x", theme: { primary: "#1F4FD8", onPrimary: "#FFFFFF" }, sections: [
+    { name: "A", blocks: [{ type: "heading", title: "Loans" }] },
+    { name: "B", blocks: [{ type: "button", text: "Pay EMI" }] },
+    { name: "C", blocks: [{ type: "text", text: "End" }] },
+  ], learningCandidate: null };
+  const styles = { paint: [{ id: "S:blue-muted", name: "Blue/300", color: "#6F8FE8" }] };
+  const out = expandBlockSpec(spec, { nodes: [], styles }, { create: true });
+  assert.ok(out.plan, out.errors.join("; "));
+  let btn: N | null = null;
+  walk(out.plan!.elements as N[], (n) => { if (!btn && n.type === "FRAME" && String(n.name).toLowerCase().includes("pay emi")) btn = n; });
+  assert.ok(btn, "button found");
+  assert.notEqual((btn as N).paintStyleId, "S:blue-muted", "white label keeps its contrast");
+});

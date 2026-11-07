@@ -254,6 +254,11 @@ export function providerBody(provider: ProviderDef, model: string, body: Record<
   for (const [key, value] of Object.entries(body)) if (OPENAI_FIELDS.has(key)) out[key] = value;
   out.model = model;
   if (!jsonMode) delete out.response_format;
+  // OpenAI-compatible JSON mode (Groq, Cerebras) refuses a request whose messages never say "json".
+  else if (out.response_format !== undefined && Array.isArray(out.messages) &&
+      !out.messages.some((m) => /json/i.test(textOf(m && typeof m === "object" ? (m as { content?: unknown }).content : "")))) {
+    out.messages = [...out.messages, { role: "system", content: "Respond with JSON only." }];
+  }
   const requested = typeof body.max_tokens === "number" ? body.max_tokens : undefined;
   if (requested && requested > provider.maxOutputTokens) out.max_tokens = provider.maxOutputTokens;
   if (out.stream === true && ["groq", "cerebras", "openrouter", "nvidia"].includes(provider.id)) out.stream_options = { include_usage: true };

@@ -622,3 +622,45 @@ test("after a build, a row whose real parts overflow lets its text column fill t
   await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "c", op: "componentize-repeats", payload: { rootId: screen.id } });
   assert.equal(col.layoutSizingHorizontal, "FILL", "120 + 100 + 56 + 24 > 294: the text column gives way");
 });
+
+test("after a build, a one-token amount or ID hugs on one line and the label beside it gives way", async () => {
+  const r = runtime();
+  const screen = r.make({ type: "FRAME", name: "New screen", width: 360, height: 800, layoutMode: "VERTICAL" });
+  const row = r.make({ type: "FRAME", name: "Row · Loan ID", width: 200, height: 40, layoutMode: "HORIZONTAL" }, screen);
+  row.itemSpacing = 12;
+  const lbl = r.make({ type: "TEXT", name: "Row label", characters: "Loan account ID", width: 100, height: 18, layoutSizingHorizontal: "FIXED" }, row);
+  const id = r.make({ type: "TEXT", name: "Row value", characters: "DMI1234567890", width: 70, height: 36, layoutSizingHorizontal: "FIXED" }, row);
+  // Measured width in this mock: 0.6em per character while the text hugs.
+  let mode = "HEIGHT", size = 14;
+  Object.defineProperty(id, "textAutoResize", { get: () => mode, set: (v: string) => { mode = v; if (v === "WIDTH_AND_HEIGHT") { id.width = id.characters.length * size * 0.6; id.height = size * 1.3; } } });
+  Object.defineProperty(id, "fontSize", { get: () => size, set: (v: number) => { size = v; if (mode === "WIDTH_AND_HEIGHT") id.width = id.characters.length * v * 0.6; } });
+  await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "c", op: "componentize-repeats", payload: { rootId: screen.id } });
+  assert.equal(mode, "WIDTH_AND_HEIGHT", "the ID no longer wraps");
+  assert.equal(size, 14, "it fits once the label gives way, so the type keeps its size");
+  assert.equal(id.layoutSizingHorizontal, "HUG");
+  assert.equal(lbl.layoutSizingHorizontal, "FILL", "the label shrinks, not the ID");
+});
+
+test("after a build, a one-token amount wider than its card steps its type down instead of clipping", async () => {
+  const r = runtime();
+  const screen = r.make({ type: "FRAME", name: "New screen", width: 360, height: 800, layoutMode: "VERTICAL" });
+  const cell = r.make({ type: "FRAME", name: "Stat", width: 80, height: 40, layoutMode: "VERTICAL" }, screen);
+  const amount = r.make({ type: "TEXT", name: "Stat value", characters: "₹2,00,000", width: 80, height: 22, layoutSizingHorizontal: "FILL" }, cell);
+  let mode = "HEIGHT", size = 17;
+  Object.defineProperty(amount, "textAutoResize", { get: () => mode, set: (v: string) => { mode = v; if (v === "WIDTH_AND_HEIGHT") amount.width = amount.characters.length * size * 0.6; } });
+  Object.defineProperty(amount, "fontSize", { get: () => size, set: (v: number) => { size = v; if (mode === "WIDTH_AND_HEIGHT") amount.width = amount.characters.length * v * 0.6; } });
+  await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "c", op: "componentize-repeats", payload: { rootId: screen.id } });
+  assert.ok(amount.width <= 80, "the amount fits its 80px cell");
+  assert.ok(size < 17 && size >= 11);
+});
+
+test("after a build, a label 2px wider than its column fills the column and wraps instead of being clipped", async () => {
+  const r = runtime();
+  const screen = r.make({ type: "FRAME", name: "New screen", width: 360, height: 800, layoutMode: "VERTICAL" });
+  const col = r.make({ type: "FRAME", name: "Row text", width: 201, height: 40, layoutMode: "VERTICAL", clipsContent: true }, screen);
+  const title = r.make({ type: "TEXT", name: "Title", characters: "Personal Loan", width: 203, height: 20, layoutSizingHorizontal: "FIXED" }, col);
+  await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "c", op: "componentize-repeats", payload: { rootId: screen.id } });
+  assert.equal(title.layoutSizingHorizontal, "FILL");
+  assert.equal(title.textAutoResize, "HEIGHT");
+  assert.equal(col.clipsContent, false, "a text-only column never clips");
+});

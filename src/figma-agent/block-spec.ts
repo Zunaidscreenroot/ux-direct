@@ -465,6 +465,7 @@ const TYPE_ALIASES: Record<string, string> = {
   divider: "divider", separator: "divider", line: "divider",
   checkbox: "checkbox", consent: "checkbox", toggle: "checkbox", switch: "checkbox", radio: "checkbox",
   bottom_nav: "bottom_nav", bottom_bar: "bottom_nav", tab_navigation: "bottom_nav",
+  result_icon: "result_icon", status_icon: "result_icon", state_icon: "result_icon", error_icon: "result_icon", success_icon: "result_icon",
   skeleton: "skeleton", shimmer: "skeleton", skeleton_lines: "skeleton", loading_placeholder: "skeleton",
   image: "image", illustration: "image", placeholder: "image", media: "image", hero_image: "image",
   otp: "otp", pin: "otp", code_input: "otp",
@@ -566,10 +567,15 @@ function percent(value: unknown): number {
 // Expansion
 // ---------------------------------------------------------------------------
 
+type ButtonComponent = { id: string; height: number; instanceProperties?: Record<string, string> };
 type BadgeComponent = { id: string; prop: string; options: string[]; textProp: string | null; height: number };
 type Ctx = { b: Builder; t: BlockTheme; bg: string; componentIds: Set<string>; skeleton?: boolean; badge?: BadgeComponent | null;
+  /** Create mode: the file's primary button component, so full-width primary actions are instances of it. */
+  button?: ButtonComponent | null;
   /** Improve only: the source's own texts, so the renderer never adds copy the source did not have. */
-  sourceTexts?: Set<string> | null };
+  sourceTexts?: Set<string> | null;
+  screenTitle?: string | null;
+  componentSizes?: Map<string, { width: number; height: number }> };
 
 const TONE_OPTIONS: Record<string, RegExp> = {
   success: /^(success|positive|current|active|paid|completed?|approved|on ?track|green)$/i,
@@ -595,6 +601,45 @@ function findBadgeComponent(components: unknown): BadgeComponent | null {
   return null;
 }
 
+/**
+ * The file's primary button: the journey kit's own button (the exact variant the first screen used)
+ * wins; otherwise a catalogue component named like a button whose variant can be set to primary,
+ * or a component named "Primary button". Secondary and text buttons stay drawn (variants differ too
+ * much between files to pick them safely).
+ */
+export function findButtonComponent(components: unknown, kitButtonId?: string | null, kitProps?: Record<string, string | boolean> | null): ButtonComponent | null {
+  const list = arr(components).map(asRec).filter((c): c is Rec => !!c && typeof c.id === "string");
+  // Up to 72px: some kits draw the button with its own touch padding.
+  const okHeight = (c: Rec) => typeof c.height !== "number" || c.height >= 32 && c.height <= 72;
+  if (kitButtonId) {
+    const kit = list.find((c) => c.id === kitButtonId);
+    // Only variant values: a text property would be the first screen's label.
+    const variants = kitProps ? Object.fromEntries(Object.entries(kitProps).filter((e): e is [string, string] => typeof e[1] === "string" &&
+      asRec(asRec(kit?.properties)?.[e[0]])?.type !== "TEXT" && !/label|text|title/i.test(e[0]))) : {};
+    if (kit && okHeight(kit)) return { id: kitButtonId, height: typeof kit.height === "number" ? Math.round(kit.height) : 48, ...(Object.keys(variants).length ? { instanceProperties: variants } : {}) };
+  }
+  for (const c of list) {
+    const name = String(c.name ?? "");
+    if (!/\b(button|btn|cta)s?\b/i.test(name) || /\b(icon|fab|radio|toggle|group|bar|nav|tab|chip|link|text|close|back)\b/i.test(name) || !okHeight(c)) continue;
+    const props = asRec(c.properties) ?? {};
+    const variants = Object.entries(props).filter(([, def]) => asRec(def)?.type === "VARIANT");
+    const pick: Record<string, string> = {};
+    let primary = /\bprimary\b/i.test(name) && !/\b(secondary|outline|ghost|tertiary)\b/i.test(name);
+    for (const [key, def] of variants) {
+      const options = arr(asRec(def)?.options).map(String);
+      const p = options.find((o) => /^(primary|filled|solid|contained)$/i.test(o.trim()));
+      if (p) { pick[key] = p; primary = true; continue; }
+      const state = options.find((o) => /^(default|enabled|rest|normal)$/i.test(o.trim()));
+      if (state && /state|status/i.test(key)) pick[key] = state;
+      const size = options.find((o) => /^(large|lg|l|medium|md|m)$/i.test(o.trim()));
+      if (size && /size/i.test(key)) pick[key] = size;
+    }
+    if (!primary) continue;
+    return { id: c.id as string, height: typeof c.height === "number" ? Math.round(c.height) : 48, ...(Object.keys(pick).length ? { instanceProperties: pick } : {}) };
+  }
+  return null;
+}
+
 function toneColor(t: BlockTheme, kind: ReturnType<typeof tone>): string {
   return kind === "neutral" ? t.muted : t[kind];
 }
@@ -616,6 +661,27 @@ function skeletonNode(ctx: Ctx, block: Rec, W: number): NativeNode {
   const lineHeight = height || 12;
   const bars = Array.from({ length: lines }, (_, i) => b.rect("Skeleton line", Math.round(W * (i === 0 ? 0.6 : i === lines - 1 ? 0.45 : 0.85)), lineHeight, shade, { cornerRadius: Math.min(6, lineHeight / 2) }));
   return b.vstack("Skeleton", W, bars, { gap: 8 });
+}
+
+/**
+ * The icon at the top of a success / failure / pending screen: a tinted halo, a solid tone disc and a
+ * bold glyph (✓, !, …), centred. Native shapes, so it stays editable and on theme.
+ */
+function resultIconNode(ctx: Ctx, block: Rec, W: number): NativeNode {
+  const { b, t } = ctx;
+  const raw = clean(block.tone ?? block.kind ?? block.state ?? block.variant ?? block.type, 30).toLowerCase();
+  const kind = /error|fail|danger|declin|reject/.test(raw) ? "danger" : /warn|pending|process|wait/.test(raw) ? "warning" : /info/.test(raw) ? "info" : "success";
+  const color = t[kind];
+  const glyph = kind === "danger" ? "!" : kind === "warning" ? "…" : kind === "info" ? "i" : "✓";
+  const halo = mix(t.background, color, t.dark ? 0.24 : 0.14);
+  const mark = b.text(kind === "danger" ? "Error mark" : "Status mark", glyph, 56, { size: 28, weight: "Bold", color: "#FFFFFF", bg: color, align: "CENTER", hug: true });
+  const disc = b.hstack(kind === "danger" ? "Error icon" : kind === "success" ? "Success icon" : "Status icon", 56, [mark], { fill: color, radius: 100, justify: "CENTER", align: "CENTER", fixedHeight: 56 });
+  disc.layoutSizingHorizontal = "FIXED";
+  disc.width = 56;
+  const ring = b.hstack("Icon halo", 88, [disc], { fill: halo, radius: 100, justify: "CENTER", align: "CENTER", fixedHeight: 88 });
+  ring.layoutSizingHorizontal = "FIXED";
+  ring.width = 88;
+  return b.hstack("Result icon", W, [ring], { justify: "CENTER", align: "CENTER", pad: [8, 0, 8, 0] });
 }
 
 function badgeNode(ctx: Ctx, textValue: string, kind: ReturnType<typeof tone>): NativeNode {
@@ -650,14 +716,16 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
     case "app_bar": {
       // The source screen's own header component wins over a hand-drawn app bar.
       const header = b.source?.header;
-      if (header && !b.headerNode && depth <= 1) {
+      // One app bar per screen: a second one (the source's own bar repeated) is dropped.
+      if (b.headerNode) { b.warnings.push("Dropped a second app bar."); return null; }
+      if (header && depth <= 1) {
         b.count += 1;
         const node: NativeNode = { type: "INSTANCE", name: header.name, componentId: header.componentId, x: 0, y: 0, width: W, height: header.height,
           layoutSizingHorizontal: "FILL",
           ...(header.instanceProperties ? { instanceProperties: { ...header.instanceProperties } } : {}),
           ...(header.textOverrides ? { textOverrides: { ...header.textOverrides } } : {}) };
         // A new screen reuses the file's app bar component: its title becomes this screen's title.
-        const newTitle = clean(block.title ?? block.text, 120);
+        const newTitle = clean(ctx.screenTitle || block.title || block.text, 120);
         if (header.fromCatalogue && newTitle) node.textOverrides = { ...(node.textOverrides ?? {}), __title: newTitle };
         b.headerNode = node;
         return node;
@@ -851,6 +919,13 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
           pad: [8, 12, 8, 12], fill, radius: Math.min(t.radius, 8), stroke: isSecondary ? t.primary : undefined, justify: "CENTER", align: "CENTER", hugWidth: true, fixedHeight: isText ? undefined : 36,
         });
       }
+      if (ctx.button && !isText && !isSecondary) {
+        // The file's own button component: the label becomes its text, it spans the column.
+        b.count += 1;
+        return { type: "INSTANCE", name: label(text, "Primary button"), componentId: ctx.button.id, x: 0, y: 0, width: W, height: ctx.button.height,
+          layoutSizingHorizontal: "FILL", ...(ctx.button.instanceProperties ? { instanceProperties: { ...ctx.button.instanceProperties } } : {}),
+          textOverrides: { __title: text } };
+      }
       const textNode = b.text("Button label", text, W - 32, { size: 15, weight: "Semi Bold", color: fg, bg: fill ?? bg, align: "CENTER", hug: true });
       const btn = b.hstack(label(text, isText ? "Text button" : isSecondary ? "Secondary button" : "Primary button"), W, [textNode], {
         pad: [12, 16, 12, 16], fill, radius: t.radius, stroke: isSecondary ? t.primary : undefined, justify: "CENTER", align: "CENTER", fixedHeight: isText ? undefined : 48,
@@ -954,6 +1029,8 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
     }
     case "skeleton":
       return skeletonNode(ctx, block, W);
+    case "result_icon":
+      return resultIconNode(ctx, block, W);
     case "image": {
       // A loading state draws text-free skeleton shapes, never "Illustration"/"Loading" boxes.
       if (ctx.skeleton) return skeletonNode(ctx, { ...block, lines: 1 }, W);
@@ -1001,9 +1078,13 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
         b.warnings.push("Dropped component block with unknown componentId " + (componentId || "(missing)") + ".");
         return null;
       }
+      // The screen's header component placed again as a block is its app bar, never a second one.
+      if (b.source?.header && componentId === b.source.header.componentId) return b.headerNode || depth > 1 ? null : expandLeaf(ctx, { type: "app_bar", title: block.title ?? block.name }, "app_bar", W, depth);
       b.count += 1;
       const props = asRec(block.instanceProperties ?? block.properties ?? block.props);
-      const height = typeof block.height === "number" && Number.isFinite(block.height) ? Math.max(1, Math.min(800, block.height)) : 48;
+      // The component's own size from the catalogue: a card instance squeezed to 48px is clipped.
+      const listed = ctx.componentSizes?.get(componentId);
+      const height = typeof block.height === "number" && Number.isFinite(block.height) && (!listed || block.height >= listed.height * 0.9) ? Math.max(1, Math.min(800, block.height)) : listed ? Math.min(800, listed.height) : 48;
       const width = typeof block.width === "number" && Number.isFinite(block.width) ? Math.max(1, Math.min(W, block.width)) : W;
       const node: NativeNode = { type: "INSTANCE", name: clean(block.name, 80) || "Component", componentId, x: 0, y: 0, width, height,
         layoutSizingHorizontal: width >= W ? "FILL" : "FIXED" };
@@ -1011,6 +1092,15 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
         const entries = Object.entries(props).filter((e): e is [string, string | boolean] => typeof e[1] === "string" || typeof e[1] === "boolean").slice(0, 30);
         if (entries.length) node.instanceProperties = Object.fromEntries(entries);
       }
+      // The block's own words go into the instance (its largest text, or texts by layer name); a
+      // placeholder the component ships with ("Text", "Label") is hidden, never shown as content.
+      const overrides: Record<string, string> = {};
+      const named = asRec(block.texts ?? block.textOverrides);
+      if (named) for (const [key, value] of Object.entries(named).slice(0, 20)) if (typeof value === "string" && value.trim()) overrides[key.slice(0, 120)] = value.slice(0, 500);
+      const title = clean(block.text ?? block.label ?? block.title, 200);
+      if (title) overrides.__title = title;
+      if (Object.keys(overrides).length) node.textOverrides = overrides;
+      node.hidePlaceholderTexts = true;
       return node;
     }
     case "custom": {
@@ -1337,6 +1427,56 @@ function relayout(node: NativeNode): number {
   return node.height;
 }
 
+/**
+ * Improve never shows a source string more often than the source did, and never invents a layer name
+ * as copy: the page title in the app bar AND as a heading, the card title twice per card, an inline
+ * "Pay now" text beside the Pay now button, a logo turned into the text "slice" (tester T12).
+ * Extra copies go first where the same card already shows the text; labels in buttons, app bars,
+ * badges and tabs are kept.
+ */
+export function dedupeImproveTexts(elements: NativeNode[], sourceCounts: Map<string, number>, warnings: string[]): number {
+  type Occ = { node: NativeNode; parent: NativeNode | null; card: NativeNode | null; keep: boolean };
+  const byKey = new Map<string, Occ[]>();
+  const strays: Occ[] = [];
+  const walk = (node: NativeNode, parent: NativeNode | null, card: NativeNode | null, keep: boolean) => {
+    const isCard = node.type === "FRAME" && typeof node.color === "string" && Number(node.cornerRadius ?? 0) > 0;
+    const keepHere = keep || node.type === "INSTANCE" || /\b(button|app bar|header|badge|chip|tab|nav|status)\b/i.test(node.name);
+    if (node.type === "TEXT" && typeof node.text === "string") {
+      const k = textKey(node.text);
+      const occ = { node, parent, card, keep: keepHere };
+      if (!sourceCounts.has(k)) { if (/^[a-z][a-z0-9_-]{1,15}$/.test(String(node.text).trim())) strays.push(occ); return; }
+      byKey.set(k, [...(byKey.get(k) ?? []), occ]);
+      return;
+    }
+    if (node.type === "INSTANCE") return;
+    for (const child of node.children ?? []) walk(child, node, isCard ? node : card, keepHere);
+  };
+  for (const el of elements) walk(el, null, null, false);
+  const drop: Occ[] = [...strays.filter((o) => !o.keep)];
+  for (const [k, occs] of byKey) {
+    let excess = occs.length - Math.max(1, sourceCounts.get(k) ?? 1);
+    if (excess <= 0) continue;
+    const seen = new Set<NativeNode | null>();
+    for (const o of occs) {
+      if (excess > 0 && !o.keep && o.card && seen.has(o.card)) { drop.push(o); excess -= 1; }
+      seen.add(o.card);
+    }
+    for (const o of [...occs].reverse()) if (excess > 0 && !o.keep && !drop.includes(o)) { drop.push(o); excess -= 1; }
+  }
+  for (const o of drop) {
+    if (!o.parent?.children) continue;
+    o.parent.children = o.parent.children.filter((c) => c !== o.node);
+  }
+  // A wrapper left with nothing in it goes too.
+  const prune = (nodes: NativeNode[]): NativeNode[] => nodes.filter((n) => {
+    if (n.children) n.children = prune(n.children);
+    return !(n.type === "FRAME" && n.children && n.children.length === 0 && n.noFill === true);
+  });
+  for (const el of elements) if (el.children) el.children = prune(el.children);
+  if (drop.length) warnings.push("Removed " + drop.length + " repeated or invented text layer(s) the source did not have.");
+  return drop.length;
+}
+
 /** Tighten an over-tall render: card padding 16→12, stack gaps 12→8, two stacked buttons side by side. */
 function compactToBudget(elements: NativeNode[]) {
   const visit = (node: NativeNode) => {
@@ -1475,13 +1615,44 @@ export function sourceFallbackSpec(canvas: Record<string, unknown>): Rec | null 
  * the same size (±1px) and weight class, and any exact colour match takes the paint style.
  * Hygiene checks otherwise report every generated layer as hard-coded.
  */
-function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: string[]) {
+function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: string[], loose = false) {
   if (!styles) return;
   const textStyles = arr(styles.text).map(asRec).filter((x): x is Rec => !!x && typeof x.id === "string" && typeof x.fontSize === "number");
   const paintByColor = new Map<string, string>();
   for (const style of arr(styles.paint).map(asRec)) {
     if (style && typeof style.id === "string" && typeof style.color === "string" && !paintByColor.has(style.color.toUpperCase())) paintByColor.set(style.color.toUpperCase(), style.id);
   }
+  // Exact colour first; else the closest file style that is near in colour and in lightness, so
+  // derived tints and borders also use the file's tokens without moving contrast (any screen).
+  const palette = [...paintByColor].map(([color, id]) => ({ color, id })).filter((p) => !!hex(p.color));
+  // A new screen (create) has no source colours to stay faithful to: surfaces, dividers and button
+  // fills take the closest file style within a wider band, still only of near lightness.
+  const nearestPaint = (value: string, wide = false): { color: string; id: string } | null => {
+    const key = value.toUpperCase();
+    const exact = paintByColor.get(key);
+    if (exact) return { color: key, id: exact };
+    if (!hex(value)) return null;
+    let best: { color: string; id: string } | null = null, bestDist = wide ? 0.14 : 0.05;
+    const lumBand = wide ? 0.06 : 0.03;
+    for (const p of palette) {
+      const d = colorDistance(value, p.color);
+      if (d < bestDist && Math.abs(luminance(p.color) - luminance(value)) <= lumBand) { bestDist = d; best = p; }
+    }
+    return best;
+  };
+  // Text colours drawn directly on a surface: its texts, down to the next layer with its own fill.
+  const textsOn = (surface: NativeNode): string[] => {
+    const out: string[] = [];
+    const walk = (nodes: NativeNode[] | undefined) => {
+      for (const child of nodes ?? []) {
+        if (child.type === "TEXT") { if (typeof child.color === "string") out.push(child.color); continue; }
+        if (typeof child.color === "string" && child.noFill !== true) continue;
+        walk(child.children);
+      }
+    };
+    walk(surface.children);
+    return out;
+  };
   let texts = 0, paints = 0;
   const visit = (nodes: NativeNode[]) => {
     for (const node of nodes) {
@@ -1500,8 +1671,14 @@ function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: st
         }
       }
       if (node.type !== "CLONE" && node.type !== "INSTANCE" && typeof node.color === "string" && typeof node.paintStyleId !== "string") {
-        const id = paintByColor.get(node.color.toUpperCase());
-        if (id) { node.paintStyleId = id; paints += 1; }
+        const hit = nearestPaint(node.color, loose && node.type !== "TEXT");
+        // A surface's style never costs its own labels contrast (white on a muted button blue).
+        const readable = !hit || node.type === "TEXT" || textsOn(node).every((fg) => contrast(fg, hit.color) >= Math.min(4.5, contrast(fg, String(node.color))));
+        if (hit && readable) { node.color = hit.color; node.paintStyleId = hit.id; paints += 1; }
+      }
+      if (node.type !== "CLONE" && node.type !== "INSTANCE" && typeof node.strokeColor === "string" && typeof node.strokeStyleId !== "string") {
+        const hit = nearestPaint(node.strokeColor, loose);
+        if (hit) { node.strokeColor = hit.color; node.strokeStyleId = hit.id; paints += 1; }
       }
       if (node.children) visit(node.children);
     }
@@ -1515,14 +1692,19 @@ export function isBlockSpec(value: unknown): boolean {
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
 }
 
-export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean; skeleton?: boolean } = {}): BlockExpansion {
+export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean; skeleton?: boolean; create?: boolean; kitButtonId?: string | null; kitButtonProps?: Record<string, string | boolean> | null;
+  /** Journey screens: the screen's own title (its app bar shows it, whatever the model wrote), and the first screen's side gutter. */
+  screenTitle?: string | null; gutter?: number | null; background?: string | null } = {}): BlockExpansion {
   const spec = asRec(value) ?? {};
   const sourceNodes = arr(canvas.nodes);
   const source = asRec(sourceNodes[0]) ?? {};
   const sourceFill = Array.isArray(source.fillColors) ? hex(source.fillColors[0]) : null;
   const rawFrame = asRec(spec.frame) ?? {};
   const ctaFill = options.monochrome ? null : sourceCtaFill(options.sourceCanvas ?? canvas);
-  const theme = snapThemeToStyles(resolveTheme(spec.theme ?? rawFrame.theme, hex(rawFrame.backgroundColor) ?? sourceFill, ctaFill), asRec(canvas.styles));
+  // A journey screen keeps the first screen's background, whatever the model's theme says.
+  const kitBackground = options.background ? hex(options.background) : null;
+  const themeInput = kitBackground ? { ...(asRec(spec.theme ?? rawFrame.theme) ?? {}), background: kitBackground } : spec.theme ?? rawFrame.theme;
+  const theme = snapThemeToStyles(resolveTheme(themeInput, kitBackground ?? hex(rawFrame.backgroundColor) ?? sourceFill, ctaFill), asRec(canvas.styles));
   const componentIds = new Set(arr(canvas.components).map((c) => asRec(c)?.id).filter((id): id is string => typeof id === "string"));
   const b = new Builder(theme, collectSourceTokens(canvas, componentIds));
   const improveSource = asRec(arr((options.sourceCanvas ?? canvas).nodes)[0]);
@@ -1532,12 +1714,22 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     walkTexts(improveSource, 0);
     return set.size ? set : null;
   })() : null;
-  const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds, skeleton: options.skeleton === true, badge: options.monochrome ? null : findBadgeComponent(canvas.components), sourceTexts };
+  const sourceTextCounts = sourceTexts ? (() => {
+    const counts = new Map<string, number>();
+    const walk = (n: Rec, d: number) => { if (d > 14) return; if (n.type === "TEXT" && typeof n.text === "string") { const k = textKey(n.text); counts.set(k, (counts.get(k) ?? 0) + 1); } for (const c of arr(n.children)) { const r = asRec(c); if (r) walk(r, d + 1); } };
+    walk(improveSource!, 0);
+    return counts;
+  })() : null;
+  const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds, skeleton: options.skeleton === true, badge: options.monochrome ? null : findBadgeComponent(canvas.components), sourceTexts,
+    button: options.create && !options.monochrome ? findButtonComponent(canvas.components, options.kitButtonId, options.kitButtonProps) : null,
+    screenTitle: options.create ? clean(options.screenTitle, 120) || null : null,
+    componentSizes: new Map(arr(canvas.components).map(asRec).filter((c): c is Rec => !!c && typeof c.id === "string" && typeof c.height === "number")
+      .map((c) => [c.id as string, { width: typeof c.width === "number" ? c.width : 0, height: c.height as number }])) };
 
   const sourceWidth = typeof source.width === "number" ? source.width : 0;
   const sourceHeight = typeof source.height === "number" ? source.height : 0;
   const frameWidth = Math.round(Math.max(280, Math.min(1440, typeof rawFrame.width === "number" ? rawFrame.width : sourceWidth || 360)));
-  const pad = options.componentSelection ? 12 : 16;
+  const pad = options.componentSelection ? 12 : typeof options.gutter === "number" && options.gutter >= 8 && options.gutter <= 40 ? grid4(options.gutter) : 16;
   const gap = options.componentSelection ? 12 : 16;
   const content = frameWidth - pad * 2;
 
@@ -1545,6 +1737,11 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   const elements: NativeNode[] = [];
   let blockCount = 0;
   const sections = mergeExtraSections(arr(spec.sections).map(asRec).filter((x): x is Rec => !!x));
+  // A journey screen always opens with the file's app bar showing its own title, even when the model left it out.
+  if (ctx.screenTitle && b.source?.header?.fromCatalogue && sections.length &&
+      !sections.some((sec) => sectionBlocks(sec).some((bl) => blockType(bl) === "app_bar"))) {
+    sections.unshift({ name: "Header", surface: "plain", blocks: [{ type: "app_bar", title: ctx.screenTitle, back: true }] });
+  }
   if (!sections.length) errors.push("sections must be a non-empty array of {name, blocks:[...]}.");
   for (const [index, section] of sections.slice(0, 8).entries()) {
     const blocks = sectionBlocks(section);
@@ -1560,7 +1757,14 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     const sectionTitle = clean(section.title, 160);
     const kids: NativeNode[] = [];
     if (sectionTitle && sectionTitle !== clean(section.name, 160)) kids.push(b.text("Section title", sectionTitle, content, { size: 17, weight: "Semi Bold", color: theme.text, bg: theme.background }));
-    for (const block of blocks) kids.push(...expandBlock(ctx, block, content, 1));
+    for (let bi = 0; bi < blocks.length; bi += 1) {
+      // An alert keeps its one short CTA inline in a plain section too, not a full-width button below.
+      const next = blocks[bi + 1];
+      const pa = blockType(blocks[bi]) || inferBlockType(blocks[bi]);
+      const paired = next && (pa === "banner" || pa === "text" || pa === "progress_ring") ? pairCardBlocks(ctx, blocks[bi], next, content, 1) : null;
+      if (paired) { kids.push(...paired); bi += 1; continue; }
+      kids.push(...expandBlock(ctx, blocks[bi], content, 1));
+    }
     if (!kids.length) {
       b.warnings.push("Section \"" + name + "\" produced no layers and was skipped.");
       continue;
@@ -1624,10 +1828,11 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     if (fidelity.unplaced.length && options.allowClones === false) b.warnings.push(fidelity.unplaced.length + " source graphic(s) were not copied: this plugin build cannot copy layers. Re-import the latest UX Direct plugin zip.");
     else if (fidelity.unplaced.length) b.warnings.push("Could not place " + fidelity.unplaced.length + " source graphic(s): " + fidelity.unplaced.slice(0, 5).join(", ") + ".");
   }
+  if (sourceTextCounts) dedupeImproveTexts(elements, sourceTextCounts, b.warnings);
   capTypeScale(elements, 5, b.warnings);
   polishRows(elements, b.warnings);
   elements.forEach(relayout);
-  bindFileStyles(elements, asRec(canvas.styles), b.warnings);
+  bindFileStyles(elements, asRec(canvas.styles), b.warnings, options.create === true);
   const nodeCount = countNodes(elements);
 
   let rootGap = gap;
@@ -1640,9 +1845,10 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     compactToBudget(elements);
     if (measure() > budget * 1.1) b.warnings.push("The improved screen is " + Math.round(measure()) + "px tall against the source's " + budget + "px: the spec adds content the source did not have.");
   }
-  const gapUsed = rootGap;
-  const contentHeight = measure();
+  const gapUsed = grid4(rootGap);
   const requestedHeight = typeof rawFrame.height === "number" ? rawFrame.height : sourceHeight || 800;
+  if (options.create) pinActionsToBottom(elements, requestedHeight - measure());
+  const contentHeight = measure();
   const fits = contentHeight <= requestedHeight;
   const frame: Rec = {
     // A wireframe is named like the plugin's states pack ("15 / Wireframe"), whatever the model called it.
@@ -1656,6 +1862,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     primaryAxisAlignItems: "MIN", counterAxisAlignItems: "MIN",
     primaryAxisSizingMode: fits ? "FIXED" : "AUTO", counterAxisSizingMode: "FIXED",
   };
+  snapSpacingToGrid(elements);
   assignPositions(frame, elements);
   const summary = clean(spec.summary, 700) || "A UX Direct native design variation built from " + blockCount + " design blocks.";
   return {
@@ -1665,6 +1872,53 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     nodeCount,
     blockCount,
   };
+}
+
+/**
+ * Create mode: a screen shorter than its frame keeps its primary actions at the bottom, where the
+ * thumb is, instead of floating under the content with an empty lower third. The last section grows
+ * by the spare height and aligns its content to the bottom (only when it holds the screen's buttons).
+ */
+export function pinActionsToBottom(elements: NativeNode[], spare: number): boolean {
+  const last = elements[elements.length - 1];
+  if (!last || spare < 48 || last.type !== "FRAME" || last.layoutMode !== "VERTICAL" || last.noFill !== true) return false;
+  const hasButton = (n: NativeNode): boolean => /\b(primary button|button|actions|cta)\b/i.test(n.name) && !/\b(nav|tab)\b/i.test(n.name) || (n.children ?? []).some(hasButton);
+  if (!hasButton(last) || /\b(nav|tab ?bar|bottom navigation)\b/i.test(last.name)) return false;
+  const extra = Math.floor(spare / 4) * 4;
+  last.height += extra;
+  last.layoutSizingVertical = "FIXED";
+  last.primaryAxisSizingMode = "FIXED";
+  last.primaryAxisAlignItems = "MAX";
+  return true;
+}
+
+/**
+ * Every gap and padding the renderer writes sits on the 4px grid, including the ones later passes
+ * set (source-fidelity buttons, section padding, budget compaction): 10 → 12, 6 → 8, 2 → 4.
+ * A hugging frame's height follows the change so positions stay right.
+ */
+function snapSpacingToGrid(nodes: NativeNode[]): void {
+  for (const node of nodes) {
+    if (node.children?.length) snapSpacingToGrid(node.children);
+    if (node.type !== "FRAME" || !node.layoutMode) continue;
+    let delta = 0;
+    const vertical = node.layoutMode === "VERTICAL";
+    for (const key of ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"] as const) {
+      const value = node[key];
+      if (typeof value !== "number" || value <= 0 || value % 4 === 0) continue;
+      const snapped = grid4(value);
+      if (key === "paddingTop" || key === "paddingBottom") delta += snapped - value;
+      node[key] = snapped;
+    }
+    const gap = node.itemSpacing;
+    if (typeof gap === "number" && gap > 0 && gap % 4 !== 0) {
+      const snapped = grid4(gap);
+      const flow = (node.children ?? []).filter((child) => child.layoutPositioning !== "ABSOLUTE").length;
+      if (vertical) delta += (snapped - gap) * Math.max(0, flow - 1);
+      node.itemSpacing = snapped;
+    }
+    if (delta && node.layoutSizingVertical === "HUG") node.height = Math.max(1, node.height + delta);
+  }
 }
 
 /** Prompt contract for block mode. Kept short on purpose: weaker models follow short contracts. */
@@ -1688,6 +1942,7 @@ export const BLOCK_SPEC_CONTRACT = [
   "- tabs {items:[...], active: index}   - chips {items:[...], active?}   - bottom_nav {items:[...], active}",
   "- banner {title?, body?, tone: info|success|warning|danger, action?}   - steps {items:[...], current: index}",
   "- image {label, height?}  — placeholder only, never invent assets",
+  "- result_icon {tone: success|danger|warning}  — the centred icon at the top of a success, failure or pending screen",
   "- skeleton {lines?: 1–6, height?, shape?: \"circle\"}  — text-free loading placeholder (lines, or one block when height ≥ 40); shape circle = simple empty-state art",
   "- divider {}",
   "- card {title?, subtitle?, badge?: {text, tone}, blocks:[...]}  — a card inside a plain section (cards do not nest)",

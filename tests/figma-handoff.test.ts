@@ -25,6 +25,12 @@ test("handoff and prototype prompts route to their tasks", () => {
   assert.deepEqual(classify("connect these screens", two), { kind: "prototype-wire", fix: true });
   assert.deepEqual(classify("show which buttons link the screens", two), { kind: "prototype-wire", fix: false });
   assert.equal(classify("relink detached components", two).kind, "detached");
+  assert.deepEqual(classify("create a journey to pay an overdue EMI", { selectionTypes: [] }), { kind: "journey-create" });
+  assert.deepEqual(classify("add the missing states to this flow", two), { kind: "flow-states" });
+  assert.deepEqual(classify("create a journey to pay overdue EMI from this screen", one), { kind: "journey-create", fromSelection: true });
+  assert.notEqual(classify("improve this screen", one)?.kind, "journey-create");
+  assert.deepEqual(classify("design the next step", one), { kind: "journey-next" });
+  assert.notEqual(classify("create a flow variation", two)?.kind, "journey-create");
 });
 
 function decorate(n: any, parent: any): any {
@@ -166,4 +172,82 @@ test("Skip skips the whole named run, even run screens without a Skip of their o
   const plan = await run("prototype-wire", {});
   const skip = plan.links.find((l: any) => l.label === "Skip");
   assert.equal(skip.to, "Home");
+});
+
+test("a journey wires Back icons, skips the failure state going forward, Retry goes back, Done returns to the start, and the flow gets a start", async () => {
+  const backIcon = (id: string) => ({ id, type: "INSTANCE", name: "Icon / arrow-left", width: 24, height: 24, children: [{ id: id + "v", type: "VECTOR", name: "Vector", width: 16, height: 16 }] });
+  const s1: any = { id: "s1", type: "FRAME", name: "My loans", x: 0, y: 0, width: 360, height: 800, children: [button("b1", "View details")] };
+  const s2: any = { id: "s2", type: "FRAME", name: "Loan details", x: 400, y: 0, width: 360, height: 800, children: [backIcon("i2"), button("b2", "Pay ₹8,450")] };
+  const s3: any = { id: "s3", type: "FRAME", name: "Payment successful", x: 800, y: 0, width: 360, height: 800, children: [button("b3", "Done")] };
+  const s4: any = { id: "s4", type: "FRAME", name: "Payment failed", x: 1200, y: 0, width: 360, height: 800, children: [button("b4", "Retry"), button("b5", "Go to home", { name: "Secondary button" })] };
+  const nodes: Record<string, any> = { s1, s2, s3, s4 };
+  const run = runtime([s3, s1, s4, s2], nodes);
+  const page: any = (s1 as any).parent;
+  page.flowStartingPoints = [];
+  const plan = await run("prototype-wire", {});
+  const map = Object.fromEntries(plan.links.map((l: any) => [l.label, l.action === "BACK" ? "back" : l.to]));
+  assert.equal(map["Icon / arrow-left"], "back", "app bar back icon");
+  assert.equal(map["Pay ₹8,450"], "Payment successful", "main button moves on, never into the failure state");
+  assert.equal(map["Done"], "My loans", "the end returns to the start");
+  assert.equal(map["Retry"], "Loan details", "retry opens the step that failed");
+  assert.equal(map["Go to home"], "My loans");
+  assert.deepEqual(plan.deadEnds, []);
+  const wired = await run("prototype-wire", { fix: true });
+  assert.equal(page.flowStartingPoints[0].nodeId, "s1");
+  assert.equal(wired.flowStart, "My loans");
+});
+
+test("a journey's shared title words do not decide where a button goes", async () => {
+  const s1: any = { id: "j1", type: "FRAME", name: "Pay EMI / 1 · My loans", x: 0, y: 0, width: 360, height: 800, children: [button("c1", "Pay EMI")] };
+  const s2: any = { id: "j2", type: "FRAME", name: "Pay EMI / 2 · Choose amount", x: 400, y: 0, width: 360, height: 800, children: [button("c2", "Continue")] };
+  const s3: any = { id: "j3", type: "FRAME", name: "Pay EMI / 3 · Payment successful", x: 800, y: 0, width: 360, height: 800, children: [button("c3", "Done")] };
+  const s4: any = { id: "j4", type: "FRAME", name: "Pay EMI / 4 · Payment failed", x: 1200, y: 0, width: 360, height: 800, children: [button("c4", "Retry")] };
+  const run = runtime([s1, s2, s3, s4], { j1: s1, j2: s2, j3: s3, j4: s4 });
+  const plan = await run("prototype-wire", {});
+  const map = Object.fromEntries(plan.links.map((l: any) => [l.label, l.action === "BACK" ? "back" : l.to]));
+  assert.equal(map["Pay EMI"], "Pay EMI / 2 · Choose amount");
+  assert.equal(map["Continue"], "Pay EMI / 3 · Payment successful");
+  assert.equal(map["Done"], "Pay EMI / 1 · My loans");
+  assert.equal(map["Retry"], "Pay EMI / 2 · Choose amount", "retry opens the step that failed");
+});
+
+test("journey wiring: links inside instances fall back to the instance, success never leads to failure, Back to X, the true entry gets the start", async () => {
+  const card = (id: string) => ({ id, type: "INSTANCE", name: "Loan card", width: 328, height: 120, children: [txt(id + "a", "Personal Loan"), button(id + "b", "Pay now")] });
+  const f1: any = { id: "e1", type: "FRAME", name: "Manage loans", x: 0, y: 200, width: 360, height: 800, children: [card("k1")] };
+  const f2: any = { id: "e2", type: "FRAME", name: "Payment method", x: 400, y: 0, width: 360, height: 800, children: [button("m1", "Pay ₹8,450")] };
+  const f3: any = { id: "e3", type: "FRAME", name: "Flow 2", x: 800, y: 0, width: 360, height: 800, children: [
+    { id: "h3", type: "TEXT", name: "Title", characters: "Payment successful", fontSize: 24 }, button("d3", "Download receipt"), button("b3", "Back to loans")] };
+  const f4: any = { id: "e4", type: "FRAME", name: "Payment failed", x: 1200, y: 0, width: 360, height: 800, children: [button("r4", "Retry")] };
+  const nodes: Record<string, any> = { e1: f1, e2: f2, e3: f3, e4: f4 };
+  const run = runtime([f1, f2, f3, f4], nodes);
+  const inner = f1.children[0].children[1];
+  // Figma accepts the write on a layer inside an instance but does not keep it.
+  inner.setReactionsAsync = async () => { inner.reactions = []; };
+  const page: any = f1.parent;
+  page.flowStartingPoints = [{ nodeId: "e3", name: "Flow 2" }];
+  const wired = await run("prototype-wire", { fix: true });
+  const map = Object.fromEntries(wired.links.map((l: any) => [l.label, l.action === "BACK" ? "back" : l.to]));
+  assert.equal(map["Pay now"], "Payment method");
+  assert.equal(f1.children[0].reactions[0].actions[0].destinationId, "e2", "the card instance carries the link");
+  assert.notEqual(map["Download receipt"], "Payment failed", "the end never opens the failure state");
+  assert.equal(map["Back to loans"], "Manage loans");
+  assert.equal(map["Retry"], "Payment method");
+  assert.equal(wired.entry, "Manage loans");
+  assert.deepEqual(page.flowStartingPoints.map((f: any) => f.nodeId), ["e1"], "the start moves to the true entry");
+});
+
+test("a step's main button never links back to an earlier step that shares a word, and hover swaps are not links", async () => {
+  const s = (id: string, name: string, x: number, kids: any[]): any => ({ id, type: "FRAME", name, x, y: 0, width: 360, height: 800, children: kids });
+  const hover = { reactions: [{ trigger: { type: "ON_HOVER" }, actions: [{ type: "NODE", destinationId: "variant:2", navigation: "CHANGE_TO" }] }] };
+  const one = s("j1", "Pay EMI / 1 · Loan details", 0, [button("j1b", "Continue")]);
+  const two = s("j2", "Pay EMI / 2 · Payment method", 400, [button("j2b", "Continue")]);
+  const three = s("j3", "Pay EMI / 3 · Confirm", 800, [button("j3b", "Confirm payment")]);
+  const four = s("j4", "Pay EMI / 4 · Verify OTP", 1200, [button("j4b", "Verify and pay", hover)]);
+  const five = s("j5", "Pay EMI / 5 · Payment successful", 1600, [button("j5b", "Done")]);
+  const nodes: Record<string, any> = { j1: one, j2: two, j3: three, j4: four, j5: five };
+  const run = runtime([one, two, three, four, five], nodes);
+  const plan = await run("prototype-wire", {});
+  const map = Object.fromEntries(plan.links.map((l: any) => [l.label, l.to]));
+  assert.equal(map["Confirm payment"], "Pay EMI / 4 · Verify OTP");
+  assert.equal(map["Verify and pay"], "Pay EMI / 5 · Payment successful", "a hover variant swap does not count as the button's own link");
 });

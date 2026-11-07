@@ -1172,7 +1172,8 @@ async function readCanvasCommand(payload) {
   payload = payload || {};
   var scope = payload.scope === "current-page" ? "current-page" : "selection";
   var maxDepth = Math.max(0, Math.min(12, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
-  var maxNodes = Math.max(1, Math.min(500, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
+  // Up to 1500: a list screen's last cards must not be cut off when a journey reads its facts.
+  var maxNodes = Math.max(1, Math.min(1500, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
   var isSearch = (typeof payload.queryName === "string" && payload.queryName.trim()) ||
     (typeof payload.queryType === "string" && payload.queryType.trim());
   var source;
@@ -1720,6 +1721,18 @@ async function writeCanvasCommand(payload, options) {
     }
     return frame;
   }
+  // A component placed on a new screen keeps no default copy that reads as a placeholder
+  // ("Text", "Label", "Lorem ipsum"): the layer is hidden instead of shown as content.
+  function hidePlaceholderTexts(instance) {
+    var hidden = 0;
+    instance.findAll(function (child) { return child.type === "TEXT"; }).forEach(function (text) {
+      if (text.visible === false) return;
+      if (/^\s*(text|label|title|heading|subtitle|caption|value|placeholder|button|lorem ipsum.*|text here|your text( here)?)\s*$/i.test(String(text.characters || ""))) {
+        try { text.visible = false; hidden += 1; } catch (_) {}
+      }
+    });
+    return hidden;
+  }
   async function applyInstanceTextOverrides(instance, overrides) {
     if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) return 0;
     var applied = 0;
@@ -1952,6 +1965,7 @@ async function writeCanvasCommand(payload, options) {
       else if (typeof node.resize === "function" && (type !== "INSTANCE" || Number.isFinite(spec.width) || Number.isFinite(spec.height))) node.resize(width, height);
       if (type === "INSTANCE" && spec.instanceProperties) applyInstanceProperties(node, spec.instanceProperties, true);
       if (type === "INSTANCE" && spec.textOverrides) await applyInstanceTextOverrides(node, spec.textOverrides);
+      if (type === "INSTANCE" && spec.hidePlaceholderTexts === true) hidePlaceholderTexts(node);
       if (type === "INSTANCE" && spec.monochrome && typeof spec.monochrome === "object") await monochromeClone(node, spec.monochrome);
       if (type === "VECTOR") {
         if (!Array.isArray(spec.vectorPaths) || spec.vectorPaths.length < 1 || spec.vectorPaths.length > 20) {
@@ -1995,6 +2009,9 @@ async function writeCanvasCommand(payload, options) {
       if (type === "TEXT" && typeof spec.textStyleId === "string") await applyTextStyleAsync(node, spec.textStyleId);
       if (type !== "CLONE" && typeof spec.paintStyleId === "string" && typeof node.setFillStyleIdAsync === "function") {
         try { await node.setFillStyleIdAsync(spec.paintStyleId); } catch (_) { /* keep the literal colour */ }
+      }
+      if (type !== "CLONE" && typeof spec.strokeStyleId === "string" && typeof node.setStrokeStyleIdAsync === "function") {
+        try { await node.setStrokeStyleIdAsync(spec.strokeStyleId); } catch (_) { /* keep the literal colour */ }
       }
       parent.appendChild(node);
       if (type === "CLONE" && "layoutPositioning" in node && spec.layoutPositioning !== "ABSOLUTE") {
@@ -4246,7 +4263,91 @@ async function uxdSyncInstance(copy, instance) {
 // A row whose real parts (a chip instance with an icon, a copied logo) came out wider than the plan's
 // estimate overflows and clips its last item ("slice" logo cut to "slic"; T12): the widest text
 // column in that row fills the remaining space instead of keeping its estimated fixed width.
+// Room a child has inside its parent: the parent's inner width, minus its siblings in a row.
+function uxdAvailableWidth(node) {
+  var parent = node.parent;
+  if (!parent || typeof parent.width !== "number") return Infinity;
+  var inner = parent.width - (parent.paddingLeft || 0) - (parent.paddingRight || 0);
+  if (parent.layoutMode === "HORIZONTAL" && parent.layoutWrap !== "WRAP" && node.layoutPositioning !== "ABSOLUTE") {
+    var flow = parent.children.filter(function (c) { return c.visible !== false && c.layoutPositioning !== "ABSOLUTE"; });
+    var gap = parent.primaryAxisAlignItems === "SPACE_BETWEEN" ? 0 : (parent.itemSpacing || 0);
+    var others = flow.filter(function (c) { return c !== node; });
+    // A label beside it (growing, or multi-word text that can wrap) gives its room up first,
+    // keeping at least 60px; icons, badges and other tokens keep their width.
+    var wraps = function (c) {
+      if (c.layoutSizingHorizontal === "FILL" || c.layoutGrow === 1) return true;
+      var words = function (t) { return /\s/.test(String(t.characters || "").trim()); };
+      if (c.type === "TEXT") return words(c);
+      return c.type === "FRAME" && typeof c.findAll === "function" && c.findAll(function (k) { return k.type === "TEXT" && words(k); }).length > 0;
+    };
+    return inner - Math.max(0, flow.length - 1) * gap - others.reduce(function (sum, c) {
+      return sum + (wraps(c) ? Math.min(c.width, 60) : c.width);
+    }, 0);
+  }
+  if (parent.layoutMode === "VERTICAL" || parent.layoutMode === "HORIZONTAL") return inner;
+  return parent.width - Math.max(0, node.x || 0);
+}
+// One unbreakable token (an amount like ₹2,00,000, an ID like DMI1234567890) must never wrap
+// mid-token or be clipped at its card edge, on any screen. Measured in Figma, not estimated:
+// such a text hugs its width; when even that is wider than its room, the type steps down to 11px.
+async function uxdFixTokenWrap(root) {
+  var fixed = 0;
+  var texts = root.findAll(function (n) {
+    if (n.type !== "TEXT" || n.visible === false || uxdInsideInstance(n)) return false;
+    var value = String(n.characters || "").trim();
+    return value.length >= 3 && !/\s/.test(value) && typeof n.fontSize === "number";
+  });
+  for (var i = 0; i < texts.length; i++) {
+    var text = texts[i];
+    try {
+      var before = { mode: text.textAutoResize, width: text.width, sizing: text.layoutSizingHorizontal };
+      var room = uxdAvailableWidth(text);
+      await uxdLoadTextFonts(text);
+      text.textAutoResize = "WIDTH_AND_HEIGHT";
+      var natural = text.width;
+      if (natural <= before.width + 0.5 && natural <= room + 0.5) {
+        // It already fits on one line: leave it exactly as it was.
+        if (before.mode !== "WIDTH_AND_HEIGHT") { text.textAutoResize = before.mode; if (before.mode !== "NONE") text.resize(before.width, text.height); if (before.sizing === "FILL") text.layoutSizingHorizontal = "FILL"; }
+        continue;
+      }
+      var size = text.fontSize;
+      while (text.width > room + 0.5 && size > 11) { size -= 1; text.fontSize = size; }
+      if (text.parent && (text.parent.layoutMode === "HORIZONTAL" || text.parent.layoutMode === "VERTICAL")) text.layoutSizingHorizontal = "HUG";
+      fixed++;
+    } catch (_) {}
+  }
+  return fixed;
+}
+// A wrapping text (any words) that came out wider than its auto-layout column, even by 1-2px from
+// font metrics, is clipped at the column edge: it fills the column and wraps instead (any screen).
+async function uxdFitTextsToColumn(root) {
+  var fixed = 0;
+  var texts = root.findAll(function (n) {
+    if (n.type !== "TEXT" || n.visible === false || uxdInsideInstance(n) || n.layoutPositioning === "ABSOLUTE") return false;
+    var parent = n.parent;
+    if (!parent || parent.layoutMode !== "VERTICAL" || typeof parent.width !== "number") return false;
+    if (!/\s/.test(String(n.characters || "").trim())) return false;
+    var inner = parent.width - (parent.paddingLeft || 0) - (parent.paddingRight || 0);
+    return n.width > inner + 0.5 && n.layoutSizingHorizontal !== "FILL";
+  });
+  for (var i = 0; i < texts.length; i++) {
+    try {
+      await uxdLoadTextFonts(texts[i]);
+      texts[i].textAutoResize = "HEIGHT";
+      texts[i].layoutSizingHorizontal = "FILL";
+      fixed++;
+    } catch (_) {}
+  }
+  // A column that holds only text has nothing to mask: it never clips a text's last pixel.
+  root.findAll(function (n) {
+    return n.type === "FRAME" && n.clipsContent === true && n.layoutMode && n.layoutMode !== "NONE" && !uxdInsideInstance(n) &&
+      n.children.length > 0 && n.children.every(function (c) { return c.type === "TEXT"; });
+  }).forEach(function (frame) { try { frame.clipsContent = false; fixed++; } catch (_) {} });
+  return fixed;
+}
 async function uxdFixRowOverflow(root) {
+  try { await uxdFixTokenWrap(root); } catch (_) {}
+  try { await uxdFitTextsToColumn(root); } catch (_) {}
   var fixed = 0, picks = [];
   var rows = root.findAll(function (n) { return n.type === "FRAME" && n.layoutMode === "HORIZONTAL" && n.layoutWrap !== "WRAP" && !uxdInsideInstance(n); });
   rows.forEach(function (row) {
@@ -4259,7 +4360,12 @@ async function uxdFixRowOverflow(root) {
       if (c.layoutSizingHorizontal === "FILL") return false;
       if (c.type === "TEXT") return true;
       return c.type === "FRAME" && typeof c.findAll === "function" && c.findAll(function (k) { return k.type === "TEXT"; }).length > 0;
-    }).sort(function (a, b) { return b.width - a.width; });
+    }).sort(function (a, b) {
+      // The label side shrinks, never a one-token value (an amount or an ID stays whole).
+      var ta = a.type === "TEXT" && !/\s/.test(String(a.characters || "").trim()) ? 1 : 0;
+      var tb = b.type === "TEXT" && !/\s/.test(String(b.characters || "").trim()) ? 1 : 0;
+      return ta - tb || b.width - a.width;
+    }).filter(function (c) { return !(c.type === "TEXT" && !/\s/.test(String(c.characters || "").trim())); });
     if (candidates[0]) picks.push(candidates[0]);
   });
   for (var i = 0; i < picks.length; i++) {
@@ -5031,6 +5137,17 @@ async function localApplyHygieneFixes(payload) {
       });
     }
   }
+  // A journey screen keeps its background as the journey's first screen has it: that screen's fill
+  // is a plain colour, so binding this one to a style would give the journey two background styles.
+  if (payload.keepRootFill === true) {
+    for (var kr = 0; kr < roots.length; kr++) {
+      var root = roots[kr];
+      if (typeof root.fillStyleId === "string" && root.fillStyleId && typeof root.setFillStyleIdAsync === "function" && UXD_HYGIENE_SNAPSHOT.keys[root.id + "|fillStyleId"]) {
+        var keptFills = uxdCloneValue(root.fills);
+        try { await root.setFillStyleIdAsync(""); root.fills = keptFills; counts.colorStyles = Math.max(0, counts.colorStyles - 1); } catch (_) {}
+      }
+    }
+  }
   if (typeof figma.commitUndo === "function") figma.commitUndo();
   var total = Object.keys(counts).reduce(function (sum, key) { return sum + counts[key]; }, 0);
   var snapshot = UXD_HYGIENE_SNAPSHOT.items.map(function (item) {
@@ -5733,16 +5850,39 @@ var UXD_BACK_LABEL = /^(back|go back|previous|prev|cancel|close|dismiss|wapas|pe
 var UXD_NEXT_LABEL = /\b(continue|next|proceed|submit|confirm|get started|sign ?in|log ?in|sign ?up|verify|done|finish|start|got it|aage|save)\b/i;
 // "Skip" in a carousel/onboarding skips the whole run: it goes to the first later screen that has no Skip itself.
 var UXD_SKIP_LABEL = /^(skip|skip for now|skip all|skip intro)\b/i;
+// A failed step's Retry goes back to the step that failed; "Home" from the end goes to the start.
+var UXD_RETRY_LABEL = /^(retry|try again|try once more|dobara)\b/i;
+var UXD_HOME_LABEL = /\b(home|dashboard|back to (home|start)|go to home|close)\b/i;
+// A layer that is a back control by itself: an app bar's back arrow icon (no label).
+var UXD_BACK_ICON = /\b(back|arrow[ _-]?left|chevron[ _-]?left|caret[ _-]?left|nav(igation)?[ _-]?back|left[ _-]?arrow)\b/i;
+// The journey's end and its failure states, by screen name: "Payment successful", "Payment failed".
+var UXD_SUCCESS_SCREEN = /\b(success|successful|succeeded|done|complete|completed|thank|thanks|receipt|confirmed|confirmation)\b/i;
+var UXD_ERROR_SCREEN = /\b(fail|failed|failure|error|declined|unsuccessful|rejected|timeout|timed out)\b/i;
 var UXD_SCREEN_STOP = { screen: 1, page: 1, view: 1, the: 1, a: 1, an: 1, and: 1, of: 1, to: 1, my: 1, your: 1, v1: 1, v2: 1, v3: 1, new: 1, copy: 1 };
 function uxdWords(text) {
   return String(text || "").toLowerCase().split(/[^a-z0-9]+/).filter(function (w) { return w.length > 1 && !UXD_SCREEN_STOP[w] && !/^\d+$/.test(w); });
+}
+// A screen's role in a journey, by its name or its big title text ("Payment successful" as a heading).
+function uxdScreenKind(screen) {
+  var name = String(screen.name || "");
+  if (UXD_ERROR_SCREEN.test(name)) return "error";
+  if (UXD_SUCCESS_SCREEN.test(name)) return "end";
+  var titles = uxdDescendants(screen, function (n) { return n.type === "TEXT" && n.visible !== false && typeof n.fontSize === "number" && n.fontSize >= 18; })
+    .slice(0, 4).map(function (t) { return String(t.characters || ""); }).join(" ");
+  if (UXD_ERROR_SCREEN.test(titles)) return "error";
+  if (UXD_SUCCESS_SCREEN.test(titles) || /\b(paid|payment received|all set)\b/i.test(titles)) return "end";
+  return "step";
 }
 async function localPrototypeWire(payload) {
   var screens = figma.currentPage.selection.filter(function (n) { return n.type === "FRAME" && n.parent && n.parent.type === "PAGE"; });
   if (screens.length < 2) throw new Error("Select 2 or more top-level screens to wire together.");
   screens = screens.slice(0, 12).sort(function (a, b) { return Math.abs(a.y - b.y) > a.height / 2 ? a.y - b.y : a.x - b.x; });
   var fix = payload && payload.fix === true;
+  // Screens whose existing links are replaced (the screen a "next step" was built from).
+  var replaceOn = payload && Array.isArray(payload.replaceOn) ? payload.replaceOn : [];
+  var screenIds = screens.map(function (sc) { return sc.id; });
   var links = [];
+  var flowStart = "";
   var hasSkip = screens.map(function (screen) {
     return uxdDescendants(screen, function (n) { return n.visible !== false && uxdLooksLikeButton(n) && UXD_SKIP_LABEL.test(String(uxdFirstText(n) || n.name).trim()); }).length > 0;
   });
@@ -5757,28 +5897,122 @@ async function localPrototypeWire(payload) {
     for (var j = index + 1; j < screens.length; j++) if (!hasSkip[j] && (!key || runKey(screens[j]) !== key)) return screens[j];
     return index + 1 < screens.length ? screens[screens.length - 1] : null;
   }
+  var sharedWords = {};
+  uxdWords(screens[0].name).forEach(function (w) {
+    if (screens.every(function (sc) { return uxdWords(sc.name).indexOf(w) >= 0; })) sharedWords[w] = true;
+  });
+  var kinds = screens.map(uxdScreenKind);
+  var isError = kinds.map(function (k) { return k === "error"; });
+  var isEnd = kinds.map(function (k) { return k === "end"; });
+  // "Continue" goes to the next step of the happy path: never into a failure state.
+  function nextStep(index) {
+    for (var j = index + 1; j < screens.length; j++) if (!isError[j]) return screens[j];
+    return null;
+  }
+  // A button keeps its own link, unless that link leads outside the selected flow (repointed) or
+  // its screen is being re-wired on purpose.
+  function keepsOwnLink(node, screen) {
+    if (!node.reactions || !node.reactions.length) return false;
+    if (replaceOn.indexOf(screen.id) >= 0) return false;
+    var dests = [], navigates = false;
+    node.reactions.forEach(function (r) {
+      (Array.isArray(r.actions) ? r.actions : r.action ? [r.action] : []).forEach(function (a) {
+        if (!a) return;
+        // Hover/press variant swaps (CHANGE_TO) on a file's button component are not a link.
+        if (a.type === "BACK" || a.type === "CLOSE" || a.type === "URL") navigates = true;
+        if (a.type === "NODE" && a.destinationId && a.navigation !== "CHANGE_TO") { navigates = true; dests.push(a.destinationId); }
+      });
+    });
+    if (!navigates) return false;
+    return !dests.length || dests.some(function (d) { return screenIds.indexOf(d) >= 0; });
+  }
+  function byWords(words, screen) {
+    var best = null, bestScore = 0;
+    screens.forEach(function (other) {
+      if (other === screen) return;
+      // Words every selected screen shares (a journey title: "Pay EMI / 2 · Choose amount") name no one screen.
+      var score = uxdWords(other.name).filter(function (w) { return words.indexOf(w) >= 0 && !sharedWords[w]; }).length;
+      if (score > bestScore) { best = other; bestScore = score; }
+    });
+    return best;
+  }
   screens.forEach(function (screen, index) {
+    // Back arrow icons in the app bar (no label): BACK, on every step after the first.
+    if (index > 0) uxdDescendants(screen, function (n) {
+      return n.visible !== false && n.type !== "TEXT" && UXD_BACK_ICON.test(String(n.name || "")) && n.width <= 48 && n.height <= 48 &&
+        !uxdDescendants(n, function (k) { return k.type === "TEXT" && String(k.characters || "").trim(); }).length;
+    }).forEach(function (icon) {
+      if (links.length >= 60 || keepsOwnLink(icon, screen) || typeof icon.setReactionsAsync !== "function") return;
+      for (var p = icon.parent; p && p !== screen; p = p.parent) if (uxdLooksLikeButton(p) || UXD_BACK_ICON.test(String(p.name || "")) && p.width <= 48) return;
+      links.push({ button: icon, label: icon.name, screen: screen.name, from: index, action: "BACK" });
+    });
     uxdDescendants(screen, function (n) { return n.visible !== false && uxdLooksLikeButton(n); })
       .forEach(function (button) {
-        if (links.length >= 60 || (button.reactions && button.reactions.length) || typeof button.setReactionsAsync !== "function") return;
+        if (links.length >= 60 || keepsOwnLink(button, screen) || typeof button.setReactionsAsync !== "function") return;
         for (var p = button.parent; p && p !== screen; p = p.parent) if (uxdLooksLikeButton(p)) return;
-        var label = uxdFirstText(button) || button.name;
-        if (UXD_BACK_LABEL.test(label.trim())) { links.push({ button: button, label: label, screen: screen.name, action: "BACK" }); return; }
-        if (UXD_SKIP_LABEL.test(label.trim())) {
-          var end = afterSkip(index);
-          if (end) links.push({ button: button, label: label, screen: screen.name, action: "NAVIGATE", destination: end });
+        if (links.some(function (l) { return l.button === button; })) return;
+        var label = String(uxdFirstText(button) || button.name).trim();
+        var base = { button: button, label: label, screen: screen.name, from: index };
+        // "Back to loans", "Go back home": the named screen, else the journey's start.
+        var named = /^(?:go\s+)?back\s+(?:to\s+)?(.+)$|^go\s+to\s+(.+)$|^(?:return|take me)\s+(?:to\s+)?(.+)$/i.exec(label);
+        if (named) {
+          var target = byWords(uxdWords(named[1] || named[2] || named[3]), screen);
+          links.push(Object.assign(base, target ? { action: "NAVIGATE", destination: target } : { action: "NAVIGATE", toStart: true }));
           return;
         }
-        var words = uxdWords(label), best = null, bestScore = 0;
-        screens.forEach(function (other) {
-          if (other === screen) return;
-          var score = uxdWords(other.name).filter(function (w) { return words.indexOf(w) >= 0; }).length;
-          if (score > bestScore) { best = other; bestScore = score; }
-        });
-        if (!best && UXD_NEXT_LABEL.test(label) && index + 1 < screens.length) best = screens[index + 1];
-        if (best) links.push({ button: button, label: label, screen: screen.name, action: "NAVIGATE", destination: best });
+        if (UXD_BACK_LABEL.test(label) && !(isEnd[index] && /^close\b/i.test(label))) { links.push(Object.assign(base, { action: "BACK" })); return; }
+        if (UXD_RETRY_LABEL.test(label)) { links.push(Object.assign(base, { action: "NAVIGATE", retry: true })); return; }
+        // From the end (or a failure), Done / Home / Close returns to the journey's start.
+        if ((isEnd[index] || isError[index]) && (UXD_HOME_LABEL.test(label) || UXD_NEXT_LABEL.test(label))) {
+          var home = screens.filter(function (other) { return other !== screen && uxdWords(other.name).some(function (w) { return /^(home|dashboard)$/.test(w); }); })[0];
+          links.push(Object.assign(base, home ? { action: "NAVIGATE", destination: home } : { action: "NAVIGATE", toStart: true }));
+          return;
+        }
+        if (UXD_SKIP_LABEL.test(label)) {
+          var end = afterSkip(index);
+          if (end) links.push(Object.assign(base, { action: "NAVIGATE", destination: end }));
+          return;
+        }
+        var best = byWords(uxdWords(label), screen);
+        // A step's main or forward button never goes back: "Confirm payment" on step 3 shares a word with
+        // "Payment method" (step 2) but moves on to step 4.
+        var primaryLike = UXD_NEXT_LABEL.test(label) || /primary|cta|main/i.test(String(button.name || "")) && !/secondary|tertiary|ghost|text|link/i.test(String(button.name || ""));
+        if (best && primaryLike && !isEnd[index] && !isError[index] && screens.indexOf(best) < index && !isEnd[screens.indexOf(best)]) best = nextStep(index);
+        // A failure screen is reached only by its own name, never from the end of the journey.
+        if (best && isError[screens.indexOf(best)] && isEnd[index]) best = null;
+        if (!best && UXD_NEXT_LABEL.test(label) && !isEnd[index] && !isError[index]) best = nextStep(index);
+        // The step's one main button with no matching label ("Pay ₹8,450") moves the journey on.
+        if (!best && !isEnd[index] && !isError[index] && !links.some(function (l) { return l.from === index && l.action === "NAVIGATE"; }) &&
+          /primary|cta|main|button|btn/i.test(String(button.name || "")) && !/secondary|tertiary|ghost|text|link/i.test(String(button.name || ""))) best = nextStep(index);
+        if (best) links.push(Object.assign(base, { action: "NAVIGATE", destination: best }));
       });
+    // A list screen with no button forward (its rows/cards are the way in): the first item opens the next step.
+    if (!isEnd[index] && !isError[index] && !links.some(function (l) { return l.from === index && l.action === "NAVIGATE" && !l.toStart; }) && nextStep(index)) {
+      var item = uxdDescendants(screen, function (n) {
+        return n.visible !== false && (n.type === "INSTANCE" || n.type === "FRAME") && UXD_CARD_NAME.test(String(n.name || "")) && n.height >= 40 && !keepsOwnLink(n, screen);
+      })[0];
+      if (item && typeof item.setReactionsAsync === "function") links.push({ button: item, label: uxdFirstText(item) || item.name, screen: screen.name, from: index, action: "NAVIGATE", destination: nextStep(index) });
+    }
   });
+  // The journey's entry: the first happy-path screen nothing else leads to (not just the top-left one).
+  var incoming = screens.map(function (sc) { return links.filter(function (l) { return l.destination === sc && !l.toStart; }).length; });
+  var entryIndex = screens.findIndex(function (sc, i) { return !isEnd[i] && !isError[i] && incoming[i] === 0; });
+  var entry = screens[entryIndex >= 0 ? entryIndex : 0];
+  // Retry opens the step that failed: the happy-path step that leads to the end.
+  var lastStep = null;
+  links.forEach(function (l) { if (l.action === "NAVIGATE" && l.destination && isEnd[screens.indexOf(l.destination)]) lastStep = screens[l.from]; });
+  if (!lastStep) for (var k = screens.length - 1; k >= 0; k--) if (!isEnd[k] && !isError[k]) { lastStep = screens[k]; break; }
+  links.forEach(function (l) {
+    if (l.toStart) { l.destination = entry; delete l.toStart; }
+    if (l.retry) { if (lastStep && lastStep !== screens[l.from]) l.destination = lastStep; else l.action = "BACK"; delete l.retry; }
+  });
+  links = links.filter(function (l) { return l.action === "BACK" || (l.destination && l.destination !== screens[l.from]); });
+  // No dead ends: every step but the last leads somewhere, every failure has a way out.
+  var deadEnds = screens.filter(function (screen, i) {
+    var out = links.some(function (l) { return l.from === i; });
+    var wired = uxdDescendants(screen, function (n) { return n.reactions && n.reactions.length > 0; }).length > 0;
+    return !out && !wired && (!isEnd[i] || isError[i]) && (i < screens.length - 1 || isError[i]);
+  }).map(function (s) { return s.name; });
   var snapshot = [];
   if (fix && links.length) {
     if (typeof figma.commitUndo === "function") figma.commitUndo();
@@ -5786,17 +6020,45 @@ async function localPrototypeWire(payload) {
       var l = links[i];
       var action = l.action === "BACK" ? { type: "BACK" } : { type: "NODE", destinationId: l.destination.id, navigation: "NAVIGATE",
         transition: { type: "DISSOLVE", easing: { type: "EASE_OUT" }, duration: 0.3 }, preserveScrollPosition: false };
-      try {
-        await l.button.setReactionsAsync([{ trigger: { type: "ON_CLICK" }, actions: [action] }]);
-        snapshot.push({ id: l.button.id, prop: "reactions", before: [], after: uxdCloneValue(l.button.reactions) || [] });
-        l.done = true;
-      } catch (_) { l.done = false; }
+      var reactions = [{ trigger: { type: "ON_CLICK" }, actions: [action] }];
+      // A layer inside a component instance may not keep the link Figma accepted (read back to check):
+      // then the nearest instance around it, inside this screen, carries the link instead.
+      var targets = [l.button];
+      for (var up = l.button.parent; up && up.type !== "PAGE" && screenIds.indexOf(up.id) < 0; up = up.parent) if (up.type === "INSTANCE") targets.push(up);
+      l.done = false;
+      for (var t = 0; t < targets.length && !l.done; t++) {
+        var node = targets[t];
+        if (t > 0 && node.reactions && node.reactions.length) continue;
+        var before = uxdCloneValue(node.reactions) || [];
+        try {
+          await node.setReactionsAsync(reactions);
+          if (node.reactions && node.reactions.length) {
+            snapshot.push({ id: node.id, prop: "reactions", before: before, after: uxdCloneValue(node.reactions) || [] });
+            l.done = true;
+            if (t > 0) l.on = node.name;
+          }
+        } catch (_) {}
+      }
     }
+    // The journey starts at its entry (a flow starting point). A start set on another selected screen moves.
+    var page = figma.currentPage;
+    try {
+      var starts = Array.isArray(page.flowStartingPoints) ? page.flowStartingPoints : null;
+      if (starts && !starts.some(function (f) { return f.nodeId === entry.id; })) {
+        var beforeStarts = uxdCloneValue(starts) || [];
+        var others = starts.filter(function (f) { return screenIds.indexOf(f.nodeId) < 0; });
+        var moved = starts.filter(function (f) { return screenIds.indexOf(f.nodeId) >= 0; })[0];
+        page.flowStartingPoints = others.concat([{ nodeId: entry.id, name: moved ? moved.name : String(entry.name || "Flow").slice(0, 60) }]);
+        snapshot.push({ id: page.id, prop: "flowStartingPoints", before: beforeStarts, after: uxdCloneValue(page.flowStartingPoints) || [] });
+        flowStart = entry.name;
+      }
+    } catch (_) {}
     if (typeof figma.commitUndo === "function") figma.commitUndo();
   }
-  return { ok: true, screens: screens.map(function (s) { return s.name; }),
-    links: links.map(function (l) { return { screen: l.screen, label: l.label.slice(0, 40), action: l.action, to: l.destination ? l.destination.name : "", done: l.done === true }; }),
-    snapshot: snapshot };
+  return { ok: true, screens: screens.map(function (s) { return s.name; }), entry: entry.name,
+    links: links.map(function (l) { return { screen: l.screen, screenId: screens[l.from].id, label: String(l.label).slice(0, 40), action: l.action,
+      to: l.destination ? l.destination.name : "", toId: l.destination ? l.destination.id : "", done: l.done === true, on: l.on || "" }; }),
+    deadEnds: deadEnds, flowStart: flowStart, snapshot: snapshot };
 }
 // uxd-handoff:end
 // uxd-learn:start

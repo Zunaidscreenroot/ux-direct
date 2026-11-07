@@ -20,7 +20,7 @@ import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
 import { designRulesBlock } from "@/src/figma-agent/design-rules";
 import { canvasTexts, contentLocaleInstruction, inferContentLocale } from "@/src/figma-agent/content-locale";
-import { CREATE_DESIGN_SCOPE, CREATE_OPERATING_CONTRACT, createFrameSize, createModeCanvas, createScopeInstructions } from "@/src/figma-agent/create-mode";
+import { CREATE_DENSITY_RULE, CREATE_DESIGN_SCOPE, CREATE_OPERATING_CONTRACT, createFrameSize, createModeCanvas, createScopeInstructions } from "@/src/figma-agent/create-mode";
 import { SCREEN_STATES, STATE_BRIEFS, stateDropsContent, stateFallbackSpec, stateGatePrompt } from "@/src/figma-agent/screen-states";
 import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, promptRequestsWireframe, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
 import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
@@ -78,8 +78,10 @@ const ElementFieldsSchema = z.object({
   fontStyle: z.string().trim().min(1).max(100).optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   paintStyleId: z.string().trim().min(1).max(300).optional(),
+  strokeStyleId: z.string().trim().min(1).max(300).optional(),
   textStyleId: z.string().trim().min(1).max(300).optional(),
   textOverrides: z.record(z.string().max(120), z.string().max(500)).optional(),
+  hidePlaceholderTexts: z.boolean().optional(),
   effectStyleId: z.string().trim().min(1).max(300).optional(),
   gridStyleId: z.string().trim().min(1).max(300).optional(),
   noFill: z.boolean().optional(),
@@ -521,6 +523,8 @@ export async function POST(request: Request) {
 
   let input: unknown;
   try { input = await request.json(); } catch { return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400, headers }); }
+  const KIT_COMPONENT = z.object({ id: z.string().trim().min(1).max(100), name: z.string().max(120), width: z.number().min(1).max(4000), height: z.number().min(1).max(400),
+    properties: z.record(z.string().max(60), z.union([z.string().max(120), z.boolean()])).optional() }).strict();
   const requestSchema = z.object({
     prompt: z.string().trim().min(2).max(5000),
     model: z.string().trim().min(1).max(100).optional(),
@@ -538,6 +542,14 @@ export async function POST(request: Request) {
     mode: z.enum(["create"]).optional(),
     /** Target frame size for create mode; defaults by platform (360×800 mobile, 1440×1024 web). */
     frame: z.object({ width: z.number().int().min(200).max(2400), height: z.number().int().min(200).max(4000) }).strict().optional(),
+    /** Journey screens: the first screen's app bar and primary button, reused by exact component id. */
+    kit: z.object({
+      header: KIT_COMPONENT.optional(),
+      button: KIT_COMPONENT.optional(),
+      title: z.string().trim().max(120).optional(),
+      gutter: z.number().min(0).max(64).optional(),
+      background: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+    }).strict().optional(),
     /** The file's own design rules (spacing/radius/type scales, colours, tone), stored in the Figma file. */
     designRules: z.string().max(4000).optional(),
   }).strict();
@@ -556,7 +568,7 @@ export async function POST(request: Request) {
   if (createMode && parsedInput.data.state) return NextResponse.json({ error: "A screen state needs a selected screen; create mode builds a new one." }, { status: 400, headers });
   const createSize = createMode ? createFrameSize(parsedInput.data.prompt, parsedInput.data.frame) : null;
   // Create mode: an empty virtual frame of the target size plus the file's real component catalogue.
-  const requestCanvas: unknown = createSize ? createModeCanvas(parsedInput.data.canvas, createSize, parsedInput.data.prompt) : parsedInput.data.canvas;
+  const requestCanvas: unknown = createSize ? createModeCanvas(parsedInput.data.canvas, createSize, parsedInput.data.prompt, parsedInput.data.kit) : parsedInput.data.canvas;
   const canvas = compactCanvas(requestCanvas);
   // Uncompacted read-back: carries image fills, corner radii and deep icon layers for source fidelity.
   const rawSourceCanvas = requestCanvas && typeof requestCanvas === "object" && !Array.isArray(requestCanvas)
@@ -727,7 +739,7 @@ export async function POST(request: Request) {
   ].join("\n");
   const blockRecoverySystem = [
     UX_DIRECT_DESIGN_ROLE,
-    createMode ? "Create a NEW native Figma screen from the user prompt as a BLOCK SPEC; there is no source screen, so ignore source-text rules below." : "Create an improved native Figma variation of the selected source as a BLOCK SPEC. The user prompt is the design change, not the procedure.",
+    createMode ? "Create a NEW native Figma screen from the user prompt as a BLOCK SPEC; there is no source screen, so ignore source-text rules below. " + CREATE_DENSITY_RULE : "Create an improved native Figma variation of the selected source as a BLOCK SPEC. The user prompt is the design change, not the procedure.",
     scopeInstructions,
     roleInstructions(taskRole, agentBrief.domain),
     designRulesInstructions.trim(),
@@ -771,7 +783,8 @@ export async function POST(request: Request) {
     let planInput: unknown = candidateInput;
     let blockSpec: BlockSpecInfo | null = null;
     if (isBlockSpec(candidateInput)) {
-      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone, monochrome: wireframeRequest, contentDropped: stateDropsContent(screenState), skeleton: screenState === "loading" });
+      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone, monochrome: wireframeRequest, contentDropped: stateDropsContent(screenState), skeleton: screenState === "loading", create: createMode, kitButtonId: parsedInput.data.kit?.button?.id ?? null, kitButtonProps: parsedInput.data.kit?.button?.properties ?? null,
+        screenTitle: parsedInput.data.kit?.title ?? null, gutter: parsedInput.data.kit?.gutter ?? null, background: parsedInput.data.kit?.background ?? null });
       blockSpec = { blocks: expansion.blockCount, nodes: expansion.nodeCount, warnings: expansion.warnings };
       if (!expansion.plan) {
         const issues = expansion.errors.slice(0, 4).join("; ");
@@ -815,7 +828,7 @@ export async function POST(request: Request) {
       for (const entry of nodes) {
         if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
         const node = entry as Record<string, unknown>;
-        for (const [key, group] of [["paintStyleId", "paint"], ["textStyleId", "text"], ["effectStyleId", "effect"], ["gridStyleId", "grid"]] as const) {
+        for (const [key, group] of [["paintStyleId", "paint"], ["strokeStyleId", "paint"], ["textStyleId", "text"], ["effectStyleId", "effect"], ["gridStyleId", "grid"]] as const) {
           if (typeof node[key] === "string") styleReferences.push({ key, group, node });
         }
         if (Array.isArray(node.children)) collectStyleReferences(node.children);
@@ -1060,6 +1073,11 @@ export async function POST(request: Request) {
       }
     }
   }
+  // Only a few free models read images (Gemini, one OpenRouter VL). When those are out of quota or
+  // time out, every later attempt goes text-only on the native layer tree, so the gateway can reach
+  // Groq, Mistral and Workers AI instead of the deterministic source fallback (2026-11-07: an
+  // improve tried five Gemini models in a row, all 429/timeout, then fell back).
+  let visionDropped = false;
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
     const attemptsForModel = 2;
@@ -1095,12 +1113,12 @@ export async function POST(request: Request) {
           : "";
         const modelUserText = isRecovery
           ? "RECOVERY RETRY: The prior response was absent, incomplete, or invalid. Return a smaller complete JSON object following the exact compact output budget in the system message. Do not continue the old text or explain the failure.\nSOURCE CONTEXT:\n" + recoveryContext + validationBlock
-          : (renderedScreen
+          : (renderedScreen && !visionDropped
             ? "Design a high-fidelity, source-faithful improvement. Combine the rendered screen image with its native layer tree. Avoid generic redesigns. Context:\n" + userContext + validationBlock
             : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext + validationBlock);
         const modelImages: Array<Record<string, unknown>> = [];
-        if (renderedScreen) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
-        if (referenceImage) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
+        if (renderedScreen && !visionDropped) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
+        if (referenceImage && !visionDropped) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
         const systemText = isRecovery ? (blockMode ? blockRecoverySystem : recoverySystem) : system;
         const textChars = systemText.length + modelUserText.length;
         promptSize = { textChars, approxTokens: Math.round(textChars / 3.6),
@@ -1114,7 +1132,9 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "application/json",
-            ...figmaRoutingHeaders(activeProvider, { fast: isRecovery, role: isRecovery ? "fast-retry" : blockMode ? gatewaySeat(taskOwner(taskRole, parsedInput.data.prompt)) : "planner" }),
+            // The repair pass after a rejected compact spec runs on the designer's full seat (Groq / Workers AI
+            // first), not the fast-retry pool that just failed (2026-11-07: Ministral twice, then the fallback).
+            ...figmaRoutingHeaders(activeProvider, { fast: isRecovery && recoveryAttempt < 2, role: isRecovery && recoveryAttempt < 2 ? "fast-retry" : blockMode ? gatewaySeat(taskOwner(taskRole, parsedInput.data.prompt)) : "planner" }),
             ...(activeProvider.id === "openrouter" ? {
               "HTTP-Referer": new URL(request.url).origin,
               "X-OpenRouter-Title": "UX Direct Figma Agent",
@@ -1170,6 +1190,7 @@ export async function POST(request: Request) {
           attemptLog.push({ model: model + (isRecovery ? " compact retry" : ""), result: "HTTP " + response.status });
           const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
           errors.push(model + (isRecovery ? " compact retry" : "") + ": " + detail);
+          if (modelImages.length && [408, 429, 502, 503, 504].includes(response.status)) visionDropped = true;
           // Same-mode retry only for a FAST failure (a tunnel blip). A 5xx after a long wait means
           // the upstream chain already tried its models; repeating it burned ~67 s (finding 61).
           const attemptMs = inFlight ? Date.now() - inFlight.startedAt : 0;
@@ -1183,7 +1204,8 @@ export async function POST(request: Request) {
           // A 5xx after a long wait means the upstream chain already failed through its models;
           // the compact retry then also timed out (60 s) in every observed run, so go straight
           // to the source fallback instead (finding 61, round 5).
-          if ([500, 502, 503, 504].includes(response.status) && attemptMs > 45000) break modelLoop;
+          // Unless that attempt carried an image: the text-only retry reaches other providers.
+          if ([500, 502, 503, 504].includes(response.status) && attemptMs > 45000 && !(visionDropped && modelImages.length)) break modelLoop;
           // The compact retry runs without JSON mode, which covers free models that reject response_format.
           if (!isRecovery && ([408, 429, 500, 502, 503, 504].includes(response.status) ||
             shouldRetryWithoutJsonMode(activeProvider, response.status))) continue;
@@ -1314,6 +1336,7 @@ export async function POST(request: Request) {
       } catch (error) {
         errors.push(model + (isRecovery ? " compact retry" : "") + ": " +
           (controller.signal.aborted ? "timed out after " + attemptTimeoutMs + "ms before the provider finished the response" : error instanceof Error ? error.message.slice(0, 200) : "request failed"));
+        if (controller.signal.aborted && (renderedScreen || referenceImage)) visionDropped = true;
         if (!isRecovery) continue;
         break;
       } finally {
