@@ -385,5 +385,11 @@ export function formatHygieneReport(report: HygieneReport): string {
     lines.push("- **" + issue.severity.toUpperCase() + "** " + issue.issue + " " + issue.evidence + ". Fix: " + issue.fix);
   }
   if (report.stats.truncated) lines.push("Note: the selection was larger than the read limit, so some layers were not checked.");
+  const fixable = new Set(report.issues.map((issue) => issue.rule));
+  const offers: string[] = [];
+  if (fixable.has("spacing-grid") || fixable.has("padding-symmetry") || fixable.has("color-tokens") || fixable.has("text-styles")) offers.push("**fix hygiene** (4px grid, padding, colour + text tokens)");
+  if (fixable.has("contrast") || fixable.has("small-text") || fixable.has("touch-target")) offers.push("**fix accessibility** (contrast, 12px text, 44px targets)");
+  if (fixable.has("auto-layout")) offers.push("**fix auto layout**");
+  if (offers.length) lines.push("Auto-fix without a model: say " + offers.join(", ") + ", or **fix all**.");
   return lines.join("\n");
 }

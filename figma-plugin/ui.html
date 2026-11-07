@@ -2279,6 +2279,19 @@
         return { kind: "generate-image", description: imageDescriptionFrom(text) };
       }
       if (/\brename\b[^.]{0,25}\blayers?\b|\b(layer names?|name (the |all |these )?layers)\b/i.test(text)) return { kind: "rename-layers" };
+      // One-click hygiene fix: "fix hygiene", "fix spacing", "tokenize colours", "fix contrast", "sab theek kar do".
+      const fixVerb = /\b(fix(es)?|auto-?fix|clean ?up|tidy( up)?|resolve|correct)\b|theek kar|thik kar|sudhar|sahi kar/i.test(text);
+      const fixTarget = /\b(hygiene|lint|issues?|problems?|findings?|spacing|grid|padding|gaps?|tokens?|styles?|colou?r tokens?|variables?|contrast|touch ?targets?|tap targets?|a11y|accessibility|wcag|small text|auto ?layout)\b/i.test(text);
+      const tokenize = /\btokeni[sz]e\b|\bbind\b[^.]{0,30}\b(tokens?|variables?|styles?)\b|\b(apply|use)\b[^.]{0,20}\b(matching|file|local)\b[^.]{0,20}\b(styles?|variables?|tokens?)\b/i.test(text);
+      if (count > 0 && ((fixVerb && fixTarget) || tokenize)) {
+        const all = /\b(all|everything|every issue|sab|saare|sare|sabhi|full)\b/i.test(text);
+        const groups = [];
+        if (all || /\b(spacing|grid|padding|gaps?)\b/i.test(text)) groups.push("spacing");
+        if (all || tokenize || /\b(tokens?|styles?|variables?)\b/i.test(text)) groups.push("tokens");
+        if (all || /\b(contrast|touch ?targets?|tap targets?|a11y|accessibility|wcag|small text)\b/i.test(text)) groups.push("a11y");
+        if (all || /\bauto ?layout\b/i.test(text)) groups.push("layout");
+        return { kind: "hygiene-fix", groups: groups.length ? groups : ["spacing", "tokens"] };
+      }
       const hygieneWords = /\b(hygiene|design lint|lint|ui (review|audit|check|qa)|design qa|check (the |for )?(padding|spacing|auto ?layout|alignment|colou?rs?|typography|fonts?|contrast|consistency)|spacing check|padding check|auto ?layout check|consistency check)\b/i.test(text);
       if (hygieneWords || (/\bconsisten(t|cy)\b/i.test(text) && !/\b(make|fix|apply|set|change)\b/i.test(text))) {
         return { kind: "hygiene" };
@@ -2573,6 +2586,60 @@
       return String(result.text || "Review complete.");
     }
 
+    async function hygieneSnapshot(prompt) {
+      try {
+        const tree = await localTask("read-tree", { maxDepth: 12, maxNodes: 800 });
+        const result = await postQuickTask("/api/assistant/figma-agent/audit", {
+          kind: "hygiene", prompt: prompt, canvas: { nodes: tree.nodes, truncated: tree.truncated }, styleCounts: tree.styleCounts || undefined
+        });
+        return result.report && typeof result.report.score === "number" ? result.report : null;
+      } catch (error) {
+        console.warn("[uxd-hygiene-fix] score unavailable:", String(error && error.message || error).slice(0, 160));
+        return null;
+      }
+    }
+    async function runHygieneFixTask(task, prompt, stage) {
+      if (!selectedIds().length) throw new Error("Select the screen (or layers) to fix.");
+      stage("scanning", "Scoring the selection before fixing…");
+      const before = await hygieneSnapshot(prompt);
+      const names = { spacing: "spacing grid", tokens: "colour + text tokens", a11y: "accessibility", layout: "auto layout" };
+      stage("creating", "Fixing " + task.groups.map(function (g) { return names[g] || g; }).join(", ") + "…");
+      const result = await localTask("apply-hygiene-fixes", { groups: task.groups }, 120000);
+      if (result.total > 0) {
+        recordChange("Hygiene fix (" + task.groups.join(", ") + ")", function () {
+          return localTask("commit-undo", {}).catch(function () {})
+            .then(function () { return localTask("trigger-undo", {}); })
+            .then(function () { return "undone with Figma undo"; });
+        }, { mustBeLatest: true });
+      }
+      stage("verifying", "Re-scoring after the fix…");
+      const after = result.total > 0 ? await hygieneSnapshot(prompt) : before;
+      stage("done", "Hygiene fix complete · no model needed");
+      const c = result.counts || {};
+      const lines = [];
+      if (c.spacing) lines.push("- Snapped padding/gaps to the 4px grid on " + c.spacing + " frame(s)");
+      if (c.symmetry) lines.push("- Made left/right padding equal on " + c.symmetry + " frame(s)");
+      if (c.colorVariables) lines.push("- Bound " + c.colorVariables + " hard-coded colour(s) to matching colour variables");
+      if (c.colorStyles) lines.push("- Applied matching colour styles to " + c.colorStyles + " layer(s)");
+      if (c.textStyles) lines.push("- Applied matching text styles to " + c.textStyles + " text layer(s)");
+      if (c.contrast) lines.push("- Fixed WCAG contrast on " + c.contrast + " text layer(s)");
+      if (c.smallText) lines.push("- Raised " + c.smallText + " text layer(s) to 12px");
+      if (c.touchTargets) lines.push("- Gave " + c.touchTargets + " tappable element(s) a 44px minimum size");
+      if (c.autoLayout) lines.push("- Added auto layout to " + c.autoLayout + " stacked frame(s)");
+      (result.skipped || []).slice(0, 4).forEach(function (item) { lines.push("- Skipped: " + item); });
+      const score = before && after ? "**Hygiene score: " + before.score + " → " + after.score + "/100**" : after ? "**Hygiene score now: " + after.score + "/100**" : "";
+      const remaining = after && Array.isArray(after.issues) ? after.issues.slice(0, 3).map(function (issue) { return "- " + issue.severity.toUpperCase() + ": " + issue.issue; }) : [];
+      const more = [];
+      if (task.groups.indexOf("a11y") < 0) more.push("**fix accessibility** (contrast, 12px text, 44px targets)");
+      if (task.groups.indexOf("layout") < 0) more.push("**fix auto layout**");
+      if (task.groups.indexOf("tokens") < 0) more.push("**tokenize**");
+      return (result.total ? "Fixed " + result.total + " thing(s) across " + result.checked + " layers, no model used." : "Nothing to fix in " + task.groups.map(function (g) { return names[g] || g; }).join(", ") + ".") +
+        (score ? "\n" + score : "") + (lines.length ? "\n\n" + lines.join("\n") : "") +
+        (remaining.length ? "\n\nStill open:\n" + remaining.join("\n") : "") +
+        (more.length ? "\n\nAlso available: " + more.join(", ") + ", or **fix all**." : "") +
+        (result.total ? "\nOne Revert (or Cmd/Ctrl+Z) undoes the whole fix." : "");
+    }
+
     async function runVariationsTask(task, prompt, stage) {
       const ids = selectedIds();
       const tree = await localTask("read-tree", { nodeIds: ids, maxDepth: 0, maxNodes: 12 });
@@ -2718,6 +2785,7 @@
       if (task.kind === "remove-background") return runRemoveBackgroundTask(stage);
       if (task.kind === "rewrite-text") return runTextTask("rewrite", prompt, stage);
       if (task.kind === "rename-layers") return runTextTask("rename", prompt, stage);
+      if (task.kind === "hygiene-fix") return runHygieneFixTask(task, prompt, stage);
       if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);
       if (task.kind === "flow-variations" || task.kind === "screen-variations") return runVariationsTask(task, prompt, stage);
       throw new Error("Unknown quick task.");
