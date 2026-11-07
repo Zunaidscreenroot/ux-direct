@@ -519,3 +519,19 @@ test("light/dark mode requests are an in-place theme task; a 'version' still mak
   assert.equal(classify("make a dark mode version of this screen", FRAME)?.kind === "theme", false);
   assert.equal(classify("make this screen light mode", { selectionTypes: [] })?.kind === "theme", false, "needs a selection");
 });
+
+test("'add another loan card' duplicates the last card in its own list, not a new row at the screen root", async () => {
+  const r = runtime();
+  const screen = r.make({ type: "FRAME", name: "QA lock", width: 360, height: 800, layoutMode: "VERTICAL" });
+  const stack = r.make({ type: "FRAME", name: "Cards", width: 320, height: 500, layoutMode: "VERTICAL" }, screen);
+  const a = r.make({ type: "INSTANCE", name: "Loan Card", width: 320, height: 150 }, stack);
+  const b = r.make({ type: "INSTANCE", name: "Loan Card", width: 320, height: 150 }, stack);
+  r.make({ type: "FRAME", name: "Footer", width: 320, height: 40 }, stack);
+  r.make({ type: "TEXT", name: "Label", characters: "Loan card" }, a);
+  r.figma.createFrame = () => { throw new Error("must not create a wrapper"); };
+  const result = await r.apply("add another loan card", [screen]);
+  assert.equal(screen.children.length, 1, "nothing added at the screen root");
+  assert.deepEqual(stack.children.map((n: any) => n.name), ["Loan Card", "Loan Card", "Loan Card", "Footer"], "copy sits right after the last card");
+  assert.notEqual(stack.children[2], b);
+  assert.match(JSON.stringify(result), /added another/);
+});
