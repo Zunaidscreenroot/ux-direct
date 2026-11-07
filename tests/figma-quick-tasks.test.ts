@@ -260,3 +260,15 @@ test("local quick-task channel reads trees and images and applies image fills in
   assert.deepEqual([...removed.deleted], ["Variation"]);
   assert.equal(page.children.includes(made), false);
 });
+
+test("instances that differ by variant get a manual low finding, not the auto-fixable drift", () => {
+  const card = (id: string, layoutMode: string, height: number) => ({ id, type: "INSTANCE", name: "Loan Card", layoutMode, x: 0, y: 0, width: 343, height, paddingLeft: 16, paddingRight: 16, paddingTop: 16, paddingBottom: 16, itemSpacing: 8, children: [] });
+  const report = runHygieneCheck({ nodes: [{ id: "1", type: "FRAME", name: "Loans", layoutMode: "VERTICAL", x: 0, y: 0, width: 375, height: 800, children: [
+    card("2", "HORIZONTAL", 144), card("3", "VERTICAL", 198), card("4", "VERTICAL", 198),
+  ] }] });
+  const rules = report.issues.map((issue) => issue.rule);
+  assert.ok(!rules.includes("repeated-item-drift"));
+  const finding = report.issues.find((issue) => issue.rule === "repeated-instance-variants");
+  assert.equal(finding?.severity, "low");
+  assert.match(String(finding?.evidence), /"Loan Card" ×3/);
+});
