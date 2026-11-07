@@ -608,3 +608,17 @@ test("an insert that runs past a fixed-height screen grows the screen, and Rever
   await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "u", op: "restore-props", payload: { items: result.snapshot } });
   assert.equal(screen.height, 800);
 });
+
+test("after a build, a row whose real parts overflow lets its text column fill the rest instead of clipping the logo", async () => {
+  const r = runtime();
+  const screen = r.make({ type: "FRAME", name: "New screen", width: 360, height: 800, layoutMode: "VERTICAL" });
+  const row = r.make({ type: "FRAME", name: "Row · Personal Loan", width: 294, height: 46, layoutMode: "HORIZONTAL" }, screen);
+  row.itemSpacing = 12;
+  const col = r.make({ type: "FRAME", name: "Row text", width: 120, height: 38, layoutMode: "VERTICAL", layoutSizingHorizontal: "FIXED" }, row);
+  r.make({ type: "TEXT", name: "Label", characters: "Personal Loan" }, col);
+  r.make({ type: "INSTANCE", name: "Status badge", width: 100, height: 18 }, row);
+  r.make({ type: "FRAME", name: "Logo", width: 56, height: 28, layoutSizingHorizontal: "FIXED" }, row);
+  r.posted.length = 0;
+  await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "c", op: "componentize-repeats", payload: { rootId: screen.id } });
+  assert.equal(col.layoutSizingHorizontal, "FILL", "120 + 100 + 56 + 24 > 294: the text column gives way");
+});
