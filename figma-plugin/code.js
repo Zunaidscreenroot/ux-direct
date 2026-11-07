@@ -4042,6 +4042,19 @@ async function uxdSetPropValue(node, prop, value) {
   }
   node[prop] = value;
 }
+// Figma normalises some values after a write (reactions gain "action", transitions gain defaults), so
+// those compare by what matters: trigger, action type and destination.
+function uxdRestoreKey(prop, value) {
+  if (value === undefined) value = null;
+  if (prop === "reactions") {
+    return JSON.stringify((Array.isArray(value) ? value : []).map(function (r) {
+      var actions = Array.isArray(r && r.actions) ? r.actions : (r && r.action ? [r.action] : []);
+      return [r && r.trigger ? r.trigger.type : "", actions.map(function (a) { return [a && a.type, a && a.destinationId || "", a && a.navigation || ""]; })];
+    }));
+  }
+  if (prop === "annotations") return JSON.stringify(uxdCleanAnnotations(value));
+  return JSON.stringify(value);
+}
 async function localRestoreProps(payload) {
   var items = Array.isArray(payload.items) ? payload.items.slice(0, 3000) : [];
   var restored = 0, changedSince = 0, missing = 0;
@@ -4050,7 +4063,7 @@ async function localRestoreProps(payload) {
     var item = items[i];
     var node = await figma.getNodeByIdAsync(String(item.id || ""));
     if (!node || node.removed) { missing++; continue; }
-    if (JSON.stringify(uxdCloneValue(node[item.prop]) === undefined ? null : uxdCloneValue(node[item.prop])) !== JSON.stringify(item.after === undefined ? null : item.after)) { changedSince++; continue; }
+    if (uxdRestoreKey(item.prop, uxdCloneValue(node[item.prop])) !== uxdRestoreKey(item.prop, item.after)) { changedSince++; continue; }
     try {
       if (node.type === "TEXT") await uxdLoadTextFonts(node);
       if (item.prop === "fontName" && item.before && item.before.family) await figma.loadFontAsync(item.before);

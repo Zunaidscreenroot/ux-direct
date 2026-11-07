@@ -3303,7 +3303,10 @@
       button.textContent = "↶ Revert this change";
       button.style.cssText = "margin-top:6px;padding:4px 10px;border-radius:8px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;font:inherit;font-size:12px;opacity:.85";
       button.addEventListener("click", async function () {
-        if (isSending) return;
+        if (isSending) {
+          appendMessage("assistant", "UX Direct is still working on a task. Press Revert again when it finishes, or press Stop.");
+          return;
+        }
         button.disabled = true;
         const reply = appendMessage("assistant", "Reverting…");
         try {
