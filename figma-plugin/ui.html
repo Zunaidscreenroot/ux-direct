@@ -2843,7 +2843,7 @@
       const jobs = [];
       const stateBriefs = {
         empty: "EMPTY state: the user has no data yet. Keep the header, navigation and title exactly; replace the list/rows/cards with one centred empty-state block (simple illustration or icon, a short helpful headline, one line of guidance, and ONE button that starts the first item, e.g. \"Apply for a loan\" / \"Add account\"). Do not keep transactional buttons that need data (Pay now, View details, Download statement).",
-        loading: "LOADING state: keep the header, navigation and title; replace content text, numbers and images with grey skeleton bars and blocks of the same size and position (radius 4–8, #E5E7EB). Skeleton bars are plain rectangles with NO text inside them (no \"Loading\" labels), and no spinners over content.",
+        loading: "LOADING state: keep the header, navigation and title; replace content text, numbers and images with skeleton bars and blocks of the same size and position (radius 4–8) in the source theme: a muted tone of the surface they sit on (light grey on light screens, a slightly lighter shade of the surface on dark screens). Skeleton bars are plain rectangles with NO text inside them (no \"Loading\" labels), and no spinners over content.",
         error: "ERROR state: keep the whole screen and its content; add a clear inline error banner near the top (red/danger tint, icon, one-sentence cause, a Retry action), and mark any failed field or card.",
         success: "SUCCESS state: keep the screen; add a success confirmation (green tint banner or confirmation block with a check icon, one-sentence result, and the next primary action)."
       };
