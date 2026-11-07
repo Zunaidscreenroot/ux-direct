@@ -474,3 +474,18 @@ test("snapshot Revert is wired into the direct-edit runner, not the native actio
   const native = fn("executeNativeActionPlan");
   assert.equal(native.includes("result.layoutChanged"), false, "the planner has no direct-edit result to read");
 });
+
+test("bulk copy edits are one local find/replace, quotes optional", () => {
+  const replaceOf = (prompt: string) => {
+    const out = parse(prompt, FRAME);
+    return out && out.ops.length === 1 && out.ops[0].set.replace ? [out.ops[0].set.replace.from, out.ops[0].set.replace.to] : null;
+  };
+  assert.deepEqual(replaceOf("make all Pay now buttons say Pay EMI"), ["Pay now", "Pay EMI"]);
+  assert.deepEqual(replaceOf("change every Apply to Apply now"), ["Apply", "Apply now"]);
+  assert.deepEqual(replaceOf("replace all Submit with Continue"), ["Submit", "Continue"]);
+  assert.deepEqual(replaceOf("make all \"Pay now\" buttons say \"Pay EMI\""), ["Pay now", "Pay EMI"]);
+  assert.deepEqual(replaceOf("sab Pay now ko Pay EMI kar do"), ["Pay now", "Pay EMI"]);
+  // Style edits on "all X" are not copy edits.
+  assert.equal(replaceOf("make all buttons rounded"), null);
+  assert.equal(replaceOf("make all titles bold"), null);
+});

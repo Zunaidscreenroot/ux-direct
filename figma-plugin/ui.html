@@ -1293,8 +1293,27 @@
       const textKeys = new Set(["fontFamily", "fontStyle", "fontSize", "text", "textAlignHorizontal", "textAlignVertical", "textAutoResize", "lineHeight", "letterSpacing"]);
       const layoutKeys = new Set(["layoutMode", "layoutWrap", "itemSpacing", "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "primaryAxisAlignItems", "counterAxisAlignItems", "primaryAxisSizingMode", "counterAxisSizingMode"]);
       let applied = 0;
+      // A scoped edit (native actions) may only be repaired inside the nodes it targeted, and a repair
+      // never undoes or fights what the edit itself set (a hidden tab moved off-canvas, a rename reverted).
+      const scope = options && options.targetScope;
+      const inScope = function (nodeId) {
+        if (!scope || !scope.ids || !scope.ids.length) return true;
+        const allowed = new Set();
+        (function mark(nodes, inside) {
+          (Array.isArray(nodes) ? nodes : []).forEach(function (n) {
+            if (!n || typeof n !== "object") return;
+            const here = inside || scope.ids.includes(n.id);
+            if (here && typeof n.id === "string") allowed.add(n.id);
+            mark(n.children, here);
+          });
+        })(outputCanvas.nodes, false);
+        return allowed.has(nodeId);
+      };
       for (const item of refinement.patch.slice(0, 12)) {
         if (!item || typeof item.nodeId !== "string" || !item.patch || typeof item.patch !== "object") continue;
+        if (!inScope(item.nodeId)) continue;
+        const intended = scope && scope.keys && scope.keys[item.nodeId];
+        if (intended) item.patch = Object.fromEntries(Object.entries(item.patch).filter(function (e) { return !intended.includes(e[0]) && e[0] !== "layoutPositioning" && e[0] !== "x" && e[0] !== "y"; }));
         const node = maps.byId.get(item.nodeId);
         if (!node || ["DOCUMENT", "PAGE"].includes(String(node.type))) continue;
         const patch = {};
@@ -1341,7 +1360,8 @@
           const secondPass = await runVisualQualityLoop({
             prompt: prompt, sourceCanvas: sourceCanvas, sourceImage: sourceImage,
             outputCanvas: outputCanvas, outputImage: capture.dataUrl || null,
-            repairIteration: 1, reportProgress: notify, onReviewResult: options && options.onReviewResult
+            repairIteration: 1, reportProgress: notify, onReviewResult: options && options.onReviewResult,
+            targetScope: options && options.targetScope
           });
           return {
             text: "First surgical pass applied " + applied + " patch(es).\n" + String(secondPass.text || ""),
@@ -1650,6 +1670,45 @@
           ].includes(key);
         });
       });
+      // Property-only edits (hide/show, lock, rename, opacity, spacing, padding, radius) have one exact
+      // expected value per node: verify that by read-back. Screenshot QA would judge an intended hide as
+      // "missing content" and "repair" it with patches nobody asked for.
+      const PROPERTY_ONLY_KEYS = ["visible", "locked", "name", "opacity", "itemSpacing", "counterAxisSpacing",
+        "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "cornerRadius"];
+      const propertyOnly = actions.length > 0 && actions.every(function (action) {
+        return action.operation === "update-node" && action.patch && Object.keys(action.patch).length > 0 &&
+          Object.keys(action.patch).every(function (key) { return PROPERTY_ONLY_KEYS.includes(key); });
+      });
+      if (propertyOnly) {
+        const deep = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 12, maxNodes: 500 }, 90000).catch(function () { return null; });
+        const found = new Map();
+        (function walk(nodes) { (Array.isArray(nodes) ? nodes : []).forEach(function (n) { if (n && n.id) { found.set(n.id, n); walk(n.children); } }); })((deep || verified).nodes);
+        const mismatches = [];
+        actions.forEach(function (action) {
+          const node = found.get(action.nodeId);
+          if (!node) return;
+          Object.keys(action.patch).forEach(function (key) {
+            const want = action.patch[key], got = node[key];
+            if (got === undefined) return;
+            const same = typeof want === "number" ? Math.abs(Number(got) - want) < 0.01 : got === want;
+            if (!same) mismatches.push((node.name || action.nodeId) + "." + key + " is " + JSON.stringify(got) + ", expected " + JSON.stringify(want));
+          });
+        });
+        if (mismatches.length) {
+          stage("error", "Read-back found " + mismatches.length + " property mismatch(es)");
+          return String(payload.summary || "Native Figma actions ran.") + "\n\nNOT ACCEPTED: " + mismatches.slice(0, 4).join("; ") + ". Inspect or revert.";
+        }
+        stage("done", "Property edit applied · read-back passed");
+        return String(payload.summary || "Native Figma actions applied.") +
+          "\n\nApplied " + actions.length + " property edit(s) and checked each value by read-back. Nothing else was changed.";
+      }
+      const targetScope = { ids: [], keys: {} };
+      actions.forEach(function (action) {
+        [action.nodeId, action.parentNodeId].concat(action.nodeIds || []).forEach(function (id) { if (typeof id === "string" && !targetScope.ids.includes(id)) targetScope.ids.push(id); });
+        if (action.nodeId && action.patch) targetScope.keys[action.nodeId] = (targetScope.keys[action.nodeId] || []).concat(Object.keys(action.patch));
+      });
+      // Edits that only add new layers (no existing target) keep the old whole-root repair scope.
+      if (actions.some(function (a) { return a.operation === "create-elements" || a.operation === "insert-image"; })) targetScope.ids = [];
       if (hasVisualMutations) {
         // One rendered preview cannot prove the result of a multi-root edit.
         if (canvas.nodes.length !== 1) {
@@ -1659,7 +1718,7 @@
         }
         const qa = await runVisualQualityLoop({
           prompt: prompt, sourceCanvas: canvas, outputCanvas: verified, sourceImage: captured.dataUrl,
-          allowRepair: true, reportProgress: function (message) { stage("verifying", message); }
+          allowRepair: true, targetScope: targetScope, reportProgress: function (message) { stage("verifying", message); }
         });
         if (!qa || qa.passed !== true) {
           stage("error", "Visual quality gate failed · edits are not accepted");
@@ -2168,6 +2227,15 @@
         /^\s*(?:please\s+|pls\s+)?(?:rename|change|replace)\s+"([^"]+)"\s+(?:to|with|into|as)\s+"([^"]*)"\s*[.!]?\s*$/i.exec(original);
       if (fromTo && fromTo[1].trim()) {
         return { ops: [{ target: "text", set: { replace: { from: fromTo[1], to: fromTo[2] } }, label: "Replaced \"" + fromTo[1] + "\"" }] };
+      }
+      // Bulk copy edit, quotes optional: "make all Pay now buttons say Pay EMI", "change every Apply to Apply now",
+      // "replace all Submit with Continue", "sab Pay now ko Pay EMI kar do". One local find/replace, no model.
+      const bulk = /^\s*(?:please\s+|pls\s+)?(?:make|change|set|update|rename|turn|replace)\s+(?:all|every|each)(?:\s+of)?\s+(?:the\s+)?"?(.+?)"?\s*(?:\b(?:buttons?|labels?|texts?|links?|ctas?|tabs?|chips?|titles?|headings?)\b\s*)?(?:\s+(?:to\s+)?(?:say|read|show)|\s+(?:to|into|with|as))\s+"?([^"]+?)"?\s*[.!]?\s*$/i.exec(original) ||
+        /^\s*(?:sab|saare|sare|sabhi)\s+"?(.+?)"?\s*(?:buttons?|labels?|texts?)?\s+(?:ko|को)\s+"?([^"]+?)"?\s+(?:kar|kr|bana|badal)\w*(?:\s+(?:do|de|dijiye|karo|kro))?\s*$/i.exec(original);
+      if (bulk && bulk[1].trim() && bulk[2].trim() && bulk[1].trim().toLowerCase() !== bulk[2].trim().toLowerCase() &&
+          bulk[1].trim().split(/\s+/).length <= 6 && !/\b(screens?|colou?rs?|fonts?|bold|dark|light|mode|bigger|smaller|rounded)\b/i.test(bulk[1] + " " + bulk[2])) {
+        const from = bulk[1].trim(), to = bulk[2].trim();
+        return { ops: [{ target: "text", set: { replace: { from: from, to: to } }, label: "Replaced every \"" + from + "\"" }] };
       }
       if (/\b(screens?|flows?|variations?|versions?|dark mode|light mode|themes?|wireframes?|redesign|improve|better|modern|cleaner|premium|similar|inspired|like the|look like|consistent|hygiene|audit|review|generate|image of|photo of|picture of|translate|rewrite|shorter|longer|tone)\b/i.test(original)) return null;
       const allText = types.every(function (t) { return t === "TEXT"; });
