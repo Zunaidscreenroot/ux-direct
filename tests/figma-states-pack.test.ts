@@ -38,3 +38,11 @@ test("the state is sent to the planner and to structural lint, and only when set
   assert.match(ui, /sourceId: job\.frame\.id, state: job\.state \}/);
   assert.match(ui, /task\.kind === "states-pack"\) return runVariationsTask/);
 });
+
+test("batch jobs reserve one free row and keep exact slots and consistent names", () => {
+  const ui = readFileSync(join(process.cwd(), "figma-plugin/ui.html"), "utf8");
+  assert.match(ui, /if \(!\(placement && designOptions\.exactPlacement\)\)/, "exact slots skip the per-job free-spot search");
+  assert.match(ui, /const slot = await batchRow\(frame, task\.states\.length\)/);
+  assert.match(ui, /frameName: String\(frame\.name\)\.slice\(0, 60\) \+ " \/ "/, "state frames are named <screen> / <State> by the plugin, not the model");
+  assert.match(ui, /\.\.\.\(createMode \? \{ mode: "create" \} : \{\}\)/, "an empty selection asks the backend for a new screen");
+});
