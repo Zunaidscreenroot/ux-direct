@@ -1567,7 +1567,7 @@
       return row;
     }
 
-    function appendSelectionContext(message, screenText) {
+    function appendSelectionContext(message) {
       const selection = currentSelection.selection || [];
       if (!selection.length) return message;
       const nodes = selection.slice(0, 8).map(function (node) {
@@ -1576,8 +1576,7 @@
       return message + "\n\n[Current Figma context — metadata only] Page: " + (currentSelection.pageName || "unknown") +
         ". Selected nodes: " + JSON.stringify(nodes).slice(0, 4500) +
         ". Work only within the user's selected context unless asked otherwise." +
-        " You are UX Direct inside Figma: canvas changes run when the designer asks for them, so never say you cannot edit the canvas, and answer a question directly and briefly instead of auditing the screen." +
-        (screenText ? "\n\n[Visible text in the selection, in reading order — answer questions about the screen from this]\n" + screenText : "");
+        " You are UX Direct inside Figma: canvas changes run when the designer asks for them, so never say you cannot edit the canvas, and answer a question directly and briefly instead of auditing the screen.";
     }
 
     async function streamAssistantResponse(response, onDelta) {
@@ -3429,6 +3428,33 @@
         flattenTree(node.children, visit, node, insideInstance || node.type === "INSTANCE");
       });
     }
+    // The selection's own words for a chat question ("what is the overdue amount on the delinquent
+    // loan?"): texts in reading order, grouped by card/row so each value stays with its item.
+    async function selectionTextContext() {
+      const ids = (currentSelection.selection || []).map(function (node) { return node.id; }).filter(Boolean).slice(0, 4);
+      if (!ids.length) return "";
+      const canvas = await runNativeCanvasCommand("read-canvas", { scope: "selection", nodeIds: ids, maxDepth: 12, maxNodes: 900, includeStyles: false, includeVariables: false, includeComponents: false }, 60000).catch(function () { return null; });
+      const roots = canvas && Array.isArray(canvas.nodes) ? canvas.nodes : [];
+      const lines = [];
+      const textsOf = function (node) { const out = []; flattenTree([node], function (n) { if (n.type === "TEXT" && typeof n.text === "string" && n.text.trim()) out.push(n.text.trim().replace(/\s+/g, " ").slice(0, 80)); }); return out; };
+      roots.forEach(function (root) {
+        const W = Number(root.width) || 0;
+        const loose = [];
+        const walk = function (nodes) {
+          (Array.isArray(nodes) ? nodes : []).forEach(function (node) {
+            if (!node) return;
+            if (node.type === "TEXT") { if (node.text && node.text.trim()) loose.push(node.text.trim().replace(/\s+/g, " ").slice(0, 80)); return; }
+            const texts = ["FRAME", "INSTANCE", "GROUP", "COMPONENT"].indexOf(node.type) >= 0 && Number(node.width) < W * 0.97 ? textsOf(node) : [];
+            if (texts.length >= 2 && texts.length <= 30) { lines.push("- " + String(node.name || node.type).slice(0, 40) + ": " + texts.join(" | ")); return; }
+            walk(node.children);
+          });
+        };
+        walk(root.children);
+        lines.unshift("Screen \"" + String(root.name || "").slice(0, 60) + "\"" + (loose.length ? ": " + loose.join(" | ") : ""));
+      });
+      const text = lines.join("\n").slice(0, 3000);
+      return text ? "\n\n[Text on the selected layers, grouped by card/row; answer questions about values from this]\n" + text : "";
+    }
     function firstTexts(node, max) {
       const found = [];
       flattenTree([node], function (item) { if (item.type === "TEXT" && item.text && found.length < max) found.push(String(item.text).slice(0, 60)); });
@@ -4755,24 +4781,6 @@
       if (task.kind === "learn") return task.preview === true;
       return false;
     }
-    // The chat answers questions about what is on screen ("what is the overdue amount?"), so it
-    // gets the selection's visible text in reading order, grouped under each parent frame name.
-    function selectionTextDigest(tree, limit) {
-      const max = limit || 3500;
-      const lines = [];
-      let used = 0;
-      function walk(node, parentName) {
-        if (!node || used >= max || node.visible === false) return;
-        if (typeof node.text === "string" && node.text.trim()) {
-          const line = (parentName ? parentName + ": " : "") + node.text.replace(/\s+/g, " ").trim();
-          if (lines[lines.length - 1] !== line) { lines.push(line); used += line.length + 1; }
-        }
-        (node.children || []).forEach(function (child) { walk(child, node.type === "TEXT" ? parentName : node.name); });
-      }
-      ((tree && tree.nodes) || []).forEach(function (node) { walk(node, ""); });
-      const text = lines.join("\n");
-      return text.length > max ? text.slice(0, max) + "…" : text;
-    }
     // uxd-turn-intent:end
     async function submitPrompt(rawPrompt) {
       const prompt = String(rawPrompt || "").trim();
@@ -4928,13 +4936,10 @@
           return;
         }
 
-        let screenText = "";
-        if ((currentSelection.selection || []).length) {
-          try { screenText = selectionTextDigest(await localTask("read-tree", { maxDepth: 12, maxNodes: 600 })); } catch (_) { screenText = ""; }
-        }
+        const selectionText = await selectionTextContext().catch(function () { return ""; });
         const messages = chatHistory.map(function (message, index) {
           const copy = { role: message.role, content: message.content };
-          if (index === chatHistory.length - 1 && message.role === "user") copy.content = appendSelectionContext(copy.content, screenText);
+          if (index === chatHistory.length - 1 && message.role === "user") copy.content = appendSelectionContext(copy.content) + selectionText;
           return copy;
         });
         const response = await fetch(API + "/api/assistant/chat", {
