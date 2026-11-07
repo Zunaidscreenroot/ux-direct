@@ -943,7 +943,7 @@ export async function POST(request: Request) {
       const { spec: agencySpec, ...report } = agency;
       agencyReport = { ...report, used: false };
       if (agencySpec) {
-        const stabilized = stabilizeBlockSpec({ ...agencySpec, frame: { name: selectedName + " · variation" } }, canvas, parsedInput.data.prompt);
+        const stabilized = stabilizeBlockSpec({ ...agencySpec, frame: { name: selectedName + " · UX Direct" } }, canvas, parsedInput.data.prompt);
         let specInput: unknown = applyVariationDirection(stabilized.spec, variationDirection);
         let candidate = renderCandidate(specInput);
         let repairedTexts = 0;
