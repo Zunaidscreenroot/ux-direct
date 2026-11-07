@@ -5,7 +5,7 @@ import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
 import { detectDomain, detectTaskRole, roleInstructions } from "@/src/figma-agent/agent-roles";
 import { runSubAgents, subAgentsEnabled, type AgentBrief } from "@/src/figma-agent/sub-agents";
-import { agencyEnabled, agencyHandlesRole, runAgency, truncatedContentNodes, type AgencyResult } from "@/src/figma-agent/agency";
+import { agencyEnabled, agencyHandlesRole, runAgency, truncatedContentNames, type AgencyResult } from "@/src/figma-agent/agency";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { buildBrainQuery } from "@/src/memory/brain-query";
@@ -886,13 +886,16 @@ export async function POST(request: Request) {
   // falls through to the monolithic planner below with most of the 200 s budget left.
   const agencyEligible = agencyEnabled() && blockMode && !createMode && !screenState && !componentSelection && !referenceImage && agencyHandlesRole(taskRole);
   // Designers see only the layer tree; a tree with hidden (unread) content would make them drop it.
-  const truncatedNodes = agencyEligible ? truncatedContentNodes(canvas) : 0;
-  if (agencyEligible && truncatedNodes > 0) {
-    attemptTimes.push({ attempt: "agency skipped: layer tree incomplete (" + truncatedNodes + " unread container(s)); single planner with screenshot", ms: 0, outcome: "skipped" });
+  // Judged on the plugin's full read (depth 12), not the planner's compact copy (depth 8), which
+  // cuts deep card internals that the plugin did read (finding: frame 15 skipped for 4 "unread" nodes).
+  const agencySource = rawSourceCanvas ?? canvas;
+  const truncatedNames = agencyEligible ? truncatedContentNames(agencySource) : [];
+  if (agencyEligible && truncatedNames.length > 0) {
+    attemptTimes.push({ attempt: "agency skipped: layer tree incomplete (" + truncatedNames.length + " unread: " + truncatedNames.slice(0, 4).join(", ") + "); single planner with screenshot", ms: 0, outcome: "skipped" });
   }
-  if (agencyEligible && truncatedNodes === 0) {
+  if (agencyEligible && truncatedNames.length === 0) {
     const agencyStarted = Date.now();
-    const agency = await runAgency(canvas, {
+    const agency = await runAgency(agencySource, {
       prompt: parsedInput.data.prompt, role: taskRole,
       directorBrief: agentBrief.instructions, designRules: designRulesInstructions.trim(),
       brain: brain.contextText.slice(0, 6000), origin: new URL(request.url).origin,

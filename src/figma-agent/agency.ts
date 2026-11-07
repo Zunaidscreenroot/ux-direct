@@ -126,7 +126,12 @@ export function agencyHandlesRole(role: TaskRole): boolean {
  * icons are ignored. Returns the number of truncated content nodes (0 = complete).
  */
 export function truncatedContentNodes(canvas: Rec): number {
-  let truncated = 0;
+  return truncatedContentNames(canvas).length;
+}
+
+/** Names of the truncated content nodes (shown in Timing so a skip can be checked). */
+export function truncatedContentNames(canvas: Rec): string[] {
+  const names: string[] = [];
   const visit = (value: unknown) => {
     if (!value || typeof value !== "object") return;
     const node = value as Rec;
@@ -134,12 +139,17 @@ export function truncatedContentNodes(canvas: Rec): number {
     const children = Array.isArray(node.children) ? node.children : [];
     const width = typeof node.width === "number" ? node.width : 999;
     const height = typeof node.height === "number" ? node.height : 999;
-    const icon = width <= 48 && height <= 48;
-    if (!icon && typeof node.childCount === "number" && node.childCount > children.length && !["VECTOR", "BOOLEAN_OPERATION"].includes(String(node.type))) truncated += 1;
+    // Logos, icons and small marks (≤64px) are drawn shapes, not content; their vectors are
+    // often below the read depth (frame 15: the card logos were reported as unread).
+    const mark = width <= 64 && height <= 64;
+    if (!mark && typeof node.childCount === "number" && node.childCount > children.length && !["VECTOR", "BOOLEAN_OPERATION"].includes(String(node.type))) {
+      names.push(String(node.name || node.type).slice(0, 40));
+    }
     for (const child of children) visit(child);
   };
   for (const node of Array.isArray(canvas.nodes) ? canvas.nodes : []) visit(node);
-  return truncated + (canvas.truncated === true ? 1 : 0);
+  if (canvas.truncated === true) names.push("read node cap");
+  return names;
 }
 
 const MAX_BLOCKS_PER_DESIGNER = 12;
