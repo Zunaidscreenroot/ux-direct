@@ -530,7 +530,7 @@ export default function CommandCenter() {
               <thead><tr><th>Model</th><th>Via</th><th>Calls</th><th>Errors</th><th>Tokens in / out</th><th>p50 / p95</th><th>Last</th></tr></thead>
               <tbody>{tabData.models.map((row) => <tr key={row.gateway + row.provider + row.model} title={row.lastError || ""}>
                 <td><strong>{row.model}</strong><small>{row.provider}</small></td>
-                <td><span className={"ud-status-pill " + (row.gateway === "uxd" ? "ok" : "muted")}>{row.gateway === "uxd" ? "gateway" : "freellmapi"}</span></td>
+                <td><span className={"ud-status-pill " + (row.gateway === "uxd" ? "ok" : "muted")}>{row.gateway === "uxd" ? "gateway" : "legacy"}</span></td>
                 <td>{row.calls}</td>
                 <td className={row.errors ? "ud-cc-error-text" : ""}>{row.errors}</td>
                 <td>{formatTokens(row.promptTokens)} / {formatTokens(row.completionTokens)}</td>
@@ -563,7 +563,7 @@ export default function CommandCenter() {
               <tbody>{tabData.recent.map((row, index) => <tr key={row.at + index} title={row.error || ""}>
                 <td>{formatWhen(row.at)}</td>
                 <td>{row.role}</td>
-                <td><strong>{row.model}</strong><small>{row.gateway === "uxd" ? "gateway · " : "freellmapi · "}{row.provider}</small></td>
+                <td><strong>{row.model}</strong><small>{row.gateway === "uxd" ? "gateway · " : "legacy · "}{row.provider}</small></td>
                 <td className={row.ok ? "" : "ud-cc-error-text"}>{row.ok ? "ok" : (row.status || "timeout") + (row.error ? " · " + row.error.slice(0, 60) : "")}</td>
                 <td>{formatMs(row.latencyMs)}</td>
                 <td>{formatTokens(row.tokens)}</td>
