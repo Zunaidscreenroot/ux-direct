@@ -207,3 +207,14 @@ test("a selected row with nested label/value frames and a status badge gets an i
   const found = await run("find-icon-targets", {});
   assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((t: any) => [t.id, t.label]))), [["row", "Due"]]);
 });
+
+test("the real Loan Dashboard row: value as a direct child, label nested in Row text, badge beside", async () => {
+  const txt = (id: string, characters: string) => ({ id, type: "TEXT", characters, fontSize: 14, fills: [], x: 0, y: 0, width: 80, height: 18 });
+  const rowText: any = { id: "rt2", type: "FRAME", name: "Row text · Due", width: 187, height: 38, children: [txt("l2", "Due"), txt("c2", "12 Mar 2026")] };
+  const badge: any = { id: "bd2", type: "FRAME", name: "Status badge · Pending", width: 71, height: 24, children: [txt("b2", "Pending")] };
+  const row: any = { id: "row2", type: "FRAME", name: "Row · Due", layoutMode: "HORIZONTAL", width: 328, height: 62, children: [rowText, txt("v2", "₹1,00,000"), badge] };
+  const { figma, run } = makeRuntime({ row2: row, rt2: rowText, bd2: badge });
+  figma.currentPage.selection = [row];
+  const found = await run("find-icon-targets", {});
+  assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((t: any) => [t.id, t.label]))), [["row2", "Due"]]);
+});
