@@ -4523,10 +4523,10 @@ function uxdIconTargetInfo(node) {
   if (!texts.length || texts.length > 2 || kids.some(uxdIsIconLike)) return null;
   var label = String(texts[0].characters || "").trim();
   if (!label || label.length > 40) return null;
-  // Data rows ("Balance  ₹12,400", "Due date  12 Nov") show a value, not an action: no icon.
-  if (texts.some(uxdIsDataValueText)) return null;
   var size = typeof texts[0].fontSize === "number" ? texts[0].fontSize : 14;
-  return { id: node.id, name: node.name, label: label, fontSize: size, button: uxdIsButtonLike(node, texts) };
+  // Data rows ("Balance  ₹12,400", "Due date  12 Nov") show a value, not an action: flagged, and only
+  // used when the row itself is selected.
+  return { id: node.id, name: node.name, label: label, fontSize: size, button: uxdIsButtonLike(node, texts), data: texts.some(uxdIsDataValueText) };
 }
 // A button: named like one, or a filled/outlined rounded box of 24–64px holding one label.
 // Data rows ("Row · Loan Amount": label + value, no box) are not buttons.
@@ -4550,7 +4550,10 @@ async function localFindIconTargets(payload) {
     var self = uxdIconTargetInfo(root);
     if (self) { add(self, false); return; }
     if (root.type === "INSTANCE") return;
-    uxdDescendants(root, function (c) { return c.type === "FRAME" || c.type === "COMPONENT"; }).forEach(function (c) { add(uxdIconTargetInfo(c), true); });
+    uxdDescendants(root, function (c) { return c.type === "FRAME" || c.type === "COMPONENT"; }).forEach(function (c) {
+      var info = uxdIconTargetInfo(c);
+      if (info && !info.data) add(info, true);
+    });
   });
   // Inside a selected screen, icons go on buttons only; rows are used only when the selection
   // has no button at all (e.g. a selected list). A directly selected row still counts.
