@@ -283,6 +283,9 @@ export function pickVerifiedExample(rows: VerifiedRun[], designScope: string): R
     // Source-fallback rebuilds are never a model example, whatever their outcome.
     if (!plan || meta.planFormat !== "blocks" || meta.repairedTexts || meta.sourceFallback === true || meta.model === "source-fallback") return [];
     if (typeof meta.lintVersion !== "number" || meta.lintVersion < VERIFIED_LINT_VERSION) return [];
+    // A state run (":state-empty") only ever steers the same state, and never a normal screen.
+    const rowState = String(meta.designScope ?? "").split(":state-")[1] ?? "";
+    if (rowState !== (designScope.split(":state-")[1] ?? "")) return [];
     const example = structuralExample(plan);
     if (!example) return [];
     const score = typeof meta.lintScore === "number" ? meta.lintScore : typeof meta.qualityScore === "number" ? meta.qualityScore : 0;
