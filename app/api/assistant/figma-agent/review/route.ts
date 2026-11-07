@@ -171,8 +171,13 @@ export async function POST(request: Request) {
     // Record the final lint score so model stats and example ranking use the real result.
     const lintScore = lintScoreFromSummary(outcome === "failed" ? failureMessage : parsed.data.outcomeSummary, outcome);
     if (lintScore !== null && existingMeta.source === "figma-agent") {
+      // Re-read just before writing: the lesson capture above can take seconds, and merging into
+      // the stale copy would wipe fields (model, attempts) written meanwhile.
+      const fresh = await neonRequest("uxd_task_runs?id=eq." + encodeURIComponent(taskRunId) + "&select=metadata&limit=1").catch(() => null);
+      const freshMeta = Array.isArray(fresh) && fresh[0] && (fresh[0] as Record<string, unknown>).metadata && typeof (fresh[0] as Record<string, unknown>).metadata === "object"
+        ? (fresh[0] as Record<string, unknown>).metadata as Record<string, unknown> : existingMeta;
       await neonRequest("uxd_task_runs?id=eq." + encodeURIComponent(taskRunId), {
-        method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ metadata: { ...existingMeta, lintScore } }),
+        method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ metadata: { ...freshMeta, lintScore } }),
       }).catch(() => null);
     }
     const confirmedResult = await neonRequest(lookupPath).catch(() => null);

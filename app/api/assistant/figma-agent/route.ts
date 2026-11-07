@@ -849,14 +849,16 @@ export async function POST(request: Request) {
   let promptSize: { textChars: number; approxTokens: number; imageKb: number } | null = null;
   // UX Director agency report (per-designer timing and outcome), when the agency ran.
   let agencyReport: (Omit<AgencyResult, "spec"> & { used: boolean; gate?: string }) | null = null;
-  const respond = (success: SuccessCandidate) => {
+  const respond = async (success: SuccessCandidate) => {
     const { candidate } = success;
-    deferTaskWork(recordGeneration(taskRunId, {
+    // Awaited, not deferred: long runs (100 s+) lost this write after the response went out, and
+    // the plugin's finalize then saved metadata without the model (brain monitor, 2026-11-07).
+    await recordGeneration(taskRunId, {
       model: success.servedModel, routedVia: success.routed,
       planFormat: candidate.blockSpec ? "blocks" : "elements", designScope: exampleScope,
       qualityScore: candidate.quality?.score, themeLocked: success.themeLocked,
       repairedTexts: success.repairedTexts, attempts: attemptLog,
-    }, candidate.blockSpec && !success.sourceFallback ? success.spec : null));
+    }, candidate.blockSpec && !success.sourceFallback ? success.spec : null).catch(() => null);
     return NextResponse.json({
       ok: true,
       taskRunId,
