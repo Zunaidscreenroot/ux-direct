@@ -154,7 +154,7 @@ export function resolveTheme(raw: unknown, sourceBackground: string | null, sour
 // ---------------------------------------------------------------------------
 
 type SourceText = { size: number; weight: string; color: string | null; textStyleId: string | null };
-type SourceHeader = { componentId: string; name: string; height: number; instanceProperties?: Record<string, string | boolean>; textOverrides?: Record<string, string> };
+type SourceHeader = { componentId: string; name: string; height: number; instanceProperties?: Record<string, string | boolean>; textOverrides?: Record<string, string>; fromCatalogue?: boolean };
 /** What the selected source screen already uses: its type scale, text styles and header component. */
 export type SourceTokens = { sizes: number[]; texts: SourceText[]; header: SourceHeader | null; byText?: Map<string, SourceText> };
 
@@ -215,6 +215,8 @@ export function collectSourceTokens(canvas: Record<string, unknown>, componentId
     };
     collect(first, 0);
     header = { componentId: first.mainComponentId, name: clean(first.name, 80) || "Screen header", height: Math.max(24, Math.round(first.height)),
+      // Create mode puts the file's app bar component in its empty virtual frame (id "uxd:new-screen:header").
+      ...(typeof first.id === "string" && first.id.startsWith("uxd:new-screen") ? { fromCatalogue: true } : {}),
       ...(Object.keys(instanceProperties).length ? { instanceProperties } : {}),
       ...(Object.keys(textOverrides).length ? { textOverrides } : {}) };
   }
@@ -561,6 +563,9 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
           layoutSizingHorizontal: "FILL",
           ...(header.instanceProperties ? { instanceProperties: { ...header.instanceProperties } } : {}),
           ...(header.textOverrides ? { textOverrides: { ...header.textOverrides } } : {}) };
+        // A new screen reuses the file's app bar component: its title becomes this screen's title.
+        const newTitle = clean(block.title ?? block.text, 120);
+        if (header.fromCatalogue && newTitle) node.textOverrides = { ...(node.textOverrides ?? {}), __title: newTitle };
         b.headerNode = node;
         return node;
       }
