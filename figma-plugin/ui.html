@@ -148,6 +148,117 @@
     .health-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:9px; }
     .health-note { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; line-height:1.4; }
 
+    /* uxd-agent-ui:css:start — agent orb modes, run stepper, ask cards, slash menu, follow-ups */
+    :root { --uxd-accent:#7c5cff; --uxd-accent-2:#1fb6ff; --uxd-build:#ff8a3d; --uxd-build-2:#ff4fa3; --uxd-ask:#19b37a; --uxd-err:#e5484d; --uxd-soft:var(--figma-color-bg-secondary,#f6f6f8); --uxd-line:var(--figma-color-border,#e6e6ea); --uxd-muted:var(--figma-color-text-secondary,#77777f); }
+    .brand-mark { background:linear-gradient(135deg,#1b1530 0%,#3b2a7a 55%,#1fb6ff 140%); color:#fff; box-shadow:0 2px 8px rgba(76,52,190,.28); }
+    .orb-shell { position:relative; display:grid; place-items:center; width:100%; height:100%; border-radius:50%; background:radial-gradient(circle at 35% 30%,#2c2550 0%,#14111f 62%,#0b0a12 100%); box-shadow:0 0 0 1px rgba(255,255,255,.06) inset,0 10px 28px rgba(40,24,110,.28); isolation:isolate; }
+    .orb-shell::before { content:""; position:absolute; inset:-5px; z-index:-1; border-radius:50%; background:conic-gradient(from 0deg,var(--uxd-accent),var(--uxd-accent-2),transparent 55%,var(--uxd-accent)); opacity:.35; filter:blur(5px); animation:uxdHalo 6s linear infinite; }
+    .orb-shell::after { content:""; position:absolute; inset:-1px; border-radius:50%; border:1px solid rgba(255,255,255,.08); pointer-events:none; }
+    .uxd-hero-orb .orb-shell { animation:uxdBreathe 4.8s ease-in-out infinite; }
+    body[data-agent-mode="thinking"] .orb-shell::before { opacity:.75; animation-duration:2.6s; background:conic-gradient(from 0deg,var(--uxd-accent),var(--uxd-accent-2),#b892ff,transparent 70%,var(--uxd-accent)); }
+    body[data-agent-mode="building"] .orb-shell::before { opacity:.85; animation-duration:1.3s; background:conic-gradient(from 0deg,var(--uxd-build),var(--uxd-build-2),#ffd166,transparent 65%,var(--uxd-build)); }
+    body[data-agent-mode="building"] .orb-shell { background:radial-gradient(circle at 35% 30%,#4a2a24 0%,#1d1210 62%,#0d0807 100%); }
+    body[data-agent-mode="asking"] .orb-shell::before { opacity:.8; animation:uxdPing 1.6s ease-out infinite; background:radial-gradient(circle,var(--uxd-ask) 0%,transparent 70%); }
+    body[data-agent-mode="error"] .orb-shell::before { opacity:.6; animation:none; background:radial-gradient(circle,var(--uxd-err) 0%,transparent 70%); }
+    @keyframes uxdHalo { to { transform:rotate(360deg); } }
+    @keyframes uxdBreathe { 0%,100% { transform:scale(1); } 50% { transform:scale(1.04); } }
+    @keyframes uxdPing { 0% { transform:scale(.9); opacity:.85; } 100% { transform:scale(1.25); opacity:0; } }
+    .uxd-hero-orb { width:96px; height:96px; margin-bottom:10px; }
+    .welcome h1 { background:linear-gradient(90deg,var(--figma-color-text,#1d1d22),#5b46d6 120%); -webkit-background-clip:text; background-clip:text; color:transparent; }
+    .mode-chip { display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:999px; border:1px solid var(--uxd-line); background:var(--uxd-soft); color:var(--uxd-muted); font-size:10px; font-weight:650; letter-spacing:.2px; }
+    .mode-chip::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--uxd-accent); box-shadow:0 0 0 3px rgba(124,92,255,.15); }
+    body[data-agent-mode="thinking"] .mode-chip::before { background:var(--uxd-accent-2); animation:pulse .7s infinite alternate; }
+    body[data-agent-mode="building"] .mode-chip::before { background:var(--uxd-build); animation:pulse .45s infinite alternate; }
+    body[data-agent-mode="asking"] .mode-chip::before { background:var(--uxd-ask); }
+    body[data-agent-mode="error"] .mode-chip::before { background:var(--uxd-err); }
+    .process-status { padding:7px 10px 7px 7px; border-radius:12px; background:color-mix(in srgb,var(--figma-color-bg,#fff) 86%,transparent); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); box-shadow:0 4px 14px rgba(20,16,40,.06); flex-wrap:wrap; row-gap:6px; }
+    #processOrbRoot { flex:0 0 26px; width:26px; height:26px; }
+    .process-copy { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
+    .process-top { display:flex; align-items:center; gap:7px; min-width:0; }
+    .process-step { color:var(--figma-color-text,#222); font-size:10px; font-weight:700; white-space:nowrap; }
+    .process-time { margin-left:auto; color:var(--uxd-muted); font-size:9px; font-variant-numeric:tabular-nums; }
+    .process-status-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .process-bar { flex:1 0 100%; height:2px; border-radius:2px; background:var(--uxd-line); overflow:hidden; }
+    .process-bar i { display:block; height:100%; width:0; border-radius:2px; background:linear-gradient(90deg,var(--uxd-accent),var(--uxd-accent-2)); transition:width .4s ease; }
+    body[data-agent-mode="building"] .process-bar i { background:linear-gradient(90deg,var(--uxd-build),var(--uxd-build-2)); }
+    .run-card { width:100%; border:1px solid var(--uxd-line); border-radius:14px; background:var(--figma-color-bg,#fff); box-shadow:0 1px 2px rgba(0,0,0,.03),0 8px 24px rgba(30,20,80,.05); overflow:hidden; animation:appear .18s ease-out; }
+    .run-head { display:flex; align-items:center; gap:8px; width:100%; padding:9px 11px; border:0; background:transparent; color:inherit; text-align:left; }
+    .run-badge { flex:0 0 auto; padding:2px 7px; border-radius:999px; background:rgba(124,92,255,.1); color:#5b46d6; font-size:9px; font-weight:750; letter-spacing:.3px; text-transform:uppercase; }
+    .run-card[data-status="done"] .run-badge { background:rgba(25,145,90,.1); color:#168452; }
+    .run-card[data-status="error"] .run-badge { background:rgba(205,55,65,.1); color:#bf3540; }
+    .run-card[data-status="stopped"] .run-badge, .run-card[data-status="skipped"] .run-badge { background:var(--uxd-soft); color:var(--uxd-muted); }
+    .run-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:650; }
+    .run-time { color:var(--uxd-muted); font-size:9px; font-variant-numeric:tabular-nums; }
+    .run-caret { color:var(--uxd-muted); font-size:10px; transition:transform .15s; }
+    .run-card.collapsed .run-caret { transform:rotate(-90deg); }
+    .run-card.collapsed .run-steps { display:none; }
+    .run-steps { list-style:none; margin:0; padding:2px 11px 10px; }
+    .run-step { position:relative; display:grid; grid-template-columns:18px minmax(0,1fr) auto; column-gap:8px; padding:5px 0; }
+    .run-step:not(:last-child)::after { content:""; position:absolute; left:8.5px; top:22px; bottom:-4px; width:1px; background:var(--uxd-line); }
+    .run-step.done:not(:last-child)::after { background:linear-gradient(var(--uxd-accent),var(--uxd-line)); }
+    .step-dot { position:relative; z-index:1; display:grid; place-items:center; width:18px; height:18px; border-radius:50%; border:1px solid var(--uxd-line); background:var(--figma-color-bg,#fff); color:var(--uxd-muted); font-size:9px; font-weight:750; }
+    .run-step.done .step-dot { border-color:transparent; background:linear-gradient(135deg,var(--uxd-accent),var(--uxd-accent-2)); color:#fff; }
+    .run-step.active .step-dot { border-color:var(--uxd-accent); color:var(--uxd-accent); box-shadow:0 0 0 3px rgba(124,92,255,.14); }
+    .run-step.active .step-dot::before { content:""; position:absolute; inset:-4px; border-radius:50%; border:1.5px solid transparent; border-top-color:var(--uxd-accent-2); animation:uxdHalo .9s linear infinite; }
+    body[data-agent-mode="building"] .run-step.active .step-dot { border-color:var(--uxd-build); color:var(--uxd-build); box-shadow:0 0 0 3px rgba(255,138,61,.16); }
+    body[data-agent-mode="building"] .run-step.active .step-dot::before { border-top-color:var(--uxd-build-2); }
+    .run-step.waiting .step-dot { border-color:var(--uxd-ask); color:var(--uxd-ask); box-shadow:0 0 0 3px rgba(25,179,122,.16); }
+    .run-step.waiting .step-dot::before { display:none; }
+    .run-step.failed .step-dot { border-color:var(--uxd-err); background:var(--uxd-err); color:#fff; }
+    .run-step.pending { opacity:.5; }
+    .step-name { font-size:11px; font-weight:650; line-height:18px; }
+    .step-num { color:var(--uxd-muted); font-weight:600; }
+    .step-now { margin-top:1px; color:var(--uxd-muted); font-size:10px; line-height:1.45; overflow-wrap:anywhere; }
+    .run-step.active .step-now { color:var(--figma-color-text,#333); }
+    .run-step.active .step-now::after { content:"…"; animation:pulse .8s infinite alternate; }
+    .step-log { margin:3px 0 0; padding:0; list-style:none; }
+    .step-log li { color:var(--uxd-muted); font-size:9px; line-height:1.5; }
+    .step-log li::before { content:"· "; }
+    .step-time { color:var(--uxd-muted); font-size:9px; line-height:18px; font-variant-numeric:tabular-nums; }
+    .ask-card { width:100%; padding:11px; border:1px solid var(--uxd-line); border-radius:14px; background:linear-gradient(180deg,rgba(124,92,255,.05),transparent 70%),var(--figma-color-bg,#fff); animation:appear .18s ease-out; }
+    .ask-card.answered { opacity:.72; }
+    .ask-card:focus { outline:none; border-color:rgba(124,92,255,.45); }
+    .ask-q { margin:0 0 8px; font-size:12px; font-weight:650; line-height:1.45; }
+    .ask-sub { margin:-4px 0 9px; color:var(--uxd-muted); font-size:10px; line-height:1.45; }
+    .ask-options { display:flex; flex-direction:column; gap:6px; }
+    .ask-option { position:relative; display:grid; grid-template-columns:18px minmax(0,1fr); column-gap:8px; align-items:start; width:100%; padding:8px 9px; border:1px solid var(--uxd-line); border-radius:10px; background:var(--figma-color-bg,#fff); color:inherit; text-align:left; transition:border-color .12s,background .12s,transform .12s; }
+    .ask-option:hover:not(:disabled) { border-color:var(--uxd-accent); background:rgba(124,92,255,.05); transform:translateY(-1px); }
+    .ask-option.recommended { border-color:rgba(124,92,255,.55); box-shadow:0 0 0 3px rgba(124,92,255,.08); }
+    .ask-option.chosen { border-color:var(--uxd-accent); background:rgba(124,92,255,.08); }
+    .ask-option:disabled { cursor:default; }
+    .ask-key { display:grid; place-items:center; width:18px; height:18px; border-radius:5px; background:var(--uxd-soft); color:var(--uxd-muted); font-size:9px; font-weight:750; }
+    .ask-label { font-size:11px; font-weight:650; line-height:18px; }
+    .ask-rec { margin-left:6px; padding:1px 6px; border-radius:999px; background:linear-gradient(135deg,var(--uxd-accent),var(--uxd-accent-2)); color:#fff; font-size:8px; font-weight:800; letter-spacing:.3px; text-transform:uppercase; vertical-align:1px; }
+    .ask-detail { grid-column:2; color:var(--uxd-muted); font-size:10px; line-height:1.45; }
+    .ask-checks { display:flex; flex-direction:column; gap:2px; margin:0 0 9px; max-height:190px; overflow:auto; }
+    .ask-check { display:flex; align-items:flex-start; gap:7px; padding:5px 4px; border-radius:7px; font-size:10px; line-height:1.45; cursor:pointer; }
+    .ask-check:hover { background:var(--uxd-soft); }
+    .ask-check input { margin:2px 0 0; accent-color:var(--uxd-accent); }
+    .ask-actions { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:9px; }
+    .ask-btn { padding:6px 11px; border:1px solid var(--uxd-line); border-radius:9px; background:var(--figma-color-bg,#fff); color:inherit; font-size:11px; font-weight:650; }
+    .ask-btn.primary { border-color:transparent; background:linear-gradient(135deg,#5b46d6,var(--uxd-accent) 60%,#3d8bff); color:#fff; box-shadow:0 3px 10px rgba(91,70,214,.28); }
+    .ask-btn:disabled { opacity:.5; cursor:default; }
+    .ask-hint { margin-left:auto; color:var(--uxd-muted); font-size:9px; }
+    .ask-custom { display:flex; gap:6px; margin-top:7px; }
+    .ask-custom input { flex:1; min-width:0; padding:6px 8px; border:1px solid var(--uxd-line); border-radius:9px; background:transparent; color:inherit; font:inherit; font-size:11px; }
+    .ask-result { margin-top:7px; color:var(--uxd-muted); font-size:10px; }
+    .followups { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+    .followup { padding:5px 9px; border:1px solid var(--uxd-line); border-radius:999px; background:var(--figma-color-bg,#fff); color:var(--figma-color-text,#333); font-size:10px; font-weight:600; }
+    .followup:hover { border-color:var(--uxd-accent); color:#5b46d6; }
+    .followup::before { content:"↳ "; color:var(--uxd-muted); }
+    .mode-toggle { display:inline-flex; align-items:center; gap:5px; padding:4px 8px; border:1px solid var(--uxd-line); border-radius:8px; background:var(--uxd-soft); color:var(--figma-color-text,#333); font-size:10px; font-weight:650; white-space:nowrap; }
+    .mode-toggle .mt-dot { width:6px; height:6px; border-radius:50%; background:var(--uxd-ask); }
+    .mode-toggle[aria-pressed="false"] .mt-dot { background:var(--uxd-build); }
+    .slash-menu { position:absolute; left:0; right:0; bottom:calc(100% + 6px); z-index:20; max-height:240px; overflow:auto; padding:5px; border:1px solid var(--uxd-line); border-radius:12px; background:var(--figma-color-bg,#fff); box-shadow:0 12px 32px rgba(0,0,0,.14); }
+    .slash-item { display:grid; grid-template-columns:auto minmax(0,1fr); column-gap:9px; width:100%; padding:6px 8px; border:0; border-radius:8px; background:transparent; color:inherit; text-align:left; font-size:11px; }
+    .slash-item.active, .slash-item:hover { background:rgba(124,92,255,.08); }
+    .slash-cmd { font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace; color:#5b46d6; }
+    .slash-desc { color:var(--uxd-muted); font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:16px; }
+    .composer-area { position:relative; }
+    .model-card { margin-top:10px; padding:11px; border:1px solid var(--figma-color-border,#ddd); border-radius:11px; background:var(--figma-color-bg-secondary,#f8f8f8); }
+    @media(prefers-reduced-motion:reduce){ .orb-shell, .orb-shell::before, .run-step.active .step-dot::before, .mode-chip::before { animation:none !important; } }
+    /* uxd-agent-ui:css:end */
+
   </style>
 </head>
 <body>
@@ -167,17 +278,9 @@
       </div>
     </div>
     <div id="serviceList" class="service-list"></div>
-    <section class="provider-card" aria-label="Model provider switcher">
-      <div class="provider-card-head">
-        <div class="provider-card-copy">
-          <div class="provider-card-title">Model provider</div>
-          <div class="provider-card-subtitle">Chat and Figma AI run on FreeLLMAPI</div>
-        </div>
-        <select id="providerSelect" class="provider-select" aria-label="Select model provider" disabled>
-          <option value="freellmapi">FreeLLMAPI</option>
-        </select>
-      </div>
-      <p id="providerHint" class="provider-hint" role="status" aria-live="polite">Checking provider configuration…</p>
+    <section class="model-card" aria-label="Models">
+      <div class="provider-card-title">Models</div>
+      <p id="providerHint" class="provider-hint" role="status" aria-live="polite">Free models through the UX Direct gateway.</p>
     </section>
     <section class="health-card" aria-label="Figma native API health checks">
       <button id="healthSummary" class="health-summary" type="button" aria-expanded="false" aria-controls="healthDetails">
@@ -206,18 +309,18 @@
         </div>
       </div>
     </section>
-    <p class="status-footnote">ChatGPT is a supervisor for monitoring and quality checks. Design requests are handled from this UX Direct cockpit.</p>
   </section>
 
   <main id="conversation" class="conversation">
     <div id="chatLog" class="chat-log" role="log" aria-live="polite" aria-relevant="additions text">
-      <div id="processStatus" class="process-status" aria-live="polite" hidden><span id="processOrbRoot" aria-hidden="true"></span><span id="processStatusText" class="process-status-text">Ready for a design task</span></div>
+      <div id="processStatus" class="process-status" aria-live="polite" hidden><span class="orb-shell" style="width:26px;height:26px;flex:0 0 26px"><span id="processOrbRoot" aria-hidden="true"></span></span><span class="process-copy"><span class="process-top"><span id="modeChip" class="mode-chip">Ready</span><span id="processStep" class="process-step"></span><span id="processTime" class="process-time"></span></span><span id="processStatusText" class="process-status-text">Ready for a design task</span></span><span class="process-bar" aria-hidden="true"><i id="processBar"></i></span></div>
       <section id="welcome" class="welcome">
         <div class="uxd-hero-orb" aria-label="UX Direct is ready">
-          <div id="uxdOrbRoot"></div>
+          <div class="orb-shell"><div id="uxdOrbRoot"></div></div>
         </div>
+        <span class="mode-chip" id="heroModeChip">Ready</span>
         <h1>What are we designing today?</h1>
-        <p>Describe what you want to create, improve, or explore. UX Direct will use your current Figma selection as context.</p>
+        <p>Tell me what to create or improve. I ask before I change anything, and show every step. Type <strong>/</strong> for commands.</p>
         <div class="suggestions" aria-label="Suggested prompts">
           <button class="suggestion" type="button">Create a variation of the selected frame</button>
           <button class="suggestion" type="button">Improve hierarchy and visual clarity</button>
@@ -228,10 +331,10 @@
   </main>
 
   <footer class="composer-area">
+    <div id="slashMenu" class="slash-menu" role="listbox" aria-label="Commands" hidden></div>
     <div id="selectionChip" class="context-chip" hidden><span aria-hidden="true">▣</span><span id="selectionName" class="context-name"></span></div>
     <form id="chatForm" class="composer">
       <div id="beamRoot" aria-hidden="true"></div>
-      <div id="routingNote" class="routing-note" role="note">Design model: FreeLLMAPI · auto</div>
       <div id="attachmentChip" class="attachment-chip" hidden>
         <span aria-hidden="true">▧</span><span id="attachmentName" class="attachment-name"></span>
         <button id="removeAttachment" class="attachment-remove" type="button" aria-label="Remove attached image" title="Remove image">×</button>
@@ -241,7 +344,8 @@
       <div class="composer-bottom">
         <div class="composer-tools">
           <button id="attachImage" class="composer-attach" type="button" title="Attach an image to place on the canvas">＋ Image</button>
-          <span class="composer-hint">Enter to send · Shift + Enter for a new line</span>
+          <button id="askModeToggle" class="mode-toggle" type="button" aria-pressed="true" title="Ask first: I ask before every canvas change. Auto: I pick the recommended option and go."><span class="mt-dot"></span><span id="askModeLabel">Ask first</span></button>
+          <span class="composer-hint">/ for commands · Enter to send</span>
         </div>
         <button id="send" class="send" type="submit" aria-label="Send message" title="Send message" disabled>↑</button>
         <button id="stop" class="send stop" type="button" aria-label="Stop this task" title="Stop this task" hidden>■</button>
@@ -288,6 +392,7 @@
     function requestStop() {
       if (!isSending || stopRequested) return;
       stopRequested = true;
+      if (typeof agentCancelAsks === "function") agentCancelAsks();
       if (activeAbort) activeAbort.abort();
     }
     const uxdNativeFetch = window.fetch.bind(window);
@@ -311,8 +416,8 @@
     let connectionError = "";
     let providerSwitcherState = null;
     let providerOptions = [];
-    let activeProviderId = "freellmapi";
-    let activeProviderLabel = "FreeLLMAPI";
+    let activeProviderId = "";
+    let activeProviderLabel = "Free models";
     let providerSwitching = false;
     const chatHistory = [];
     const processLabels = {
@@ -352,7 +457,598 @@
         else label.textContent = nextMessage;
       }
       document.body.dataset.processState = state;
+      agentOnState(state, message || processLabels[state] || state);
     }
+
+    // uxd-agent-ui:start
+    // Agentic UI layer. It never decides routing: it shows what the running task is doing (orb mode,
+    // a step-by-step run card, elapsed time), asks before canvas changes (Ask first mode), turns the
+    // model's clarifying questions into clickable options, and offers next steps. Generic for any screen.
+    const AGENT_MODE_OF = { idle: "idle", done: "idle", brain: "thinking", memory: "thinking", planning: "thinking", scanning: "thinking",
+      capturing: "thinking", reviewing: "thinking", verifying: "thinking", creating: "building", rendering: "building", refining: "building",
+      waiting: "building", asking: "asking", error: "error" };
+    const AGENT_MODE_LABEL = { idle: "Ready", thinking: "Thinking", building: "Building", asking: "Your call", error: "Needs attention" };
+    const AGENT_PHASES = { understand: "Understand the request", inspect: "Read the canvas", plan: "Plan the change", ask: "Confirm with you",
+      build: "Make the change", check: "Check the result", answer: "Write the answer" };
+    const AGENT_PHASE_OF = { brain: "understand", memory: "understand", scanning: "inspect", capturing: "inspect", planning: "plan", asking: "ask",
+      creating: "build", rendering: "build", refining: "build", waiting: "build", reviewing: "check", verifying: "check" };
+    const AGENT_ROUTE_PLAN = {
+      design: ["understand", "ask", "inspect", "plan", "build", "check"],
+      native: ["understand", "inspect", "plan", "ask", "build", "check"],
+      quick: ["understand", "ask", "build", "check"],
+      direct: ["understand", "ask", "build"],
+      chat: ["understand", "answer"],
+      turn: ["understand", "build"]
+    };
+    let agentRun = null;
+    let agentTimer = null;
+    let askFirst = true;
+    try { askFirst = window.localStorage.getItem("uxd-ask-mode") !== "auto"; } catch (_) { askFirst = true; }
+    const pendingAsks = new Set();
+
+    function agentFmt(ms) {
+      const s = Math.max(0, Math.round(ms / 1000));
+      return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
+    }
+    function agentOnState(state, message) {
+      const mode = AGENT_MODE_OF[state] || "thinking";
+      document.body.dataset.agentMode = mode;
+      ["modeChip", "heroModeChip"].forEach(function (id) { const chip = $(id); if (chip) chip.textContent = AGENT_MODE_LABEL[mode]; });
+      if (!agentRun || agentRun.finished) return;
+      if (state === "done" || state === "error" || state === "idle") { agentRun.summary = message; return; }
+      agentEnter(AGENT_PHASE_OF[state] || "build", message);
+    }
+    function agentStart(prompt) {
+      if (agentRun && !agentRun.finished) agentFinish("done");
+      const card = document.createElement("section");
+      card.className = "run-card";
+      card.dataset.status = "running";
+      card.setAttribute("aria-label", "Task progress");
+      const head = document.createElement("button");
+      head.type = "button";
+      head.className = "run-head";
+      head.innerHTML = '<span class="run-badge">Working</span><span class="run-title"></span><span class="run-time"></span><span class="run-caret">▾</span>';
+      head.querySelector(".run-title").textContent = String(prompt || "Task").slice(0, 90);
+      head.addEventListener("click", function () { card.classList.toggle("collapsed"); });
+      const list = document.createElement("ol");
+      list.className = "run-steps";
+      card.append(head, list);
+      $("chatLog").appendChild(card);
+      agentRun = { card: card, list: list, startedAt: Date.now(), steps: [], current: -1, finished: false, summary: "", route: "" };
+      if (agentTimer) window.clearInterval(agentTimer);
+      agentTimer = window.setInterval(agentRenderTime, 1000);
+      agentEnter("understand", "Reading your message");
+      return agentRun;
+    }
+    function agentRoute(kind) {
+      const run = agentRun;
+      if (!run || run.finished || !AGENT_ROUTE_PLAN[kind]) return;
+      run.route = kind;
+      run.steps = run.steps.filter(function (step) { return step.status !== "pending"; });
+      const have = run.steps.map(function (step) { return step.key; });
+      AGENT_ROUTE_PLAN[kind].forEach(function (key) { if (have.indexOf(key) < 0) run.steps.push({ key: key, status: "pending", log: [] }); });
+      agentRender();
+    }
+    function agentEnter(key, message) {
+      const run = agentRun;
+      if (!run || run.finished) return;
+      let index = run.steps.findIndex(function (step) { return step.key === key; });
+      if (index < 0) {
+        run.steps.splice(run.current + 1, 0, { key: key, status: "pending", log: [] });
+        index = run.current + 1;
+      }
+      if (index < run.current) index = run.current; // never walk backwards: a repair pass stays in its step
+      const now = Date.now();
+      if (index !== run.current) {
+        const previous = run.steps[run.current];
+        if (previous) { previous.status = "done"; previous.ended = now; }
+        // Planned steps this task jumped over did not happen: drop them.
+        run.steps = run.steps.filter(function (step, i) { return !(i > run.current && i < index && step.status === "pending"); });
+        index = run.steps.findIndex(function (step) { return step.key === key; });
+        run.current = index;
+        run.steps[index].status = "active";
+        run.steps[index].started = now;
+      }
+      const step = run.steps[run.current];
+      step.status = key === "ask" ? "waiting" : "active";
+      const text = String(message || "").replace(/…+$|\.\.\.$/, "").slice(0, 200);
+      if (step.now && step.now !== text) { step.log.push(step.now); if (step.log.length > 3) step.log.shift(); }
+      step.now = text;
+      agentRender();
+    }
+    function agentFinish(status, summary) {
+      const run = agentRun;
+      if (!run || run.finished) return;
+      run.finished = true;
+      const now = Date.now();
+      run.steps = run.steps.filter(function (step) { return step.status !== "pending"; });
+      const last = run.steps[run.current];
+      if (last) { last.status = status === "error" ? "failed" : "done"; last.ended = now; }
+      run.endedAt = now;
+      run.card.dataset.status = status;
+      const badge = { done: "Done", error: "Needs attention", stopped: "Stopped", skipped: "Skipped" }[status] || "Done";
+      run.card.querySelector(".run-badge").textContent = badge;
+      if (summary || run.summary) run.card.querySelector(".run-title").textContent = String(summary || run.summary).slice(0, 90);
+      if (status === "done" || status === "skipped") run.card.classList.add("collapsed");
+      if (agentTimer) { window.clearInterval(agentTimer); agentTimer = null; }
+      agentRender();
+      agentRenderTime();
+    }
+    function agentRender() {
+      const run = agentRun;
+      if (!run) return;
+      const total = run.steps.length;
+      run.list.innerHTML = "";
+      run.steps.forEach(function (step, i) {
+        const li = document.createElement("li");
+        li.className = "run-step " + step.status;
+        const dot = step.status === "done" ? "✓" : step.status === "failed" ? "!" : String(i + 1);
+        const time = step.started ? agentFmt((step.ended || Date.now()) - step.started) : "";
+        li.innerHTML = '<span class="step-dot">' + dot + '</span><div><div class="step-name"><span class="step-num">Step ' + (i + 1) +
+          ' · </span></div></div><span class="step-time">' + (step.status === "pending" ? "" : time) + "</span>";
+        li.querySelector(".step-name").appendChild(document.createTextNode(AGENT_PHASES[step.key] || step.key));
+        const body = li.children[1];
+        if (step.now && step.status !== "pending") {
+          const now = document.createElement("div");
+          now.className = "step-now";
+          now.textContent = step.now;
+          body.appendChild(now);
+        }
+        if (step.log.length && (step.status === "active" || step.status === "waiting")) {
+          const log = document.createElement("ul");
+          log.className = "step-log";
+          step.log.slice(-2).forEach(function (line) { const item = document.createElement("li"); item.textContent = line; log.appendChild(item); });
+          body.appendChild(log);
+        }
+        run.list.appendChild(li);
+      });
+      const done = run.steps.filter(function (step) { return step.status === "done"; }).length;
+      const active = run.steps[run.current];
+      const stepText = run.finished ? (run.card.dataset.status === "done" ? "Done · " + total + " steps" : run.card.querySelector(".run-badge").textContent)
+        : active ? "Step " + (run.current + 1) + " of " + total + " · " + (AGENT_PHASES[active.key] || active.key) : "";
+      if ($("processStep")) $("processStep").textContent = stepText;
+      if ($("processBar")) $("processBar").style.width = (run.finished ? 100 : Math.min(96, Math.round(((done + 0.5) / Math.max(1, total)) * 100))) + "%";
+      $("conversation").scrollTop = $("conversation").scrollHeight;
+    }
+    function agentRenderTime() {
+      const run = agentRun;
+      if (!run) return;
+      const text = agentFmt((run.endedAt || Date.now()) - run.startedAt);
+      const time = run.card.querySelector(".run-time");
+      if (time) time.textContent = text;
+      if ($("processTime")) $("processTime").textContent = text;
+      const active = run.steps[run.current];
+      if (active && !run.finished) {
+        const cell = run.list.children[run.current] && run.list.children[run.current].querySelector(".step-time");
+        if (cell && active.started) cell.textContent = agentFmt(Date.now() - active.started);
+      }
+    }
+
+    // Ask card: options with one Recommended, optional checklist, optional free text. In Auto mode the
+    // recommended choice is taken at once and noted on the run card. Stop cancels a waiting card.
+    function agentAsk(spec) {
+      const options = Array.isArray(spec.options) ? spec.options : [];
+      let recommended = options.findIndex(function (option) { return option.recommended; });
+      if (recommended < 0) recommended = 0;
+      if (!askFirst && !spec.always) {
+        const picked = options[recommended];
+        if (agentRun && agentRun.steps[agentRun.current]) agentEnter(agentRun.steps[agentRun.current].key, "Auto · " + (picked ? picked.label : "approved"));
+        return Promise.resolve({ index: recommended, option: picked, values: (spec.checks || []).map(function (c) { return c.checked !== false; }), auto: true });
+      }
+      setProcessState("asking", spec.status || "Waiting for your choice");
+      return new Promise(function (resolve, reject) {
+        const card = document.createElement("section");
+        card.className = "ask-card";
+        card.setAttribute("role", "group");
+        card.setAttribute("aria-label", spec.question);
+        const q = document.createElement("p"); q.className = "ask-q"; q.textContent = spec.question; card.appendChild(q);
+        if (spec.sub) { const sub = document.createElement("p"); sub.className = "ask-sub"; sub.textContent = spec.sub; card.appendChild(sub); }
+        const checks = [];
+        if (Array.isArray(spec.checks) && spec.checks.length) {
+          const box = document.createElement("div"); box.className = "ask-checks";
+          spec.checks.forEach(function (item) {
+            const label = document.createElement("label"); label.className = "ask-check";
+            const input = document.createElement("input"); input.type = "checkbox"; input.checked = item.checked !== false;
+            const text = document.createElement("span"); text.textContent = item.label;
+            label.append(input, text); box.appendChild(label); checks.push(input);
+          });
+          card.appendChild(box);
+        }
+        const entry = { reject: reject, card: card };
+        pendingAsks.add(entry);
+        const buttons = [];
+        function finish(result, chosenLabel) {
+          if (!pendingAsks.has(entry)) return;
+          pendingAsks.delete(entry);
+          card.classList.add("answered");
+          card.querySelectorAll("button,input").forEach(function (el) { el.disabled = true; });
+          const note = document.createElement("div"); note.className = "ask-result"; note.textContent = chosenLabel; card.appendChild(note);
+          result.values = checks.map(function (input) { return input.checked; });
+          // The next stage the task reports moves the stepper on; until then show the answer on this step.
+          agentEnter("ask", result.index < 0 ? "Skipped by you" : chosenLabel);
+          document.body.dataset.agentMode = "thinking";
+          resolve(result);
+        }
+        const wrap = document.createElement("div");
+        wrap.className = options.length > 1 || !checks.length ? "ask-options" : "ask-actions";
+        if (options.length > 1) {
+          options.forEach(function (option, i) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "ask-option" + (i === recommended ? " recommended" : "");
+            button.innerHTML = '<span class="ask-key">' + (i + 1) + '</span><span class="ask-label"></span>';
+            button.querySelector(".ask-label").textContent = option.label;
+            if (i === recommended) { const rec = document.createElement("span"); rec.className = "ask-rec"; rec.textContent = "Recommended"; button.querySelector(".ask-label").appendChild(rec); }
+            if (option.detail) { const detail = document.createElement("span"); detail.className = "ask-detail"; detail.textContent = option.detail; button.appendChild(detail); }
+            button.addEventListener("click", function () { button.classList.add("chosen"); finish({ index: i, option: option }, "You chose: " + option.label); });
+            wrap.appendChild(button); buttons.push(button);
+          });
+          card.appendChild(wrap);
+        }
+        const actions = document.createElement("div"); actions.className = "ask-actions";
+        if (options.length <= 1) {
+          const primary = document.createElement("button"); primary.type = "button"; primary.className = "ask-btn primary";
+          const only = options[0] || { label: "Apply" };
+          primary.textContent = only.label;
+          primary.addEventListener("click", function () { finish({ index: 0, option: only }, "Approved"); });
+          actions.appendChild(primary); buttons.push(primary);
+        }
+        if (spec.skip !== null) {
+          const skip = document.createElement("button"); skip.type = "button"; skip.className = "ask-btn";
+          skip.textContent = spec.skip || "Skip";
+          skip.addEventListener("click", function () { finish({ index: -1 }, "Skipped"); });
+          actions.appendChild(skip);
+        }
+        const hint = document.createElement("span"); hint.className = "ask-hint";
+        hint.textContent = options.length > 1 ? "1–" + options.length + " to pick · Enter = recommended" : "Enter = approve · Esc = skip";
+        actions.appendChild(hint);
+        card.appendChild(actions);
+        if (spec.custom) {
+          const row = document.createElement("form"); row.className = "ask-custom";
+          const input = document.createElement("input"); input.placeholder = "Or tell me what you want…"; input.maxLength = 300;
+          const go = document.createElement("button"); go.type = "submit"; go.className = "ask-btn"; go.textContent = "Send";
+          row.append(input, go);
+          row.addEventListener("submit", function (event) { event.preventDefault(); const text = input.value.trim(); if (text) finish({ index: recommended, option: options[recommended], custom: text }, "You said: " + text); });
+          card.appendChild(row);
+        }
+        card.tabIndex = -1;
+        card.addEventListener("keydown", function (event) {
+          if (event.target && event.target.tagName === "INPUT" && event.target.type !== "checkbox") return;
+          const n = Number(event.key);
+          if (n >= 1 && n <= options.length && options.length > 1) { event.preventDefault(); buttons[n - 1].click(); }
+          else if (event.key === "Enter") { event.preventDefault(); buttons[options.length > 1 ? recommended : 0].click(); }
+          else if (event.key === "Escape" && spec.skip !== null) { event.preventDefault(); event.stopPropagation(); finish({ index: -1 }, "Skipped"); }
+        });
+        $("chatLog").appendChild(card);
+        $("conversation").scrollTop = $("conversation").scrollHeight;
+        window.setTimeout(function () { try { card.focus({ preventScroll: true }); } catch (_) {} }, 30);
+      });
+    }
+    async function agentConfirm(question, sub, approveLabel) {
+      const result = await agentAsk({ question: question, sub: sub, options: [{ label: approveLabel || "Apply", recommended: true }], skip: "Skip" });
+      return result.index === 0;
+    }
+    function agentCancelAsks() {
+      pendingAsks.forEach(function (entry) { entry.card.classList.add("answered"); entry.reject(new Error(STOP_MESSAGE)); });
+      pendingAsks.clear();
+    }
+    const AGENT_SKIPPED = "Skipped. Nothing changed on the canvas.";
+
+    // Design requests: one clarifying question with a Recommended pick when the ask is short, else a go-ahead.
+    async function agentPlanDesign(prompt) {
+      const selection = currentSelection.selection || [];
+      const frames = selection.filter(function (node) { return ["FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE", "SECTION", "GROUP"].indexOf(node.type) >= 0; });
+      const words = prompt.split(/\s+/).filter(Boolean).length;
+      const name = frames[0] && frames[0].name ? String(frames[0].name).slice(0, 40) : "your selection";
+      const improve = /\b(improve\w*|better|polish|refine|enhance|clean\w*|simplif\w*|moderni[sz]e|sudhar\w*|behtar)\b/i.test(prompt);
+      const specific = words > 16 || /\b(redesign|re-?design|variations?|versions?|wireframe|dark|light|theme|keep|only|exactly|states?)\b/i.test(prompt);
+      if (frames.length === 1 && improve && !specific) {
+        const pick = await agentAsk({
+          question: "How should I improve “" + name + "”?",
+          sub: "I work on a copy next to it. Your original stays as it is.",
+          options: [
+            { label: "Polish this screen", detail: "Same layout and components. Fix hierarchy, spacing, alignment and copy.", recommended: true },
+            { label: "Bolder redesign", detail: "A clearly new layout and hierarchy, every piece of content kept." },
+            { label: "3 directions to compare", detail: "Three different takes, side by side." }
+          ], custom: true
+        });
+        if (pick.index < 0) return { skip: true };
+        const extra = pick.custom ? ". " + pick.custom : "";
+        if (pick.index === 2 && !pick.custom) return { quickTask: { kind: "screen-variations", count: 3, preApproved: true }, prompt: prompt + " — make 3 variations of this screen" };
+        if (pick.index === 1) return { prompt: prompt + ". Redesign it: a clearly new layout and visual hierarchy, keep every piece of content" + extra };
+        return { prompt: prompt + extra };
+      }
+      if (!selection.length && /\b(create|design|make|build|generate|draw|banao|bana)\b/i.test(prompt) &&
+          !/\b(mobile|app|ios|android|phone|desktop|web|website|tablet|dashboard|wireframe|landing|laptop)\b/i.test(prompt)) {
+        const pick = await agentAsk({
+          question: "What should I make?",
+          sub: "I'll place it on an empty spot of the canvas.",
+          options: [
+            { label: "Mobile app screen", detail: "High-fidelity UI, 390 px wide.", recommended: true },
+            { label: "Desktop web screen", detail: "High-fidelity UI, 1440 px wide." },
+            { label: "Low-fi wireframe", detail: "Greyscale boxes and real copy, fast to iterate." }
+          ], custom: true
+        });
+        if (pick.index < 0) return { skip: true };
+        const suffix = [" (mobile app screen, 390 px wide)", " (desktop web screen, 1440 px wide)", " as a low-fidelity greyscale wireframe"][pick.index] || "";
+        return { prompt: prompt + suffix + (pick.custom ? ". " + pick.custom : "") };
+      }
+      const ok = await agentConfirm(frames.length ? "Make this change on a copy of “" + name + "”?" : "Create this on the canvas?",
+        frames.length ? "I build it next to the original and check it. The original is not touched." : "I'll place it on an empty spot and check it.", "Go ahead");
+      return ok ? { prompt: prompt } : { skip: true };
+    }
+
+    // Quick tasks that change the canvas ask first; read-only ones (checks, audits, revert) just run.
+    function agentQuickTaskWrites(task) {
+      if (!task || task.preApproved) return false;
+      if (["revert", "hygiene", "ux-audit", "learn", "design-rules"].indexOf(task.kind) >= 0) return false;
+      if (["consistency", "detached", "prototype-wire"].indexOf(task.kind) >= 0) return task.fix !== false;
+      return true;
+    }
+    function agentDescribeQuickTask(task) {
+      const n = (currentSelection.selection || []).length;
+      const what = n > 1 ? n + " selected layers" : "the selection";
+      switch (task.kind) {
+        case "generate-image": return "Generate an image into " + what + "?";
+        case "remove-background": return "Remove the background from " + what + "?";
+        case "rewrite-text": return "Rewrite the text in " + what + "?";
+        case "rename-layers": return "Rename the layers in " + what + " by purpose?";
+        case "hygiene-fix": return "Fix " + (task.groups || []).join(", ") + " issues in " + what + "?";
+        case "fill-data": return "Fill " + what + " with realistic data?";
+        case "icon": return task.query ? "Add a “" + task.query + "” icon?" : "Add matching icons to " + what + "?";
+        case "consistency": return "Make the selected screens consistent?";
+        case "detached": return "Relink detached copies to their components?";
+        case "handoff": return "Add handoff notes next to " + what + "?";
+        case "prototype-wire": return "Wire the selected screens as a prototype?";
+        case "journey-create": return "Build a journey of new screens?";
+        case "journey-next": return "Build the next screen of this flow?";
+        case "flow-states": return "Add the missing states to this flow?";
+        case "theme": return "Switch " + what + " to " + task.target + " mode?";
+        case "states-pack": return "Create " + (task.states || []).join(", ") + " states?";
+        case "screen-variations": return "Create " + (task.count || 2) + " variations of this screen?";
+        case "flow-variations": return "Create a variation of this flow?";
+        default: return "Apply this change?";
+      }
+    }
+
+    // Native action plans: show every planned change with a checkbox before anything runs.
+    async function agentReviewActions(actions, summary, canvas) {
+      if (!askFirst || !Array.isArray(actions) || !actions.length) return actions;
+      const names = {};
+      (function walk(nodes) { (nodes || []).forEach(function (node) { if (node && node.id) names[node.id] = node.name || node.type; if (node && node.children) walk(node.children); }); })(canvas && canvas.nodes);
+      const verbs = { "update-node": "Change", "create-elements": "Add layers to", "delete-node": "Delete", "insert-image": "Insert image into",
+        "create-image-fill": "Fill with image", "reparent-node": "Move", "group-nodes": "Group", "ungroup-node": "Ungroup", "clone-node": "Duplicate",
+        "create-instance": "Place component in", "swap-instance": "Swap component", "detach-instance": "Detach", "set-instance-properties": "Set properties of",
+        "apply-style": "Apply style to", "bind-variable": "Bind variable on", "rename-node": "Rename", "reorder-node": "Reorder" };
+      const checks = actions.map(function (action) {
+        const target = names[action.nodeId] || names[action.parentNodeId] || (Array.isArray(action.nodeIds) && names[action.nodeIds[0]]) || "selection";
+        const detail = action.operation === "update-node" && action.patch ? " · " + Object.keys(action.patch).slice(0, 4).join(", ")
+          : action.operation === "create-elements" && Array.isArray(action.elements) ? " · " + action.elements.length + " layer(s)" : "";
+        return { label: (verbs[action.operation] || String(action.operation).replace(/-/g, " ")) + " “" + String(target).slice(0, 40) + "”" + detail, checked: true };
+      });
+      const result = await agentAsk({
+        question: actions.length === 1 ? "Apply this change?" : "Apply these " + actions.length + " changes?",
+        sub: summary ? String(summary).slice(0, 220) : "Untick anything you don't want.",
+        checks: checks, options: [{ label: "Apply selected", recommended: true }], skip: "Skip all"
+      });
+      if (result.index < 0) return [];
+      return actions.filter(function (_action, i) { return result.values[i] !== false; });
+    }
+
+    // Clarifying questions from a model reply become clickable options. Preferred form: a fenced
+    // ```uxd-ask {"questions":[{"q":"…","options":["…"],"recommended":0}]}``` block; otherwise numbered questions
+    // with "(e.g., a, b, c)" or "a or b" choices are parsed from the text.
+    function agentStripAskBlock(text) { return String(text || "").replace(/```\s*uxd-ask[\s\S]*?(```|$)/gi, "").trim(); }
+    function agentParseQuestions(text) {
+      const raw = String(text || "");
+      const block = /```\s*uxd-ask\s*([\s\S]*?)```/i.exec(raw);
+      if (block) {
+        try {
+          const data = JSON.parse(block[1]);
+          const list = (Array.isArray(data) ? data : data.questions || []).map(function (item) {
+            return { q: String(item.q || item.question || "").slice(0, 200), options: (item.options || []).map(String).filter(Boolean).slice(0, 5),
+              recommended: Number(item.recommended) || 0 };
+          }).filter(function (item) { return item.q && item.options.length >= 2; });
+          if (list.length) return list.slice(0, 4);
+        } catch (_) {}
+      }
+      const asking = /\?|let me know|could you|can you (tell|share|confirm)|which|whether|prefer/i.test(raw);
+      if (!asking) return [];
+      const out = [];
+      raw.split("\n").forEach(function (line) {
+        const m = /^\s*(?:\d+[.)]|[-*•])\s+(.{8,260})$/.exec(line);
+        if (!m) return;
+        const q = m[1].replace(/\*\*/g, "").trim();
+        let options = [];
+        const eg = /\((?:e\.g\.?,?|eg,?|for example,?|like|such as)\s*([^)]+)\)/i.exec(q);
+        if (eg) options = eg[1].split(/,\s*|\s+or\s+|\s*\/\s*/);
+        else {
+          const tail = /\b(?:whether (?:you want to|to)?|if you prefer|do you (?:want|prefer)|should i|prefer|between)\s+(.+?)[.?]?$/i.exec(q);
+          if (tail && /\s(or|vs\.?)\s/i.test(tail[1])) options = tail[1].split(/,\s*|\s+or\s+|\s+vs\.?\s+/i);
+        }
+        options = options.map(function (o) { return o.replace(/^(and|or|the|a|an)\s+/i, "").replace(/[.?]+$/, "").trim(); })
+          .filter(function (o) { return o.length > 1 && o.length < 70; });
+        if (options.length >= 2) {
+          options = options.slice(0, 5).map(function (o) { return o.charAt(0).toUpperCase() + o.slice(1); });
+          out.push({ q: q.replace(/\s*\((?:e\.g\.?|eg|for example|like|such as)[^)]*\)/i, "").slice(0, 200), options: options, recommended: 0 });
+        }
+      });
+      return out.slice(0, 4);
+    }
+    function agentOfferQuestions(text, message) {
+      const questions = agentParseQuestions(text);
+      if (!questions.length || !message || !message.row) return false;
+      const card = document.createElement("section");
+      card.className = "ask-card";
+      const picks = questions.map(function (q) { return { value: q.options[Math.min(q.options.length - 1, Math.max(0, q.recommended))] }; });
+      questions.forEach(function (q, qi) {
+        const title = document.createElement("p"); title.className = "ask-q"; title.textContent = (questions.length > 1 ? (qi + 1) + ". " : "") + q.q;
+        const row = document.createElement("div"); row.className = "followups"; row.style.margin = "0 0 10px";
+        const chips = [];
+        function select(chip, value) { chips.forEach(function (c) { c.classList.remove("chosen"); c.style.borderColor = ""; c.style.background = ""; }); chip.style.borderColor = "var(--uxd-accent)"; chip.style.background = "rgba(124,92,255,.1)"; picks[qi].value = value; if (questions.length === 1) send(); }
+        q.options.forEach(function (option, oi) {
+          const chip = document.createElement("button"); chip.type = "button"; chip.className = "ask-option" + (oi === q.recommended ? " recommended" : "");
+          chip.style.cssText = "display:inline-flex;width:auto;padding:5px 9px;grid-template-columns:none;font-size:11px";
+          chip.textContent = option;
+          if (oi === q.recommended) { const rec = document.createElement("span"); rec.className = "ask-rec"; rec.textContent = "Recommended"; chip.appendChild(rec); if (questions.length > 1) { chip.style.borderColor = "var(--uxd-accent)"; chip.style.background = "rgba(124,92,255,.1)"; } }
+          chip.addEventListener("click", function () { select(chip, option); });
+          row.appendChild(chip); chips.push(chip);
+        });
+        const other = document.createElement("button"); other.type = "button"; other.className = "ask-option";
+        other.style.cssText = "display:inline-flex;width:auto;padding:5px 9px;grid-template-columns:none;font-size:11px";
+        other.textContent = "Other…";
+        other.addEventListener("click", function () {
+          if (row.querySelector("input")) return;
+          const input = document.createElement("input"); input.placeholder = "Type your answer"; input.maxLength = 200;
+          input.style.cssText = "flex:1 1 140px;min-width:0;padding:5px 8px;border:1px solid var(--uxd-line);border-radius:9px;background:transparent;color:inherit;font:inherit;font-size:11px";
+          input.addEventListener("input", function () { picks[qi].value = input.value.trim() || picks[qi].value; });
+          input.addEventListener("keydown", function (event) { if (event.key === "Enter" && input.value.trim()) { event.preventDefault(); picks[qi].value = input.value.trim(); send(); } });
+          row.appendChild(input); input.focus();
+        });
+        row.appendChild(other); chips.push(other);
+        card.append(title, row);
+      });
+      let sent = false;
+      function send() {
+        if (sent || isSending) return;
+        sent = true;
+        card.classList.add("answered");
+        card.querySelectorAll("button,input").forEach(function (el) { el.disabled = true; });
+        const answer = questions.length === 1 ? picks[0].value
+          : questions.map(function (q, i) { return (i + 1) + ". " + q.q.replace(/[?.]+$/, "") + ": " + picks[i].value; }).join("\n");
+        void submitPrompt(answer);
+      }
+      if (questions.length > 1) {
+        const actions = document.createElement("div"); actions.className = "ask-actions";
+        const go = document.createElement("button"); go.type = "button"; go.className = "ask-btn primary"; go.textContent = "Send answers";
+        go.addEventListener("click", send);
+        const hint = document.createElement("span"); hint.className = "ask-hint"; hint.textContent = "Recommended picks are preselected";
+        actions.append(go, hint); card.appendChild(actions);
+      }
+      message.row.appendChild(card);
+      return true;
+    }
+
+    // Next steps after a result, chosen from the route and the current selection.
+    function agentFollowups(route, message) {
+      if (!message || !message.row || agentRun && agentRun.card.dataset.status === "error") return;
+      const selection = currentSelection.selection || [];
+      const frames = selection.filter(function (node) { return ["FRAME", "COMPONENT", "INSTANCE", "SECTION"].indexOf(node.type) >= 0; }).length;
+      let items = [];
+      if (route === "design") items = ["Make 3 variations of this screen", "Add empty, loading and error states", "Check hygiene"];
+      else if (route === "native" || route === "direct") items = ["Check hygiene", "Fix spacing issues", "Learn from my edits"];
+      else if (route === "quick") items = frames ? ["Check hygiene", "Add handoff notes", "Make 3 variations of this screen"] : ["Check hygiene"];
+      if (!items.length) return;
+      const row = document.createElement("div"); row.className = "followups";
+      items.slice(0, 3).forEach(function (text) {
+        const chip = document.createElement("button"); chip.type = "button"; chip.className = "followup"; chip.textContent = text;
+        chip.addEventListener("click", function () { if (!isSending) void submitPrompt(text); });
+        row.appendChild(chip);
+      });
+      message.row.appendChild(row);
+    }
+
+    // Welcome suggestions follow the selection.
+    function agentSmartSuggestions() {
+      const box = document.querySelector(".suggestions");
+      if (!box || $("welcome").classList.contains("has-started")) return;
+      const selection = currentSelection.selection || [];
+      const types = selection.map(function (node) { return node.type; });
+      const frames = types.filter(function (t) { return ["FRAME", "COMPONENT", "INSTANCE", "SECTION", "GROUP"].indexOf(t) >= 0; }).length;
+      let list;
+      if (!selection.length) list = ["Create a mobile login screen", "Create a journey to pay a bill", "What can you do?"];
+      else if (types.every(function (t) { return t === "TEXT"; })) list = ["Make this copy shorter", "Translate to Hindi", "Fix grammar and tone"];
+      else if (frames >= 2) list = ["Make these screens consistent", "Wire these screens as a prototype", "Add the missing states to this flow"];
+      else if (types.some(function (t) { return t === "RECTANGLE" || t === "ELLIPSE"; }) && !frames) list = ["Insert an image of a happy customer", "Remove background"];
+      else list = ["Improve this screen", "Add empty, loading and error states", "Check hygiene and fix issues"];
+      box.innerHTML = "";
+      list.forEach(function (text) {
+        const button = document.createElement("button"); button.type = "button"; button.className = "suggestion"; button.textContent = text;
+        button.addEventListener("click", function () { $("prompt").value = text; $("prompt").dispatchEvent(new Event("input", { bubbles: true })); $("prompt").focus(); });
+        box.appendChild(button);
+      });
+    }
+
+    // Slash commands: type "/" for a list; picking one fills the prompt.
+    const AGENT_COMMANDS = [
+      ["/improve", "Improve this screen", "Polish or redesign the selected screen"],
+      ["/variations", "Make 3 variations of this screen", "Three directions side by side"],
+      ["/states", "Add empty, loading and error states", "States pack for the selected screen"],
+      ["/journey", "Create a journey to ", "Plan and build a flow of screens"],
+      ["/next", "Create the next step screen", "The screen that follows the selected one"],
+      ["/hygiene", "Check hygiene", "Spacing, auto layout, tokens, contrast"],
+      ["/fix", "Fix all hygiene issues", "One-click fixes on the selection"],
+      ["/audit", "UX audit of this screen", "Usability and accessibility review"],
+      ["/icons", "Add icons", "Matching icons on buttons and rows"],
+      ["/data", "Fill with realistic data", "Real names, amounts and dates"],
+      ["/copy", "Rewrite the text shorter and clearer", "Rewrite selected copy"],
+      ["/rename", "Rename layers", "Name layers by purpose"],
+      ["/dark", "Make this screen dark mode", "Switch theme in place"],
+      ["/consistent", "Make these screens consistent", "Style lock across selected screens"],
+      ["/wire", "Wire these screens as a prototype", "Connect screens in order"],
+      ["/handoff", "Add handoff notes", "Developer notes next to the screen"],
+      ["/rules", "Show design rules", "This file's saved design rules"],
+      ["/learn", "Learn from my edits", "Save lessons from your corrections"],
+      ["/revert", "Revert", "Undo the last UX Direct change"]
+    ];
+    let slashIndex = 0;
+    function slashMatches() {
+      const value = $("prompt").value;
+      if (!/^\/\S*$/.test(value)) return [];
+      const q = value.slice(1).toLowerCase();
+      const byCommand = AGENT_COMMANDS.filter(function (c) { return c[0].slice(1).indexOf(q) === 0; });
+      return (byCommand.length ? byCommand : AGENT_COMMANDS.filter(function (c) { return c[1].toLowerCase().indexOf(q) >= 0; })).slice(0, 8);
+    }
+    function renderSlashMenu() {
+      const menu = $("slashMenu");
+      const matches = slashMatches();
+      if (!matches.length) { menu.hidden = true; return; }
+      slashIndex = Math.min(slashIndex, matches.length - 1);
+      menu.innerHTML = "";
+      matches.forEach(function (c, i) {
+        const item = document.createElement("button"); item.type = "button"; item.className = "slash-item" + (i === slashIndex ? " active" : "");
+        item.setAttribute("role", "option");
+        item.innerHTML = '<span class="slash-cmd"></span><span class="slash-desc"></span>';
+        item.children[0].textContent = c[0]; item.children[1].textContent = c[2];
+        item.addEventListener("mousedown", function (event) { event.preventDefault(); applySlash(c); });
+        menu.appendChild(item);
+      });
+      menu.hidden = false;
+    }
+    function applySlash(c) {
+      $("prompt").value = c[1];
+      $("slashMenu").hidden = true;
+      $("prompt").dispatchEvent(new Event("input", { bubbles: true }));
+      $("prompt").focus();
+      $("prompt").setSelectionRange(c[1].length, c[1].length);
+    }
+    const promptHistory = [];
+    let historyIndex = -1;
+    function agentPromptKeydown(event) {
+      const menu = $("slashMenu");
+      if (!menu.hidden) {
+        const matches = slashMatches();
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); event.stopImmediatePropagation(); slashIndex = (slashIndex + (event.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length; renderSlashMenu(); return; }
+        if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); event.stopImmediatePropagation(); if (matches[slashIndex]) applySlash(matches[slashIndex]); return; }
+        if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); menu.hidden = true; return; }
+      }
+      const box = $("prompt");
+      if ((event.key === "ArrowUp" || event.key === "ArrowDown") && promptHistory.length && (!box.value || historyIndex >= 0)) {
+        if (event.key === "ArrowUp" && box.selectionStart !== 0 && box.value) return;
+        event.preventDefault();
+        historyIndex = event.key === "ArrowUp" ? Math.min(promptHistory.length - 1, historyIndex + 1) : historyIndex - 1;
+        box.value = historyIndex >= 0 ? promptHistory[promptHistory.length - 1 - historyIndex] : "";
+        box.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    }
+    function setAskMode(next) {
+      askFirst = Boolean(next);
+      try { window.localStorage.setItem("uxd-ask-mode", askFirst ? "ask" : "auto"); } catch (_) {}
+      const toggle = $("askModeToggle");
+      if (toggle) toggle.setAttribute("aria-pressed", String(askFirst));
+      if ($("askModeLabel")) $("askModeLabel").textContent = askFirst ? "Ask first" : "Auto";
+    }
+    // uxd-agent-ui:end
     const handledBridgeCommands = new Set();
     const pendingCanvasCommands = new Map();
     // Matches the backend limit for renderedScreen/sourceImage/outputImage data URLs.
@@ -593,15 +1289,12 @@
     function renderStatuses() {
       renderService("backend", "UX Direct backend", backendHealthy ? "Connected" : "Not connected",
         connectionError || (backendHealthy ? "Cloudflare Workers health endpoint verified." : "Backend health check failed."), backendHealthy);
-      renderService("provider", activeProviderLabel + " · model routing", providerHealthy ? "Connected" : "Not connected",
-        providerHealthy ? "API key verified; internal chat uses the configured model router." : "Model provider could not be verified.", providerHealthy);
+      renderService("provider", "Free models · UX Direct gateway", providerHealthy ? "Connected" : "Not connected",
+        providerHealthy ? "Free models are reachable through the UX Direct gateway." : "Free models could not be reached. Use Refresh to retry.", providerHealthy);
       renderService("figma", "Figma native plugin bridge", figmaBridgeHealthy ? "Connected" : "Not connected",
         figmaBridgeHealthy ? "This plugin session is sending fresh heartbeats." : "The plugin bridge is unavailable or the session is stale.", figmaBridgeHealthy);
       renderService("brain", "Shared Knowledge Base", brainHealthy === true ? "Connected" : brainHealthy === false ? "Unavailable" : "Not checked",
         brainHealthy === true ? "Approved UX Direct memories are reachable." : brainHealthy === false ? "Chat may continue with reduced context; brain diagnostics are unavailable." : "Waiting for provider diagnostics.", brainHealthy);
-      const chatHealthy = chatgptState === "connected";
-      renderService("chatgpt", "ChatGPT monitor · MCP", chatHealthy ? "Active" : chatgptState === "idle" ? "Idle" : "Not verified",
-        chatHealthy ? "Recent authenticated ChatGPT activity was detected." : chatgptState === "idle" ? "No MCP request in the recent activity window. The in-Figma cockpit does not depend on ChatGPT to send design requests." : "Connection activity has not been confirmed.", chatgptState === "connected" ? true : chatgptState === "idle" ? null : false);
       const coreConnected = backendHealthy && providerHealthy && figmaBridgeHealthy;
       setOverallStatus(coreConnected ? "connected" : "disconnected", coreConnected ? "Connected" : "Not connected");
       renderHealthPanel();
@@ -630,128 +1323,26 @@
       }
     }
 
+    // The plugin shows one model route: free models through the UX Direct gateway. The legacy
+    // provider switch (and its warm-up call) stays on the backend behind its flag, never in this UI.
     function renderProviderSwitcher(state) {
       if (state && Array.isArray(state.providers)) {
         providerSwitcherState = state;
         providerOptions = state.providers;
-        activeProviderId = state.activeProvider || "freellmapi";
-        const selectedProvider = providerOptions.find(function (provider) { return provider.id === activeProviderId; });
-        activeProviderLabel = selectedProvider ? selectedProvider.label : (state.activeProviderLabel || "Model provider");
+        activeProviderId = state.activeProvider || activeProviderId;
       }
-      const select = $("providerSelect");
       const hint = $("providerHint");
-      if (!select || !hint) return;
-      const currentState = providerSwitcherState;
-      if (!currentState) {
-        select.disabled = true;
-        hint.textContent = "Provider configuration could not be loaded. Use Refresh to retry.";
-        return;
-      }
-
-      select.innerHTML = "";
-      providerOptions.forEach(function (provider) {
-        const option = document.createElement("option");
-        option.value = provider.id;
-        option.textContent = provider.label + (provider.configured ? "" : " · not configured");
-        option.disabled = !provider.configured && provider.id !== activeProviderId;
-        select.appendChild(option);
-      });
-      select.value = activeProviderId;
-      select.disabled = providerSwitching || !verifiedFileKey || providerOptions.length < 2;
-      const active = providerOptions.find(function (provider) { return provider.id === activeProviderId; });
-      if (!active) {
+      if (!hint) return;
+      const active = providerSwitcherState && providerOptions.find(function (provider) { return provider.id === activeProviderId; });
+      if (!providerSwitcherState) {
         hint.className = "provider-hint error";
-        hint.textContent = "The active provider wasn't recognized. Refresh to reload provider settings.";
-      } else if (!active.configured) {
+        hint.textContent = "Model settings could not be loaded. Use Refresh to retry.";
+      } else if (active && !active.configured) {
         hint.className = "provider-hint error";
-        hint.textContent = active.configurationError || (active.label + " isn't configured on the Worker yet.");
-      } else if (activeProviderId === "freellmapi") {
-        hint.className = "provider-hint";
-        hint.textContent = "Active: FreeLLMAPI · " + active.model + ". The API endpoint must be hosted separately and reachable over HTTPS.";
+        hint.textContent = "Free models are not ready on the server yet.";
       } else {
         hint.className = "provider-hint";
-        hint.textContent = "Active: " + active.label + " · " + active.model + ". Provider keys remain on the backend.";
-      }
-      const routingNote = $("routingNote");
-      if (routingNote && active) {
-        routingNote.textContent = "Design model: " + active.label + " · " + active.model;
-      }
-    }
-
-    async function changeActiveProvider(nextProviderId) {
-      if (providerSwitching || !verifiedFileKey || nextProviderId === activeProviderId) return;
-      const target = providerOptions.find(function (provider) { return provider.id === nextProviderId; });
-      if (!target || !target.configured) {
-        $("providerSelect").value = activeProviderId;
-        $("providerHint").className = "provider-hint error";
-        $("providerHint").textContent = target && target.configurationError
-          ? target.configurationError
-          : "That provider isn't configured. Set its server-side URL and key before switching.";
-        return;
-      }
-
-      providerSwitching = true;
-      renderProviderSwitcher(providerSwitcherState);
-      $("providerHint").className = "provider-hint";
-      $("providerHint").textContent = "Switching to " + target.label + "…";
-      try {
-        const response = await fetch(API + "/api/assistant/provider", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Accept": "application/json" },
-          cache: "no-store",
-          body: JSON.stringify({
-            provider: nextProviderId,
-            fileKey: verifiedFileKey,
-            clientId: pluginClientId,
-            sessionToken: pluginSessionToken
-          })
-        });
-        const data = await response.json().catch(function () { return {}; });
-        if (!response.ok) throw new Error(data.error || ("Provider switch failed (HTTP " + response.status + ")."));
-        renderProviderSwitcher(data);
-        void sendTelemetry("Model provider switched", "success", "UX Direct runtime provider changed from the cockpit.", {
-          mode: nextProviderId,
-          category: "provider",
-          action: "switch-model-provider"
-        });
-        await refreshConnections();
-      } catch (error) {
-        $("providerSelect").value = activeProviderId;
-        $("providerHint").className = "provider-hint error";
-        $("providerHint").textContent = error && error.message
-          ? error.message
-          : "Provider switch failed. The active provider was not changed.";
-      } finally {
-        providerSwitching = false;
-        renderProviderSwitcher(providerSwitcherState);
-      }
-    }
-
-    // A sleeping FreeLLMAPI host (e.g. Render Free) needs up to a minute to wake.
-    // Wake it when the plugin opens so the first Figma task doesn't spend its attempt on the cold start.
-    let freeModelWarmAt = 0;
-    let freeModelWarmPending = false;
-    async function warmFreeModelServer(fileKey) {
-      if (activeProviderId !== "freellmapi" || freeModelWarmPending || Date.now() - freeModelWarmAt < 10 * 60 * 1000) return;
-      freeModelWarmPending = true;
-      const hint = $("providerHint");
-      if (hint) { hint.className = "provider-hint"; hint.textContent = "Waking the free model server… the first request after idle can take up to a minute."; }
-      try {
-        const response = await fetch(API + "/api/assistant/provider?warm=1&fileKey=" + encodeURIComponent(fileKey), { cache: "no-store", headers: { "Accept": "application/json" } });
-        const data = await response.json().catch(function () { return {}; });
-        if (data && data.ok) {
-          freeModelWarmAt = Date.now();
-          renderProviderSwitcher(null);
-          const readyHint = $("providerHint");
-          if (readyHint && !data.skipped) readyHint.textContent += " Free model server ready" + (typeof data.modelCount === "number" ? " · " + data.modelCount + " models" : "") + ".";
-        } else if (hint) {
-          hint.className = "provider-hint error";
-          hint.textContent = (data && data.error) || "The free model server could not be reached.";
-        }
-      } catch (_) {
-        if (hint) { hint.className = "provider-hint error"; hint.textContent = "The free model server could not be reached."; }
-      } finally {
-        freeModelWarmPending = false;
+        hint.textContent = "Free models only, through the UX Direct gateway. Keys stay on the server.";
       }
     }
 
@@ -794,7 +1385,6 @@
         if (results[4].status === "fulfilled" && results[4].value.ok) {
           const providerState = await results[4].value.json();
           renderProviderSwitcher(providerState);
-          warmFreeModelServer(fileKey);
         } else {
           renderProviderSwitcher(null);
         }
@@ -931,7 +1521,7 @@
     }
     function renderReplyHtml(content) {
       var visible = [], tech = [];
-      String(content || "").replace(/\r\n?/g, "\n").split("\n").forEach(function (line) {
+      agentStripAskBlock(content).replace(/\r\n?/g, "\n").split("\n").forEach(function (line) {
         (UXD_TECH_LINE.test(line) ? tech : visible).push(line);
       });
       var main = uxdScrubArchitecture(visible.join("\n").replace(/\n{3,}/g, "\n\n").trim());
@@ -1542,7 +2132,8 @@
         throw new Error((payload.error || "Native action planning failed.") + details);
       }
 
-      const actions = payload.actions;
+      const actions = await agentReviewActions(payload.actions, payload.summary, canvas);
+      if (!actions.length) { stage("done", "Skipped by you"); return AGENT_SKIPPED; }
       const canvasIds = new Set();
       function gatherIds(nodes) {
         (Array.isArray(nodes) ? nodes : []).forEach(function (node) {
@@ -3970,6 +4561,11 @@
 
     async function runDirectEditTask(edit, prompt, reportProgress) {
       const notify = typeof reportProgress === "function" ? reportProgress : function () {};
+      const layerCount = (currentSelection.selection || []).length;
+      if (!(await agentConfirm("Apply this edit?", "“" + prompt.slice(0, 120) + "” on " + (layerCount > 1 ? layerCount + " selected layers" : "the selection") + ".", "Apply"))) {
+        setProcessState("done", "Skipped by you");
+        return AGENT_SKIPPED;
+      }
       setProcessState("creating", "Applying " + edit.ops.length + " direct edit(s)…");
       notify("Applying " + edit.ops.length + " direct edit(s)…");
       const result = await localTask("apply-direct-edits", { ops: edit.ops }, 60000);
@@ -4002,6 +4598,10 @@
     async function runQuickTask(task, prompt, reportProgress) {
       const notify = typeof reportProgress === "function" ? reportProgress : function () {};
       function stage(state, message) { setProcessState(state, message); notify(message); }
+      if (agentQuickTaskWrites(task) && !(await agentConfirm(agentDescribeQuickTask(task), "Revert stays available after it runs."))) {
+        stage("done", "Skipped by you");
+        return AGENT_SKIPPED;
+      }
       if (task.kind === "revert") return runRevertTask(task, stage);
       if (task.kind === "generate-image") return runGenerateImageTask(task, prompt, stage);
       if (task.kind === "remove-background") return runRemoveBackgroundTask(stage);
@@ -4192,6 +4792,9 @@
       const startedAt = Date.now();
       appendMessage("user", prompt);
       chatHistory.push({ role: "user", content: prompt });
+      if (promptHistory[promptHistory.length - 1] !== prompt) promptHistory.push(prompt);
+      historyIndex = -1;
+      agentStart(prompt);
       const typingRow = appendTyping();
       let assistantMessage = null;
       const journalStart = changeSeq;
@@ -4236,6 +4839,7 @@
         });
         const isQuestionTurn = Boolean(turn && turn.kind === "question");
         if (!isQuestionTurn && directEdit && (!quickTask || quickTask.kind === "rewrite-text" || quickTask.kind === "generate-image")) {
+          agentRoute("direct");
           typingRow.remove();
           assistantMessage = appendMessage("assistant", "Applying the edit…");
           const answer = await runDirectEditTask(directEdit, prompt, function (status) {
@@ -4258,6 +4862,7 @@
           return;
         }
         if (quickTask) {
+          agentRoute("quick");
           typingRow.remove();
           assistantMessage = appendMessage("assistant", "Starting " + quickTask.kind.replace(/-/g, " ") + "…");
           const answer = await runQuickTask(quickTask, prompt, function (status) {
@@ -4271,6 +4876,7 @@
           return;
         }
         if (!isQuestionTurn && isDirectCanvasActionPrompt(prompt)) {
+          agentRoute("native");
           typingRow.remove();
           assistantMessage = appendMessage("assistant", "Inspecting selected layers and planning native edits…");
           const answer = await executeNativeActionPlan(prompt, function (status) {
@@ -4284,11 +4890,28 @@
           return;
         }
         if (!isQuestionTurn && isDesignActionPrompt(prompt)) {
+          agentRoute("design");
           typingRow.remove();
+          const designPlan = await agentPlanDesign(prompt);
+          if (designPlan.skip) {
+            setProcessState("done", "Skipped by you");
+            assistantMessage = appendMessage("assistant", AGENT_SKIPPED);
+            chatHistory.push({ role: "assistant", content: AGENT_SKIPPED });
+            return;
+          }
+          if (designPlan.quickTask) {
+            assistantMessage = appendMessage("assistant", "Starting variations…");
+            const variations = await runQuickTask(designPlan.quickTask, designPlan.prompt, function (status) {
+              if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
+            });
+            assistantMessage.bubble.innerHTML = renderReplyHtml(variations);
+            chatHistory.push({ role: "assistant", content: variations });
+            return;
+          }
           assistantMessage = appendMessage("assistant", "Scanning selected screen and native layers…");
           const designSeqStart = changeSeq;
           const designSourceIds = (currentSelection.selection || []).map(function (node) { return node.id; }).filter(Boolean).slice(0, 20);
-          const answer = await createFigmaDesign(prompt, function (status) {
+          const answer = await createFigmaDesign(designPlan.prompt, function (status) {
             if (assistantMessage) {
               assistantMessage.bubble.textContent = status;
               $("conversation").scrollTop = $("conversation").scrollHeight;
@@ -4324,6 +4947,8 @@
           const payload = await response.json().catch(function () { return {}; });
           throw new Error(payload.error || "UX Direct chat returned HTTP " + response.status + ".");
         }
+        agentRoute("chat");
+        agentEnter("answer", "Writing the answer");
         assistantMessage = appendMessage("assistant", "");
         typingRow.remove();
         const answer = await streamAssistantResponse(response, function (_delta, current) {
@@ -4338,7 +4963,8 @@
           await sendTelemetry("Cockpit chat returned empty response", "error", "The model stream contained no assistant text.", { durationMs: Date.now() - startedAt });
         } else {
           chatHistory.push({ role: "assistant", content: answer });
-          setProcessState("done", "Response ready · UX Direct Brain replied");
+          setProcessState("done", "Answered");
+          agentOfferQuestions(answer, assistantMessage);
           await sendTelemetry("Cockpit chat response completed", "success", "UX Direct returned a conversational response from its internal model route.", { durationMs: Date.now() - startedAt, answerChars: answer.length });
         }
       } catch (error) {
@@ -4364,6 +4990,12 @@
         }
         await sendTelemetry("Cockpit chat request failed", "error", "The internal UX Direct chat or native design-agent request failed.", { durationMs: Date.now() - startedAt });
       } finally {
+        const endState = document.body.dataset.processState;
+        const runStatus = stopRequested ? "stopped" : endState === "error" ? "error"
+          : assistantMessage && assistantMessage.bubble && assistantMessage.bubble.textContent.indexOf(AGENT_SKIPPED) === 0 ? "skipped" : "done";
+        const runRoute = agentRun ? agentRun.route : "";
+        agentFinish(runStatus);
+        if (runStatus === "done") agentFollowups(runRoute, assistantMessage);
         attachRevertButton(assistantMessage, changeJournal.filter(function (entry) { return entry.seq > journalStart && !entry.reverted; }));
         isSending = false;
         stopRequested = false;
@@ -4394,7 +5026,6 @@
       runNativeHealthChecks();
     });
     $("refreshStatus").addEventListener("click", function () { void refreshConnections(); });
-    $("providerSelect").addEventListener("change", function () { void changeActiveProvider(this.value); });
     $("closeStatus").addEventListener("click", function () { toggleStatusPanel(false); });
     $("stop").addEventListener("click", function (event) { event.preventDefault(); requestStop(); });
     $("chatForm").addEventListener("submit", function (event) {
@@ -4433,6 +5064,11 @@
       this.style.height = Math.min(this.scrollHeight, 130) + "px";
       $("send").disabled = isSending || !this.value.trim() || !verifiedFileKey;
     });
+    $("prompt").addEventListener("keydown", agentPromptKeydown, { capture: true });
+    $("prompt").addEventListener("input", function () { slashIndex = 0; renderSlashMenu(); });
+    $("prompt").addEventListener("blur", function () { window.setTimeout(function () { $("slashMenu").hidden = true; }, 120); });
+    $("askModeToggle").addEventListener("click", function () { setAskMode(!askFirst); });
+    setAskMode(askFirst);
     $("prompt").addEventListener("keydown", function (event) {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -4511,6 +5147,7 @@
         currentSelection = message;
         if (selectionWaiters.length) selectionWaiters.splice(0).forEach(function (resolve) { resolve(); });
         updateSelectionChip();
+        agentSmartSuggestions();
         $("send").disabled = isSending || !$("prompt").value.trim() || !verifiedFileKey;
         return;
       }

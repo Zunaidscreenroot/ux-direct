@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { PROVIDERS, configuredProviders, freeModelsFromListing, modelTier, modelSupportsVision } from "../src/llm-gateway/catalog";
-import { cooldownFor, estimatePromptTokens, providerBody, rankCandidates, resolveRole } from "../src/llm-gateway/router";
+import { cooldownFor, estimatePromptTokens, isAccountWideQuota, providerBody, rankCandidates, resolveRole } from "../src/llm-gateway/router";
 import { freeLlmApiShouldFallBack } from "../src/providers/provider-fetch";
 import { getActiveChatProvider, llmGatewayMode, UXD_GATEWAY_BASE_URL } from "../src/providers/active-chat-provider";
 
@@ -270,4 +270,11 @@ test("budget view sums published daily limits only, shares OpenRouter's account 
   assert.equal(budget.roles[0].share, 50);
   assert.equal(budget.providers.find((provider) => provider.id === "mistral")!.models[0].rpd, undefined);
   assert.equal(budget.resetsAt, "2026-11-08T00:00:00.000Z");
+});
+
+test("account-wide daily caps skip the provider's other models; a per-model quota does not", () => {
+  assert.equal(isAccountWideQuota("Rate limit exceeded: free-models-per-day. Add 5 credits to unlock 1000"), true);
+  assert.equal(isAccountWideQuota("4006: you have used up your daily free allocation of 10,000 neurons"), true);
+  // Gemini quotas are per model: flash-lite can still answer when flash is out.
+  assert.equal(isAccountWideQuota("You exceeded your current quota, please check your plan"), false);
 });
