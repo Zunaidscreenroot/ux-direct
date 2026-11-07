@@ -4609,6 +4609,17 @@ function uxdPaintIcon(icon, color) {
     } catch (_) {}
   });
 }
+function uxdSiblingLeadingBox(target) {
+  var parent = target.parent;
+  if (!parent || !parent.children) return null;
+  for (var i = 0; i < parent.children.length; i++) {
+    var sib = parent.children[i];
+    if (sib === target || sib.visible === false || !sib.children || !sib.children.length) continue;
+    var lead = sib.children[0];
+    if (lead.type === "FRAME" && /\bleading\b/i.test(String(lead.name || "")) && lead.width <= 64 && lead.height <= 64 && typeof lead.clone === "function") return lead;
+  }
+  return null;
+}
 async function localInsertIcons(payload) {
   var items = Array.isArray(payload.items) ? payload.items.slice(0, 20) : [];
   var inserted = [], skipped = [], created = [], hidden = [];
@@ -4648,7 +4659,20 @@ async function localInsertIcons(payload) {
       hidden.push({ id: target.id, prop: "visible", before: target.visible !== false, after: false });
       target.visible = false;
     } else if (uxdHasAutoLayout(target)) {
-      target.insertChild(0, icon);
+      // Sibling rows that put their icon in a "Leading" box (circle background) get the same box here.
+      var leadBox = uxdSiblingLeadingBox(target);
+      if (leadBox) {
+        var box = leadBox.clone();
+        (box.children || []).slice().forEach(function (c) { c.remove(); });
+        box.name = "Leading / " + String(item.name || "icon").slice(0, 40);
+        var fit = Math.min(size, Math.round(Math.min(box.width, box.height) * 0.6));
+        if (fit !== size && typeof icon.rescale === "function" && icon.width) icon.rescale(fit / icon.width);
+        box.appendChild(icon);
+        if (!uxdHasAutoLayout(box)) { icon.x = Math.round((box.width - icon.width) / 2); icon.y = Math.round((box.height - icon.height) / 2); }
+        if (typeof box.setPluginData === "function") box.setPluginData("uxdCreated", "1");
+        target.insertChild(0, box);
+        icon = box;
+      } else target.insertChild(0, icon);
       if (target.layoutMode === "HORIZONTAL" && (Number(target.itemSpacing) || 0) < 4 && target.primaryAxisAlignItems !== "SPACE_BETWEEN") {
         // The icon must not touch its label.
         var gap = size <= 16 ? 6 : 8;
@@ -4741,18 +4765,31 @@ if (figma.parameters && typeof figma.parameters.on === "function") {
     if (event.key === "prompt") event.result.setSuggestions(uxdQuickActionSuggestions(event.query));
   });
 }
+var UXD_PENDING_QUICK_AUTORUN = true;
 function uxdDeliverQuickPrompt() {
   if (!UXD_PENDING_QUICK_PROMPT) return;
   var prompt = UXD_PENDING_QUICK_PROMPT;
   UXD_PENDING_QUICK_PROMPT = "";
-  figma.ui.postMessage({ type: "uxd-quick-action", prompt: prompt });
+  figma.ui.postMessage({ type: "uxd-quick-action", prompt: prompt, autoRun: UXD_PENDING_QUICK_AUTORUN });
 }
-figma.on("run", function (event) {
+// Figma replays the last parameters on "Run last plugin" and some menu relaunches, which would rerun
+// the previous task unasked. The same task as the last quick action is only prefilled, not run.
+var UXD_LAST_QUICK_KEY = "uxdLastQuickPrompt";
+async function uxdIsReplayedQuickPrompt(prompt) {
+  try {
+    if (!figma.clientStorage) return false;
+    var last = await figma.clientStorage.getAsync(UXD_LAST_QUICK_KEY);
+    await figma.clientStorage.setAsync(UXD_LAST_QUICK_KEY, prompt);
+    return String(last || "").toLowerCase() === prompt.toLowerCase();
+  } catch (_) { return false; }
+}
+figma.on("run", async function (event) {
   // Figma runs this file in "query mode" while the Cmd+/ parameter box is open, where showUI is not
   // allowed, so the panel starts here (after input), not at load. Plain launches fire "run" too.
   uxdBoot();
   var prompt = event && event.parameters && typeof event.parameters.prompt === "string" ? event.parameters.prompt.trim().slice(0, 500) : "";
   if (!prompt || !getUxDirectScopeDecision().allowed) return;
+  UXD_PENDING_QUICK_AUTORUN = !(await uxdIsReplayedQuickPrompt(prompt));
   UXD_PENDING_QUICK_PROMPT = prompt;
   if (UXD_UI_READY) uxdDeliverQuickPrompt();
 });

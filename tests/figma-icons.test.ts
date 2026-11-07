@@ -218,3 +218,26 @@ test("the real Loan Dashboard row: value as a direct child, label nested in Row 
   const found = await run("find-icon-targets", {});
   assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((t: any) => [t.id, t.label]))), [["row2", "Due"]]);
 });
+
+test("a row whose sibling rows use a Leading icon box gets the same box around its new icon", async () => {
+  const txt = (id: string, characters: string) => ({ id, type: "TEXT", characters, fontSize: 14, fills: [], x: 0, y: 0, width: 80, height: 18 });
+  const lead: any = { id: "ld", type: "FRAME", name: "Leading", width: 36, height: 36, cornerRadius: 18, fills: [{ type: "SOLID", color: { r: 0.9, g: 0.95, b: 1 } }], children: [txt("ck", "✓")] };
+  lead.clone = function () {
+    const copy: any = { ...this, id: "ldc", children: this.children.map((c: any) => ({ ...c, id: c.id + "c" })) };
+    copy.children.forEach((c: any) => { c.parent = copy; c.remove = function () { copy.children.splice(copy.children.indexOf(this), 1); }; });
+    copy.appendChild = function (c: any) { c.parent = copy; copy.children.push(c); };
+    copy.data = {}; copy.setPluginData = function (k: string, v: string) { copy.data[k] = v; }; copy.getPluginData = function (k: string) { return copy.data[k] || ""; };
+    return copy;
+  };
+  const paid: any = { id: "rp", type: "FRAME", name: "Row · Paid", layoutMode: "HORIZONTAL", itemSpacing: 12, width: 328, height: 62, children: [lead, txt("pl", "Paid")] };
+  const due: any = { id: "rd3", type: "FRAME", name: "Row · Due", layoutMode: "HORIZONTAL", itemSpacing: 12, width: 328, height: 62, children: [txt("dl", "Due")] };
+  const card: any = { id: "cd", type: "FRAME", name: "Repayment Schedule", layoutMode: "VERTICAL", width: 360, height: 200, children: [paid, due] };
+  const { run } = makeRuntime({ cd: card, rp: paid, rd3: due, ld: lead });
+  const result = await run("insert-icons", { items: [{ targetId: "rd3", svg: '<svg width="24" height="24"></svg>', name: "calendar" }] });
+  assert.equal(result.inserted.length, 1);
+  assert.equal(due.children[0].name, "Leading / calendar");
+  assert.equal(due.children[0].width, 36);
+  assert.equal(due.children[0].children.length, 1, "the copied box holds only the new icon");
+  assert.equal(due.children[0].children[0].name, "Icon / calendar");
+  assert.equal(due.children[0].getPluginData("uxdCreated"), "1", "Revert deletes the whole box");
+});
