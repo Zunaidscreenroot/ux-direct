@@ -2980,7 +2980,7 @@
       stage("done", "Hygiene fix complete · no model needed");
       const c = result.counts || {};
       const lines = [];
-      if (c.spacing) lines.push("- Snapped padding/gaps to the 4px grid on " + c.spacing + " frame(s)");
+      if (c.spacing) lines.push("- Snapped padding/gaps to " + (result.usedSpacingScale ? "your spacing scale" : "the 4px grid") + " on " + c.spacing + " frame(s)");
       if (c.symmetry) lines.push("- Made left/right padding equal on " + c.symmetry + " frame(s)");
       if (c.radius) lines.push("- Snapped " + c.radius + " corner radius value(s) to the file's design rules");
       if (c.repeated) lines.push("- Matched padding, gap and radius on " + c.repeated + " repeated item(s) to the rest of their group");

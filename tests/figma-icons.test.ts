@@ -145,3 +145,16 @@ test("insert-icons adds before the label in auto layout, coloured like the label
   assert.equal(button.counterAxisAlignItems, "MIN");
   assert.equal(restored.restored, 2);
 });
+
+test("data rows (label + amount/date value) get no auto icon; action rows still do", async () => {
+  const mkText = (id: string, characters: string) => ({ id, type: "TEXT", characters, fontSize: 14, fills: [], x: 0, y: 0, width: 80, height: 18 });
+  const dataRow: any = { id: "d1", type: "FRAME", name: "Row", layoutMode: "HORIZONTAL", width: 320, height: 48, children: [mkText("dt1", "Account balance"), mkText("dt2", "₹12,400.00")] };
+  const dateRow: any = { id: "d2", type: "FRAME", name: "Row", layoutMode: "HORIZONTAL", width: 320, height: 48, children: [mkText("dt3", "Due date"), mkText("dt4", "12 Nov 2026")] };
+  const actionRow: any = { id: "a1", type: "FRAME", name: "Row", layoutMode: "HORIZONTAL", width: 320, height: 48, children: [mkText("at1", "Download statement")] };
+  const list: any = { id: "l1", type: "FRAME", name: "List", layoutMode: "VERTICAL", width: 360, height: 400, children: [dataRow, dateRow, actionRow] };
+  const nodes: Record<string, any> = { l1: list, d1: dataRow, d2: dateRow, a1: actionRow };
+  const { figma, run } = makeRuntime(nodes);
+  figma.currentPage.selection = [list];
+  const found = await run("find-icon-targets", {});
+  assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((t: any) => t.id))), ["a1"]);
+});
