@@ -2495,7 +2495,9 @@
         }
       }
       // Style lock across screens (no model): "check consistency", "make these screens consistent", "style lock".
-      if ((count > 0 && /\bstyle[ -]?lock\b/i.test(text)) || (count >= 2 && (/\bconsisten(t|cy)\b|\bek (jaise|jaisa)\b|\bsame (style|look)\b[^.]{0,30}\b(screens?|all)\b|\bmatch(ing)?\b[^.]{0,20}\b(styles?|look)\b[^.]{0,20}\bacross\b/i.test(text)))) {
+      const singleConsistency = count === 1 && /\bconsisten(t|cy)\b/i.test(text) && /\b(check|make|fix|cards?|elements?|components?|screen|batao|karo)\b/i.test(text) &&
+        !/\b(spacing|padding|colou?rs?|fonts?|typography|alignment|auto ?layout|contrast)\b/i.test(text);
+      if (singleConsistency || (count > 0 && /\bstyle[ -]?lock\b/i.test(text)) || (count >= 2 && (/\bconsisten(t|cy)\b|\bek (jaise|jaisa)\b|\bsame (style|look)\b[^.]{0,30}\b(screens?|all)\b|\bmatch(ing)?\b[^.]{0,20}\b(styles?|look)\b[^.]{0,20}\bacross\b/i.test(text)))) {
         const fixIt = /\b(fix|make|apply|lock|align|match|karo|kar do|set)\b|\bstyle[ -]?lock\b/i.test(text) && !/\b(check|find|show|report|list|audit|kya|batao)\b/i.test(text);
         return { kind: "consistency", fix: fixIt };
       }
@@ -3303,7 +3305,10 @@
       button.textContent = "↶ Revert this change";
       button.style.cssText = "margin-top:6px;padding:4px 10px;border-radius:8px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;font:inherit;font-size:12px;opacity:.85";
       button.addEventListener("click", async function () {
-        if (isSending) return;
+        if (isSending) {
+          appendMessage("assistant", "UX Direct is still working on a task. Press Revert again when it finishes, or press Stop.");
+          return;
+        }
         button.disabled = true;
         const reply = appendMessage("assistant", "Reverting…");
         try {

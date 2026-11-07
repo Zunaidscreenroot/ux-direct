@@ -24,6 +24,7 @@ test("consistency prompts route to style lock only across 2+ screens", () => {
   assert.deepEqual(classify("style lock", { selectionTypes: ["FRAME"] }), { kind: "consistency", fix: true });
   assert.deepEqual(classify("sab screens ek jaise karo", two), { kind: "consistency", fix: true });
   assert.equal(classify("is the spacing consistent?", { selectionTypes: ["FRAME"] }).kind, "hygiene");
+  assert.deepEqual(classify("check consistency", { selectionTypes: ["FRAME"] }), { kind: "consistency", fix: false });
 });
 
 function runtime(nodes: Record<string, any>) {
@@ -66,7 +67,7 @@ test("style lock reports and fixes drift by layer name, label casing, with exact
   const { figma, run } = runtime(nodes);
 
   figma.currentPage.selection = [sa];
-  await assert.rejects(run("consistency", {}), /2 or more screens/);
+  assert.deepEqual((await run("consistency", {})).findings, [], "one screen with one card has nothing to compare");
 
   figma.currentPage.selection = [sa, sb, sc];
   const report = await run("consistency", {});
@@ -89,4 +90,24 @@ test("style lock reports and fixes drift by layer name, label casing, with exact
   assert.equal(c1.cornerRadius, 12);
   assert.equal(c1.paddingTop, 20);
   assert.equal(bc.children[0].characters, "Pay Now");
+});
+
+test("style lock compares card instances and labels inside them, also within one screen", async () => {
+  const card = (id: string, radius: number, pad: number, label: string) => ({ id, type: "INSTANCE", name: "Loan Card", layoutMode: "VERTICAL", cornerRadius: radius,
+    paddingTop: pad, paddingRight: pad, paddingBottom: pad, paddingLeft: pad, itemSpacing: 8, fills: [], width: 328, height: 160, visible: true,
+    children: [{ id: id + "b", type: "FRAME", name: "Frame 4", layoutMode: "HORIZONTAL", cornerRadius: 8, paddingTop: 8, paddingRight: 16, paddingBottom: 8, paddingLeft: 16,
+      itemSpacing: 4, fills: [], width: 120, height: 40, visible: true,
+      children: [{ id: id + "t", type: "TEXT", name: label, characters: label, fontName: { family: "Inter", style: "Medium" }, visible: true }] }] });
+  const c1 = card("c1", 4, 24, "Pay now"), c2 = card("c2", 4, 8, "Pay Now"), c3 = card("c3", 4, 8, "Pay Now");
+  const screen: any = { id: "s", type: "FRAME", name: "QA lock 3", width: 360, height: 800, visible: true, children: [c1, c2, c3] };
+  const nodes: Record<string, any> = { s: screen, c1, c2, c3, c1b: c1.children[0], c2b: c2.children[0], c3b: c3.children[0], c1t: c1.children[0].children[0], c2t: c2.children[0].children[0], c3t: c3.children[0].children[0] };
+  const { figma, run } = runtime(nodes);
+  figma.currentPage.selection = [screen];
+  const report = await run("consistency", {});
+  const kinds = report.findings.map((f: any) => [f.element, f.kind, f.expected, f.found]);
+  assert.deepEqual(kinds.sort(), [["Button label", "label", "Pay Now", ["Pay now"]], ["Loan Card", "padding", "8/8/8/8", ["24/24/24/24"]]].sort());
+  const fixed = await run("consistency", { fix: true });
+  assert.ok(fixed.fixed >= 2);
+  assert.equal(c1.paddingTop, 8);
+  assert.equal(c1.children[0].children[0].characters, "Pay Now");
 });

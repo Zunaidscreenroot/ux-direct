@@ -129,3 +129,17 @@ test("buttons are found by look, not only by name, also inside card instances", 
   assert.ok(notes.notes.some((n: any) => n.kind === "button" && n.id === "pay"), "button inside the card instance gets a note");
   assert.ok(!notes.notes.some((n: any) => n.id === "lab"), "a plain label frame is not a button");
 });
+
+test("prototype Revert works when Figma normalises the reactions it read back", async () => {
+  const home: any = { id: "h", type: "FRAME", name: "Home", x: 0, y: 0, width: 360, height: 800, fills: [], strokes: [], children: [button("hb", "Continue")] };
+  const next: any = { id: "n", type: "FRAME", name: "Next step", x: 400, y: 0, width: 360, height: 800, fills: [], strokes: [], children: [] };
+  const nodes: Record<string, any> = { h: home, n: next };
+  const run = runtime([home, next], nodes);
+  const hb = home.children[0]; nodes.hb = hb;
+  const wired = await run("prototype-wire", { fix: true });
+  // Figma later reports the same link with the deprecated "action" field and filled-in defaults.
+  hb.reactions = hb.reactions.map((r: any) => ({ ...r, action: r.actions[0], actions: [{ ...r.actions[0], resetVideoPosition: false }] }));
+  const restored = await run("restore-props", { items: wired.snapshot });
+  assert.equal(restored.restored, 1);
+  assert.equal(hb.reactions.length, 0);
+});

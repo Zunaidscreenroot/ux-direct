@@ -4042,6 +4042,19 @@ async function uxdSetPropValue(node, prop, value) {
   }
   node[prop] = value;
 }
+// Figma normalises some values after a write (reactions gain "action", transitions gain defaults), so
+// those compare by what matters: trigger, action type and destination.
+function uxdRestoreKey(prop, value) {
+  if (value === undefined) value = null;
+  if (prop === "reactions") {
+    return JSON.stringify((Array.isArray(value) ? value : []).map(function (r) {
+      var actions = Array.isArray(r && r.actions) ? r.actions : (r && r.action ? [r.action] : []);
+      return [r && r.trigger ? r.trigger.type : "", actions.map(function (a) { return [a && a.type, a && a.destinationId || "", a && a.navigation || ""]; })];
+    }));
+  }
+  if (prop === "annotations") return JSON.stringify(uxdCleanAnnotations(value));
+  return JSON.stringify(value);
+}
 async function localRestoreProps(payload) {
   var items = Array.isArray(payload.items) ? payload.items.slice(0, 3000) : [];
   var restored = 0, changedSince = 0, missing = 0;
@@ -4050,7 +4063,7 @@ async function localRestoreProps(payload) {
     var item = items[i];
     var node = await figma.getNodeByIdAsync(String(item.id || ""));
     if (!node || node.removed) { missing++; continue; }
-    if (JSON.stringify(uxdCloneValue(node[item.prop]) === undefined ? null : uxdCloneValue(node[item.prop])) !== JSON.stringify(item.after === undefined ? null : item.after)) { changedSince++; continue; }
+    if (uxdRestoreKey(item.prop, uxdCloneValue(node[item.prop])) !== uxdRestoreKey(item.prop, item.after)) { changedSince++; continue; }
     try {
       if (node.type === "TEXT") await uxdLoadTextFonts(node);
       if (item.prop === "fontName" && item.before && item.before.family) await figma.loadFontAsync(item.before);
@@ -4434,18 +4447,19 @@ var UXD_CONSISTENCY_PROPS = {
 };
 async function localConsistency(payload) {
   var roots = figma.currentPage.selection.filter(function (n) { return ["FRAME", "COMPONENT", "SECTION"].indexOf(n.type) >= 0; });
-  if (roots.length < 2) throw new Error("Select 2 or more screens to compare (style lock works across screens).");
+  if (!roots.length) throw new Error("Select the screens to compare (style lock works across screens, or inside one screen).");
   roots = roots.slice(0, 12);
   var fix = payload && payload.fix === true;
   var groups = {}, labels = {};
   roots.forEach(function (root, r) {
     uxdDescendants(root, function (c) { return c.visible !== false; }).forEach(function (node) {
-      if (uxdInsideInstance(node) || node.locked === true) return;
-      if ((node.type === "FRAME" || node.type === "COMPONENT") && !(node.width > 400 && node.height > 400)) {
+      if (node.locked === true) return;
+      // Instances count too (a "Loan Card" instance can carry radius/padding overrides), and so do layers inside them.
+      if ((node.type === "FRAME" || node.type === "COMPONENT" || node.type === "INSTANCE") && !(node.width > 400 && node.height > 400)) {
         var key = uxdConsistencyKey(node.name);
         if (key) (groups[key] = groups[key] || []).push({ node: node, root: r });
       }
-      if (node.type === "TEXT" && node.parent && (UXD_BUTTON_NAME.test(String(node.parent.name || "")) || UXD_BUTTON_NAME.test(String(node.name || "")))) {
+      if (node.type === "TEXT" && node.parent && (UXD_BUTTON_NAME.test(String(node.parent.name || "")) || UXD_BUTTON_NAME.test(String(node.name || "")) || uxdLooksLikeButton(node.parent))) {
         var text = String(node.characters || "").trim();
         var norm = text.toLowerCase().replace(/[.!…]+$/, "").replace(/\s+/g, " ");
         if (norm && norm.length <= 40) (labels[norm] = labels[norm] || []).push({ node: node, root: r, text: text });
@@ -4462,7 +4476,8 @@ async function localConsistency(payload) {
   Object.keys(groups).forEach(function (key) {
     var entries = groups[key];
     var screens = {}; entries.forEach(function (e) { screens[e.root] = 1; });
-    if (Object.keys(screens).length < 2) return;
+    // Across 2+ screens an element must appear on 2 of them; on one screen, 2 copies of it are enough.
+    if (roots.length > 1 ? Object.keys(screens).length < 2 : entries.length < 2) return;
     Object.keys(UXD_CONSISTENCY_PROPS).forEach(function (kind) {
       var spec = UXD_CONSISTENCY_PROPS[kind];
       var m = majority(entries, function (e) { return spec.read(e.node); });
