@@ -1938,6 +1938,8 @@
           : "Structural lint blocked the variation: " + lint.text,
         lint.passed ? "" : lint.text);
       const timingLine = "\nTiming: " + formatRunTiming(localReadMs, serverMs, payload, buildMs, Date.now() - checksStartedAt, Date.now() - taskStartedAt);
+      // Baseline for "learn from my edits": the designer's later changes are diffed against this.
+      await localTask("learn-baseline", { nodeIds: [createdFrameId] }).catch(function () {});
       if (lint.passed) stage("done", "Variation created · native structure read-back passed");
       else stage("error", "Variation created · structural lint found issues to fix");
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
@@ -2472,6 +2474,10 @@
       if (/\b(revert|undo|roll ?back|reverse (it|this|that|the (last )?change))\b|\bgo back to (the )?(previous|original|old|earlier)\b|\brestore (it|this|that|the (previous|original|old)|previous|original)\b|\b(wapas|vapas|waapas)\b|pehle (jaisa|jaise|wala)|purana (wala|jaisa)|\bcancel (the |this |that |my )?(last )?(change|edit)s?\b/i.test(text)) {
         return { kind: "revert", all: /\b(all|everything|sab|saare|sare)\b/i.test(text) };
       }
+      // Learn from corrections (no model): "learn from my edits", "what did I change", "meri edits se seekho".
+      if (/\b(learn|seekh\w*|yaad rakh\w*)\b[^.]{0,30}\b(edits?|changes?|corrections?|fixes|tweaks)\b|\b(edits?|changes?|corrections?)\b[^.]{0,15}\bseekh\w*|\blearn from (me|my|what i)\b|\bwhat (did|have) i (change|edit)(d|ed)?\b/i.test(text)) {
+        return { kind: "learn", preview: /\b(what|show|check|list|kya|batao|preview)\b/i.test(text) && !/\b(save|keep|remember|and learn)\b/i.test(text) };
+      }
       // Per-file design rules ("DESIGN.md"): "set design rules: spacing 4/8/16, radius 8/16…", "show design rules".
       if (/\bdesign[ .-]?(rules|md|system rules|guidelines)\b/i.test(text)) {
         if (/\b(clear|reset|remove|delete)\b/i.test(text)) return { kind: "design-rules", mode: "clear" };
@@ -2962,6 +2968,70 @@
         "\n\nThey are sent with every design task, and **fix hygiene** now uses them as its thresholds.";
     }
     // uxd-design-rules:end
+    // uxd-learn:start
+    const UXD_LEARN_HEADER = "Learned from your edits:";
+    // One rule per subject: "Button corner radius: use 12 px (not 8 px)". A newer edit replaces the older line.
+    function learnRuleLine(change) {
+      const px = function (v) { return typeof v === "number" ? Math.round(v * 10) / 10 + " px" : String(v); };
+      const who = { text: "Text", button: "Button", frame: "Container" }[change.role] || "Layer";
+      const subject = {
+        size: change.role === "text" ? "Text set at " + px(change.from) + " size" : who + " text size",
+        weight: change.from + " text weight", color: "Text colour " + change.from,
+        radius: who + " corner radius", fill: who + " fill " + change.from, gap: who + " gap",
+        padX: who + " side padding", padY: who + " top/bottom padding", height: "Button height"
+      }[change.prop];
+      if (!subject) return null;
+      const value = change.prop === "weight" || change.prop === "color" || change.prop === "fill" ? String(change.to) : px(change.to);
+      return { subject: subject, line: "- " + subject + ": use " + value + " (not " + (change.prop === "weight" || change.prop === "color" || change.prop === "fill" ? change.from : px(change.from)) + ")" };
+    }
+    function mergeLearnedRules(text, changes) {
+      const src = String(text || "");
+      const at = src.indexOf(UXD_LEARN_HEADER);
+      const own = at >= 0 ? src.slice(0, at).trimEnd() : src.trimEnd();
+      const oldLines = at >= 0 ? src.slice(at + UXD_LEARN_HEADER.length).split("\n").map(function (l) { return l.trim(); }).filter(function (l) { return /^- .+: use /.test(l); }) : [];
+      const bySubject = new Map();
+      oldLines.forEach(function (l) { bySubject.set(l.slice(2, l.indexOf(": use ")), l); });
+      const added = [];
+      changes.forEach(function (c) {
+        const rule = learnRuleLine(c);
+        if (!rule || added.some(function (a) { return a.subject === rule.subject; })) return;
+        bySubject.delete(rule.subject);
+        bySubject.set(rule.subject, rule.line);
+        added.push(rule);
+      });
+      const lines = Array.from(bySubject.values()).slice(-15);
+      const merged = (own ? own + "\n\n" : "") + UXD_LEARN_HEADER + "\n" + lines.join("\n");
+      return { text: merged.slice(-4000), added: added };
+    }
+    async function runLearnTask(task, stage) {
+      stage("scanning", "Comparing UX Direct's screens with your edits…");
+      const preview = await localTask("learn-corrections", { commit: false }, 120000);
+      const changes = preview.changes || [];
+      if (!preview.scanned) return "Nothing to learn from yet. UX Direct learns from screens it created (from now on): edit one, then say **learn from my edits**.";
+      if (!changes.length) return "No edits to learn from. " + preview.scanned + " layer(s) UX Direct made still match what it created.";
+      const describe = changes.map(function (c) { const r = learnRuleLine(c); return r ? r.line + " · " + c.layers + " layer(s)" : null; }).filter(Boolean);
+      if (task.preview) {
+        stage("done", "Found " + changes.length + " kind(s) of edit");
+        return "Your edits on UX Direct's screens (" + preview.edited + " layer(s)):\n" + describe.join("\n") + "\n\nSay **learn from my edits** to save them as design rules for this file.";
+      }
+      const before = await localTask("get-design-rules", {});
+      const merged = mergeLearnedRules(before.text || "", changes);
+      if (!merged.added.length) return "No edits to learn from that UX Direct can turn into rules.";
+      await localTask("set-design-rules", { text: merged.text, rules: parseDesignRules(merged.text) });
+      cachedDesignRules = merged.text;
+      const committed = await localTask("learn-corrections", { commit: true }, 120000);
+      recordChange("Learned " + merged.added.length + " rule(s) from your edits", async function () {
+        await localTask("set-design-rules", { text: before.text || "", rules: before.rules || null });
+        cachedDesignRules = before.text || "";
+        if (committed.previous) await localTask("learn-corrections", { restore: committed.previous });
+        return "learned rules removed";
+      });
+      stage("done", "Learned " + merged.added.length + " rule(s)");
+      return "Learned " + merged.added.length + " rule(s) from your edits and saved them in this file's design rules:\n" +
+        merged.added.map(function (a) { return a.line; }).join("\n") +
+        "\n\nEvery later UX Direct task in this file follows them. Say **show design rules** to see all of them.";
+    }
+    // uxd-learn:end
 
     // uxd-consistency:start
     function describeConsistencyFinding(f) {
@@ -3382,6 +3452,7 @@
       if (task.kind === "detached") return runDetachedTask(task, stage);
       if (task.kind === "handoff") return runHandoffTask(stage);
       if (task.kind === "prototype-wire") return runPrototypeWireTask(task, stage);
+      if (task.kind === "learn") return runLearnTask(task, stage);
       if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);
       if (task.kind === "flow-variations" || task.kind === "screen-variations" || task.kind === "states-pack") return runVariationsTask(task, prompt, stage);
       throw new Error("Unknown quick task.");

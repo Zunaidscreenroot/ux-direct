@@ -2937,7 +2937,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire", "learn-baseline", "learn-corrections"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -5004,6 +5004,111 @@ async function localPrototypeWire(payload) {
     snapshot: snapshot };
 }
 // uxd-handoff:end
+// uxd-learn:start
+// Learn from corrections: when UX Direct creates a screen it stores a small baseline of style values on
+// each layer it made. Later, "learn from my edits" diffs the designer's changes against that baseline and
+// the UI turns repeated changes into lines in the file's design rules, so later tasks follow them.
+var UXD_LEARN_MAX = 3000;
+function uxdLearnRole(node) {
+  if (node.type === "TEXT") return "text";
+  if (uxdLooksLikeButton(node)) return "button";
+  return "frame";
+}
+function uxdLearnValues(node) {
+  var v = { role: uxdLearnRole(node) };
+  if (node.type === "TEXT") {
+    if (typeof node.fontSize === "number") v.size = node.fontSize;
+    if (node.fontName && typeof node.fontName === "object" && typeof node.fontName.style === "string") v.weight = node.fontName.style;
+    var th = uxdFillHex(node); if (th) v.color = th;
+    return v;
+  }
+  if (["FRAME", "COMPONENT", "INSTANCE", "RECTANGLE"].indexOf(node.type) < 0) return null;
+  if (typeof node.cornerRadius === "number") v.radius = node.cornerRadius;
+  var fh = uxdFillHex(node); if (fh) v.fill = fh;
+  if (node.layoutMode && node.layoutMode !== "NONE") {
+    if (typeof node.itemSpacing === "number" && node.primaryAxisAlignItems !== "SPACE_BETWEEN") v.gap = node.itemSpacing;
+    if (typeof node.paddingLeft === "number" && node.paddingLeft === node.paddingRight) v.padX = node.paddingLeft;
+    if (typeof node.paddingTop === "number" && node.paddingTop === node.paddingBottom) v.padY = node.paddingTop;
+  }
+  if (v.role === "button" && typeof node.height === "number") v.height = Math.round(node.height);
+  return Object.keys(v).length > 1 ? v : null;
+}
+function uxdLearnSubtree(root) {
+  var out = [root];
+  if (typeof root.findAll === "function") out = out.concat(root.findAll(function () { return true; }));
+  return out.slice(0, UXD_LEARN_MAX);
+}
+async function localLearnBaseline(payload) {
+  var ids = Array.isArray(payload.nodeIds) ? payload.nodeIds.slice(0, 20) : [];
+  var stored = 0;
+  for (var i = 0; i < ids.length; i++) {
+    var root = await figma.getNodeByIdAsync(String(ids[i]));
+    if (!root) continue;
+    uxdLearnSubtree(root).forEach(function (n) {
+      if (typeof n.getPluginData !== "function" || n.getPluginData("uxdCreated") !== "1") return;
+      var values = uxdLearnValues(n);
+      if (!values) return;
+      n.setPluginData("uxdBaseline", JSON.stringify(values));
+      stored++;
+    });
+  }
+  return { ok: true, stored: stored };
+}
+function uxdLearnCandidates() {
+  var roots = figma.currentPage.selection && figma.currentPage.selection.length ? figma.currentPage.selection : figma.currentPage.children || [];
+  var seen = {}, out = [];
+  roots.forEach(function (root) {
+    uxdLearnSubtree(root).forEach(function (n) {
+      if (out.length >= UXD_LEARN_MAX || seen[n.id] || typeof n.getPluginData !== "function") return;
+      var raw = n.getPluginData("uxdBaseline");
+      if (!raw) return;
+      seen[n.id] = true;
+      out.push({ node: n, raw: raw });
+    });
+  });
+  return out;
+}
+async function localLearnCorrections(payload) {
+  if (payload.restore && typeof payload.restore === "object") {
+    var restored = 0;
+    for (var id in payload.restore) {
+      var node = await figma.getNodeByIdAsync(id);
+      if (node && typeof node.setPluginData === "function") { node.setPluginData("uxdBaseline", String(payload.restore[id])); restored++; }
+    }
+    return { ok: true, restored: restored };
+  }
+  var groups = {}, previous = {}, scanned = 0, edited = 0;
+  uxdLearnCandidates().forEach(function (entry) {
+    var base = null;
+    try { base = JSON.parse(entry.raw); } catch (_) { base = null; }
+    if (!base) return;
+    scanned++;
+    var now = uxdLearnValues(entry.node);
+    if (!now) return;
+    var changed = false;
+    Object.keys(base).forEach(function (prop) {
+      if (prop === "role" || now[prop] === undefined) return;
+      var from = base[prop], to = now[prop];
+      if (typeof from === "number" ? Math.abs(from - to) < 0.5 : from === to) return;
+      changed = true;
+      var key = base.role + "|" + prop + "|" + from + "|" + to;
+      if (!groups[key]) groups[key] = { role: base.role, prop: prop, from: from, to: to, layers: 0, sample: entry.node.name };
+      groups[key].layers++;
+    });
+    if (changed) {
+      edited++;
+      if (payload.commit) {
+        previous[entry.node.id] = entry.raw;
+        now.role = base.role;
+        entry.node.setPluginData("uxdBaseline", JSON.stringify(now));
+      }
+    }
+  });
+  var changes = Object.keys(groups).map(function (k) { return groups[k]; })
+    .sort(function (a, b) { return b.layers - a.layers; }).slice(0, 20);
+  return { ok: true, scanned: scanned, edited: edited, changes: changes, previous: payload.commit ? previous : undefined };
+}
+// uxd-learn:end
 // uxd-detached:start
 // Detached-instance rescue, no model: frames that were detached from a component (Figma keeps
 // detachedInfo on them) are found and, on "relink", replaced by a fresh instance of that component
@@ -5197,6 +5302,8 @@ async function runLocalTask(message) {
     else if (message.op === "detached-rescue") result = await localDetachedRescue(payload);
     else if (message.op === "handoff-notes") result = await localHandoffNotes(payload);
     else if (message.op === "prototype-wire") result = await localPrototypeWire(payload);
+    else if (message.op === "learn-baseline") result = await localLearnBaseline(payload);
+    else if (message.op === "learn-corrections") result = await localLearnCorrections(payload);
     else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
     else if (message.op === "trigger-undo") {
       if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");
@@ -5231,7 +5338,7 @@ sendSelection();
 // opens its panel (network runs there) and the panel runs the task once the file is verified.
 var UXD_QUICK_ACTION_SUGGESTIONS = ["fix hygiene", "add icons to these buttons", "fill with realistic data", "check hygiene",
   "ux audit", "add empty, loading and error states", "make 3 variations", "make this card cleaner", "show design rules", "revert",
-  "check consistency", "find detached components", "add handoff notes", "wire the prototype"];
+  "check consistency", "find detached components", "add handoff notes", "wire the prototype", "learn from my edits"];
 var UXD_PENDING_QUICK_PROMPT = "";
 function uxdQuickActionSuggestions(query) {
   var q = String(query || "").trim().toLowerCase();
