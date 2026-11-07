@@ -2948,7 +2948,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire", "learn-baseline", "learn-corrections"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire", "learn-baseline", "learn-corrections", "apply-theme", "restore-theme-modes"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -4161,6 +4161,148 @@ function uxdTextBackground(node) {
   }
   return null;
 }
+// uxd-theme:start
+// "Make this screen light/dark mode", in place: switch the variable mode when the screen's colours come
+// from a collection with Light/Dark modes, otherwise remap hard-coded colours (neutrals flip lightness,
+// brand colours keep their hue), then lift any text that falls below WCAG AA. Snapshotted for Revert.
+function uxdRgbToHsl(c) {
+  var max = Math.max(c.r, c.g, c.b), min = Math.min(c.r, c.g, c.b), l = (max + min) / 2, h = 0, s = 0;
+  if (max !== min) {
+    var d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    h = max === c.r ? (c.g - c.b) / d + (c.g < c.b ? 6 : 0) : max === c.g ? (c.b - c.r) / d + 2 : (c.r - c.g) / d + 4;
+    h /= 6;
+  }
+  return { h: h, s: s, l: l };
+}
+function uxdHslToRgb(x) {
+  if (x.s === 0) return { r: x.l, g: x.l, b: x.l };
+  function f(p, q, t) { if (t < 0) t += 1; if (t > 1) t -= 1; if (t < 1 / 6) return p + (q - p) * 6 * t; if (t < 1 / 2) return q; if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6; return p; }
+  var q = x.l < 0.5 ? x.l * (1 + x.s) : x.l + x.s - x.l * x.s, p = 2 * x.l - q;
+  return { r: f(p, q, x.h + 1 / 3), g: f(p, q, x.h), b: f(p, q, x.h - 1 / 3) };
+}
+function uxdThemeColor(color, toLight, isText) {
+  var hsl = uxdRgbToHsl(color);
+  // Chroma, not HSL saturation: near-black slates (#111827) have high saturation but read as neutral.
+  var chroma = Math.max(color.r, color.g, color.b) - Math.min(color.r, color.g, color.b);
+  if (chroma < 0.14) {
+    // Neutral: mirror lightness, with a soft floor/ceiling (pure black/white read harsh in both modes).
+    var l = 1 - hsl.l;
+    l = toLight ? Math.min(0.99, Math.max(isText ? 0.1 : 0.12, l)) : Math.max(0.06, Math.min(isText ? 0.95 : 0.92, l));
+    return uxdHslToRgb({ h: hsl.h, s: hsl.s, l: l });
+  }
+  // Brand/accent: same hue; only move lightness when it would vanish on the new background.
+  if (toLight && hsl.l > 0.72) hsl.l = isText ? 0.4 : 0.9;
+  if (!toLight && hsl.l < 0.3) hsl.l = isText ? 0.7 : 0.35;
+  return uxdHslToRgb(hsl);
+}
+async function uxdThemeModeSwitch(root, toLight) {
+  if (!figma.variables || typeof root.setExplicitVariableModeForCollection !== "function") return null;
+  var used = {};
+  (function walk(n, depth) {
+    if (!n || depth > 8) return;
+    ["fills", "strokes"].forEach(function (prop) {
+      if (!Array.isArray(n[prop])) return;
+      n[prop].forEach(function (paint) { if (paint && paint.boundVariables && paint.boundVariables.color) used[paint.boundVariables.color.id] = true; });
+    });
+    if (Array.isArray(n.children)) n.children.forEach(function (c) { walk(c, depth + 1); });
+  })(root, 0);
+  var ids = Object.keys(used);
+  if (!ids.length) return null;
+  for (var i = 0; i < ids.length; i++) {
+    var variable = await figma.variables.getVariableByIdAsync(ids[i]);
+    if (!variable) continue;
+    var collection = await figma.variables.getVariableCollectionByIdAsync(variable.variableCollectionId);
+    if (!collection || !Array.isArray(collection.modes)) continue;
+    var want = collection.modes.find(function (m) { return (toLight ? /light|day|default/i : /dark|night/i).test(m.name); });
+    if (!want) continue;
+    var before = root.explicitVariableModes ? root.explicitVariableModes[collection.id] : undefined;
+    root.setExplicitVariableModeForCollection(collection, want.modeId);
+    return { collectionId: collection.id, collectionName: collection.name, modeName: want.name, before: before || null, nodeId: root.id };
+  }
+  return null;
+}
+async function localApplyTheme(payload) {
+  var toLight = payload.target !== "dark";
+  var roots = figma.currentPage.selection.slice();
+  if (!roots.length) throw new Error("Select the screen to switch to " + (toLight ? "light" : "dark") + " mode.");
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  var modes = [];
+  for (var r = 0; r < roots.length; r++) {
+    var switched = await uxdThemeModeSwitch(roots[r], toLight);
+    if (switched) modes.push(switched);
+  }
+  UXD_HYGIENE_SNAPSHOT = { keys: {}, items: [] };
+  var changed = 0, contrast = 0, already = 0;
+  var nodes = uxdHygieneNodes(roots, true);
+  // Skip screens that are already in the asked mode (background luminance decides).
+  var rootBg = roots.map(function (root) { var p = uxdSingleSolid(root.fills); return p ? uxdLuminance(p.color) : null; });
+  var isAlready = rootBg.every(function (l) { return l !== null && (toLight ? l > 0.5 : l < 0.2); });
+  if (!modes.length && isAlready) already = roots.length;
+  else {
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var isText = node.type === "TEXT";
+      ["fills", "strokes"].forEach(function (prop) {
+        if (!(prop in node) || !Array.isArray(node[prop]) || !node[prop].length) return;
+        var next = node[prop].map(function (paint) {
+          if (!paint || paint.type !== "SOLID" || (paint.boundVariables && paint.boundVariables.color)) return paint;
+          return Object.assign({}, paint, { color: uxdThemeColor(paint.color, toLight, isText) });
+        });
+        if (JSON.stringify(next) === JSON.stringify(node[prop])) return;
+        uxdSnapProp(node, prop);
+        if (isText && prop === "fills") return node.__uxdPending = next;
+        node[prop] = next;
+        changed++;
+      });
+    }
+    // Text needs its fonts loaded before fills change.
+    for (var t = 0; t < nodes.length; t++) {
+      if (!nodes[t].__uxdPending) continue;
+      try { await uxdLoadTextFonts(nodes[t]); nodes[t].fills = nodes[t].__uxdPending; changed++; } catch (_) {}
+      delete nodes[t].__uxdPending;
+    }
+  }
+  // Contrast pass: any text below 4.5:1 on its background goes to the mode's text colour.
+  for (var c = 0; c < nodes.length; c++) {
+    var text = nodes[c];
+    if (text.type !== "TEXT") continue;
+    var paint = uxdSingleSolid(text.fills), bg = uxdTextBackground(text);
+    if (!paint || !bg || (paint.boundVariables && paint.boundVariables.color)) continue;
+    var need = Number(text.fontSize) >= 18 ? 3 : 4.5;
+    if (uxdContrast(paint.color, bg) >= need) continue;
+    var dark = { r: 0.07, g: 0.09, b: 0.15 }, light = { r: 0.96, g: 0.97, b: 0.98 };
+    var pick = uxdContrast(dark, bg) >= uxdContrast(light, bg) ? dark : light;
+    try {
+      await uxdLoadTextFonts(text);
+      uxdSnapProp(text, "fills");
+      text.fills = [Object.assign({}, paint, { color: pick })];
+      contrast++;
+    } catch (_) {}
+  }
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  var snapshot = UXD_HYGIENE_SNAPSHOT.items.map(function (item) {
+    var after = uxdCloneValue(item.node[item.prop]);
+    return { id: item.node.id, prop: item.prop, before: item.before, after: after === undefined ? null : after };
+  });
+  UXD_HYGIENE_SNAPSHOT = null;
+  return { ok: true, target: toLight ? "light" : "dark", modes: modes, changed: changed, contrast: contrast, already: already, checked: nodes.length, snapshot: snapshot };
+}
+async function localRestoreThemeModes(payload) {
+  var items = Array.isArray(payload.modes) ? payload.modes : [];
+  var restored = 0;
+  for (var i = 0; i < items.length; i++) {
+    var node = await figma.getNodeByIdAsync(String(items[i].nodeId || ""));
+    if (!node || typeof node.setExplicitVariableModeForCollection !== "function") continue;
+    var collection = await figma.variables.getVariableCollectionByIdAsync(items[i].collectionId);
+    if (!collection) continue;
+    if (items[i].before) node.setExplicitVariableModeForCollection(collection, items[i].before);
+    else if (typeof node.clearExplicitVariableModeForCollection === "function") node.clearExplicitVariableModeForCollection(collection);
+    restored++;
+  }
+  return { ok: true, restored: restored };
+}
+// uxd-theme:end
 async function localApplyHygieneFixes(payload) {
   var groups = Array.isArray(payload.groups) ? payload.groups.filter(function (g) { return UXD_HYGIENE_GROUPS.indexOf(g) >= 0; }) : [];
   if (!groups.length) groups = ["spacing", "tokens"];
@@ -5397,6 +5539,8 @@ async function runLocalTask(message) {
     else if (message.op === "delete-created") result = await localDeleteCreated(payload);
     else if (message.op === "apply-direct-edits") result = await localApplyDirectEdits(payload);
     else if (message.op === "apply-hygiene-fixes") result = await localApplyHygieneFixes(payload);
+    else if (message.op === "apply-theme") result = await localApplyTheme(payload);
+    else if (message.op === "restore-theme-modes") result = await localRestoreThemeModes(payload);
     else if (message.op === "fill-realistic-data") result = await localFillRealisticData(payload);
     else if (message.op === "restore-texts") result = await localRestoreTexts(payload);
     else if (message.op === "restore-props") result = await localRestoreProps(payload);

@@ -2574,6 +2574,13 @@
         if (body && body[1].trim().length > 3) return { kind: "design-rules", mode: "set", text: body[1].trim().slice(0, 4000) };
         return { kind: "design-rules", mode: "show" };
       }
+      // Light/dark mode on the selected screen, in place (no regeneration): "make this screen light mode",
+      // "switch to dark theme", "dark mode kar do". A "version"/"variation"/"copy" asks for a new screen instead.
+      const themeMatch = /\b(light|dark)\s*(?:mode|theme)\b/i.exec(text) || /\b(?:make|switch|turn|convert|change)\b[^.]{0,30}\b(?:to|into)?\s*(light|dark)\b\s*$/i.exec(text);
+      if (themeMatch && count > 0 && !/\b(versions?|variations?|cop(y|ies)|duplicate|new screens?|another|alag)\b/i.test(text) &&
+          /\b(make|switch|turn|convert|change|set|apply|use|to|into|kar\w*|bana\w*|kr\w*|do)\b/i.test(text)) {
+        return { kind: "theme", target: themeMatch[1].toLowerCase() === "dark" ? "dark" : "light" };
+      }
       if (!/\b(background|bg)\s*(colou?r|fill|ka colou?r|ka rang)\b|\b(colou?r|fill)\b/i.test(text) && /\b(remove|erase|delete|cut ?out|clear|hatao|hata do|nikal)\b[^.]{0,25}\b(background|bg)\b|\bbackground\s*(removal|remover|remove)\b|\b(background|bg)\b[^.]{0,15}\b(hatao|hata do|remove)\b/i.test(text)) {
         return { kind: "remove-background" };
       }
@@ -3374,6 +3381,29 @@
         (result.total ? "\nOne Revert (or Cmd/Ctrl+Z) undoes the whole fix." : "");
     }
 
+    async function runThemeTask(task, stage) {
+      stage("creating", "Switching the selected screen to " + task.target + " mode in place…");
+      const result = await localTask("apply-theme", { target: task.target }, 120000);
+      if (result.already) return "This screen is already in " + task.target + " mode. Nothing was changed.";
+      const snapshot = result.snapshot || [], modes = result.modes || [];
+      if (snapshot.length || modes.length) {
+        recordChange("Switch to " + task.target + " mode", function () {
+          return localTask("restore-props", { items: snapshot }, 120000).then(function (restore) {
+            return localTask("restore-theme-modes", { modes: modes }).then(function () {
+              return restore.restored + " colour(s) restored" + (modes.length ? " and the variable mode reset" : "");
+            });
+          });
+        });
+      }
+      stage("done", "Theme switched · no model needed");
+      const lines = [];
+      modes.forEach(function (m) { lines.push("- Switched " + m.collectionName + " to the " + m.modeName + " mode"); });
+      if (result.changed) lines.push("- Remapped " + result.changed + " hard-coded colour(s): neutrals flipped, brand colours kept their hue");
+      if (result.contrast) lines.push("- Lifted " + result.contrast + " text layer(s) to WCAG AA contrast");
+      return "Switched to " + task.target + " mode in place. The layout is unchanged and no model was used." +
+        (lines.length ? "\n\n" + lines.join("\n") : "") + "\nOne Revert undoes it.";
+    }
+
     async function runVariationsTask(task, prompt, stage) {
       const ids = selectedIds();
       const tree = await localTask("read-tree", { nodeIds: ids, maxDepth: 0, maxNodes: 12 });
@@ -3575,6 +3605,7 @@
       if (task.kind === "handoff") return runHandoffTask(stage);
       if (task.kind === "prototype-wire") return runPrototypeWireTask(task, stage);
       if (task.kind === "learn") return runLearnTask(task, stage);
+      if (task.kind === "theme") return runThemeTask(task, stage);
       if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);
       if (task.kind === "flow-variations" || task.kind === "screen-variations" || task.kind === "states-pack") return runVariationsTask(task, prompt, stage);
       throw new Error("Unknown quick task.");
