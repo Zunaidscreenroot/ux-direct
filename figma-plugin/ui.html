@@ -1749,6 +1749,65 @@
         (captured.warning ? "\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
     }
 
+    // uxd-claude-polish-ui:start
+    // "improve / polish / refine this screen" (not a redesign, restyle, theme, state or variation).
+    function uxdWantsPolish(prompt, designOptions) {
+      if (designOptions && (designOptions.variation || designOptions.state || designOptions.sourceId)) return false;
+      const text = String(prompt || "");
+      if (!/\b(improve|improved|polish|refine|better|clean\s?up|cleaner|tidy|enhance|fix (the )?(design|screen|ui)|sudhar\w*|behtar|acha|achha|accha)\b/i.test(text)) return false;
+      return !/\b(redesign|re-?design|rebuild|from scratch|new layout|re-?layout|restructure|variations?|variants?|versions?|wireframe|dark|light|theme|colou?rs?|modern|premium|minimal|playful|bold|restyle|style|look like|inspired|similar|states?|empty|error|loading|copy|text|content|rewrite|icons?|images?|data)\b/i.test(text);
+    }
+    async function runClaudePolish(prompt, sourceNode, stage) {
+      const width = Number(sourceNode.width) || 360, height = Number(sourceNode.height) || 800;
+      stage("planning", "Assessing the screen like a senior designer: components, layout, styles…");
+      const assessed = await localTask("claude-polish", { sourceId: sourceNode.id, assessOnly: true }, 60000);
+      if (!assessed || !assessed.eligible) {
+        const why = assessed && assessed.assessment && assessed.assessment.reasons ? assessed.assessment.reasons.join("; ") : "";
+        return { fallback: why ? "Assessment: " + why + ", so the screen was rebuilt." : "" };
+      }
+      const spot = await findFreeCanvasSpot((Number(sourceNode.x) || 0) + width + 100, Number(sourceNode.y) || 0, width, height);
+      stage("creating", "Built from components, so keeping its structure and copy; polishing a copy…");
+      const made = await localTask("claude-polish", { sourceId: sourceNode.id, x: spot.x, y: spot.y }, 60000);
+      if (!made || !made.id) return { fallback: "" };
+      const copyId = made.id;
+      let hygiene = null;
+      try {
+        stage("creating", "Applying the file's text and colour styles, the spacing grid and role names…");
+        hygiene = await localTask("apply-hygiene-fixes", { groups: ["layout", "spacing", "tokens", "names"] }, 120000);
+      } catch (_) { /* the copy is still the source's own layout */ }
+      stage("verifying", "Self-check: content, fit, reuse, overlap, styles, names…");
+      const check = await localTask("claude-self-check", { sourceId: sourceNode.id, outputId: copyId }, 60000);
+      if (!check || !check.passed) {
+        await localTask("delete-created", { nodeIds: [copyId] }).catch(function () {});
+        const failed = check && Array.isArray(check.checks) ? check.checks.filter(function (c) { return !c.pass; }).map(function (c) { return c.name + " (" + c.detail + ")"; }).join(", ") : "self-check unavailable";
+        return { fallback: "Polished copy failed the self-check: " + failed + ". Rebuilt instead." };
+      }
+      recordChange("Improved screen \"" + made.name + "\"", function () {
+        return localTask("delete-created", { nodeIds: [copyId] }).then(function (result) {
+          return result && result.missing && result.missing.length ? "it was already deleted" : "improved copy deleted, source untouched";
+        });
+      });
+      await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [copyId] }, 90000).catch(function () {});
+      await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "zoom-to-nodes", nodeIds: [copyId] }, 90000).catch(function () {});
+      await localTask("learn-baseline", { nodeIds: [copyId] }).catch(function () {});
+      stage("done", "Improved · structure kept, self-check passed");
+      const a = made.assessment || {};
+      const c = hygiene && hygiene.counts || {};
+      const fixes = [];
+      if (c.textStyles) fixes.push("text styles on " + c.textStyles + " layer(s)");
+      if (c.colorStyles || c.colorVariables) fixes.push("colour styles on " + ((c.colorStyles || 0) + (c.colorVariables || 0)) + " layer(s)");
+      if (c.spacing || c.symmetry || c.repeated) fixes.push("spacing grid on " + ((c.spacing || 0) + (c.symmetry || 0) + (c.repeated || 0)) + " frame(s)");
+      if (made.negativeGaps) fixes.push(made.negativeGaps + " overlap(s) removed");
+      if (c.autoLayout) fixes.push("auto layout on " + c.autoLayout + " frame(s)");
+      if (made.renamed || c.names) fixes.push((made.renamed || 0) + (c.names || 0) + " layer(s) named by role");
+      const checks = check.checks.map(function (x) { return (x.pass ? "✓ " : "⚠ ") + x.name; }).join(" · ");
+      return { answer: "Improved **" + made.name + "** next to the original. It is already built from your components" +
+        (a.repeated && a.repeated.length ? " (" + a.repeated.join(", ") + ")" : "") +
+        ", so I kept its structure, copy and height and fixed the details" + (fixes.length ? ": " + fixes.join(", ") + "." : ".") +
+        "\nSelf-check: " + checks +
+        "\nWant a full rebuild instead? Say **redesign this screen**." };
+    }
+    // uxd-claude-polish-ui:end
     async function createFigmaDesign(prompt, reportProgress, designOptions) {
       const placement = designOptions && designOptions.placement &&
         Number.isFinite(designOptions.placement.x) && Number.isFinite(designOptions.placement.y) ? designOptions.placement : null;
@@ -1820,6 +1879,19 @@
           !Array.isArray(sourceNode.children) &&
           !["COMPONENT", "COMPONENT_SET", "INSTANCE", "SECTION", "GROUP"].includes(sourceNode.type)) {
         throw new Error("The selection is " + (sourceNode.type || "a layer") + ", not a frame/container. Select the full screen.");
+      }
+
+      // Claude-style design thinking: assess the screen before choosing how to improve it. A screen
+      // already built from components with auto layout is improved in place on a copy (same
+      // instances, copy and height; styles, grid, overlaps and names fixed), then self-checked.
+      // Anything else, or a failed self-check, goes on to the full rebuild below.
+      let polishNote = "";
+      if (!createMode && sourceNode && sourceNode.id && uxdWantsPolish(prompt, designOptions)) {
+        const polished = await runClaudePolish(prompt, sourceNode, stage).catch(function (error) {
+          return { fallback: "Claude-style polish stopped (" + String(error && error.message || error).slice(0, 140) + "), so the screen was rebuilt instead." };
+        });
+        if (polished && polished.answer) return polished.answer;
+        polishNote = polished && polished.fallback ? "\n" + polished.fallback : "";
       }
 
       stage("capturing", "Rendering the selected screen…");
@@ -2045,7 +2117,7 @@
         (lint.passed ? '' : '\n**Not ready yet:** ' + uxdLintHeadline(lint) + ' Say **retry** to fix it.') +
         '\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory +
         visualNote +
-        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') + timingLine;
+        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') + polishNote + timingLine;
       } catch (error) {
         if (taskRunId) {
           await finalizeTaskOutcome("failed", String(error && error.message || error || "Native Figma task failed"),
