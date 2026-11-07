@@ -2975,7 +2975,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire", "learn-baseline", "learn-corrections", "apply-theme", "restore-theme-modes", "componentize-repeats"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire", "learn-baseline", "learn-corrections", "apply-theme", "restore-theme-modes", "componentize-repeats", "claude-polish", "claude-self-check"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -4322,6 +4322,171 @@ async function localComponentizeRepeats(payload) {
   return { ok: true, components: components, instances: instances, kept: kept };
 }
 // uxd-componentize:end
+// uxd-claude-polish:start
+// Claude-style design thinking for "improve this screen". Claude in Figma first ASSESSES the screen:
+// when it is already built from the file's components with auto layout, the best improvement keeps
+// that structure (same instances, same copy, same height) and fixes what is off: file styles,
+// spacing grid, overlaps, layer names. Only a screen that is not built that way gets rebuilt.
+// Generic: nothing here knows about any domain or screen.
+function uxdPolishWalk(root, visit) {
+  (function walk(node, depth, inInstance) {
+    var kids = Array.isArray(node.children) ? node.children : [];
+    for (var i = 0; i < kids.length; i++) {
+      var kid = kids[i];
+      if (!kid || kid.visible === false) continue;
+      visit(kid, depth + 1, inInstance);
+      walk(kid, depth + 1, inInstance || kid.type === "INSTANCE");
+    }
+  })(root, 0, false);
+}
+function uxdPolishAssess(root) {
+  var texts = 0, textsInInstances = 0, containers = 0, autoLayout = 0, instances = 0, overlaps = 0;
+  var componentUse = {};
+  uxdPolishWalk(root, function (node, depth, inInstance) {
+    if (node.type === "TEXT") { texts++; if (inInstance) textsInInstances++; }
+    if (node.type === "INSTANCE" && !inInstance) {
+      instances++;
+      var main = node.mainComponent;
+      var set = main && main.parent && main.parent.type === "COMPONENT_SET" ? main.parent : main;
+      var key = set ? String(set.id || set.name) : String(node.name);
+      componentUse[key] = componentUse[key] || { name: String(node.name || (set && set.name) || "Component"), setName: String(set && set.name || node.name), count: 0 };
+      // Instances renamed one by one ("Tab 1", "Tab 2") are described by their component.
+      if (componentUse[key].count && componentUse[key].name !== String(node.name)) componentUse[key].name = componentUse[key].setName;
+      componentUse[key].count++;
+    }
+    if (inInstance) return;
+    var kids = (node.children || []).filter(function (c) { return c && c.visible !== false; });
+    if (["FRAME", "COMPONENT"].indexOf(node.type) >= 0 && kids.length >= 2) {
+      containers++;
+      if (uxdHasAutoLayout(node)) autoLayout++;
+      else {
+        for (var a = 0; a < kids.length; a++) for (var b = a + 1; b < kids.length; b++) {
+          var A = kids[a], B = kids[b];
+          if (A.layoutPositioning === "ABSOLUTE" || B.layoutPositioning === "ABSOLUTE") continue;
+          if (A.x < B.x + B.width - 1 && B.x < A.x + A.width - 1 && A.y < B.y + B.height - 1 && B.y < A.y + A.height - 1) overlaps++;
+        }
+      }
+    }
+  });
+  var rootKids = (root.children || []).filter(function (c) { return c && c.visible !== false; });
+  if (uxdHasAutoLayout(root) || rootKids.length < 2) { containers++; autoLayout++; }
+  var instanceShare = texts ? textsInInstances / texts : 0;
+  var autoLayoutShare = containers ? autoLayout / containers : 1;
+  var repeated = Object.keys(componentUse).map(function (k) { return componentUse[k]; }).filter(function (c) { return c.count >= 2; });
+  // Built from the system: most copy lives in component instances, or every container already
+  // lays out its children. Overlapping free-positioned layers mean the screen needs a rebuild.
+  var reasons = [];
+  if (texts < 3) reasons.push("too little content to judge");
+  if (instanceShare < 0.5 && autoLayoutShare < 0.9) reasons.push("not built from components or auto layout (" + Math.round(instanceShare * 100) + "% of text in instances, " + Math.round(autoLayoutShare * 100) + "% auto layout)");
+  if (overlaps > 2) reasons.push(overlaps + " overlapping free-positioned layers");
+  return { eligible: reasons.length === 0, reasons: reasons, texts: texts, instanceShare: Math.round(instanceShare * 100),
+    autoLayoutShare: Math.round(autoLayoutShare * 100), instances: instances, overlaps: overlaps,
+    repeated: repeated.map(function (c) { return c.count + "× " + c.name; }).slice(0, 4) };
+}
+// "Frame 2095586997" holding three "Loan Card" instances is the "Loan Card list"; a short
+// horizontal row of 2–5 instances of one component set is "Tabs"-like segmented control.
+function uxdPolishContainerName(node) {
+  var kids = (node.children || []).filter(function (c) { return c && c.visible !== false; });
+  if (kids.length < 2 || !kids.every(function (c) { return c.type === "INSTANCE"; })) return "";
+  var sets = {};
+  kids.forEach(function (c) {
+    var main = c.mainComponent, set = main && main.parent && main.parent.type === "COMPONENT_SET" ? main.parent : main;
+    sets[set ? String(set.id || set.name) : String(c.name)] = true;
+  });
+  if (Object.keys(sets).length !== 1) return "";
+  if (node.layoutMode === "HORIZONTAL" && kids.length <= 5 && Number(node.height) <= 56) return "Tabs";
+  var base = String(kids[0].name || "Item").replace(/\s*\d+$/, "").trim().slice(0, 40) || "Item";
+  return base + " list";
+}
+// A negative gap stacks one child under the previous one (overlap). When the next child pads its
+// leading edge by at least that much, the gap goes to 0 and the padding absorbs it: the pixels
+// stay where they were, the overlap is gone.
+function uxdPolishNegativeGaps(root, notes) {
+  var fixed = 0;
+  var stacks = [root].concat(typeof root.findAll === "function" ? root.findAll(function (n) { return uxdHasAutoLayout(n) && typeof n.itemSpacing === "number" && n.itemSpacing < 0; }) : []);
+  stacks.forEach(function (stack) {
+    if (!uxdHasAutoLayout(stack) || !(stack.itemSpacing < 0)) return;
+    var gap = stack.itemSpacing;
+    var lead = stack.layoutMode === "HORIZONTAL" ? "paddingLeft" : "paddingTop";
+    var kids = (stack.children || []).filter(function (c) { return c && c.visible !== false && c.layoutPositioning !== "ABSOLUTE"; });
+    var followers = kids.slice(1);
+    if (!followers.length || !followers.every(function (k) { return uxdHasAutoLayout(k) && typeof k[lead] === "number" && k[lead] >= -gap; })) {
+      if (notes.length < 6) notes.push("\"" + String(stack.name).slice(0, 30) + "\" overlaps its children (gap " + gap + "), left as designed");
+      return;
+    }
+    try {
+      stack.itemSpacing = 0;
+      followers.forEach(function (k) { k[lead] = k[lead] + gap; });
+      fixed++;
+    } catch (error) { if (notes.length < 6) notes.push(String(error && error.message || error).slice(0, 100)); }
+  });
+  return fixed;
+}
+async function localClaudePolish(payload) {
+  var source = await figma.getNodeByIdAsync(String(payload && payload.sourceId || ""));
+  if (!source || source.removed || !Array.isArray(source.children)) throw new Error("Select the screen to improve.");
+  var assessment = uxdPolishAssess(source);
+  if (!assessment.eligible || payload.assessOnly) return { ok: true, eligible: assessment.eligible, assessment: assessment };
+  var copy = source.clone();
+  var page = figma.currentPage;
+  if (source.parent && source.parent.type !== "PAGE" && typeof page.appendChild === "function") page.appendChild(copy);
+  else if (source.parent && typeof source.parent.insertChild === "function" && Array.isArray(source.parent.children)) {
+    var at = source.parent.children.indexOf(source);
+    if (at >= 0) source.parent.insertChild(at + 1, copy);
+  }
+  if (Number.isFinite(payload.x)) copy.x = payload.x;
+  if (Number.isFinite(payload.y)) copy.y = payload.y;
+  copy.name = String(payload.name || (String(source.name).slice(0, 60) + " · improved")).slice(0, 80);
+  if (typeof copy.setPluginData === "function") copy.setPluginData("uxdCreated", "1");
+  var notes = [], renamed = 0;
+  var frames = typeof copy.findAll === "function" ? copy.findAll(function (n) { return n.type === "FRAME" && /^(frame|group|auto layout)(\s+\d+)?$/i.test(String(n.name || "").trim()); }) : [];
+  frames.forEach(function (frame) {
+    var role = uxdPolishContainerName(frame);
+    if (role) { frame.name = role; renamed++; }
+  });
+  var gaps = uxdPolishNegativeGaps(copy, notes);
+  // The hygiene pass that follows works on the selection.
+  page.selection = [copy];
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  return { ok: true, eligible: true, assessment: assessment, id: copy.id, name: copy.name, renamed: renamed, negativeGaps: gaps, notes: notes,
+    height: Math.round(copy.height), sourceHeight: Math.round(source.height) };
+}
+// Claude's self-check before it calls a screen done: every source text still there in order,
+// nothing invented, the frame did not grow, no overlaps, no generic names, styles applied.
+async function localClaudeSelfCheck(payload) {
+  var source = await figma.getNodeByIdAsync(String(payload && payload.sourceId || ""));
+  var output = await figma.getNodeByIdAsync(String(payload && payload.outputId || ""));
+  if (!source || !output) throw new Error("Source or improved screen is missing.");
+  var listTexts = function (root) {
+    var out = [];
+    uxdPolishWalk(root, function (n) { if (n.type === "TEXT") out.push(String(n.characters || "").trim()); });
+    return out.filter(Boolean);
+  };
+  var before = listTexts(source), after = listTexts(output);
+  var count = function (list) { var m = {}; list.forEach(function (t) { m[t] = (m[t] || 0) + 1; }); return m; };
+  var b = count(before), a = count(after);
+  var lost = Object.keys(b).filter(function (t) { return (a[t] || 0) < b[t]; });
+  var invented = Object.keys(a).filter(function (t) { return (b[t] || 0) < a[t]; });
+  var styled = 0, textTotal = 0, generic = 0;
+  uxdPolishWalk(output, function (n, depth, inInstance) {
+    if (n.type === "TEXT") { textTotal++; if (typeof n.textStyleId === "string" && n.textStyleId) styled++; }
+    if (!inInstance && n.type !== "INSTANCE" && /^(frame|group|rectangle)\s+\d+$/i.test(String(n.name || "").trim())) generic++;
+  });
+  var outAssess = uxdPolishAssess(output);
+  var negatives = typeof output.findAll === "function" ? output.findAll(function (n) { return uxdHasAutoLayout(n) && n.itemSpacing < 0; }).length : 0;
+  var growth = source.height ? output.height / source.height : 1;
+  var checks = [
+    { name: "Content kept", pass: lost.length === 0 && invented.length === 0, detail: lost.length + " lost, " + invented.length + " invented" },
+    { name: "Fits the frame", pass: growth <= 1.1, detail: Math.round(output.height) + "px vs " + Math.round(source.height) + "px" },
+    { name: "Components reused", pass: outAssess.instances >= uxdPolishAssess(source).instances, detail: outAssess.instances + " instances" },
+    { name: "No overlap", pass: outAssess.overlaps === 0 && negatives === 0, detail: (outAssess.overlaps + negatives) + " overlap(s)" },
+    { name: "Text styles", pass: textTotal === 0 || styled / textTotal >= 0.75, detail: (textTotal ? Math.round(100 * styled / textTotal) : 100) + "% styled" },
+    { name: "Layer names", pass: generic === 0, detail: generic + " generic" }
+  ];
+  // Content and fit are hard gates (decision priority 1); the rest is reported.
+  return { ok: true, passed: checks[0].pass && checks[1].pass, checks: checks, lost: lost.slice(0, 6), invented: invented.slice(0, 6) };
+}
+// uxd-claude-polish:end
 async function localRestoreProps(payload) {
   var items = Array.isArray(payload.items) ? payload.items.slice(0, 3000) : [];
   var restored = 0, changedSince = 0, missing = 0;
@@ -5981,6 +6146,8 @@ async function runLocalTask(message) {
     else if (message.op === "restore-texts") result = await localRestoreTexts(payload);
     else if (message.op === "restore-props") result = await localRestoreProps(payload);
     else if (message.op === "componentize-repeats") result = await localComponentizeRepeats(payload);
+    else if (message.op === "claude-polish") result = await localClaudePolish(payload);
+    else if (message.op === "claude-self-check") result = await localClaudeSelfCheck(payload);
     else if (message.op === "find-icon-targets") result = await localFindIconTargets(payload);
     else if (message.op === "insert-icons") result = await localInsertIcons(payload);
     else if (message.op === "section-state") result = await localSectionState(payload);

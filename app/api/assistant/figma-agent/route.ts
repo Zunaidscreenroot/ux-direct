@@ -26,6 +26,7 @@ import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, p
 import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, PLAN_NODE_LIMIT, expandBlockSpec, isBlockSpec, sourceFallbackSpec } from "@/src/figma-agent/block-spec";
+import { CLAUDE_DESIGN_PLAYBOOK } from "@/src/figma-agent/design-thinking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -495,6 +496,7 @@ const BLOCK_SYSTEM = [
   "Group content the way a senior product designer would: one clear primary action, related values together in one card, status next to what it describes, secondary detail in lists.",
   "For finance designs (banking, lending, payments, insurance, investing), emphasize transparency, clear amount/date/status hierarchy, user control and accessible legibility. Never make up actual interest rates, contractual terms or legal-compliance claims; label illustrative financial values as sample.",
   "Progress indicators must keep their meaning: a partial ring (for example 60% paid) is a progress_ring with percent 60, never a solid shape.",
+  CLAUDE_DESIGN_PLAYBOOK,
   BLOCK_SPEC_CONTRACT,
   "EXAMPLE OF THE SHAPE ONLY (never copy its content): " + BLOCK_SPEC_EXAMPLE,
   LEARNING_CANDIDATE_RULE,
@@ -731,6 +733,7 @@ export async function POST(request: Request) {
     designRulesInstructions.trim(),
     "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Copy every listed text string exactly into block fields, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
     "Do not redesign it as a generic dashboard. Do not invent contractual financial details.",
+    createMode ? "" : CLAUDE_DESIGN_PLAYBOOK,
     BLOCK_SPEC_CONTRACT,
     "OUTPUT BUDGET: 3–6 sections and 10–22 blocks. Prefer list over many single rows. Finish every string, array, object and the final closing brace. learningCandidate:null. No markdown, explanation or reasoning.",
   ].join("\n");
