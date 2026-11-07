@@ -2917,7 +2917,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -3712,6 +3712,274 @@ async function localApplyDirectEdits(payload) {
   if (!applied.length) throw new Error(errors.slice(0, 3).join(" ") || "Nothing could be changed.");
   return { ok: true, applied: applied, notes: notes.slice(0, 6), errors: errors.slice(0, 6) };
 }
+// uxd-hygiene-fix:start
+// One-click hygiene fixer. Deterministic, no model: every change is computed from live layer properties,
+// so the same selection always gets the same fix. Groups: "spacing" (4px grid + near-symmetric padding),
+// "tokens" (bind hard-coded colours / text to the file's exactly matching variable or style, so nothing
+// changes visually), "a11y" (WCAG contrast, 12px minimum text, 44px touch targets on auto-layout frames),
+// "layout" (auto layout on cleanly stacked frames). Instances, locked and hidden layers are never touched.
+var UXD_HYGIENE_GROUPS = ["spacing", "tokens", "a11y", "layout"];
+var UXD_HYGIENE_INTERACTIVE = /\b(button|btn|cta|icon[ -]?button|tab|chip|toggle|switch|checkbox|radio|link|close|back|menu|fab)\b/i;
+function uxdHygieneNodes(roots) {
+  var out = [];
+  (function walk(list) {
+    for (var i = 0; i < list.length; i++) {
+      var node = list[i];
+      if (!node || node.removed || node.visible === false || node.locked === true) continue;
+      out.push(node);
+      if (node.type !== "INSTANCE" && Array.isArray(node.children)) walk(node.children);
+    }
+  })(roots);
+  return out;
+}
+function uxdSnapToGrid(value) {
+  if (typeof value !== "number" || !isFinite(value) || value <= 0 || value === 2) return value;
+  if (value < 3) return 2;
+  return Math.round(value / 4) * 4;
+}
+function uxdBound(node, prop) {
+  try { return !!(node.boundVariables && node.boundVariables[prop]); } catch (_) { return false; }
+}
+function uxdColorKey(color, alpha) {
+  function h(v) { return Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, "0"); }
+  return (h(color.r) + h(color.g) + h(color.b)).toUpperCase() + "/" + Math.round((alpha === undefined ? 1 : alpha) * 100);
+}
+function uxdLuminance(c) {
+  function ch(v) { return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+  return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b);
+}
+function uxdContrast(a, b) {
+  var la = uxdLuminance(a), lb = uxdLuminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+function uxdSingleSolid(paints) {
+  if (!Array.isArray(paints)) return null;
+  var visible = paints.filter(function (p) { return p && p.visible !== false; });
+  return visible.length === 1 && visible[0].type === "SOLID" && paints.length === 1 ? visible[0] : null;
+}
+async function uxdHygienePalette() {
+  var palette = { styles: new Map(), variables: new Map() };
+  try {
+    var styles = await figma.getLocalPaintStylesAsync();
+    styles.forEach(function (style) {
+      var paint = uxdSingleSolid(style.paints);
+      if (!paint) return;
+      var key = uxdColorKey(paint.color, paint.opacity);
+      palette.styles.set(key, (palette.styles.get(key) || []).concat([style]));
+    });
+  } catch (_) {}
+  try {
+    if (figma.variables && typeof figma.variables.getLocalVariablesAsync === "function") {
+      var vars = await figma.variables.getLocalVariablesAsync("COLOR");
+      var collections = new Map();
+      for (var i = 0; i < vars.length; i++) {
+        var variable = vars[i];
+        if (!variable || variable.resolvedType !== "COLOR") continue;
+        var collection = collections.get(variable.variableCollectionId);
+        if (collection === undefined) {
+          try { collection = await figma.variables.getVariableCollectionByIdAsync(variable.variableCollectionId); } catch (_) { collection = null; }
+          collections.set(variable.variableCollectionId, collection);
+        }
+        var value = variable.valuesByMode ? variable.valuesByMode[collection && collection.defaultModeId ? collection.defaultModeId : Object.keys(variable.valuesByMode)[0]] : null;
+        for (var hop = 0; hop < 3 && value && value.type === "VARIABLE_ALIAS"; hop++) {
+          var target = await figma.variables.getVariableByIdAsync(value.id).catch(function () { return null; });
+          if (!target || !target.valuesByMode) { value = null; break; }
+          var targetCollection = await figma.variables.getVariableCollectionByIdAsync(target.variableCollectionId).catch(function () { return null; });
+          value = target.valuesByMode[targetCollection && targetCollection.defaultModeId ? targetCollection.defaultModeId : Object.keys(target.valuesByMode)[0]];
+        }
+        if (!value || typeof value.r !== "number") continue;
+        var key = uxdColorKey(value, value.a);
+        palette.variables.set(key, (palette.variables.get(key) || []).concat([variable]));
+      }
+    }
+  } catch (_) {}
+  return palette;
+}
+function uxdPickToken(candidates, role) {
+  if (!candidates || !candidates.length) return null;
+  var prefer = role === "text" ? /text|fg|foreground|content|label|on[-/ ]/i : role === "stroke" ? /border|stroke|outline|divider|line/i : /bg|background|surface|fill|container|card|primary|brand/i;
+  var scoped = candidates.filter(function (item) {
+    var scopes = Array.isArray(item.scopes) ? item.scopes : null;
+    if (!scopes) return true;
+    if (scopes.indexOf("ALL_SCOPES") >= 0) return true;
+    if (role === "text") return scopes.indexOf("TEXT_FILL") >= 0 || scopes.indexOf("ALL_FILLS") >= 0;
+    if (role === "stroke") return scopes.indexOf("STROKE_COLOR") >= 0;
+    return scopes.indexOf("ALL_FILLS") >= 0 || scopes.indexOf("FRAME_FILL") >= 0 || scopes.indexOf("SHAPE_FILL") >= 0;
+  });
+  if (!scoped.length) return null;
+  return scoped.slice().sort(function (a, b) {
+    var pa = prefer.test(a.name) ? 0 : 1, pb = prefer.test(b.name) ? 0 : 1;
+    return pa - pb || String(a.name).length - String(b.name).length || String(a.name).localeCompare(String(b.name));
+  })[0];
+}
+async function uxdBindPaintToken(node, prop, palette, role) {
+  var styleProp = prop === "fills" ? "fillStyleId" : "strokeStyleId";
+  if (typeof node[styleProp] === "string" && node[styleProp]) return false;
+  if (uxdBound(node, prop)) return false;
+  var paint = uxdSingleSolid(node[prop]);
+  if (!paint || (paint.boundVariables && paint.boundVariables.color)) return false;
+  var key = uxdColorKey(paint.color, paint.opacity);
+  var variable = uxdPickToken(palette.variables.get(key), role);
+  if (variable && figma.variables && typeof figma.variables.setBoundVariableForPaint === "function") {
+    if (node.type === "TEXT") await uxdLoadTextFonts(node);
+    node[prop] = [figma.variables.setBoundVariableForPaint(paint, "color", variable)];
+    return "variable";
+  }
+  var style = uxdPickToken(palette.styles.get(key), role);
+  if (!style) return false;
+  if (node.type === "TEXT") await uxdLoadTextFonts(node);
+  var setter = prop === "fills" ? "setFillStyleIdAsync" : "setStrokeStyleIdAsync";
+  if (typeof node[setter] === "function") await node[setter](style.id);
+  else node[styleProp] = style.id;
+  return "style";
+}
+function uxdSameNumberish(a, b) {
+  if (a && typeof a === "object" && b && typeof b === "object") {
+    if (a.unit !== b.unit) return false;
+    if (a.unit === "AUTO") return true;
+    return Math.abs(Number(a.value) - Number(b.value)) < 0.01;
+  }
+  return a === b;
+}
+function uxdMatchTextStyle(node, styles) {
+  if (typeof node.textStyleId === "string" && node.textStyleId) return null;
+  if (!node.fontName || typeof node.fontName !== "object" || typeof node.fontSize !== "number") return null;
+  var matches = styles.filter(function (style) {
+    return style.fontName && style.fontName.family === node.fontName.family && style.fontName.style === node.fontName.style &&
+      Math.abs(style.fontSize - node.fontSize) < 0.01 &&
+      (node.lineHeight === undefined || typeof node.lineHeight !== "object" || uxdSameNumberish(style.lineHeight, node.lineHeight)) &&
+      (node.letterSpacing === undefined || typeof node.letterSpacing !== "object" || uxdSameNumberish(style.letterSpacing, node.letterSpacing)) &&
+      (style.textCase === undefined || node.textCase === undefined || style.textCase === node.textCase) &&
+      (style.textDecoration === undefined || node.textDecoration === undefined || style.textDecoration === node.textDecoration);
+  });
+  return matches.sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); })[0] || null;
+}
+function uxdTextBackground(node) {
+  for (var parent = node.parent; parent && parent.type !== "PAGE"; parent = parent.parent) {
+    if (!Array.isArray(parent.fills)) continue;
+    var visible = parent.fills.filter(function (p) { return p && p.visible !== false; });
+    if (!visible.length) continue;
+    var top = visible[visible.length - 1];
+    return top.type === "SOLID" ? top.color : null;
+  }
+  return null;
+}
+async function localApplyHygieneFixes(payload) {
+  var groups = Array.isArray(payload.groups) ? payload.groups.filter(function (g) { return UXD_HYGIENE_GROUPS.indexOf(g) >= 0; }) : [];
+  if (!groups.length) groups = ["spacing", "tokens"];
+  var roots = figma.currentPage.selection.slice();
+  if (!roots.length) throw new Error("Select the screen (or layers) to fix first.");
+  var nodes = uxdHygieneNodes(roots);
+  var counts = { spacing: 0, symmetry: 0, colorVariables: 0, colorStyles: 0, textStyles: 0, contrast: 0, smallText: 0, touchTargets: 0, autoLayout: 0 };
+  var skipped = [];
+  function skip(message) { if (skipped.length < 8 && skipped.indexOf(message) < 0) skipped.push(message); }
+  var has = function (g) { return groups.indexOf(g) >= 0; };
+  // Fonts first, so the whole fix is one undo step.
+  var texts = nodes.filter(function (n) { return n.type === "TEXT"; });
+  for (var t = 0; t < texts.length; t++) { try { await uxdLoadTextFonts(texts[t]); } catch (_) {} }
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+
+  if (has("layout")) {
+    var stacks = nodes.filter(function (n) {
+      if (["FRAME", "COMPONENT"].indexOf(n.type) < 0 || uxdHasAutoLayout(n)) return false;
+      var kids = (n.children || []).filter(function (c) { return c.visible !== false && c.layoutPositioning !== "ABSOLUTE"; });
+      return kids.length >= 2;
+    });
+    for (var s = 0; s < stacks.length; s++) {
+      if (!uxdInferLayout(stacks[s])) { skip("\"" + String(stacks[s].name).slice(0, 30) + "\" has overlapping layers, so auto layout was not forced"); continue; }
+      try { if (uxdEnableAutoLayout(stacks[s], null)) counts.autoLayout++; } catch (error) { skip(String(error && error.message || error).slice(0, 120)); }
+    }
+  }
+  if (has("spacing")) {
+    var frames = nodes.filter(function (n) { return n.type !== "INSTANCE" && uxdHasAutoLayout(n); });
+    frames.forEach(function (frame) {
+      var changed = false;
+      ["paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "itemSpacing"].forEach(function (prop) {
+        if (prop === "itemSpacing" && frame.primaryAxisAlignItems === "SPACE_BETWEEN") return;
+        if (uxdBound(frame, prop) || typeof frame[prop] !== "number") return;
+        var snapped = uxdSnapToGrid(frame[prop]);
+        if (snapped !== frame[prop]) { frame[prop] = snapped; changed = true; }
+      });
+      if (changed) counts.spacing++;
+      var left = frame.paddingLeft, right = frame.paddingRight;
+      if (typeof left === "number" && typeof right === "number" && left !== right && Math.abs(left - right) <= 8 &&
+          !uxdBound(frame, "paddingLeft") && !uxdBound(frame, "paddingRight")) {
+        var both = Math.max(left, right);
+        frame.paddingLeft = both; frame.paddingRight = both; counts.symmetry++;
+      }
+    });
+  }
+  if (has("a11y")) {
+    for (var a = 0; a < texts.length; a++) {
+      var text = texts[a];
+      if (typeof text.fontSize === "number" && text.fontSize < 12 && !uxdBound(text, "fontSize") && !(typeof text.textStyleId === "string" && text.textStyleId)) {
+        try { text.fontSize = 12; counts.smallText++; } catch (_) {}
+      }
+      var fg = uxdSingleSolid(text.fills);
+      var bg = uxdTextBackground(text);
+      if (!fg || !bg) continue;
+      var size = typeof text.fontSize === "number" ? text.fontSize : 14;
+      var bold = text.fontName && typeof text.fontName === "object" && /bold|semi|heavy|black/i.test(text.fontName.style);
+      var required = size >= 24 || (size >= 18.5 && bold) ? 3 : 4.5;
+      if (uxdContrast(fg.color, bg) >= required) continue;
+      if ((typeof text.fillStyleId === "string" && text.fillStyleId) || uxdBound(text, "fills") || (fg.boundVariables && fg.boundVariables.color)) {
+        skip("\"" + String(text.name).slice(0, 30) + "\" fails contrast but uses a colour token; change the token instead");
+        continue;
+      }
+      var darken = uxdLuminance(bg) > 0.18;
+      var color = { r: fg.color.r, g: fg.color.g, b: fg.color.b };
+      for (var step = 0; step < 40 && uxdContrast(color, bg) < required + 0.05; step++) color = uxdShiftColor(color, darken ? -0.06 : 0.06);
+      if (uxdContrast(color, bg) < required) { skip("\"" + String(text.name).slice(0, 30) + "\" cannot reach contrast on its background"); continue; }
+      text.fills = [{ type: "SOLID", color: color, opacity: fg.opacity === undefined ? 1 : fg.opacity, visible: true }];
+      counts.contrast++;
+    }
+    nodes.forEach(function (n) {
+      if (n.type === "TEXT" || !UXD_HYGIENE_INTERACTIVE.test(String(n.name)) || !(n.width < 44 || n.height < 44)) return;
+      if (!uxdHasAutoLayout(n) || !("minHeight" in n || "minWidth" in n)) {
+        skip("\"" + String(n.name).slice(0, 30) + "\" is under 44×44 without auto layout; give it a 44px hit area by hand");
+        return;
+      }
+      try {
+        if (n.height < 44) n.minHeight = 44;
+        if (n.width < 44) n.minWidth = 44;
+        counts.touchTargets++;
+      } catch (error) { skip("\"" + String(n.name).slice(0, 30) + "\": " + String(error && error.message || error).slice(0, 80)); }
+    });
+  }
+  if (has("tokens")) {
+    var palette = await uxdHygienePalette();
+    var textStyles = [];
+    try { textStyles = await figma.getLocalTextStylesAsync(); } catch (_) {}
+    if (!palette.styles.size && !palette.variables.size && !textStyles.length) skip("this file has no local colour variables, colour styles or text styles to bind to");
+    for (var k = 0; k < nodes.length; k++) {
+      var node = nodes[k];
+      if (node.type === "INSTANCE") continue;
+      var role = node.type === "TEXT" ? "text" : "fill";
+      try {
+        if ("fills" in node) {
+          var fill = await uxdBindPaintToken(node, "fills", palette, role);
+          if (fill === "variable") counts.colorVariables++; else if (fill === "style") counts.colorStyles++;
+        }
+        if ("strokes" in node && node.type !== "TEXT") {
+          var stroke = await uxdBindPaintToken(node, "strokes", palette, "stroke");
+          if (stroke === "variable") counts.colorVariables++; else if (stroke === "style") counts.colorStyles++;
+        }
+        if (node.type === "TEXT" && textStyles.length) {
+          var match = uxdMatchTextStyle(node, textStyles);
+          if (match) {
+            if (typeof node.setTextStyleIdAsync === "function") await node.setTextStyleIdAsync(match.id);
+            else node.textStyleId = match.id;
+            counts.textStyles++;
+          }
+        }
+      } catch (error) { skip("\"" + String(node.name).slice(0, 30) + "\": " + String(error && error.message || error).slice(0, 80)); }
+    }
+  }
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  var total = Object.keys(counts).reduce(function (sum, key) { return sum + counts[key]; }, 0);
+  return { ok: true, groups: groups, counts: counts, total: total, checked: nodes.length, skipped: skipped };
+}
+// uxd-hygiene-fix:end
 async function runLocalTask(message) {
   var result = null;
   var errorText = null;
@@ -3725,6 +3993,7 @@ async function runLocalTask(message) {
     else if (message.op === "restore-fills") result = await localRestoreFills(payload);
     else if (message.op === "delete-created") result = await localDeleteCreated(payload);
     else if (message.op === "apply-direct-edits") result = await localApplyDirectEdits(payload);
+    else if (message.op === "apply-hygiene-fixes") result = await localApplyHygieneFixes(payload);
     else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
     else if (message.op === "trigger-undo") {
       if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");
