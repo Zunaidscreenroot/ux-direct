@@ -55,6 +55,8 @@
     .message.user { align-items:flex-end; }
     .message.assistant { align-items:flex-start; }
     .message-role { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; font-weight:700; letter-spacing:.4px; padding:0 3px; }
+    .bubble details.tech { margin-top:6px; opacity:.75; font-size:11px; }
+    .bubble details.tech summary { cursor:pointer; }
     .bubble { max-width:95%; padding:10px 12px; border-radius:14px; font-size:12px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
     .user .bubble { background:var(--figma-color-bg-secondary,#f3f3f3); border:1px solid var(--figma-color-border,#e6e6e6); border-bottom-right-radius:5px; }
     .assistant .bubble { max-width:100%; padding:2px 3px 4px; border:0; background:transparent; }
@@ -901,6 +903,34 @@
       return output.join("");
     }
 
+    // uxd-short-reply:start
+    // Replies stay short and plain: run diagnostics (timing, models, lint/read-back notes) fold
+    // into a collapsed "Details" line, and backend architecture names never reach the designer.
+    var UXD_TECH_LINE = /^\s*(Timing:|Generation model:|Design model:|Model:|UX Direct Brain|Post-variation visual QA|Native structure|Native layer|Structural lint|Visual capture note:|Visual QA|Lint:|Read-back|Routed via|Served by|Attempts?:|Task run|Task outcome|Brain learning|Brain:|Memory:)/i;
+    function uxdScrubArchitecture(text) {
+      return String(text || "")
+        .replace(/\b(?:the\s+)?UX\s+Director\s+agency\b/gi, "UX Direct")
+        .replace(/\bagency\s*(?:\(([^)]*)\))?/gi, function (_, inner) { return inner ? "parallel pass (" + inner + ")" : "parallel pass"; })
+        .replace(/\b(?:UX|UI|Content|Design)\s+Leads?\b(?:\s+—\s+[^,.;\n]+)?/g, "UX Direct")
+        .replace(/\bspecialist(?:\s+designers?)?s?\b/gi, "UX Direct")
+        .replace(/\bsub-?agents?\b/gi, "checks")
+        .replace(/·\s*[A-Za-z-]+(?:\s+[A-Za-z-]+)?\s+designer:\s*/g, "· ")
+        .replace(/\b(?:Header|Navigation|Form|Data-viz|Information|Interaction|Status|Product)\s+designer\b/g, "section")
+        .replace(/\bUX writer\b/g, "copy");
+    }
+    function renderReplyHtml(content) {
+      var visible = [], tech = [];
+      String(content || "").replace(/\r\n?/g, "\n").split("\n").forEach(function (line) {
+        (UXD_TECH_LINE.test(line) ? tech : visible).push(line);
+      });
+      var main = uxdScrubArchitecture(visible.join("\n").replace(/\n{3,}/g, "\n\n").trim());
+      var details = tech.length
+        ? '<details class="tech"><summary>Details</summary>' + renderMarkdownHtml(uxdScrubArchitecture(tech.join("\n"))) + "</details>"
+        : "";
+      return renderMarkdownHtml(main) + details;
+    }
+    // uxd-short-reply:end
+
     function appendMessage(role, content, options = {}) {
       $("welcome").hidden = true;
       const row = document.createElement("article");
@@ -910,7 +940,7 @@
       label.textContent = role === "user" ? "YOU" : "UX DIRECT";
       const bubble = document.createElement("div");
       bubble.className = "bubble";
-      bubble.innerHTML = renderMarkdownHtml(content || "");
+      bubble.innerHTML = role === "user" ? renderMarkdownHtml(content || "") : renderReplyHtml(content || "");
       if (options.error) bubble.classList.add("error");
       row.append(label, bubble);
       $("chatLog").appendChild(row);
@@ -1080,6 +1110,13 @@
       } catch (_) { return null; }
     }
 
+    /** One plain sentence for the most serious lint issue. */
+    function uxdLintHeadline(lint) {
+      var issues = Array.isArray(lint && lint.issues) ? lint.issues : [];
+      var top = issues.find(function (i) { return i && i.severity === "high"; }) || issues[0];
+      return top && top.issue ? String(top.issue) : "a quality check failed.";
+    }
+
     function formatLintIssues(issues) {
       return (Array.isArray(issues) ? issues : []).slice(0, 4).map(function (item) {
         return "• [" + String(item.severity || "issue") + "] " + String(item.issue || "") + " " + String(item.evidence || "");
@@ -1106,8 +1143,24 @@
         if (expanded && Array.isArray(expanded.nodes)) lint = await requestStructuralLint(lintBody(expanded)) || lint;
       }
       if (!lint) return { passed: false, issues: [], text: "Structural lint was unavailable, so overlap, clipping and source content were not verified." };
+      // A few source texts lost by the model: copy the exact source layers back, then lint again.
+      let restoredNote = "";
+      const missing = lint.content && lint.content.partial !== true && Array.isArray(lint.content.missingText) ? lint.content.missingText : [];
+      if (!lint.passed && missing.length >= 1 && missing.length <= 5 && options.sourceRootId && options.outputRootId) {
+        const restore = await localTask("restore-missing-texts", {
+          sourceRootId: options.sourceRootId, outputRootId: options.outputRootId, texts: missing
+        }).catch(function () { return null; });
+        if (restore && Array.isArray(restore.restored) && restore.restored.length) {
+          const reread = await runNativeCanvasCommand("read-canvas", {
+            scope: "selection", nodeIds: [options.outputRootId], maxDepth: 12, maxNodes: 500, includeStyles: true, includeVariables: true
+          }, 90000).catch(function () { return null; });
+          if (reread && Array.isArray(reread.nodes)) lint = await requestStructuralLint(lintBody(reread)) || lint;
+          restoredNote = "\nRestored " + restore.restored.length + " missing source text(s) from the original screen: " +
+            restore.restored.map(function (item) { return '"' + String(item.text).slice(0, 40) + '"'; }).join(", ") + ".";
+        }
+      }
       return { passed: lint.passed === true, issues: lint.issues,
-        text: String(lint.summary || (lint.passed ? "Structural lint passed" : "Structural lint failed")) +
+        text: String(lint.summary || (lint.passed ? "Structural lint passed" : "Structural lint failed")) + restoredNote +
           (lint.passed ? "" : "\n" + formatLintIssues(lint.issues)) };
     }
 
@@ -1867,8 +1920,8 @@
         sourceRootId: sourceNode && sourceNode.id, outputRootId: createdFrameId,
         state: designOptions && designOptions.state ? designOptions.state : undefined
       });
-      let visualNote = "\n\nPost-variation visual QA disabled as requested; native layer read-back passed." +
-        "\n" + lint.text;
+      let visualNote = "\nPost-variation visual QA disabled as requested; native layer read-back passed." +
+        "\n" + String(lint.text || "").split("\n").map(function (line) { return /^\s*Structural lint/i.test(line) ? line : "Structural lint · " + line; }).join("\n");
       visualNote += await finalizeTaskOutcome(lint.passed ? "verified" : "failed",
         lint.passed
           ? "Native structure/read-back and structural lint passed; post-variation visual QA disabled as requested. " + lint.text
@@ -1879,20 +1932,16 @@
       else stage("error", "Variation created · structural lint found issues to fix");
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
       if (createMode) {
-        return 'Created a new screen "' + frameName + '" with ' + completedElementCount + ' native layers from your prompt, using this file\'s components where they fit. ' +
-          String(plan.summary || "") + '\n\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory + visualNote + timingLine +
-          '\nIt is selected on the canvas. Next: **add icons**, **fill with realistic data**, **fix hygiene**, or **add empty, loading and error states**.' +
-          (lint.passed ? '' : '\nThis screen is NOT accepted yet: fix the issues above or ask UX Direct to retry.');
+        return 'Created **' + frameName + '**. ' + String(plan.summary || "") +
+          (lint.passed ? '' : '\n**Not ready yet:** ' + uxdLintHeadline(lint) + ' Say **retry** to fix it.') +
+          '\nNext: **add icons**, **fill with realistic data** or **add states**.' +
+          '\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory + visualNote + timingLine;
       }
-      return 'Created "' + frameName + '" as a separate editable Figma variation with ' +
-        completedElementCount + ' native layers. ' + String(plan.summary || "The variation is ready for review.") +
-        '\n\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory +
+      return 'Created **' + frameName + '** next to the original. ' + String(plan.summary || "") +
+        (lint.passed ? '' : '\n**Not ready yet:** ' + uxdLintHeadline(lint) + ' Say **retry** to fix it.') +
+        '\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory +
         visualNote +
-        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') +
-        '\nThe source frame was preserved. The new variation is selected on the canvas.' + timingLine +
-        (lint.passed
-          ? '\nThe generated variation is ready for manual review.'
-          : '\nThis variation is NOT accepted yet: fix the issues above or ask UX Direct to retry.');
+        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') + timingLine;
       } catch (error) {
         if (taskRunId) {
           await finalizeTaskOutcome("failed", String(error && error.message || error || "Native Figma task failed"),
@@ -2450,6 +2499,16 @@
         const fixIt = /\b(fix|make|apply|lock|align|match|karo|kar do|set)\b|\bstyle[ -]?lock\b/i.test(text) && !/\b(check|find|show|report|list|audit|kya|batao)\b/i.test(text);
         return { kind: "consistency", fix: fixIt };
       }
+      // Developer handoff (no model): "add handoff notes", "annotate for dev"; "wire the prototype", "connect these screens".
+      if (count > 0 && /\b(handoff|hand-off|dev ?notes?|annotat(e|ions?)|spec (notes?|sheet)|redlines?)\b/i.test(text)) return { kind: "handoff" };
+      if (count >= 2 && /\b(prototype|wire|link|connect)\b[^.]{0,30}\b(prototype|screens?|flow|buttons?|together)\b|\b(auto[ -]?wire|jod do|link karo)\b/i.test(text)) {
+        return { kind: "prototype-wire", fix: !/\b(check|preview|show|list|kya|batao|which|plan)\b/i.test(text) };
+      }
+      // Detached-instance rescue (no model): "find detached components", "relink detached instances".
+      if (count > 0 && /\b(detach(ed)?|re-?link|re-?attach)\b/i.test(text) && /\b(detach(ed)?|instances?|components?|copies)\b/i.test(text)) {
+        const relink = /\b(re-?link|re-?attach|rescue|fix|replace|restore|karo|kar do)\b/i.test(text) && !/\b(check|find|show|report|list|kya|batao)\b/i.test(text);
+        return { kind: "detached", fix: relink };
+      }
       // Realistic sample data (no model): "fill with realistic data", "dummy data bhar do", "use sample Indian names".
       if (count > 0 && !/lorem/i.test(text) && (
         /\b(fill|populate|add|put|use|replace|generate)\b[^.]{0,40}\b(realistic|real|dummy|sample|mock|fake|demo|test|indian)\b[^.]{0,20}\b(data|content|values|details|numbers|names|amounts)\b/i.test(text) ||
@@ -2918,6 +2977,74 @@
         (findings.length > 12 ? "\n- …and " + (findings.length - 12) + " more" : "") + "\n\nSay **fix consistency** to apply the most common value everywhere (Revert available).";
     }
     // uxd-consistency:end
+    // uxd-detached:start
+    async function runDetachedTask(task, stage) {
+      stage("scanning", task.fix ? "Relinking detached components…" : "Looking for detached components…");
+      const result = await localTask("detached-rescue", { fix: Boolean(task.fix) }, 120000);
+      const rows = result.results || [];
+      stage("done", "Detached check complete · no model needed");
+      if (!rows.length) return "No detached components found in the selection. Every frame here is either a live instance or was never a component.";
+      const line = function (r) {
+        return "- **" + r.name + "**" + (r.component ? " → " + r.component : "") +
+          (r.status === "relinked" ? ": relinked" : r.status === "skipped" ? ": left as is, " + r.reason : ": can be relinked");
+      };
+      const lines = rows.slice(0, 15).map(line).join("\n") + (rows.length > 15 ? "\n- …and " + (rows.length - 15) + " more" : "");
+      const created = (result.createdIds || []).slice();
+      if (task.fix && created.length) {
+        const restore = (result.restore || []).slice();
+        recordChange("Relink detached (" + created.length + ")", async function () {
+          const removed = await localTask("delete-created", { nodeIds: created });
+          if (restore.length) await localTask("restore-props", { items: restore });
+          return removed.deleted.length + " instance(s) removed, detached copies shown again";
+        });
+        return "Relinked " + created.length + " detached copy(ies) to their components, with their texts kept as overrides:\n" + lines +
+          "\n\nThe old copies are hidden next to each instance. Delete them when you are happy, or press Revert.";
+      }
+      const ready = rows.filter(function (r) { return r.status === "ready"; }).length;
+      return "Found " + rows.length + " detached component copy(ies):\n" + lines +
+        (ready ? "\n\nSay **relink detached components** to swap the " + ready + " ready one(s) back to live instances (Revert available)." : "");
+    }
+    // uxd-detached:end
+    // uxd-handoff:start
+    function revertSnapshot(label, snapshot) {
+      recordChange(label, function () {
+        return localTask("restore-props", { items: snapshot }, 120000).then(function (restore) {
+          return restore.restored + " change(s) restored" + (restore.changedSince ? ", " + restore.changedSince + " left as you edited them" : "");
+        });
+      });
+    }
+    async function runHandoffTask(stage) {
+      stage("creating", "Adding handoff notes for developers…");
+      const result = await localTask("handoff-notes", {}, 120000);
+      const notes = result.notes || [];
+      stage("done", "Handoff notes added · no model needed");
+      if (!notes.length) return "No handoff notes were added. This Figma version may not support annotations on these layers.";
+      if ((result.snapshot || []).length) revertSnapshot("Handoff notes (" + notes.length + ")", result.snapshot);
+      const counts = {};
+      notes.forEach(function (n) { counts[n.kind] = (counts[n.kind] || 0) + 1; });
+      return "Added " + notes.length + " handoff note(s) as native Figma annotations: " +
+        Object.keys(counts).map(function (k) { return counts[k] + " " + k + (counts[k] > 1 ? "s" : ""); }).join(", ") +
+        ". Each one shows measured size, radius, padding and colour, and the states to build.\n" +
+        notes.slice(0, 8).map(function (n) { return "- **" + n.name + "**: " + n.note; }).join("\n") +
+        "\n\nOpen Dev Mode to see them. Running it again replaces only UX Direct's notes. Revert removes them.";
+    }
+    async function runPrototypeWireTask(task, stage) {
+      stage("creating", task.fix ? "Wiring buttons between the selected screens…" : "Planning prototype links…");
+      const result = await localTask("prototype-wire", { fix: Boolean(task.fix) }, 120000);
+      const links = result.links || [];
+      stage("done", "Prototype " + (task.fix ? "wired" : "plan ready") + " · no model needed");
+      if (!links.length) return "No buttons could be matched to a screen. Name buttons after the screen they open (e.g. \"Pay now\" → \"Pay\"), or use Back / Continue.";
+      const lines = links.slice(0, 15).map(function (l) {
+        return "- " + l.screen + ": **" + l.label + "** → " + (l.action === "BACK" ? "back" : l.to) + (task.fix && !l.done ? " (failed)" : "");
+      }).join("\n");
+      if (task.fix) {
+        if ((result.snapshot || []).length) revertSnapshot("Prototype links (" + result.snapshot.length + ")", result.snapshot);
+        return "Wired " + (result.snapshot || []).length + " button(s) on click, with a dissolve transition:\n" + lines +
+          "\n\nButtons that already had an interaction were left alone. Press Present to try it. Revert removes these links.";
+      }
+      return "Planned " + links.length + " link(s):\n" + lines + "\n\nSay **wire the prototype** to apply them.";
+    }
+    // uxd-handoff:end
     async function runIconTask(task, stage) {
       const ids = selectedIds();
       if (!ids.length) throw new Error("Select the buttons, rows or icon to change.");
@@ -2931,6 +3058,8 @@
       } else {
         stage("scanning", "Finding buttons and rows without icons…");
         targets = (await localTask("find-icon-targets", {})).targets || [];
+        // Amounts and dates ("₹1,00,000", "12/05") never name an icon; don't send them.
+        targets = targets.filter(function (t) { return !t.label || /\p{L}/u.test(String(t.label)); });
         if (!targets.length) throw new Error("No buttons or rows without an icon were found in the selection. Select a button and say, for example, **add a wallet icon**.");
         stage("creating", "Picking icons for " + targets.length + " label(s)…");
         try {
@@ -3178,7 +3307,7 @@
         const reply = appendMessage("assistant", "Reverting…");
         try {
           const text = await revertEntries(entries, function (state, status) { setProcessState(state, status); reply.bubble.textContent = status; });
-          reply.bubble.innerHTML = renderMarkdownHtml(text);
+          reply.bubble.innerHTML = renderReplyHtml(text);
           button.textContent = "Reverted";
         } catch (error) {
           reply.bubble.textContent = "Could not revert. " + String(error && error.message || error);
@@ -3233,6 +3362,9 @@
       if (task.kind === "icon") return runIconTask(task, stage);
       if (task.kind === "design-rules") return runDesignRulesTask(task, stage);
       if (task.kind === "consistency") return runConsistencyTask(task, stage);
+      if (task.kind === "detached") return runDetachedTask(task, stage);
+      if (task.kind === "handoff") return runHandoffTask(stage);
+      if (task.kind === "prototype-wire") return runPrototypeWireTask(task, stage);
       if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);
       if (task.kind === "flow-variations" || task.kind === "screen-variations" || task.kind === "states-pack") return runVariationsTask(task, prompt, stage);
       throw new Error("Unknown quick task.");
@@ -3276,7 +3408,7 @@
             if (assistantMessage) { assistantMessage.bubble.textContent = status; }
           });
           if (answer) {
-            assistantMessage.bubble.innerHTML = renderMarkdownHtml(answer);
+            assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
             chatHistory.push({ role: "assistant", content: answer });
             await sendTelemetry("Direct edit completed", "success", "UX Direct applied a deterministic Figma edit without a model.", {
               durationMs: Date.now() - startedAt, selectedCount: (currentSelection.selection || []).length, model: "direct-edit"
@@ -3287,7 +3419,7 @@
           const planned = await executeNativeActionPlan(prompt, function (status) {
             if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
           });
-          assistantMessage.bubble.innerHTML = renderMarkdownHtml(planned);
+          assistantMessage.bubble.innerHTML = renderReplyHtml(planned);
           chatHistory.push({ role: "assistant", content: planned });
           return;
         }
@@ -3297,7 +3429,7 @@
           const answer = await runQuickTask(quickTask, prompt, function (status) {
             if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
           });
-          assistantMessage.bubble.innerHTML = renderMarkdownHtml(answer);
+          assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
           chatHistory.push({ role: "assistant", content: answer });
           await sendTelemetry("Quick task completed", "success", "UX Direct completed a Figma quick task: " + quickTask.kind + ".", {
             durationMs: Date.now() - startedAt, selectedCount: (currentSelection.selection || []).length, model: "quick-task:" + quickTask.kind
@@ -3310,7 +3442,7 @@
           const answer = await executeNativeActionPlan(prompt, function (status) {
             if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
           });
-          assistantMessage.bubble.innerHTML = renderMarkdownHtml(answer);
+          assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
           chatHistory.push({ role: "assistant", content: answer });
           await sendTelemetry("Native Figma editing completed", "success", "UX Direct planned and executed native Figma editing operations, then verified the selected tree.", {
             durationMs: Date.now() - startedAt, selectedCount: (currentSelection.selection || []).length, model: "figma-native-actions"
@@ -3326,7 +3458,7 @@
               $("conversation").scrollTop = $("conversation").scrollHeight;
             }
           });
-          assistantMessage.bubble.innerHTML = renderMarkdownHtml(answer);
+          assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
           chatHistory.push({ role: "assistant", content: answer });
           await sendTelemetry("Figma design-agent task completed", "success", "UX Direct generated a native layout, executed Figma Plugin API commands, and verified the selected variation.", {
             durationMs: Date.now() - startedAt,
@@ -3354,7 +3486,7 @@
         assistantMessage = appendMessage("assistant", "");
         typingRow.remove();
         const answer = await streamAssistantResponse(response, function (_delta, current) {
-          assistantMessage.bubble.innerHTML = renderMarkdownHtml(current);
+          assistantMessage.bubble.innerHTML = renderReplyHtml(current);
           $("conversation").scrollTop = $("conversation").scrollHeight;
         });
         if (!answer.trim()) {

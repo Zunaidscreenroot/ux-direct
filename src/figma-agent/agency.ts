@@ -92,6 +92,11 @@ export interface DesignerRun {
   outcome: "kept" | "designed" | "fallback";
   error?: string;
   restoredTexts?: number;
+  /** Design → review rounds for this section (1 = accepted at first review). */
+  rounds?: number;
+  /** Issues the reviewer raised over all rounds, and how many were still open at the end. */
+  reviewIssues?: number;
+  openIssues?: number;
 }
 
 export interface AgencyResult {
@@ -103,7 +108,7 @@ export interface AgencyResult {
 }
 
 export function agencyEnabled(): boolean {
-  return (process.env.UXD_AGENCY || "on").trim().toLowerCase() !== "off";
+  return (process.env.UXD_AGENCY || "off").trim().toLowerCase() !== "off";
 }
 
 export function agencyConcurrency(): number {
@@ -389,6 +394,105 @@ function designerSystem(item: WorkItem, context: AgencyContext): string {
 }
 
 const QUOTA_ERROR = /rate.?limit|quota|429|too many requests/i;
+/** Design → review → redesign rounds per section; each round is two calls, so quota caps it. */
+export const REVIEW_ROUNDS = 2;
+export const AGENCY_DEADLINE_MS = 60000;
+
+export interface ReviewIssue { severity: "high" | "medium" | "low"; issue: string; fix: string }
+
+type Designed = { ok: true; section: Rec; restored: number; model: string } | { ok: false; error: string };
+
+async function designSection(item: WorkItem, label: string, context: AgencyContext, signal: AbortSignal,
+  feedback: { previous: Rec; issues: ReviewIssue[] } | null): Promise<Designed> {
+  let restored = 0;
+  let accepted: Rec | null = null;
+  const result = await callFigmaJsonModel({
+    system: designerSystem(item, context),
+    user: JSON.stringify({
+      userRequest: context.prompt,
+      section: label,
+      sourceSection: item.source,
+      sourceTexts: item.sourceTexts,
+      ...(feedback ? {
+        yourPreviousVersion: feedback.previous,
+        reviewerFeedback: feedback.issues.map((issue) => issue.severity + ": " + issue.issue + " → " + issue.fix),
+        task: "Revise your previous version: fix every reviewer point, keep everything that was fine, keep every source text.",
+      } : {}),
+    }),
+    hasVisionInput: false,
+    maxTokens: 2500,
+    temperature: 0.2,
+    title: "UX Direct " + item.designer.title,
+    role: "section-designer",
+    origin: context.origin,
+    timeoutMs: AGENCY_DEADLINE_MS,
+    signal,
+    // A rejected answer gets one more try (the gateway may route it to another model).
+    maxAttempts: 2,
+    anyObject: true,
+    accept: (data) => {
+      const grounded = groundDesignerSection(item, data);
+      if ("error" in grounded) return grounded.error;
+      accepted = grounded.section;
+      restored = grounded.restored;
+      return null;
+    },
+  });
+  if (result.ok && accepted) return { ok: true, section: accepted, restored, model: result.model };
+  return { ok: false, error: result.ok ? "rejected" : (result.errors.slice(-2).join(" | ") || result.error).slice(0, 200) };
+}
+
+/** Deterministic review points: things code can see for sure, so no model is needed for them. */
+export function deterministicReview(section: Rec): ReviewIssue[] {
+  const issues: ReviewIssue[] = [];
+  const blocks = Array.isArray(section.blocks) ? section.blocks as Rec[] : [];
+  const buttons = blocks.flatMap((block) => block.type === "button" ? [block] : block.type === "buttons" && Array.isArray(block.items) ? block.items as Rec[] : []);
+  const primaries = buttons.filter((button) => (button.variant ?? "primary") === "primary").length;
+  if (primaries > 1) issues.push({ severity: "high", issue: primaries + " primary buttons compete", fix: "Keep one primary (the main task); make the others secondary or text." });
+  const seen = new Map<string, number>();
+  for (const text of blockTexts(blocks)) if (text.length > 2) seen.set(norm(text), (seen.get(norm(text)) ?? 0) + 1);
+  const repeated = [...seen.entries()].filter(([, count]) => count > 1).map(([text]) => text);
+  if (repeated.length) issues.push({ severity: "medium", issue: "Repeated content: " + repeated.slice(0, 3).join(", "), fix: "Show each source text once, in the block that matches its meaning." });
+  const singleRows = blocks.filter((block) => block.type === "row").length;
+  if (singleRows >= 3) issues.push({ severity: "medium", issue: singleRows + " separate row blocks", fix: "Group related rows into one list block." });
+  return issues;
+}
+
+const REVIEWER_SYSTEM = [
+  "You are the Design reviewer in UX Direct's design agency (Quality Lead's team), with an accessibility reviewer's eye. Review ONE section a specialist designer just made, against its source. Be specific; never praise.",
+  "Check, in this order: 1) hierarchy: one clear focal point (the key amount or status), secondary info quieter; 2) grouping: related label/value pairs together, one list instead of many rows; 3) action priority: at most one primary button; 4) content order matches how a user scans this section; 5) right block for the content (amount → stat or row value, % → ring/bar with the real value, status → badge); 6) no generic AI filler: no invented headings, taglines, decorative text or features the source does not have; 7) accessibility: labels present, status not by colour only, nothing that hurts reading order.",
+  "Only raise issues a designer can fix within this section with the block contract. Return {\"pass\": boolean, \"issues\": [{\"severity\": \"high\"|\"medium\"|\"low\", \"issue\": string, \"fix\": string}]} with at most 4 issues; pass=true when nothing high or medium remains.",
+].join("\n");
+
+async function reviewSection(item: WorkItem, label: string, section: Rec, context: AgencyContext, signal: AbortSignal): Promise<{ issues: ReviewIssue[] }> {
+  const issues = deterministicReview(section);
+  const result = await callFigmaJsonModel({
+    system: REVIEWER_SYSTEM + (context.brain ? "\nTEAM KNOWLEDGE (the quality standard):\n" + context.brain.slice(0, 3000) : ""),
+    user: JSON.stringify({ userRequest: context.prompt, section: label, designerSpecialty: item.designer.title, sourceSection: item.source, designedSection: section }),
+    hasVisionInput: false,
+    maxTokens: 900,
+    temperature: 0.1,
+    title: "UX Direct design reviewer",
+    role: "critic",
+    origin: context.origin,
+    timeoutMs: 25000,
+    signal,
+    maxAttempts: 1,
+    anyObject: true,
+    accept: (data) => (Array.isArray(data.issues) || typeof data.pass === "boolean" ? null : "missing issues"),
+  }).catch(() => null);
+  if (result && result.ok && Array.isArray(result.data.issues)) {
+    for (const entry of (result.data.issues as unknown[]).slice(0, 4)) {
+      if (!entry || typeof entry !== "object") continue;
+      const record = entry as Rec;
+      const severity = record.severity === "high" || record.severity === "medium" ? record.severity : "low";
+      const issue = typeof record.issue === "string" ? record.issue.slice(0, 200) : "";
+      const fix = typeof record.fix === "string" ? record.fix.slice(0, 200) : "";
+      if (issue) issues.push({ severity, issue, fix });
+    }
+  }
+  return { issues };
+}
 
 export interface AgencyContext {
   prompt: string;
@@ -411,7 +515,7 @@ export async function runAgency(canvas: Rec, context: AgencyContext, options: { 
   const order = planWorkOrder(canvas, context.role);
   if (!order) return { spec: null, runs: [], ms: 0, designedSections: 0, concurrency };
   const deadline = new AbortController();
-  const timer = setTimeout(() => deadline.abort(), options.deadlineMs ?? 45000);
+  const timer = setTimeout(() => deadline.abort(), options.deadlineMs ?? AGENCY_DEADLINE_MS);
   const runs: DesignerRun[] = [];
   // Quota circuit breaker: once two designers hit rate limits or exhausted quotas, the rest are
   // kept from the source instead of spending more of the free quota the fallback planner needs.
@@ -429,48 +533,38 @@ export async function runAgency(canvas: Rec, context: AgencyContext, options: { 
         return { item, section: item.source };
       }
       const callStarted = Date.now();
-      let restored = 0;
-      let accepted: Rec | null = null;
-      const result = await callFigmaJsonModel({
-        system: designerSystem(item, context),
-        user: JSON.stringify({
-          userRequest: context.prompt,
-          section: label,
-          sourceSection: item.source,
-          sourceTexts: item.sourceTexts,
-        }),
-        hasVisionInput: false,
-        maxTokens: 2500,
-        temperature: 0.2,
-        title: "UX Direct " + item.designer.title,
-        role: "section-designer",
-        origin: context.origin,
-        timeoutMs: options.deadlineMs ?? 45000,
-        signal: deadline.signal,
-        // A rejected answer gets one more try (`auto` may route it to another model).
-        maxAttempts: 2,
-        anyObject: true,
-        accept: (data) => {
-          const grounded = groundDesignerSection(item, data);
-          if ("error" in grounded) return grounded.error;
-          accepted = grounded.section;
-          restored = grounded.restored;
-          return null;
-        },
-      });
-      const ms = Date.now() - callStarted;
-      if (result.ok && accepted) {
-        runs.push({ ...base, ok: true, ms, model: result.model, outcome: "designed", ...(restored ? { restoredTexts: restored } : {}) });
-        return { item, section: accepted };
+      const designed = await designSection(item, label, context, deadline.signal, null);
+      if (!designed.ok) {
+        if (QUOTA_ERROR.test(designed.error)) quotaHits += 1;
+        runs.push({ ...base, ok: false, ms: Date.now() - callStarted, outcome: "fallback", error: designed.error });
+        return { item, section: item.source };
       }
-      const error = result.ok ? "rejected" : (result.errors.slice(-2).join(" | ") || result.error).slice(0, 200);
-      if (QUOTA_ERROR.test(error)) quotaHits += 1;
-      runs.push({ ...base, ok: false, ms, outcome: "fallback", error });
-      return { item, section: item.source };
+      // Reviewer: starts on this section as soon as it is designed, while designers are still
+      // working on the sections below it (top to bottom). Concrete issues go back to the same
+      // designer for another iteration, then the reviewer checks again (at most REVIEW_ROUNDS).
+      let current = designed;
+      let rounds = 1;
+      let raised = 0;
+      let open: ReviewIssue[] = [];
+      while (true) {
+        const remaining = (options.deadlineMs ?? AGENCY_DEADLINE_MS) - (Date.now() - started);
+        if (remaining < 12000 || quotaHits >= 2) break;
+        const review = await reviewSection(item, label, current.section, context, deadline.signal);
+        open = review.issues.filter((issue) => issue.severity !== "low");
+        raised += review.issues.length;
+        if (!open.length || rounds >= REVIEW_ROUNDS || Date.now() - started > (options.deadlineMs ?? AGENCY_DEADLINE_MS) - 15000) break;
+        const iteration = await designSection(item, label, context, deadline.signal, { previous: current.section, issues: open });
+        rounds += 1;
+        if (!iteration.ok) break; // keep the last accepted version
+        current = iteration;
+      }
+      runs.push({ ...base, ok: true, ms: Date.now() - callStarted, model: current.model, outcome: "designed",
+        ...(current.restored ? { restoredTexts: current.restored } : {}), rounds, reviewIssues: raised, openIssues: open.length });
+      return { item, section: current.section };
     });
     const designedSections = runs.filter((run) => run.outcome === "designed").length;
     const spec = designedSections
-      ? assembleSpec(order, results, "Designed by UX Direct's agency: " + designedSections + " specialist designer(s) worked on the screen's sections in parallel.")
+      ? assembleSpec(order, results, "Improved the screen section by section, keeping every source value.")
       : null;
     return { spec, runs, ms: Date.now() - started, designedSections, concurrency };
   } finally {

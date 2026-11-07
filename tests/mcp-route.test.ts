@@ -80,8 +80,9 @@ test("OAuth tool discovery is scope-filtered and execution tools reject read-onl
     const listed = await listing.json();
     const names = listed.result.tools.map((tool: { name: string }) => tool.name);
     assert.ok(names.includes("ux_direct_brain_search"));
-    assert.ok(!names.includes("ux_direct_brain_run_retrieval_evals"));
-    const call = await POST(request({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "ux_direct_brain_run_retrieval_evals", arguments: { limit: 1 } } }, { key: token }));
+    assert.ok(!names.includes("ux_direct_plan_task"));
+    assert.ok(!names.some((name: string) => name.startsWith("ux_direct_uxaudit_")));
+    const call = await POST(request({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "ux_direct_plan_task", arguments: { task: "Plan a dashboard" } } }, { key: token }));
     const result = await call.json();
     assert.equal(result.result.isError, true);
     assert.match(result.result.content[0].text, /missing required scope ux:execute/);

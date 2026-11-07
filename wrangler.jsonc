@@ -46,7 +46,9 @@
     // fails; "primary": gateway first; "only": no FreeLLMAPI/Mac at all; "off": old behaviour.
     // Provider keys are Worker secrets: GEMINI_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY, OPENROUTER_API_KEY,
     // MISTRAL_API_KEY, NVIDIA_API_KEY, ZAI_API_KEY, GITHUB_MODELS_TOKEN (comma-separate several keys to rotate).
-    "UXD_LLM_GATEWAY": "fallback",
+    // "only" since 2026-11-07 (Zunaid): every model call goes through the own gateway; FreeLLMAPI code stays,
+    // switch back with "fallback" (FreeLLMAPI first) or "primary" (gateway first) if ever needed.
+    "UXD_LLM_GATEWAY": "only",
     // "vpc": FreeLLMAPI calls go through the FREELLMAPI_VPC binding. Set to "url" to fall back to the
     // FREELLMAPI_TUNNEL_URL secret (quick tunnel synced by scripts/freellmapi-tunnel-sync.sh).
     "FREELLMAPI_TRANSPORT": "vpc",

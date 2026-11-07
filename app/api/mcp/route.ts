@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { getMcpIssuer, verifyMcpPayload } from "@/lib/mcp-oauth";
 import { getChatGPTConnectionStatus, getFigmaPluginConnectionStatus, recordChatGPTActivity } from "@/src/connections/connection-status";
 import { NextResponse } from "next/server";
@@ -1104,6 +1104,15 @@ async function callTool(name: string, args: unknown, request: Request) {
   }
 
 
+  /* eslint-disable @typescript-eslint/no-explicit-any -- Normalize the UX Audit API payload contract at the MCP boundary. */
+
+
+
+
+
+
+
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   return toolText({ error: "Unknown UX Direct tool: " + name }, true);
 }
 
@@ -1172,7 +1181,7 @@ export async function POST(request: Request) {
           protocolVersion: PROTOCOL_VERSIONS.has(requested) ? requested : "2025-11-25",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "ux-direct", version: "0.1.0" },
-          instructions: "UX Direct is the conversational cockpit and native Figma executor inside the installed plugin. This MCP connection has full control: backend/connection status, plugin health checks, bounded Figma canvas reads, explicitly confirmed canvas writes, task planning and owner-authorized shared-brain learning. Figma commands run through the approved file's native plugin APIs, so the plugin must be open and connected; Figma OAuth is not required. Read the canvas before writing, send writes only for an explicit user request with confirm=true, and verify every queued action from its command ID; current canvas evidence takes precedence over remembered rules. Keep client-specific past findings separate from generalized approved shared knowledge; preserve Hindi/Hinglish feedback.",
+          instructions: "UX Direct is the conversational cockpit and native Figma executor inside the installed plugin. This MCP connection has full control: backend/connection status, plugin health checks, bounded Figma canvas reads, explicitly confirmed canvas writes, task planning, UX Audit workflows and owner-authorized shared-brain learning. Figma commands run through the approved file's native plugin APIs, so the plugin must be open and connected; Figma OAuth is not required. Read the canvas before writing, send writes only for an explicit user request with confirm=true, and verify every queued action from its command ID; current canvas evidence takes precedence over remembered rules. Keep client-specific past findings separate from generalized approved shared knowledge; preserve Hindi/Hinglish feedback. Audit workflows may incur OpenRouter costs.",
         }, headers);
       }
       case "ping":

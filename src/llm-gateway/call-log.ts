@@ -102,7 +102,10 @@ export async function writeCalls(records: CallRecord[]): Promise<void> {
   );
 }
 
-/** Per-model usage for routing: last 60 s, today (UTC), 24 h success and latency, active cooldown. */
+/**
+ * Per-model usage for routing: last 60 s, today (UTC), 24 h success and latency, active cooldown.
+ * Counts FreeLLMAPI calls too: it uses the same provider keys, so it eats the same quotas.
+ */
 export async function readModelUsage(): Promise<ModelUsage[]> {
   const sql = await sqlClient();
   if (!sql) return [];
@@ -116,7 +119,7 @@ export async function readModelUsage(): Promise<ModelUsage[]> {
        coalesce(avg(latency_ms) FILTER (WHERE ok), 0)::int AS avg_latency_ms,
        max(cooldown_until) AS cooldown_until
      FROM public.uxd_llm_calls
-     WHERE gateway = 'uxd' AND at > now() - interval '24 hours'
+     WHERE at > now() - interval '24 hours'
      GROUP BY provider, model`,
   ) as Array<Record<string, unknown>>;
   return rows.map((row) => ({

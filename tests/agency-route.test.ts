@@ -4,13 +4,16 @@ import assert from "node:assert/strict";
 process.env.ACTIVE_CHAT_PROVIDER = "freellmapi";
 process.env.FREELLMAPI_BASE_URL = "https://freellmapi.test/v1";
 process.env.FREELLMAPI_API_KEY = "test-key";
+process.env.UXD_AGENCY = "on";
+process.env.UXD_LEAD_REVIEW = "off";
 
 const PROVIDER = "https://freellmapi.test/v1/chat/completions";
 const realFetch = globalThis.fetch;
 const designerCalls: string[] = [];
 let plannerCalls = 0;
+let reviewerCalls = 0;
 let designerMode: "good" | "quota" = "good";
-const ok = (content: unknown, model = "designer-model") => new Response(JSON.stringify({
+const ok = (content: unknown, model = "model-a") => new Response(JSON.stringify({
   model, choices: [{ finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(content) } }],
 }), { status: 200, headers: { "content-type": "application/json" } });
 
@@ -19,6 +22,11 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (url !== PROVIDER) throw new Error("offline in test: " + url);
   const body = typeof init?.body === "string" ? init.body : "";
   if (body.includes("You are one sub-agent in a team")) return new Response("{}", { status: 502 });
+  if (body.includes("You are the Design reviewer")) {
+    reviewerCalls += 1;
+    // First review asks for one fix; the re-review passes.
+    return ok(reviewerCalls % 2 === 1 ? { pass: false, issues: [{ severity: "medium", issue: "EMI should lead", fix: "Make Upcoming EMI the stat" }] } : { pass: true, issues: [] }, "critic-model");
+  }
   const designer = /You are the ([A-Za-z -]+?) in UX Direct's design agency/.exec(body);
   if (designer) {
     designerCalls.push(designer[1]);
@@ -48,6 +56,7 @@ const canvas = {
 
 async function run() {
   designerCalls.length = 0;
+  reviewerCalls = 0;
   plannerCalls = 0;
   const { POST } = await import("../app/api/assistant/figma-agent/route");
   const response = await POST(new Request("https://ux-direct.test/api/assistant/figma-agent", {
@@ -65,8 +74,14 @@ test("agency: specialist designers design sections in parallel and the planner i
   assert.equal(body.agency?.used, true, JSON.stringify(body.agency));
   assert.equal(plannerCalls, 0);
   assert.ok(designerCalls.includes("Data-viz designer") && designerCalls.includes("Interaction designer"), designerCalls.join(","));
-  assert.match(body.model, /^agency: designer-model/);
-  assert.ok(body.generation.attemptTimes.some((entry: { attempt: string }) => entry.attempt.startsWith("agency (")));
+  assert.match(body.model, /^model-a/);
+  assert.ok(body.generation.attemptTimes.some((entry: { attempt: string }) => entry.attempt.startsWith("sections ")));
+  // Backend architecture stays out of what the plugin shows.
+  const shown = JSON.stringify([body.plan?.summary, body.model, body.generation.attemptTimes, body.plan?.frame?.name]);
+  assert.doesNotMatch(shown, /agency|specialist|designer|reviewer/i);
+  // Reviewer ran, asked for a fix, and the designer iterated.
+  assert.ok(reviewerCalls >= 2, "reviewer calls " + reviewerCalls);
+  assert.ok(body.agency.runs.some((run: { rounds?: number }) => (run.rounds ?? 1) >= 2));
   const plan = JSON.stringify(body.plan);
   for (const text of ["Personal Loan", "Credit limit", "₹50,000", "Upcoming EMI", "₹10,000", "Pay ₹10,000"]) assert.ok(plan.includes(text), "missing " + text);
 });
