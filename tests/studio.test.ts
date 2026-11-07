@@ -134,7 +134,7 @@ test("studio route: an iteration that drops the amounts is refused by the Direct
   const { status, body, row } = await run([50, 50]);
   assert.equal(status, 200);
   for (const text of ["Credit limit", "₹50,000", "Upcoming EMI", "₹10,000"]) assert.ok(JSON.stringify(body.plan).includes(text), "missing " + text);
-  assert.match(row ?? "", /^review 50% ×/);
+  assert.match(row ?? "", /^review 50% ×lost/);
   assert.doesNotMatch(body.model, /designer-model/);
 });
 
@@ -170,6 +170,13 @@ test("studio: logo and chevron texts are decoration, not required content, and f
   const notes = deterministicLeadNotes(spec, read.content, read.decorative);
   assert.ok(notes.some((entry) => /glyph text shown as content: slice/.test(entry.issue)));
   assert.ok(!notes.some((entry) => /missing|invented/i.test(entry.issue)));
+});
+
+test("studio: per-card amounts in a primary label are one action type", () => {
+  const cards = (labels: string[]) => ({ sections: labels.map((label) => ({ blocks: [{ type: "button", label }] })) });
+  assert.equal(deterministicLeadNotes(cards(["Pay now", "Pay ₹12,570", "Pay ₹2,290 now"])).length, 0);
+  const notes = deterministicLeadNotes(cards(["Pay now", "View details"]));
+  assert.ok(notes.some((entry) => entry.code === "primary" && entry.severity === "high"));
 });
 
 test("studio: each seat gets its role's knowledge", async () => {

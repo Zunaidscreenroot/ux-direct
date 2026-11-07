@@ -921,21 +921,22 @@ export async function POST(request: Request) {
      * so merged cards fail), must not add invented text, must pass every gate on its own (no
      * restore that dumps texts outside their cards), and must cover the source at least as well.
      */
+    let refusal = "";
     const directorKeeps = (spec: Record<string, unknown>, model?: string): boolean => {
       // Only content counts as lost: dropping a stray logo or chevron text is a fix, not a loss.
       const contentKeys = new Set(fullSource.map((text) => text.toLowerCase().replace(/\s+/g, " ").trim()));
       const lost = lostTexts(current.spec as Record<string, unknown>, spec).filter((text) => !fullSource.length || contentKeys.has(text.toLowerCase().replace(/\s+/g, " ").trim()) || isValueText(text));
-      if (lost.length) { log("iteration dropped " + lost.length + " texts (" + lost.slice(0, 4).join(", ") + "); previous version kept"); return false; }
+      if (lost.length) { refusal = "lost"; log("iteration dropped " + lost.length + " texts (" + lost.slice(0, 4).join(", ") + "); previous version kept"); return false; }
       const known = [...(fullSource.length ? fullSource : sourceTexts), ...sourceRead.decorative];
       const inventedBefore = inventedTexts(current.spec as Record<string, unknown>, known, parsedInput.data.prompt).length;
       const invented = inventedTexts(spec, known, parsedInput.data.prompt);
-      if (invented.length > inventedBefore) { log("iteration invented text (" + invented.slice(0, 4).join(", ") + "); previous version kept"); return false; }
+      if (invented.length > inventedBefore) { refusal = "new text"; log("iteration invented text (" + invented.slice(0, 4).join(", ") + "); previous version kept"); return false; }
       const candidate = renderCandidate(spec);
       const before = missingNow(current.spec);
       const after = missingNow(spec);
       const kept = candidate.stage === "ok" && !!candidate.plan && !!candidate.quality && after <= before;
       log("iteration " + (kept ? "kept" : "refused") + ": " + (candidate.stage !== "ok" ? candidate.stage + ": " + candidate.error : "missing source " + before + "→" + after + ", score " + (current.candidate.quality?.score ?? "?") + "→" + (candidate.quality?.score ?? "?")));
-      if (!kept) return false;
+      if (!kept) { refusal = candidate.stage !== "ok" ? "gate" : "coverage"; return false; }
       if (model) models.push(model);
       current = { ...current, candidate, spec };
       return true;
@@ -951,7 +952,9 @@ export async function POST(request: Request) {
         timeoutMs: Math.min(25000, Math.floor(timeLeft() / 4)) }).catch(() => null);
       if (!review) break;
       const actionable = review.notes.filter((entry) => entry.severity !== "low");
-      ledger.push((review.score ?? "?") + "%");
+      // Show why a score is capped (a deterministic high note), e.g. "55%(missing)".
+      const cap = review.notes.find((entry) => entry.severity === "high" && entry.code)?.code;
+      ledger.push((review.score ?? "?") + "%" + (cap ? "(" + cap + ")" : ""));
       log("round " + round + " score " + (review.score ?? "?") + " (" + (review.model || "rules") + "): " + (actionable.map((entry) => entry.severity + ": " + entry.issue).join(" | ") || "no fixes"));
       if (review.score !== null) reviewed.push({ version: current, score: review.score, models: models.length });
       approved = leadApproves(review);
@@ -963,7 +966,7 @@ export async function POST(request: Request) {
       const revision = await reviseFromNotes(current.spec as Record<string, unknown>, review.notes, { ...shared, knowledge: designerKnowledge,
         designRules: designRulesInstructions.trim(), timeoutMs: Math.min(70000, timeLeft() - 25000) });
       if (!revision.spec) { ledger.push("×"); log("iteration failed: " + (revision.error || "no answer")); break; }
-      if (!directorKeeps(revision.spec, revision.model)) { ledger.push("×"); break; }
+      if (!directorKeeps(revision.spec, revision.model)) { ledger.push("×" + refusal); break; }
       ledger.push("→");
     }
     // Director's final call: the best-scored reviewed version (the earlier one on a tie).

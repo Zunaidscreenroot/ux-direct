@@ -93,7 +93,7 @@ export function designerPersona(role: TaskRole, prompt = ""): string {
     " The UX Lead reviews your finished screen and you iterate on the notes, so do it right the first time: keep every source text and value, no generic filler, no invented content.";
 }
 
-export interface LeadNote { severity: "high" | "medium" | "low"; issue: string; fix: string }
+export interface LeadNote { severity: "high" | "medium" | "low"; issue: string; fix: string; /** Set on deterministic notes: missing, primary, glyph, invented, repeat. */ code?: string }
 
 const blockTexts = (value: unknown, out: string[] = []): string[] => {
   if (typeof value === "string") { const text = value.trim(); if (text) out.push(text); }
@@ -203,23 +203,26 @@ export const isValueText = (text: string) => /[\d₹$€£%]/.test(text);
 export function deterministicLeadNotes(spec: Rec, sourceTexts: string[] = [], decorative: string[] = []): LeadNote[] {
   const notes: LeadNote[] = [];
   const missing = sourceTexts.length ? [...new Set(missingFromSpec(spec, sourceTexts))] : [];
-  if (missing.length) notes.push({ severity: "high", issue: "Source content missing from the screen (" + missing.length + "): " + missing.slice(0, 8).join(", "),
+  if (missing.length) notes.push({ code: "missing", severity: "high", issue: "Source content missing from the screen (" + missing.length + "): " + missing.slice(0, 8).join(", "),
     fix: "Put every one of these exact texts back, in the block that matches its meaning (amounts as values, never dropped)." });
   const shownDecoration = [...new Set(decorative.map((text) => text.trim()))].filter((text) => {
     const key = norm(text);
     return specTexts(spec).some((item) => item === key) && !sourceTexts.some((source) => norm(source) === key);
   });
-  if (shownDecoration.length) notes.push({ severity: "medium", issue: "Logo or icon glyph text shown as content: " + shownDecoration.slice(0, 4).join(", "),
+  if (shownDecoration.length) notes.push({ code: "glyph", severity: "medium", issue: "Logo or icon glyph text shown as content: " + shownDecoration.slice(0, 4).join(", "),
     fix: "Remove these texts from the blocks; logos and chevrons are not content (rows get their chevron from the block)." });
   const invented = sourceTexts.length ? inventedTexts(spec, [...sourceTexts, ...decorative]) : [];
-  if (invented.length) notes.push({ severity: "medium", issue: "Text not in the source (invented): " + invented.slice(0, 6).join(", "),
+  if (invented.length) notes.push({ code: "invented", severity: "medium", issue: "Text not in the source (invented): " + invented.slice(0, 6).join(", "),
     fix: "Remove invented headings, banners, buttons and captions; use only the source's own texts." });
   const sections = Array.isArray(spec.sections) ? spec.sections as Rec[] : [];
   const blocks = sections.flatMap((section) => Array.isArray(section.blocks) ? section.blocks as Rec[] : []);
   const buttons = blocks.flatMap((block) => block.type === "button" ? [block] : block.type === "buttons" && Array.isArray(block.items) ? block.items as Rec[] : []);
+  // The action type is the label's verb without amounts: "Pay ₹12,570" and "Pay now" are one action.
+  const actionType = (label: string) => norm(label.replace(/[₹$€£]?\s?[\d][\d,.]*\s?%?/g, " ")).split(" ")[0] || norm(label);
   const primaryLabels = buttons.filter((button) => (button.variant ?? "primary") === "primary").map((button) => String(button.label ?? ""));
+  const primaryTypes = new Set(primaryLabels.map(actionType));
   // Repeated cards (one "Pay now" per loan card) are fine; different primaries compete.
-  if (new Set(primaryLabels).size > 1) notes.push({ severity: "high", issue: "Different primary actions compete: " + [...new Set(primaryLabels)].slice(0, 3).join(", "), fix: "Keep one primary action type; make the others secondary or text." });
+  if (primaryTypes.size > 1) notes.push({ code: "primary", severity: "high", issue: "Different primary actions compete: " + [...new Set(primaryLabels)].slice(0, 3).join(", "), fix: "Keep one primary action type; make the others secondary or text." });
   const counts = new Map<string, number>();
   for (const section of sections) {
     const seenHere = new Set<string>();
@@ -230,7 +233,7 @@ export function deterministicLeadNotes(spec: Rec, sourceTexts: string[] = [], de
     }
   }
   const repeated = [...counts.keys()];
-  if (repeated.length) notes.push({ severity: "medium", issue: "Same text twice inside one section: " + repeated.slice(0, 3).join(", "), fix: "Show each source text once, in the block that matches its meaning." });
+  if (repeated.length) notes.push({ code: "repeat", severity: "medium", issue: "Same text twice inside one section: " + repeated.slice(0, 3).join(", "), fix: "Show each source text once, in the block that matches its meaning." });
   return notes;
 }
 
