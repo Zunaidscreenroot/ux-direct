@@ -373,3 +373,10 @@ test("property-only native edits verify by read-back and scoped repairs never to
   assert.ok(ui.includes("if (!inScope(item.nodeId)) continue;"), "repairs stay inside the edit's target set");
   assert.ok(ui.includes("targetScope: targetScope"), "native edits pass their target scope to the repair loop");
 });
+
+test("an empty selection after Revert falls back to the last target, and duplicates land beside their source", () => {
+  assert.ok(ui.includes("if (selectedNow.length) lastTargetIds = selectedNow.slice(0, 20);"), "the last target is remembered");
+  assert.ok(/operation: "set-selection", nodeIds: lastTargetIds/.test(ui), "it is reselected when nothing is selected");
+  const code = readFileSync(join(process.cwd(), "figma-plugin/code.js"), "utf8");
+  assert.ok(code.includes("cloneParent.insertChild(sourceIndex + 1, cloned)"), "clone-node inserts right after its source");
+});

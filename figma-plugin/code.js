@@ -2190,9 +2190,20 @@ async function writeCanvasCommand(payload, options) {
   if (payload.operation === "clone-node") {
     var cloneSource = requireCanvasNode(payload.nodeId, "clone-node");
     var cloned = cloneSource.clone();
-    cloned.name = (cloneSource.name + " copy").slice(0, 120);
-    if ("x" in cloned && "x" in cloneSource) cloned.x = cloneSource.x + 24;
-    if ("y" in cloned && "y" in cloneSource) cloned.y = cloneSource.y + 24;
+    // A duplicate sits right after its source in the same container (like Cmd+D), keeps its name, and
+    // only gets an offset when the container does not lay it out (free-positioned parents).
+    var cloneParent = cloneSource.parent;
+    if (cloneParent && typeof cloneParent.insertChild === "function" && Array.isArray(cloneParent.children)) {
+      var sourceIndex = cloneParent.children.indexOf(cloneSource);
+      if (sourceIndex >= 0) cloneParent.insertChild(sourceIndex + 1, cloned);
+    }
+    cloned.name = String(cloneSource.name).slice(0, 120);
+    var parentLaysOut = cloneParent && "layoutMode" in cloneParent && cloneParent.layoutMode && cloneParent.layoutMode !== "NONE";
+    if (!parentLaysOut) {
+      var stackedV = cloneParent && cloneParent.type !== "PAGE";
+      if ("x" in cloned && "x" in cloneSource) cloned.x = stackedV ? cloneSource.x : cloneSource.x + 24;
+      if ("y" in cloned && "y" in cloneSource) cloned.y = stackedV ? cloneSource.y + cloneSource.height + 12 : cloneSource.y + 24;
+    }
     return { ok: true, operation: "clone-node", fileKey: figma.fileKey, pageName: figma.currentPage.name, node: nodeSummary(cloned) };
   }
 
