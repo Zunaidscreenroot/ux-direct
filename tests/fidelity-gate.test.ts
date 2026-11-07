@@ -88,6 +88,7 @@ test("wireframe renders mark copied graphics for monochrome recolouring", () => 
   walk(mono.plan!.elements as N[]);
   assert.ok(clones.length > 0);
   assert.ok(clones.every((c) => c.monochrome && typeof (c.monochrome as N).ink === "string"));
+  assert.equal((mono.plan!.frame as N).name, "Screen / Wireframe", "named like the states pack");
 });
 
 test("wireframes also mark reused source component instances (finding 52)", () => {

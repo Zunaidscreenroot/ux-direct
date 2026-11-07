@@ -1232,7 +1232,9 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   const requestedHeight = typeof rawFrame.height === "number" ? rawFrame.height : sourceHeight || 800;
   const fits = contentHeight <= requestedHeight;
   const frame: Rec = {
-    name: clean(rawFrame.name, 80) || (clean(source.name, 60) ? clean(source.name, 60) + " · UX Direct" : "UX Direct Variation"),
+    // A wireframe is named like the plugin's states pack ("15 / Wireframe"), whatever the model called it.
+    name: options.monochrome && clean(source.name, 60) ? clean(source.name, 60) + " / Wireframe"
+      : clean(rawFrame.name, 80) || (clean(source.name, 60) ? clean(source.name, 60) + " · UX Direct" : "UX Direct Variation"),
     width: frameWidth,
     height: Math.round(Math.max(360, Math.min(4096, fits ? requestedHeight : contentHeight))),
     backgroundColor: theme.background,
