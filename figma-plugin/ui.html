@@ -1809,8 +1809,10 @@
         const free = await findFreeCanvasSpot(rootX, rootY, Number(plan.frame.width) || 393, Number(plan.frame.height) || 800);
         rootX = free.x; rootY = free.y;
       }
-      const frameName = String(designOptions && designOptions.frameName || plan.frame.name || "UX Direct Variation").slice(0, 80);
-      stage("creating", "Creating a separate editable variation; the original stays untouched…");
+      // A new screen from a prompt is not a variation of anything: drop a "· variation" suffix the plan may add.
+      const rawFrameName = String(designOptions && designOptions.frameName || plan.frame.name || (createMode ? "New screen" : "UX Direct Variation"));
+      const frameName = (createMode ? rawFrameName.replace(/\s*[·•|–—-]?\s*\b(variation|variant|option)\b(\s*\d+)?\s*$/i, "").trim() || "New screen" : rawFrameName).slice(0, 80);
+      stage("creating", createMode ? "Creating the new screen…" : "Creating a separate editable variation; the original stays untouched…");
       const buildStartedAt = Date.now();
       try {
       const rootResult = await runNativeCanvasCommand("write-canvas", {
@@ -2853,6 +2855,26 @@
       return String(result.text || "Review complete.");
     }
 
+    // Says which formats were actually filled ("$ and € amounts, dates, names"), not a fixed list.
+    function describeFilledKinds(edits) {
+      const kinds = [];
+      const symbols = new Set();
+      const add = function (k) { if (kinds.indexOf(k) < 0) kinds.push(k); };
+      (edits || []).forEach(function (e) {
+        const t = String(e.before || "").trim();
+        const cur = /^[-+]?\s?(\p{Sc}|Rs\.?|INR|USD|EUR|GBP|AED|SGD|AUD|CAD|JPY|CHF|R\$)/iu.exec(t);
+        if (cur) { symbols.add(/^rs\.?$/i.test(cur[1]) ? "₹" : cur[1]); add("amounts"); }
+        else if (/\d\s?%/.test(t)) add("rates");
+        else if (/(\d{1,2}\s(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d|\d{2}[\/.-]\d{2}[\/.-]\d{2,4})/i.test(t)) add("dates");
+        else if (/[x•*]{2,}\s?\d{3,4}$/i.test(t)) add("masked accounts");
+        else if (/^[A-Z]{5}\d{4}[A-Z]$/.test(t)) add("PAN numbers");
+        else if (/^\+?[\d\s-]{8,}$/.test(t)) add("phone numbers");
+        else if (/\d/.test(t)) add("IDs");
+        else add("names");
+      });
+      const list = kinds.map(function (k) { return k === "amounts" ? Array.from(symbols).join(", ") + " amounts" : k; });
+      return list.length > 1 ? list.slice(0, -1).join(", ") + " and " + list[list.length - 1] : list[0] || "values";
+    }
     async function runFillDataTask(task, stage) {
       if (!selectedIds().length) throw new Error("Select the screen, list or rows to fill.");
       stage("creating", "Filling realistic sample data (no model)…");
@@ -2869,9 +2891,9 @@
       stage("done", "Sample data filled · " + result.changed + " value(s)");
       const lines = (result.samples || []).map(function (item) { return "- " + item.before + " → **" + item.after + "**"; });
       return (result.changed
-        ? "Filled " + result.changed + " value(s) in " + result.checked + " text layers with realistic data in the same format (₹ amounts in lakh format, dates, masked accounts, IDs, PAN, phone, rates, names)." +
+        ? "Filled " + result.changed + " value(s) in " + result.checked + " text layers with realistic data in the same format (" + describeFilledKinds(result.edits) + ")." +
           (result.repeated ? " " + result.repeated + " of them were copy-pasted repeats and now differ." : "")
-        : "No values to fill. Amounts, dates, masked accounts, IDs, PAN, phone numbers, rates and person names are filled; labels, headings, buttons and statuses are left alone.") +
+        : "No values to fill. Amounts in any currency, dates, masked accounts, IDs, phone numbers, rates and person names are filled; labels, headings, buttons and statuses are left alone.") +
         (lines.length ? "\n\n" + lines.join("\n") + (result.changed > lines.length ? "\n- …and " + (result.changed - lines.length) + " more" : "") : "") +
         (result.lorem ? "\n\n" + result.lorem + " layer(s) still have lorem ipsum. Say **replace the lorem ipsum with realistic content** for that." : "") +
         (result.changed ? "\nSay **fill different data** for a new set. Revert restores the original values, even after other edits." : "");
@@ -2948,8 +2970,7 @@
         const current = await localTask("get-design-rules", {});
         if (!current.text) return "This file has no design rules yet. Set them once and every UX Direct task follows them, for example:\n" +
           "**design rules: spacing 4/8/12/16/24, radius 8/16, type 12/14/16/20/28, min text 12, primary #2563EB, font: Inter, tone: clear and formal**";
-        return "Design rules for this file (shared with everyone on it):\n" + (describeDesignRules(current.rules).join("\n") || "- (free text only)") +
-          "\n\nFull text:\n> " + String(current.text).replace(/\n/g, "\n> ") + "\n\nChange them with **design rules: …**, or **clear design rules**.";
+        return "Design rules for this file (shared with everyone on it):\n" + (describeDesignRules(current.rules).length ? describeDesignRules(current.rules).join("\n") + "\n\nFull text:\n> " : "> ") + String(current.text).replace(/\n/g, "\n> ") + "\n\nChange them with **design rules: …**, or **clear design rules**.";
       }
       stage("creating", task.mode === "clear" ? "Clearing the file's design rules…" : "Saving the file's design rules…");
       const rules = task.mode === "clear" ? null : parseDesignRules(task.text);
@@ -2974,9 +2995,11 @@
     function learnRuleLine(change) {
       const px = function (v) { return typeof v === "number" ? Math.round(v * 10) / 10 + " px" : String(v); };
       const who = { text: "Text", button: "Button", frame: "Container" }[change.role] || "Layer";
+      // Text rules are scoped by role ("Card title", "Button label", "Body text"), so one title edit
+      // never becomes a rule for every text of that size.
+      const scope = change.textRole ? change.textRole.charAt(0).toUpperCase() + change.textRole.slice(1) : "Text";
       const subject = {
-        size: change.role === "text" ? "Text set at " + px(change.from) + " size" : who + " text size",
-        weight: change.from + " text weight", color: "Text colour " + change.from,
+        size: scope + " size", weight: scope + " weight", color: scope + " colour",
         radius: who + " corner radius", fill: who + " fill " + change.from, gap: who + " gap",
         padX: who + " side padding", padY: who + " top/bottom padding", height: "Button height"
       }[change.prop];
@@ -3154,7 +3177,19 @@
           response = { icons: [] };
         }
       }
-      const icons = response.icons || [];
+      const icons = (response.icons || []).slice();
+      // A row whose label names no icon ("Fare", "Total") gets one for the kind of value it shows.
+      const VALUE_ICONS = { currency: "banknote", percent: "percent", date: "calendar", time: "clock" };
+      if (task.mode !== "named") {
+        const fallback = targets.map(function (t, i) { return (!icons[i] || !icons[i].svg) && t.valueKind && VALUE_ICONS[t.valueKind] ? VALUE_ICONS[t.valueKind] : null; });
+        const names = Array.from(new Set(fallback.filter(Boolean)));
+        if (names.length) {
+          const extra = await postQuickTask("/api/assistant/figma-agent/icon", { queries: names }).catch(function () { return { icons: [] }; });
+          const byName = {};
+          (extra.icons || []).forEach(function (icon) { if (icon && icon.svg) byName[icon.query] = icon; });
+          fallback.forEach(function (name, i) { if (name && byName[name]) icons[i] = byName[name]; });
+        }
+      }
       const items = [];
       const unmatched = [];
       targets.forEach(function (target, index) {

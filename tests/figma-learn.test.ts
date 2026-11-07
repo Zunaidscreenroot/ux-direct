@@ -29,11 +29,11 @@ test("learned rules merge into the designer's own rules, one line per subject", 
   const { merge } = region("uxd-learn", "{ merge: mergeLearnedRules }");
   const first = merge("spacing 4/8/16, radius 8/16", [
     { role: "button", prop: "radius", from: 8, to: 12, layers: 3 },
-    { role: "text", prop: "size", from: 14, to: 16, layers: 5 },
+    { role: "text", textRole: "Card title", prop: "size", from: 14, to: 16, layers: 5 },
   ]);
-  assert.equal(first.text, "spacing 4/8/16, radius 8/16\n\nLearned from your edits:\n- Button corner radius: use 12 px (not 8 px)\n- Text set at 14 px size: use 16 px (not 14 px)");
+  assert.equal(first.text, "spacing 4/8/16, radius 8/16\n\nLearned from your edits:\n- Button corner radius: use 12 px (not 8 px)\n- Card title size: use 16 px (not 14 px)");
   const second = merge(first.text, [{ role: "button", prop: "radius", from: 12, to: 16, layers: 2 }, { role: "frame", prop: "fill", from: "#FFFFFF", to: "#F8FAFC", layers: 1 }]);
-  assert.equal(second.text, "spacing 4/8/16, radius 8/16\n\nLearned from your edits:\n- Text set at 14 px size: use 16 px (not 14 px)\n- Button corner radius: use 16 px (not 12 px)\n- Container fill #FFFFFF: use #F8FAFC (not #FFFFFF)");
+  assert.equal(second.text, "spacing 4/8/16, radius 8/16\n\nLearned from your edits:\n- Card title size: use 16 px (not 14 px)\n- Button corner radius: use 16 px (not 12 px)\n- Container fill #FFFFFF: use #F8FAFC (not #FFFFFF)");
   assert.equal(second.added.length, 2);
 });
 
@@ -81,6 +81,8 @@ test("baseline then diff finds the designer's edits, commits once, and restores"
   assert.equal((await run("learn-baseline", { nodeIds: ["s1"] })).stored, 4);
   assert.equal((await run("learn-corrections", {})).changes.length, 0);
 
+  assert.equal(JSON.parse(body.getPluginData("uxdBaseline")).textRole, "body text");
+  assert.equal(JSON.parse(label.getPluginData("uxdBaseline")).textRole, "Button label");
   btn.cornerRadius = 12; btn.height = 48; body.fontSize = 16; label.fontName = { family: "Inter", style: "Semi Bold" };
   const found = await run("learn-corrections", {});
   assert.equal(found.edited, 3);

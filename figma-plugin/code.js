@@ -4372,6 +4372,23 @@ function uxdFakeValue(text, rand) {
   }
   return null;
 }
+// Changing an auto-width text in a free (non auto-layout) parent grows it to the right, which breaks
+// right-aligned values and centred labels. Keep the edge the text is anchored to: the right edge for
+// text in the right part of its parent (or set to align right), the centre for centred text.
+function uxdSetTextKeepAnchor(node, value) {
+  var parent = node.parent;
+  var free = parent && parent.type !== "PAGE" && (!parent.layoutMode || parent.layoutMode === "NONE" || node.layoutPositioning === "ABSOLUTE");
+  var autoWidth = node.textAutoResize === "WIDTH_AND_HEIGHT";
+  var anchor = null, x0 = node.x, w0 = node.width;
+  if (free && autoWidth && typeof parent.width === "number") {
+    var leftGap = x0, rightGap = parent.width - (x0 + w0);
+    if (Math.abs(leftGap - rightGap) <= 2 && leftGap > 0) anchor = "center";
+    else if (node.textAlignHorizontal === "RIGHT" || rightGap < leftGap) anchor = "right";
+  }
+  node.characters = value;
+  if (anchor === "right") node.x = x0 + w0 - node.width;
+  else if (anchor === "center") node.x = x0 + (w0 - node.width) / 2;
+}
 async function localFillRealisticData(payload) {
   var roots = figma.currentPage.selection.slice();
   if (!roots.length) throw new Error("Select the screen, list or rows to fill first.");
@@ -4396,7 +4413,7 @@ async function localFillRealisticData(payload) {
   for (var i = 0; i < plan.length; i++) {
     try {
       var before = plan[i].node.characters;
-      plan[i].node.characters = plan[i].value;
+      uxdSetTextKeepAnchor(plan[i].node, plan[i].value);
       changed++;
       edits.push({ id: plan[i].node.id, before: before, after: plan[i].value });
       if (samples.length < 6) samples.push({ before: before, after: plan[i].value });
@@ -4419,7 +4436,7 @@ async function localRestoreTexts(payload) {
     var node = await figma.getNodeByIdAsync(String(items[i].id || ""));
     if (!node || node.type !== "TEXT" || node.removed) { missing++; continue; }
     if (node.characters !== String(items[i].expect)) { changedSince++; continue; }
-    try { await uxdLoadTextFonts(node); node.characters = String(items[i].text); restored++; } catch (_) { missing++; }
+    try { await uxdLoadTextFonts(node); uxdSetTextKeepAnchor(node, String(items[i].text)); restored++; } catch (_) { missing++; }
   }
   if (typeof figma.commitUndo === "function") figma.commitUndo();
   return { ok: true, restored: restored, changedSince: changedSince, missing: missing };
@@ -4652,6 +4669,15 @@ function uxdLabelPart(text) {
   head = String(head || "").replace(/[\s:·|–—-]+$/, "").trim();
   return head.length >= 2 && head.length <= 30 && /\p{L}{2}/u.test(head) && !/[0-9\p{Sc}%]/u.test(head) && head !== value ? head : "";
 }
+// What kind of value a row shows, so a row whose label names no icon still gets a fitting one.
+function uxdValueKind(texts) {
+  var all = texts.map(function (t) { return String(t.characters || ""); }).join("  ");
+  if (/\p{Sc}\s?\d|\b(?:Rs\.?|INR|USD|EUR|GBP|AED|SGD|AUD|CAD|JPY|CHF)\s?\d/u.test(all)) return "currency";
+  if (/\d\s?%/.test(all)) return "percent";
+  if (/\b\d{1,2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{1,2}\b|\b\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}\b/i.test(all)) return "date";
+  if (/\b\d{1,2}:\d{2}\s?(?:am|pm)?\b/i.test(all)) return "time";
+  return null;
+}
 function uxdIconTargetInfo(node) {
   if (["FRAME", "COMPONENT"].indexOf(node.type) < 0 || node.visible === false || node.locked === true) return null;
   if ((node.height || 0) > 88 || (node.width || 0) < 40 || uxdInsideInstance(node)) return null;
@@ -4670,7 +4696,7 @@ function uxdIconTargetInfo(node) {
   var size = typeof labelText.fontSize === "number" ? labelText.fontSize : 14;
   // Data rows ("Balance  ₹12,400", "Due date  12 Nov") show a value, not an action: flagged, and only
   // used when the row itself is selected.
-  return { id: node.id, name: node.name, label: label, fontSize: size, button: uxdIsButtonLike(node, texts), data: texts.some(uxdIsDataValueText) };
+  return { id: node.id, name: node.name, label: label, fontSize: size, button: uxdIsButtonLike(node, texts), data: texts.some(uxdIsDataValueText), valueKind: uxdValueKind(texts) };
 }
 // A button: named like one, or a filled/outlined rounded box of 24–64px holding one label.
 // Data rows ("Row · Loan Amount": label + value, no box) are not buttons.
@@ -4701,7 +4727,7 @@ function uxdNestedRowTarget(node) {
   if (!labelText) labelText = mixed;
   var label = uxdLabelPart(labelText) || String(labelText.characters).trim();
   if (label.length > 40) return null;
-  return { id: node.id, name: node.name, label: label, fontSize: typeof labelText.fontSize === "number" ? labelText.fontSize : 14, button: false, data: true };
+  return { id: node.id, name: node.name, label: label, fontSize: typeof labelText.fontSize === "number" ? labelText.fontSize : 14, button: false, data: true, valueKind: uxdValueKind(texts) };
 }
 async function localFindIconTargets(payload) {
   var roots = figma.currentPage.selection.slice();
@@ -4886,7 +4912,7 @@ function uxdLooksLikeButton(node) {
   if (label.length > 24 || label.split(/\s+/).length > 4 || !/\p{L}/u.test(label)) return false;
   var painted = function (list) { return Array.isArray(list) && list.some(function (p) { return p && p.visible !== false && (p.opacity === undefined || p.opacity > 0); }); };
   return painted(node.fills) || painted(node.strokes) || (typeof node.cornerRadius === "number" && node.cornerRadius > 0) ||
-    UXD_BACK_LABEL.test(label) || UXD_NEXT_LABEL.test(label);
+    UXD_BACK_LABEL.test(label) || UXD_NEXT_LABEL.test(label) || UXD_SKIP_LABEL.test(label);
 }
 function uxdHandoffKind(node) {
   if (node.type !== "FRAME" && node.type !== "INSTANCE" && node.type !== "COMPONENT") return "";
@@ -4959,7 +4985,9 @@ async function localHandoffNotes() {
   return { ok: true, notes: notes, skipped: skipped, snapshot: snapshot };
 }
 var UXD_BACK_LABEL = /^(back|go back|previous|prev|cancel|close|dismiss|wapas|peeche|piche)\b/i;
-var UXD_NEXT_LABEL = /\b(continue|next|proceed|submit|confirm|get started|sign ?in|log ?in|sign ?up|verify|done|finish|skip|start|got it|aage|save)\b/i;
+var UXD_NEXT_LABEL = /\b(continue|next|proceed|submit|confirm|get started|sign ?in|log ?in|sign ?up|verify|done|finish|start|got it|aage|save)\b/i;
+// "Skip" in a carousel/onboarding skips the whole run: it goes to the first later screen that has no Skip itself.
+var UXD_SKIP_LABEL = /^(skip|skip for now|skip all|skip intro)\b/i;
 var UXD_SCREEN_STOP = { screen: 1, page: 1, view: 1, the: 1, a: 1, an: 1, and: 1, of: 1, to: 1, my: 1, your: 1, v1: 1, v2: 1, v3: 1, new: 1, copy: 1 };
 function uxdWords(text) {
   return String(text || "").toLowerCase().split(/[^a-z0-9]+/).filter(function (w) { return w.length > 1 && !UXD_SCREEN_STOP[w] && !/^\d+$/.test(w); });
@@ -4970,6 +4998,13 @@ async function localPrototypeWire(payload) {
   screens = screens.slice(0, 12).sort(function (a, b) { return Math.abs(a.y - b.y) > a.height / 2 ? a.y - b.y : a.x - b.x; });
   var fix = payload && payload.fix === true;
   var links = [];
+  var hasSkip = screens.map(function (screen) {
+    return uxdDescendants(screen, function (n) { return n.visible !== false && uxdLooksLikeButton(n) && UXD_SKIP_LABEL.test(String(uxdFirstText(n) || n.name).trim()); }).length > 0;
+  });
+  function afterSkip(index) {
+    for (var j = index + 1; j < screens.length; j++) if (!hasSkip[j]) return screens[j];
+    return index + 1 < screens.length ? screens[screens.length - 1] : null;
+  }
   screens.forEach(function (screen, index) {
     uxdDescendants(screen, function (n) { return n.visible !== false && uxdLooksLikeButton(n); })
       .forEach(function (button) {
@@ -4977,6 +5012,11 @@ async function localPrototypeWire(payload) {
         for (var p = button.parent; p && p !== screen; p = p.parent) if (uxdLooksLikeButton(p)) return;
         var label = uxdFirstText(button) || button.name;
         if (UXD_BACK_LABEL.test(label.trim())) { links.push({ button: button, label: label, screen: screen.name, action: "BACK" }); return; }
+        if (UXD_SKIP_LABEL.test(label.trim())) {
+          var end = afterSkip(index);
+          if (end) links.push({ button: button, label: label, screen: screen.name, action: "NAVIGATE", destination: end });
+          return;
+        }
         var words = uxdWords(label), best = null, bestScore = 0;
         screens.forEach(function (other) {
           if (other === screen) return;
@@ -5017,10 +5057,25 @@ function uxdLearnRole(node) {
   if (uxdLooksLikeButton(node)) return "button";
   return "frame";
 }
+// A text's role, so one edit becomes a scoped rule ("Card title size: 20 px"), never one for all text.
+function uxdLearnTextRole(node) {
+  var parent = node.parent;
+  if (parent && uxdLooksLikeButton(parent)) return "Button label";
+  var inCard = false;
+  for (var p = parent; p && p.type !== "PAGE"; p = p.parent) if (UXD_CARD_NAME.test(String(p.name || ""))) { inCard = true; break; }
+  var name = String(node.name || "");
+  var size = typeof node.fontSize === "number" ? node.fontSize : 14;
+  var bold = node.fontName && /bold|semi|medium|heavy|black/i.test(String(node.fontName.style || ""));
+  var role = /\b(title|heading|header|headline|h[1-3])\b/i.test(name) || size >= 22 || (bold && size >= 16) ? "title"
+    : size <= 12 ? "caption" : "body text";
+  if (role === "title" && !inCard && size >= 22) return "Screen title";
+  return (inCard ? "Card " : "") + role;
+}
 function uxdLearnValues(node) {
   var v = { role: uxdLearnRole(node) };
   if (node.type === "TEXT") {
     if (typeof node.fontSize === "number") v.size = node.fontSize;
+    v.textRole = uxdLearnTextRole(node);
     if (node.fontName && typeof node.fontName === "object" && typeof node.fontName.style === "string") v.weight = node.fontName.style;
     var th = uxdFillHex(node); if (th) v.color = th;
     return v;
@@ -5090,12 +5145,12 @@ async function localLearnCorrections(payload) {
     if (!now) return;
     var changed = false;
     Object.keys(base).forEach(function (prop) {
-      if (prop === "role" || now[prop] === undefined) return;
+      if (prop === "role" || prop === "textRole" || now[prop] === undefined) return;
       var from = base[prop], to = now[prop];
       if (typeof from === "number" ? Math.abs(from - to) < 0.5 : from === to) return;
       changed = true;
-      var key = base.role + "|" + prop + "|" + from + "|" + to;
-      if (!groups[key]) groups[key] = { role: base.role, prop: prop, from: from, to: to, layers: 0, sample: entry.node.name };
+      var key = base.role + "|" + (base.textRole || "") + "|" + prop + "|" + from + "|" + to;
+      if (!groups[key]) groups[key] = { role: base.role, textRole: base.textRole || "", prop: prop, from: from, to: to, layers: 0, sample: entry.node.name };
       groups[key].layers++;
     });
     if (changed) {
@@ -5103,6 +5158,7 @@ async function localLearnCorrections(payload) {
       if (payload.commit) {
         previous[entry.node.id] = entry.raw;
         now.role = base.role;
+        if (base.textRole) now.textRole = base.textRole;
         entry.node.setPluginData("uxdBaseline", JSON.stringify(now));
       }
     }

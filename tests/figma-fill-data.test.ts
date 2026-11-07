@@ -88,3 +88,37 @@ test("amounts in any currency keep their symbol and grouping style", () => {
   assert.match(fake("₹1,20,000", rand), /^₹\d{1,2}(,\d{2})*,\d{3}$/);
   assert.match(fake("AED 4,999/mo", rand), /^AED \d{1,3}(,\d{3})*\/mo$/);
 });
+
+test("a right-aligned or centred value keeps its edge when its width changes, and the summary names real formats", async () => {
+  const font = { family: "Inter", style: "Regular" };
+  const mk = (id: string, characters: string, x: number, width: number): any => ({ id, type: "TEXT", characters, x, width, textAutoResize: "WIDTH_AND_HEIGHT", textAlignHorizontal: "LEFT",
+    fontName: font, getRangeAllFontNames() { return [font]; }, visible: true });
+  const right = mk("r", "$1,250", 286, 50), left = mk("l", "$86", 16, 30), centre = mk("c", "€980", 140, 40);
+  [right, left, centre].forEach((t) => {
+    let chars = t.characters;
+    Object.defineProperty(t, "characters", { get: () => chars, set: (v: string) => { chars = v; t.width = v.length * 8; } });
+  });
+  const card: any = { id: "card", type: "FRAME", layoutMode: "NONE", width: 320, children: [right, left, centre] };
+  [right, left, centre].forEach((t) => { t.parent = card; });
+  card.findAll = (f: (n: any) => boolean) => card.children.filter(f);
+  const posted: any[] = [];
+  const figma: any = {
+    fileKey: /UXD_ALLOWED_FILE_KEY = "([^"]+)"/.exec(code)![1], currentPage: { id: "0:1", type: "PAGE", children: [card], selection: [card], findOne: () => null }, root: { children: [] }, mixed: Symbol("m"),
+    viewport: { zoom: 1, bounds: {} }, ui: { postMessage: (m: any) => posted.push(m), onmessage: null }, showUI() {}, on() {}, closePlugin() {}, commitUndo() {},
+    listAvailableFontsAsync: async () => [], loadFontAsync: async () => {}, getNodeByIdAsync: async () => null,
+  };
+  runInNewContext(code, { figma, __html__: "", console, atob, btoa, Promise, Map, Set, Symbol, Uint8Array, setTimeout, clearTimeout });
+  await figma.ui.onmessage({ type: "uxd-local-task", requestId: "r", op: "fill-realistic-data", payload: {} });
+  const result = posted.find((m) => m.type === "uxd-local-result").result;
+  assert.equal(result.changed, 3);
+  assert.equal(right.x + right.width, 336, "right edge kept");
+  assert.equal(left.x, 16, "left edge kept");
+  assert.equal(centre.x + centre.width / 2, 160, "centre kept");
+
+  const match = /(function describeFilledKinds[\s\S]*?\n    }\n)/.exec(ui);
+  assert.ok(match);
+  const sandbox: any = {};
+  runInNewContext(match[1] + "\nthis.fn = describeFilledKinds;", sandbox);
+  assert.equal(sandbox.fn([{ before: "$1,250" }, { before: "€980" }, { before: "12 Dec" }]), "$, € amounts and dates");
+  assert.doesNotMatch(sandbox.fn([{ before: "$1,250" }]), /lakh|PAN/);
+});
