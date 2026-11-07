@@ -1682,7 +1682,9 @@
       // "missing content" and "repair" it with patches nobody asked for.
       const PROPERTY_ONLY_KEYS = ["visible", "locked", "name", "opacity", "itemSpacing", "counterAxisSpacing",
         "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "cornerRadius"];
+      // A variant/property switch on an existing instance is a property edit too: its component draws it.
       const propertyOnly = actions.length > 0 && actions.every(function (action) {
+        if (action.operation === "set-instance-properties") return true;
         return action.operation === "update-node" && action.patch && Object.keys(action.patch).length > 0 &&
           Object.keys(action.patch).every(function (key) { return PROPERTY_ONLY_KEYS.includes(key); });
       });
@@ -1693,7 +1695,7 @@
         const mismatches = [];
         actions.forEach(function (action) {
           const node = found.get(action.nodeId);
-          if (!node) return;
+          if (!node || !action.patch) return;
           Object.keys(action.patch).forEach(function (key) {
             const want = action.patch[key], got = node[key];
             if (got === undefined) return;
