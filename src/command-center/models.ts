@@ -1,6 +1,6 @@
 import { readCallStats, readModelUsage, type CallStats } from "@/src/llm-gateway/call-log";
-import { gatewayAvailability, gatewayChatCompletion } from "@/src/llm-gateway/router";
-import { PROVIDERS, modelLimits, modelTier } from "@/src/llm-gateway/catalog";
+import { gatewayAvailability, gatewayChatCompletion, gatewayEnv } from "@/src/llm-gateway/router";
+import { PROVIDERS, modelLimits, modelTier, providerKeys } from "@/src/llm-gateway/catalog";
 import { llmGatewayMode } from "@/src/providers/active-chat-provider";
 
 export type ModelAnalytics = CallStats & {
@@ -34,7 +34,7 @@ export type ProviderCheck = { provider: string; model: string; ok: boolean; stat
 let lastCheckAt = 0;
 
 /** Live check: one tiny pinned call per configured provider (no key values are ever returned). */
-export async function checkGatewayProviders(): Promise<{ checkedAt: string; log: { ok: boolean; error?: string }; results: ProviderCheck[] } | { throttled: true; retryAfterSeconds: number }> {
+export async function checkGatewayProviders(): Promise<{ checkedAt: string; log: { ok: boolean; error?: string }; results: ProviderCheck[]; openrouter?: { freeTier?: boolean; dailyFreeLimit?: number; error?: string } } | { throttled: true; retryAfterSeconds: number }> {
   const now = Date.now();
   if (now - lastCheckAt < 60_000) return { throttled: true, retryAfterSeconds: Math.ceil((60_000 - (now - lastCheckAt)) / 1000) };
   lastCheckAt = now;
@@ -58,7 +58,18 @@ export async function checkGatewayProviders(): Promise<{ checkedAt: string; log:
       ...(!response.ok ? { error: String(payload.error?.message || "HTTP " + response.status).slice(0, 300) } : {}),
     };
   }));
+  // OpenRouter account allowance: 1000 free calls/day once the account has bought credit, else 50.
+  let openrouter: { freeTier?: boolean; dailyFreeLimit?: number; error?: string } | undefined;
+  const orKey = providerKeys(PROVIDERS.find((provider) => provider.id === "openrouter")!, gatewayEnv())[0];
+  if (orKey) {
+    try {
+      const keyInfo = await fetch("https://openrouter.ai/api/v1/key", { headers: { Authorization: "Bearer " + orKey }, signal: AbortSignal.timeout(8_000) })
+        .then((response) => response.json()) as { data?: { is_free_tier?: boolean } };
+      const freeTier = keyInfo.data?.is_free_tier;
+      openrouter = typeof freeTier === "boolean" ? { freeTier, dailyFreeLimit: freeTier ? 50 : 1000 } : { error: "no key info" };
+    } catch (error) { openrouter = { error: error instanceof Error ? error.message.slice(0, 120) : String(error) }; }
+  }
   let log: { ok: boolean; error?: string } = { ok: true };
   try { await readModelUsage(); } catch (error) { log = { ok: false, error: error instanceof Error ? error.message.slice(0, 200) : String(error) }; }
-  return { checkedAt: new Date().toISOString(), log, results };
+  return { checkedAt: new Date().toISOString(), log, results, ...(openrouter ? { openrouter } : {}) };
 }
