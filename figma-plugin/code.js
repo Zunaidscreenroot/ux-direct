@@ -4823,13 +4823,28 @@ function uxdCleanAnnotations(list) {
     return out;
   }).filter(function (a) { return a.labelMarkdown || a.label || a.properties; });
 }
+// A button is either named like one, or looks like one: a small frame holding exactly one short label,
+// with a fill, stroke or rounded corners (or a Back/Continue-style label), e.g. "Frame 4" > "Pay now".
+function uxdLooksLikeButton(node) {
+  if (node.type !== "FRAME" && node.type !== "INSTANCE" && node.type !== "COMPONENT") return false;
+  if (UXD_BUTTON_NAME.test(String(node.name || ""))) return true;
+  if (UXD_INPUT_NAME.test(String(node.name || "")) || UXD_CARD_NAME.test(String(node.name || ""))) return false;
+  if (!(node.height >= 24 && node.height <= 72 && node.width <= 360) || (node.children || []).length > 3) return false;
+  var texts = uxdDescendants(node, function (n) { return n.type === "TEXT" && n.visible !== false && String(n.characters || "").trim(); });
+  if (texts.length !== 1) return false;
+  var label = String(texts[0].characters).trim();
+  if (label.length > 24 || label.split(/\s+/).length > 4 || !/\p{L}/u.test(label)) return false;
+  var painted = function (list) { return Array.isArray(list) && list.some(function (p) { return p && p.visible !== false && (p.opacity === undefined || p.opacity > 0); }); };
+  return painted(node.fills) || painted(node.strokes) || (typeof node.cornerRadius === "number" && node.cornerRadius > 0) ||
+    UXD_BACK_LABEL.test(label) || UXD_NEXT_LABEL.test(label);
+}
 function uxdHandoffKind(node) {
   if (node.type !== "FRAME" && node.type !== "INSTANCE" && node.type !== "COMPONENT") return "";
   var name = String(node.name || "");
   if (UXD_BUTTON_NAME.test(name)) return "button";
   if (UXD_INPUT_NAME.test(name)) return "input";
   if (UXD_CARD_NAME.test(name)) return "card";
-  return "";
+  return uxdLooksLikeButton(node) ? "button" : "";
 }
 function uxdHandoffNote(node, kind, root) {
   var label = uxdFirstText(node).slice(0, 40);
@@ -4906,10 +4921,10 @@ async function localPrototypeWire(payload) {
   var fix = payload && payload.fix === true;
   var links = [];
   screens.forEach(function (screen, index) {
-    uxdDescendants(screen, function (n) { return n.visible !== false && (n.type === "FRAME" || n.type === "INSTANCE") && UXD_BUTTON_NAME.test(String(n.name || "")); })
+    uxdDescendants(screen, function (n) { return n.visible !== false && uxdLooksLikeButton(n); })
       .forEach(function (button) {
         if (links.length >= 60 || (button.reactions && button.reactions.length) || typeof button.setReactionsAsync !== "function") return;
-        for (var p = button.parent; p && p !== screen; p = p.parent) if (p.type === "INSTANCE" || UXD_BUTTON_NAME.test(String(p.name || ""))) return;
+        for (var p = button.parent; p && p !== screen; p = p.parent) if (uxdLooksLikeButton(p)) return;
         var label = uxdFirstText(button) || button.name;
         if (UXD_BACK_LABEL.test(label.trim())) { links.push({ button: button, label: label, screen: screen.name, action: "BACK" }); return; }
         var words = uxdWords(label), best = null, bestScore = 0;

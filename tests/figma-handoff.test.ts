@@ -112,3 +112,20 @@ test("prototype wire links by screen name, Back and Continue, skips wired button
   assert.equal(nodes.hb1.reactions.length, 0);
   assert.equal(nodes.pb1.reactions.length, 0);
 });
+
+test("buttons are found by look, not only by name, also inside card instances", async () => {
+  const unnamed = (id: string, label: string, extra: any = {}) => ({ id, type: "FRAME", name: "Frame 4", layoutMode: "HORIZONTAL", width: 120, height: 40, cornerRadius: 0,
+    fills: [], strokes: [], children: [txt(id + "t", label)], ...extra });
+  const card: any = { id: "card", type: "INSTANCE", name: "Loan Card", layoutMode: "VERTICAL", width: 328, height: 160, fills: [], strokes: [],
+    children: [txt("ct1", "Home loan"), txt("ct2", "₹12,000 due"), unnamed("pay", "Pay now", { fills: [{ type: "SOLID", visible: true }] })] };
+  const label: any = { id: "lab", type: "FRAME", name: "Frame 9", width: 200, height: 30, fills: [], strokes: [], children: [txt("lt", "Due date")] };
+  const loans: any = { id: "l", type: "FRAME", name: "QA wire — Loans", x: 0, y: 0, width: 360, height: 800, fills: [], strokes: [], children: [card, label] };
+  const payScreen: any = { id: "ps", type: "FRAME", name: "Pay now", x: 400, y: 0, width: 360, height: 800, fills: [], strokes: [], children: [{ ...unnamed("back", "Back"), name: "Back" }] };
+  const nodes: Record<string, any> = { l: loans, ps: payScreen };
+  const run = runtime([loans, payScreen], nodes);
+  const plan = await run("prototype-wire", {});
+  assert.deepEqual(plan.links.map((l: any) => [l.label, l.action, l.to]), [["Pay now", "NAVIGATE", "Pay now"], ["Back", "BACK", ""]]);
+  const notes = await run("handoff-notes", {});
+  assert.ok(notes.notes.some((n: any) => n.kind === "button" && n.id === "pay"), "button inside the card instance gets a note");
+  assert.ok(!notes.notes.some((n: any) => n.id === "lab"), "a plain label frame is not a button");
+});
