@@ -2937,7 +2937,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -4407,6 +4407,106 @@ async function localRestoreTexts(payload) {
   return { ok: true, restored: restored, changedSince: changedSince, missing: missing };
 }
 // uxd-fill-data:end
+// uxd-consistency:start
+// Style lock across screens, no model: the same element (same layer name) on 2+ selected screens should
+// look the same, and the same button label should be written the same way. Reports drift; "fix" sets
+// each drifted layer to the most common value (property snapshot, so Revert restores exactly).
+var UXD_GENERIC_NAME = /^(frame|group|rectangle|ellipse|vector|auto layout|container|component|instance|text|line|image|section|layer)\b/i;
+function uxdConsistencyKey(name) {
+  var base = String(name || "").split(/\s+[·•|\/–—-]\s+/)[0].replace(/\s*\d+$/, "").trim().toLowerCase();
+  return base && !UXD_GENERIC_NAME.test(base) && base.length <= 40 ? base : "";
+}
+function uxdFillHex(node) {
+  if (!Array.isArray(node.fills) || node.fills.length !== 1 || (node.fillStyleId && typeof node.fillStyleId === "string")) return null;
+  var p = node.fills[0];
+  if (!p || p.type !== "SOLID" || p.visible === false || (p.boundVariables && p.boundVariables.color)) return null;
+  function h(v) { return ("0" + Math.round(v * 255).toString(16)).slice(-2); }
+  return ("#" + h(p.color.r) + h(p.color.g) + h(p.color.b)).toUpperCase() + (p.opacity !== undefined && p.opacity < 1 ? "@" + Math.round(p.opacity * 100) : "");
+}
+var UXD_CONSISTENCY_PROPS = {
+  radius: { read: function (n) { return typeof n.cornerRadius === "number" ? String(n.cornerRadius) : null; }, props: ["cornerRadius"] },
+  padding: { read: function (n) { return n.layoutMode && n.layoutMode !== "NONE" ? [n.paddingTop, n.paddingRight, n.paddingBottom, n.paddingLeft].join("/") : null; },
+    props: ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"] },
+  gap: { read: function (n) { return n.layoutMode && n.layoutMode !== "NONE" && n.primaryAxisAlignItems !== "SPACE_BETWEEN" ? String(n.itemSpacing) : null; }, props: ["itemSpacing"] },
+  fill: { read: uxdFillHex, props: ["fills"] },
+};
+async function localConsistency(payload) {
+  var roots = figma.currentPage.selection.filter(function (n) { return ["FRAME", "COMPONENT", "SECTION"].indexOf(n.type) >= 0; });
+  if (roots.length < 2) throw new Error("Select 2 or more screens to compare (style lock works across screens).");
+  roots = roots.slice(0, 12);
+  var fix = payload && payload.fix === true;
+  var groups = {}, labels = {};
+  roots.forEach(function (root, r) {
+    uxdDescendants(root, function (c) { return c.visible !== false; }).forEach(function (node) {
+      if (uxdInsideInstance(node) || node.locked === true) return;
+      if ((node.type === "FRAME" || node.type === "COMPONENT") && !(node.width > 400 && node.height > 400)) {
+        var key = uxdConsistencyKey(node.name);
+        if (key) (groups[key] = groups[key] || []).push({ node: node, root: r });
+      }
+      if (node.type === "TEXT" && node.parent && (UXD_BUTTON_NAME.test(String(node.parent.name || "")) || UXD_BUTTON_NAME.test(String(node.name || "")))) {
+        var text = String(node.characters || "").trim();
+        var norm = text.toLowerCase().replace(/[.!…]+$/, "").replace(/\s+/g, " ");
+        if (norm && norm.length <= 40) (labels[norm] = labels[norm] || []).push({ node: node, root: r, text: text });
+      }
+    });
+  });
+  var findings = [], changes = [];
+  function majority(entries, readFn) {
+    var counts = {}, order = [];
+    entries.forEach(function (e) { var v = readFn(e); if (v === null || v === undefined) return; if (!counts[v]) { counts[v] = 0; order.push(v); } counts[v]++; });
+    var best = order.reduce(function (a, b) { return counts[b] > counts[a] ? b : a; }, order[0]);
+    return { counts: counts, values: order, best: best };
+  }
+  Object.keys(groups).forEach(function (key) {
+    var entries = groups[key];
+    var screens = {}; entries.forEach(function (e) { screens[e.root] = 1; });
+    if (Object.keys(screens).length < 2) return;
+    Object.keys(UXD_CONSISTENCY_PROPS).forEach(function (kind) {
+      var spec = UXD_CONSISTENCY_PROPS[kind];
+      var m = majority(entries, function (e) { return spec.read(e.node); });
+      if (m.values.length < 2) return;
+      var odd = entries.filter(function (e) { var v = spec.read(e.node); return v !== null && v !== m.best; });
+      findings.push({ element: entries[0].node.name.split(/\s+[·•|\/–—-]\s+/)[0], kind: kind, expected: m.best,
+        found: m.values.filter(function (v) { return v !== m.best; }), layers: odd.length,
+        screens: odd.map(function (e) { return roots[e.root].name; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).slice(0, 4) });
+      if (fix) {
+        var model = entries.find(function (e) { return spec.read(e.node) === m.best; }).node;
+        odd.forEach(function (e) { changes.push({ node: e.node, props: spec.props, model: model }); });
+      }
+    });
+  });
+  Object.keys(labels).forEach(function (norm) {
+    var entries = labels[norm];
+    var m = majority(entries, function (e) { return e.text; });
+    if (m.values.length < 2) return;
+    var odd = entries.filter(function (e) { return e.text !== m.best; });
+    findings.push({ element: "Button label", kind: "label", expected: m.best, found: m.values.filter(function (v) { return v !== m.best; }), layers: odd.length,
+      screens: odd.map(function (e) { return roots[e.root].name; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).slice(0, 4) });
+    if (fix) odd.forEach(function (e) { changes.push({ node: e.node, props: ["characters"], text: m.best }); });
+  });
+  var snapshot = [];
+  if (fix && changes.length) {
+    if (typeof figma.commitUndo === "function") figma.commitUndo();
+    UXD_HYGIENE_SNAPSHOT = { keys: {}, items: [] };
+    for (var i = 0; i < changes.length && i < 400; i++) {
+      var ch = changes[i];
+      try {
+        ch.props.forEach(function (prop) { uxdSnapProp(ch.node, prop); });
+        if (ch.text !== undefined) { await uxdLoadTextFonts(ch.node); ch.node.characters = ch.text; }
+        else ch.props.forEach(function (prop) { ch.node[prop] = uxdCloneValue(ch.model[prop]); });
+      } catch (_) {}
+    }
+    snapshot = UXD_HYGIENE_SNAPSHOT.items.map(function (item) {
+      var after = uxdCloneValue(item.node[item.prop]);
+      return { id: item.node.id, prop: item.prop, before: item.before, after: after === undefined ? null : after };
+    }).filter(function (item) { return JSON.stringify(item.before) !== JSON.stringify(item.after); });
+    UXD_HYGIENE_SNAPSHOT = null;
+    if (typeof figma.commitUndo === "function") figma.commitUndo();
+  }
+  findings.sort(function (a, b) { return b.layers - a.layers; });
+  return { ok: true, screens: roots.map(function (r) { return r.name; }), findings: findings.slice(0, 40), fixed: snapshot.length, snapshot: snapshot };
+}
+// uxd-consistency:end
 // uxd-design-rules:start
 // Per-file design rules ("DESIGN.md"): stored in the Figma file itself, so everyone on the file shares
 // them. The UI parses the designer's text into {spacing, radii, typeScale, minText, colors, font, tone};
@@ -4718,6 +4818,7 @@ async function runLocalTask(message) {
     else if (message.op === "section-state") result = await localSectionState(payload);
     else if (message.op === "get-design-rules") result = await localGetDesignRules(payload);
     else if (message.op === "set-design-rules") result = await localSetDesignRules(payload);
+    else if (message.op === "consistency") result = await localConsistency(payload);
     else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
     else if (message.op === "trigger-undo") {
       if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");
