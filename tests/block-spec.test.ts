@@ -720,3 +720,18 @@ test("card borders bind to a near file paint style, and every gap and padding si
   assert.deepEqual(offGrid, []);
 });
 
+
+test("a create screen's primary button never moves to a file style that costs its label contrast", () => {
+  const spec = { summary: "x", theme: { primary: "#1F4FD8", onPrimary: "#FFFFFF" }, sections: [
+    { name: "A", blocks: [{ type: "heading", title: "Loans" }] },
+    { name: "B", blocks: [{ type: "button", text: "Pay EMI" }] },
+    { name: "C", blocks: [{ type: "text", text: "End" }] },
+  ], learningCandidate: null };
+  const styles = { paint: [{ id: "S:blue-muted", name: "Blue/300", color: "#6F8FE8" }] };
+  const out = expandBlockSpec(spec, { nodes: [], styles }, { create: true });
+  assert.ok(out.plan, out.errors.join("; "));
+  let btn: N | null = null;
+  walk(out.plan!.elements as N[], (n) => { if (!btn && n.type === "FRAME" && String(n.name).toLowerCase().includes("pay emi")) btn = n; });
+  assert.ok(btn, "button found");
+  assert.notEqual((btn as N).paintStyleId, "S:blue-muted", "white label keeps its contrast");
+});

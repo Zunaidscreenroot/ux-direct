@@ -5672,11 +5672,25 @@ var UXD_SCREEN_STOP = { screen: 1, page: 1, view: 1, the: 1, a: 1, an: 1, and: 1
 function uxdWords(text) {
   return String(text || "").toLowerCase().split(/[^a-z0-9]+/).filter(function (w) { return w.length > 1 && !UXD_SCREEN_STOP[w] && !/^\d+$/.test(w); });
 }
+// A screen's role in a journey, by its name or its big title text ("Payment successful" as a heading).
+function uxdScreenKind(screen) {
+  var name = String(screen.name || "");
+  if (UXD_ERROR_SCREEN.test(name)) return "error";
+  if (UXD_SUCCESS_SCREEN.test(name)) return "end";
+  var titles = uxdDescendants(screen, function (n) { return n.type === "TEXT" && n.visible !== false && typeof n.fontSize === "number" && n.fontSize >= 18; })
+    .slice(0, 4).map(function (t) { return String(t.characters || ""); }).join(" ");
+  if (UXD_ERROR_SCREEN.test(titles)) return "error";
+  if (UXD_SUCCESS_SCREEN.test(titles) || /\b(paid|payment received|all set)\b/i.test(titles)) return "end";
+  return "step";
+}
 async function localPrototypeWire(payload) {
   var screens = figma.currentPage.selection.filter(function (n) { return n.type === "FRAME" && n.parent && n.parent.type === "PAGE"; });
   if (screens.length < 2) throw new Error("Select 2 or more top-level screens to wire together.");
   screens = screens.slice(0, 12).sort(function (a, b) { return Math.abs(a.y - b.y) > a.height / 2 ? a.y - b.y : a.x - b.x; });
   var fix = payload && payload.fix === true;
+  // Screens whose existing links are replaced (the screen a "next step" was built from).
+  var replaceOn = payload && Array.isArray(payload.replaceOn) ? payload.replaceOn : [];
+  var screenIds = screens.map(function (sc) { return sc.id; });
   var links = [];
   var flowStart = "";
   var hasSkip = screens.map(function (screen) {
@@ -5697,12 +5711,34 @@ async function localPrototypeWire(payload) {
   uxdWords(screens[0].name).forEach(function (w) {
     if (screens.every(function (sc) { return uxdWords(sc.name).indexOf(w) >= 0; })) sharedWords[w] = true;
   });
-  var isError = screens.map(function (screen) { return UXD_ERROR_SCREEN.test(String(screen.name || "")); });
-  var isEnd = screens.map(function (screen, i) { return !isError[i] && UXD_SUCCESS_SCREEN.test(String(screen.name || "")); });
+  var kinds = screens.map(uxdScreenKind);
+  var isError = kinds.map(function (k) { return k === "error"; });
+  var isEnd = kinds.map(function (k) { return k === "end"; });
   // "Continue" goes to the next step of the happy path: never into a failure state.
   function nextStep(index) {
     for (var j = index + 1; j < screens.length; j++) if (!isError[j]) return screens[j];
     return null;
+  }
+  // A button keeps its own link, unless that link leads outside the selected flow (repointed) or
+  // its screen is being re-wired on purpose.
+  function keepsOwnLink(node, screen) {
+    if (!node.reactions || !node.reactions.length) return false;
+    if (replaceOn.indexOf(screen.id) >= 0) return false;
+    var dests = [];
+    node.reactions.forEach(function (r) {
+      (Array.isArray(r.actions) ? r.actions : r.action ? [r.action] : []).forEach(function (a) { if (a && a.type === "NODE" && a.destinationId) dests.push(a.destinationId); });
+    });
+    return !dests.length || dests.some(function (d) { return screenIds.indexOf(d) >= 0; });
+  }
+  function byWords(words, screen) {
+    var best = null, bestScore = 0;
+    screens.forEach(function (other) {
+      if (other === screen) return;
+      // Words every selected screen shares (a journey title: "Pay EMI / 2 · Choose amount") name no one screen.
+      var score = uxdWords(other.name).filter(function (w) { return words.indexOf(w) >= 0 && !sharedWords[w]; }).length;
+      if (score > bestScore) { best = other; bestScore = score; }
+    });
+    return best;
   }
   screens.forEach(function (screen, index) {
     // Back arrow icons in the app bar (no label): BACK, on every step after the first.
@@ -5710,48 +5746,72 @@ async function localPrototypeWire(payload) {
       return n.visible !== false && n.type !== "TEXT" && UXD_BACK_ICON.test(String(n.name || "")) && n.width <= 48 && n.height <= 48 &&
         !uxdDescendants(n, function (k) { return k.type === "TEXT" && String(k.characters || "").trim(); }).length;
     }).forEach(function (icon) {
-      if (links.length >= 60 || (icon.reactions && icon.reactions.length) || typeof icon.setReactionsAsync !== "function") return;
+      if (links.length >= 60 || keepsOwnLink(icon, screen) || typeof icon.setReactionsAsync !== "function") return;
       for (var p = icon.parent; p && p !== screen; p = p.parent) if (uxdLooksLikeButton(p) || UXD_BACK_ICON.test(String(p.name || "")) && p.width <= 48) return;
-      links.push({ button: icon, label: icon.name, screen: screen.name, action: "BACK" });
+      links.push({ button: icon, label: icon.name, screen: screen.name, from: index, action: "BACK" });
     });
     uxdDescendants(screen, function (n) { return n.visible !== false && uxdLooksLikeButton(n); })
       .forEach(function (button) {
-        if (links.length >= 60 || (button.reactions && button.reactions.length) || typeof button.setReactionsAsync !== "function") return;
+        if (links.length >= 60 || keepsOwnLink(button, screen) || typeof button.setReactionsAsync !== "function") return;
         for (var p = button.parent; p && p !== screen; p = p.parent) if (uxdLooksLikeButton(p)) return;
         if (links.some(function (l) { return l.button === button; })) return;
-        var label = uxdFirstText(button) || button.name;
-        if (UXD_BACK_LABEL.test(label.trim()) && !(isEnd[index] && /^close\b/i.test(label.trim()))) { links.push({ button: button, label: label, screen: screen.name, action: "BACK" }); return; }
-        if (UXD_RETRY_LABEL.test(label.trim())) { links.push({ button: button, label: label, screen: screen.name, action: "BACK" }); return; }
+        var label = String(uxdFirstText(button) || button.name).trim();
+        var base = { button: button, label: label, screen: screen.name, from: index };
+        // "Back to loans", "Go back home": the named screen, else the journey's start.
+        var named = /^(?:go\s+)?back\s+(?:to\s+)?(.+)$|^go\s+to\s+(.+)$|^(?:return|take me)\s+(?:to\s+)?(.+)$/i.exec(label);
+        if (named) {
+          var target = byWords(uxdWords(named[1] || named[2] || named[3]), screen);
+          links.push(Object.assign(base, target ? { action: "NAVIGATE", destination: target } : { action: "NAVIGATE", toStart: true }));
+          return;
+        }
+        if (UXD_BACK_LABEL.test(label) && !(isEnd[index] && /^close\b/i.test(label))) { links.push(Object.assign(base, { action: "BACK" })); return; }
+        if (UXD_RETRY_LABEL.test(label)) { links.push(Object.assign(base, { action: "NAVIGATE", retry: true })); return; }
         // From the end (or a failure), Done / Home / Close returns to the journey's start.
-        if ((isEnd[index] || isError[index]) && index > 0 && (UXD_HOME_LABEL.test(label) || UXD_NEXT_LABEL.test(label))) {
-          var home = screens.filter(function (other) { return other !== screen && uxdWords(other.name).some(function (w) { return /^(home|dashboard)$/.test(w); }); })[0] || screens[0];
-          links.push({ button: button, label: label, screen: screen.name, action: "NAVIGATE", destination: home });
+        if ((isEnd[index] || isError[index]) && (UXD_HOME_LABEL.test(label) || UXD_NEXT_LABEL.test(label))) {
+          var home = screens.filter(function (other) { return other !== screen && uxdWords(other.name).some(function (w) { return /^(home|dashboard)$/.test(w); }); })[0];
+          links.push(Object.assign(base, home ? { action: "NAVIGATE", destination: home } : { action: "NAVIGATE", toStart: true }));
           return;
         }
-        if (UXD_SKIP_LABEL.test(label.trim())) {
+        if (UXD_SKIP_LABEL.test(label)) {
           var end = afterSkip(index);
-          if (end) links.push({ button: button, label: label, screen: screen.name, action: "NAVIGATE", destination: end });
+          if (end) links.push(Object.assign(base, { action: "NAVIGATE", destination: end }));
           return;
         }
-        var words = uxdWords(label), best = null, bestScore = 0;
-        screens.forEach(function (other) {
-          if (other === screen) return;
-          // Words every selected screen shares (a journey title: "Pay EMI / 2 · Choose amount") name no one screen.
-          var score = uxdWords(other.name).filter(function (w) { return words.indexOf(w) >= 0 && !sharedWords[w]; }).length;
-          if (score > bestScore) { best = other; bestScore = score; }
-        });
-        if (!best && UXD_NEXT_LABEL.test(label)) best = nextStep(index);
+        var best = byWords(uxdWords(label), screen);
+        // A failure screen is reached only by its own name, never from the end of the journey.
+        if (best && isError[screens.indexOf(best)] && isEnd[index]) best = null;
+        if (!best && UXD_NEXT_LABEL.test(label) && !isEnd[index] && !isError[index]) best = nextStep(index);
         // The step's one main button with no matching label ("Pay ₹8,450") moves the journey on.
-        if (!best && !isEnd[index] && !isError[index] && !links.some(function (l) { return l.screen === screen.name && l.action === "NAVIGATE"; }) &&
+        if (!best && !isEnd[index] && !isError[index] && !links.some(function (l) { return l.from === index && l.action === "NAVIGATE"; }) &&
           /primary|cta|main|button|btn/i.test(String(button.name || "")) && !/secondary|tertiary|ghost|text|link/i.test(String(button.name || ""))) best = nextStep(index);
-        if (best) links.push({ button: button, label: label, screen: screen.name, action: "NAVIGATE", destination: best });
+        if (best) links.push(Object.assign(base, { action: "NAVIGATE", destination: best }));
       });
+    // A list screen with no button forward (its rows/cards are the way in): the first item opens the next step.
+    if (!isEnd[index] && !isError[index] && !links.some(function (l) { return l.from === index && l.action === "NAVIGATE" && !l.toStart; }) && nextStep(index)) {
+      var item = uxdDescendants(screen, function (n) {
+        return n.visible !== false && (n.type === "INSTANCE" || n.type === "FRAME") && UXD_CARD_NAME.test(String(n.name || "")) && n.height >= 40 && !keepsOwnLink(n, screen);
+      })[0];
+      if (item && typeof item.setReactionsAsync === "function") links.push({ button: item, label: uxdFirstText(item) || item.name, screen: screen.name, from: index, action: "NAVIGATE", destination: nextStep(index) });
+    }
   });
+  // The journey's entry: the first happy-path screen nothing else leads to (not just the top-left one).
+  var incoming = screens.map(function (sc) { return links.filter(function (l) { return l.destination === sc && !l.toStart; }).length; });
+  var entryIndex = screens.findIndex(function (sc, i) { return !isEnd[i] && !isError[i] && incoming[i] === 0; });
+  var entry = screens[entryIndex >= 0 ? entryIndex : 0];
+  // Retry opens the step that failed: the happy-path step that leads to the end.
+  var lastStep = null;
+  links.forEach(function (l) { if (l.action === "NAVIGATE" && l.destination && isEnd[screens.indexOf(l.destination)]) lastStep = screens[l.from]; });
+  if (!lastStep) for (var k = screens.length - 1; k >= 0; k--) if (!isEnd[k] && !isError[k]) { lastStep = screens[k]; break; }
+  links.forEach(function (l) {
+    if (l.toStart) { l.destination = entry; delete l.toStart; }
+    if (l.retry) { if (lastStep && lastStep !== screens[l.from]) l.destination = lastStep; else l.action = "BACK"; delete l.retry; }
+  });
+  links = links.filter(function (l) { return l.action === "BACK" || (l.destination && l.destination !== screens[l.from]); });
   // No dead ends: every step but the last leads somewhere, every failure has a way out.
   var deadEnds = screens.filter(function (screen, i) {
-    var out = links.some(function (l) { return l.screen === screen.name; });
+    var out = links.some(function (l) { return l.from === i; });
     var wired = uxdDescendants(screen, function (n) { return n.reactions && n.reactions.length > 0; }).length > 0;
-    return !out && !wired && (i < screens.length - 1 || isError[i]);
+    return !out && !wired && (!isEnd[i] || isError[i]) && (i < screens.length - 1 || isError[i]);
   }).map(function (s) { return s.name; });
   var snapshot = [];
   if (fix && links.length) {
@@ -5760,28 +5820,44 @@ async function localPrototypeWire(payload) {
       var l = links[i];
       var action = l.action === "BACK" ? { type: "BACK" } : { type: "NODE", destinationId: l.destination.id, navigation: "NAVIGATE",
         transition: { type: "DISSOLVE", easing: { type: "EASE_OUT" }, duration: 0.3 }, preserveScrollPosition: false };
-      try {
-        await l.button.setReactionsAsync([{ trigger: { type: "ON_CLICK" }, actions: [action] }]);
-        snapshot.push({ id: l.button.id, prop: "reactions", before: [], after: uxdCloneValue(l.button.reactions) || [] });
-        l.done = true;
-      } catch (_) { l.done = false; }
+      var reactions = [{ trigger: { type: "ON_CLICK" }, actions: [action] }];
+      // A layer inside a component instance may not keep the link Figma accepted (read back to check):
+      // then the nearest instance around it, inside this screen, carries the link instead.
+      var targets = [l.button];
+      for (var up = l.button.parent; up && up.type !== "PAGE" && screenIds.indexOf(up.id) < 0; up = up.parent) if (up.type === "INSTANCE") targets.push(up);
+      l.done = false;
+      for (var t = 0; t < targets.length && !l.done; t++) {
+        var node = targets[t];
+        if (t > 0 && node.reactions && node.reactions.length) continue;
+        var before = uxdCloneValue(node.reactions) || [];
+        try {
+          await node.setReactionsAsync(reactions);
+          if (node.reactions && node.reactions.length) {
+            snapshot.push({ id: node.id, prop: "reactions", before: before, after: uxdCloneValue(node.reactions) || [] });
+            l.done = true;
+            if (t > 0) l.on = node.name;
+          }
+        } catch (_) {}
+      }
     }
-    // The journey starts at its first screen (a flow starting point), unless one is already set.
+    // The journey starts at its entry (a flow starting point). A start set on another selected screen moves.
     var page = figma.currentPage;
     try {
       var starts = Array.isArray(page.flowStartingPoints) ? page.flowStartingPoints : null;
-      var ids = screens.map(function (sc) { return sc.id; });
-      if (starts && !starts.some(function (f) { return ids.indexOf(f.nodeId) >= 0; })) {
-        var before = uxdCloneValue(starts) || [];
-        page.flowStartingPoints = starts.concat([{ nodeId: screens[0].id, name: String(screens[0].name || "Flow").slice(0, 60) }]);
-        snapshot.push({ id: page.id, prop: "flowStartingPoints", before: before, after: uxdCloneValue(page.flowStartingPoints) || [] });
-        flowStart = screens[0].name;
+      if (starts && !starts.some(function (f) { return f.nodeId === entry.id; })) {
+        var beforeStarts = uxdCloneValue(starts) || [];
+        var others = starts.filter(function (f) { return screenIds.indexOf(f.nodeId) < 0; });
+        var moved = starts.filter(function (f) { return screenIds.indexOf(f.nodeId) >= 0; })[0];
+        page.flowStartingPoints = others.concat([{ nodeId: entry.id, name: moved ? moved.name : String(entry.name || "Flow").slice(0, 60) }]);
+        snapshot.push({ id: page.id, prop: "flowStartingPoints", before: beforeStarts, after: uxdCloneValue(page.flowStartingPoints) || [] });
+        flowStart = entry.name;
       }
     } catch (_) {}
     if (typeof figma.commitUndo === "function") figma.commitUndo();
   }
-  return { ok: true, screens: screens.map(function (s) { return s.name; }),
-    links: links.map(function (l) { return { screen: l.screen, label: l.label.slice(0, 40), action: l.action, to: l.destination ? l.destination.name : "", done: l.done === true }; }),
+  return { ok: true, screens: screens.map(function (s) { return s.name; }), entry: entry.name,
+    links: links.map(function (l) { return { screen: l.screen, screenId: screens[l.from].id, label: String(l.label).slice(0, 40), action: l.action,
+      to: l.destination ? l.destination.name : "", toId: l.destination ? l.destination.id : "", done: l.done === true, on: l.on || "" }; }),
     deadEnds: deadEnds, flowStart: flowStart, snapshot: snapshot };
 }
 // uxd-handoff:end

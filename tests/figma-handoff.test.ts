@@ -27,6 +27,8 @@ test("handoff and prototype prompts route to their tasks", () => {
   assert.equal(classify("relink detached components", two).kind, "detached");
   assert.deepEqual(classify("create a journey to pay an overdue EMI", { selectionTypes: [] }), { kind: "journey-create" });
   assert.deepEqual(classify("add the missing states to this flow", two), { kind: "flow-states" });
+  assert.deepEqual(classify("create a journey to pay overdue EMI from this screen", one), { kind: "journey-create", fromSelection: true });
+  assert.notEqual(classify("improve this screen", one)?.kind, "journey-create");
   assert.deepEqual(classify("design the next step", one), { kind: "journey-next" });
   assert.notEqual(classify("create a flow variation", two)?.kind, "journey-create");
 });
@@ -187,7 +189,7 @@ test("a journey wires Back icons, skips the failure state going forward, Retry g
   assert.equal(map["Icon / arrow-left"], "back", "app bar back icon");
   assert.equal(map["Pay ₹8,450"], "Payment successful", "main button moves on, never into the failure state");
   assert.equal(map["Done"], "My loans", "the end returns to the start");
-  assert.equal(map["Retry"], "back", "retry goes back to the step that failed");
+  assert.equal(map["Retry"], "Loan details", "retry opens the step that failed");
   assert.equal(map["Go to home"], "My loans");
   assert.deepEqual(plan.deadEnds, []);
   const wired = await run("prototype-wire", { fix: true });
@@ -206,5 +208,30 @@ test("a journey's shared title words do not decide where a button goes", async (
   assert.equal(map["Pay EMI"], "Pay EMI / 2 · Choose amount");
   assert.equal(map["Continue"], "Pay EMI / 3 · Payment successful");
   assert.equal(map["Done"], "Pay EMI / 1 · My loans");
-  assert.equal(map["Retry"], "back");
+  assert.equal(map["Retry"], "Pay EMI / 2 · Choose amount", "retry opens the step that failed");
+});
+
+test("journey wiring: links inside instances fall back to the instance, success never leads to failure, Back to X, the true entry gets the start", async () => {
+  const card = (id: string) => ({ id, type: "INSTANCE", name: "Loan card", width: 328, height: 120, children: [txt(id + "a", "Personal Loan"), button(id + "b", "Pay now")] });
+  const f1: any = { id: "e1", type: "FRAME", name: "Manage loans", x: 0, y: 200, width: 360, height: 800, children: [card("k1")] };
+  const f2: any = { id: "e2", type: "FRAME", name: "Payment method", x: 400, y: 0, width: 360, height: 800, children: [button("m1", "Pay ₹8,450")] };
+  const f3: any = { id: "e3", type: "FRAME", name: "Flow 2", x: 800, y: 0, width: 360, height: 800, children: [
+    { id: "h3", type: "TEXT", name: "Title", characters: "Payment successful", fontSize: 24 }, button("d3", "Download receipt"), button("b3", "Back to loans")] };
+  const f4: any = { id: "e4", type: "FRAME", name: "Payment failed", x: 1200, y: 0, width: 360, height: 800, children: [button("r4", "Retry")] };
+  const nodes: Record<string, any> = { e1: f1, e2: f2, e3: f3, e4: f4 };
+  const run = runtime([f1, f2, f3, f4], nodes);
+  const inner = f1.children[0].children[1];
+  // Figma accepts the write on a layer inside an instance but does not keep it.
+  inner.setReactionsAsync = async () => { inner.reactions = []; };
+  const page: any = f1.parent;
+  page.flowStartingPoints = [{ nodeId: "e3", name: "Flow 2" }];
+  const wired = await run("prototype-wire", { fix: true });
+  const map = Object.fromEntries(wired.links.map((l: any) => [l.label, l.action === "BACK" ? "back" : l.to]));
+  assert.equal(map["Pay now"], "Payment method");
+  assert.equal(f1.children[0].reactions[0].actions[0].destinationId, "e2", "the card instance carries the link");
+  assert.notEqual(map["Download receipt"], "Payment failed", "the end never opens the failure state");
+  assert.equal(map["Back to loans"], "Manage loans");
+  assert.equal(map["Retry"], "Payment method");
+  assert.equal(wired.entry, "Manage loans");
+  assert.deepEqual(page.flowStartingPoints.map((f: any) => f.nodeId), ["e1"], "the start moves to the true entry");
 });
