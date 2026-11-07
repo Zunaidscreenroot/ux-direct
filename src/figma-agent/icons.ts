@@ -16,6 +16,7 @@ const LABEL_ICONS: Array<[RegExp, string]> = [
   [/\b(send money|transfer|send|remit)\b/i, "send"],
   [/\b(pay|payment|pay now|checkout|card|cards|debit|credit)\b/i, "credit-card"],
   [/\b(wallet|balance)\b/i, "wallet"],
+  [/\b(status|on track|approved|verified|completed?)\b/i, "circle-check"],
   [/\b(scan|qr|upi)\b/i, "scan-line"],
   [/\b(bank|banking|account|accounts|a\/c)\b/i, "landmark"],
   [/\b(loan|loans|emi|borrow)\b/i, "hand-coins"],

@@ -257,6 +257,16 @@
     let verifiedFileKey = null;
     let pluginSessionStarted = false;
     let currentSelection = { fileKey: null, pageName: "", selection: [] };
+    // Selection set from outside the canvas (another plugin, an API script) may not fire selectionchange,
+    // so a prompt asks for the live selection first (at most 400ms) before choosing a quick task.
+    const selectionWaiters = [];
+    function refreshSelection() {
+      return new Promise(function (resolve) {
+        selectionWaiters.push(resolve);
+        setTimeout(resolve, 400);
+        parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
+      });
+    }
     let attachedImageData = null;
     let attachedImageName = "";
     let isSending = false;
@@ -3400,6 +3410,7 @@
       $("send").disabled = true;
       await sendTelemetry("Cockpit chat request started", "info", "The in-Figma UX Direct conversation received a user prompt.", { selectedCount: (currentSelection.selection || []).length });
       try {
+        await refreshSelection();
         const quickTask = classifyQuickTask(prompt, {
           selectionTypes: (currentSelection.selection || []).map(function (node) { return node.type; }),
           hasAttachment: Boolean(attachedImageData)
@@ -3674,6 +3685,7 @@
       }
       if (message.type === "selection") {
         currentSelection = message;
+        if (selectionWaiters.length) selectionWaiters.splice(0).forEach(function (resolve) { resolve(); });
         updateSelectionChip();
         $("send").disabled = isSending || !$("prompt").value.trim() || !verifiedFileKey;
         return;

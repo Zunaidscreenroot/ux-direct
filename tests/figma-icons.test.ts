@@ -241,3 +241,18 @@ test("a row whose sibling rows use a Leading icon box gets the same box around i
   assert.equal(due.children[0].children[0].name, "Icon / calendar");
   assert.equal(due.children[0].getPluginData("uxdCreated"), "1", "Revert deletes the whole box");
 });
+
+test("rows with label and value in one text use the label part for the icon", async () => {
+  const code = readFileSync(join(process.cwd(), "figma-plugin/code.js"), "utf8");
+  const start = code.indexOf("function uxdLabelPart");
+  const end = code.indexOf("function uxdIconTargetInfo");
+  const sandbox: Record<string, any> = {};
+  runInNewContext(code.slice(start, end) + "\nthis.fn = uxdLabelPart;", sandbox);
+  const part = (characters: string) => sandbox.fn({ characters });
+  assert.equal(part("EMI  ₹9,450"), "EMI");
+  assert.equal(part("Next due  05 Dec"), "Next due");
+  assert.equal(part("Status  On track"), "Status");
+  assert.equal(part("Balance ₹12,400"), "Balance");
+  assert.equal(part("₹9,450"), "");
+  assert.equal(part("Pay now"), "");
+});

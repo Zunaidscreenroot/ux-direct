@@ -4452,12 +4452,18 @@ async function localConsistency(payload) {
   var fix = payload && payload.fix === true;
   var groups = {}, labels = {};
   roots.forEach(function (root, r) {
+    var slots = {};
     uxdDescendants(root, function (c) { return c.visible !== false; }).forEach(function (node) {
       if (node.locked === true) return;
       // Instances count too (a "Loan Card" instance can carry radius/padding overrides), and so do layers inside them.
       if ((node.type === "FRAME" || node.type === "COMPONENT" || node.type === "INSTANCE") && !(node.width > 400 && node.height > 400)) {
         var key = uxdConsistencyKey(node.name);
-        if (key) (groups[key] = groups[key] || []).push({ node: node, root: r });
+        if (!key) return;
+        // Across screens the Nth "Loan card" is compared with the Nth one on the other screens, so a
+        // featured first card is not flattened to look like the cards under it.
+        var slot = slots[key] = (slots[key] || 0) + 1;
+        var groupKey = roots.length > 1 ? key + "#" + slot : key;
+        (groups[groupKey] = groups[groupKey] || []).push({ node: node, root: r, slot: slot });
       }
       if (node.type === "TEXT" && node.parent && (UXD_BUTTON_NAME.test(String(node.parent.name || "")) || UXD_BUTTON_NAME.test(String(node.name || "")) || uxdLooksLikeButton(node.parent))) {
         var text = String(node.characters || "").trim();
@@ -4483,7 +4489,9 @@ async function localConsistency(payload) {
       var m = majority(entries, function (e) { return spec.read(e.node); });
       if (m.values.length < 2) return;
       var odd = entries.filter(function (e) { var v = spec.read(e.node); return v !== null && v !== m.best; });
-      findings.push({ element: entries[0].node.name.split(/\s+[·•|\/–—-]\s+/)[0], kind: kind, expected: m.best,
+      var baseName = entries[0].node.name.split(/\s+[·•|\/–—-]\s+/)[0];
+      var multiSlot = roots.length > 1 && (entries[0].slot > 1 || groups[key.replace(/#\d+$/, "") + "#2"]);
+      findings.push({ element: multiSlot ? baseName + " #" + entries[0].slot : baseName, kind: kind, expected: m.best,
         found: m.values.filter(function (v) { return v !== m.best; }), layers: odd.length,
         screens: odd.map(function (e) { return roots[e.root].name; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).slice(0, 4) });
       if (fix) {
@@ -4632,6 +4640,15 @@ function uxdIsDataValueText(text) {
   var value = String(text.characters || "").trim();
   return /[0-9₹$€£¥%]/.test(value) && !/^(step|page)\s*\d/i.test(value);
 }
+// One text holding both label and value ("EMI  ₹9,450", "Next due  05 Dec"): the label is the part
+// before the value (split at a wide gap, or at the first digit or currency sign).
+function uxdLabelPart(text) {
+  var value = String(text && text.characters || "").trim();
+  var parts = value.split(/\s{2,}|\t|\s[·:|–—-]\s/);
+  var head = parts.length > 1 ? parts[0] : value.split(/[0-9₹$€£¥]/)[0];
+  head = String(head || "").replace(/[\s:·|–—-]+$/, "").trim();
+  return head.length >= 2 && head.length <= 30 && /\p{L}{2}/u.test(head) && !/[0-9₹$€£¥%]/.test(head) && head !== value ? head : "";
+}
 function uxdIconTargetInfo(node) {
   if (["FRAME", "COMPONENT"].indexOf(node.type) < 0 || node.visible === false || node.locked === true) return null;
   if ((node.height || 0) > 88 || (node.width || 0) < 40 || uxdInsideInstance(node)) return null;
@@ -4642,8 +4659,10 @@ function uxdIconTargetInfo(node) {
   // Only values here (e.g. "Row · Due" holds "₹1,00,000" directly, its label sits in a nested
   // "Row text" frame): not a target by itself; uxdNestedRowTarget reads the nested label instead.
   var labelText = texts.find(function (t) { return !uxdIsDataValueText(t); });
-  if (!labelText) return null;
-  var label = String(labelText.characters || "").trim();
+  var mixed = labelText ? null : texts.find(function (t) { return uxdLabelPart(t); });
+  if (!labelText && !mixed) return null;
+  if (!labelText) labelText = mixed;
+  var label = uxdLabelPart(labelText) || String(labelText.characters || "").trim();
   if (!label || label.length > 40) return null;
   var size = typeof labelText.fontSize === "number" ? labelText.fontSize : 14;
   // Data rows ("Balance  ₹12,400", "Due date  12 Nov") show a value, not an action: flagged, and only
@@ -4674,8 +4693,10 @@ function uxdNestedRowTarget(node) {
     return true;
   });
   var labelText = texts.find(function (t) { return !uxdIsDataValueText(t) && String(t.characters || "").trim(); });
-  if (!labelText) return null;
-  var label = String(labelText.characters).trim();
+  var mixed = labelText ? null : texts.find(function (t) { return uxdLabelPart(t); });
+  if (!labelText && !mixed) return null;
+  if (!labelText) labelText = mixed;
+  var label = uxdLabelPart(labelText) || String(labelText.characters).trim();
   if (label.length > 40) return null;
   return { id: node.id, name: node.name, label: label, fontSize: typeof labelText.fontSize === "number" ? labelText.fontSize : 14, button: false, data: true };
 }
