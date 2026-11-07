@@ -94,6 +94,8 @@
     .composer-hint { color:var(--figma-color-text-tertiary,var(--figma-color-text-secondary,#888)); font-size:9px; }
     .send { display:grid; place-items:center; width:31px; height:31px; flex:0 0 31px; border:0; border-radius:10px; background:var(--figma-color-bg-brand,#0d99ff); color:#fff; font-size:17px; font-weight:700; line-height:1; }
     .send:disabled { cursor:not-allowed; opacity:.4; }
+    .send.stop { background:var(--figma-color-bg-danger,#f24822); font-size:12px; }
+    .send[hidden] { display:none; }
     .status-panel { position:fixed; z-index:50; top:44px; right:10px; width:min(340px,calc(100vw - 20px)); max-height:calc(100vh - 60px); overflow:auto; padding:13px; border:1px solid var(--figma-color-border,#ddd); border-radius:14px; background:var(--figma-color-bg,#fff); box-shadow:0 12px 32px rgba(0,0,0,.16); }
     .status-panel-head { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:9px; }
     .status-panel-head h2 { margin:0; font-size:13px; font-weight:700; }
@@ -240,6 +242,7 @@
           <span class="composer-hint">Enter to send · Shift + Enter for a new line</span>
         </div>
         <button id="send" class="send" type="submit" aria-label="Send message" title="Send message" disabled>↑</button>
+        <button id="stop" class="send stop" type="button" aria-label="Stop this task" title="Stop this task" hidden>■</button>
       </div>
     </form>
   </footer>
@@ -255,6 +258,32 @@
     let attachedImageData = null;
     let attachedImageName = "";
     let isSending = false;
+    // uxd-stop-task:start
+    // Stop: every backend fetch of the running task shares one AbortController, and every canvas
+    // write/read checks the flag first, so a stopped task makes no further changes. Undo, revert
+    // and cleanup operations stay allowed so partial output can still be removed.
+    let stopRequested = false;
+    let activeAbort = null;
+    const STOP_MESSAGE = "Stopped by you.";
+    const STOP_SAFE_LOCAL_OPS = ["commit-undo", "trigger-undo", "delete-created", "restore-fills"];
+    function isStopError(error) {
+      return stopRequested && (!error || error.name === "AbortError" || String(error && error.message || "").indexOf(STOP_MESSAGE) >= 0 || /abort/i.test(String(error && error.message || "")));
+    }
+    function throwIfStopped(op) {
+      if (stopRequested && STOP_SAFE_LOCAL_OPS.indexOf(op) < 0) throw new Error(STOP_MESSAGE);
+    }
+    function requestStop() {
+      if (!isSending || stopRequested) return;
+      stopRequested = true;
+      if (activeAbort) activeAbort.abort();
+    }
+    const uxdNativeFetch = window.fetch.bind(window);
+    window.fetch = function (url, options) {
+      if (activeAbort && !stopRequested && !(options && options.signal)) options = Object.assign({}, options || {}, { signal: activeAbort.signal });
+      else if (stopRequested && activeAbort) return Promise.reject(new Error(STOP_MESSAGE));
+      return uxdNativeFetch(url, options);
+    };
+    // uxd-stop-task:end
     let backendHealthy = false;
     let providerHealthy = false;
     let figmaBridgeHealthy = false;
@@ -358,6 +387,7 @@
 
     function runNativeCanvasCommand(action, payload, timeoutMs) {
       const execute = function () {
+        throwIfStopped(action);
         return runNativeCanvasCommandOnce(action, payload, timeoutMs);
       };
       const operation = nativeCanvasCommandTail.then(execute, execute);
@@ -2329,6 +2359,7 @@
     const pendingLocalTasks = new Map();
     function localTask(op, payload, timeoutMs) {
       return new Promise(function (resolve, reject) {
+        try { throwIfStopped(op); } catch (error) { reject(error); return; }
         const requestId = "local-" + makeId();
         const timer = window.setTimeout(function () {
           pendingLocalTasks.delete(requestId);
@@ -2799,7 +2830,11 @@
         return;
       }
       isSending = true;
+      stopRequested = false;
+      activeAbort = typeof AbortController === "function" ? new AbortController() : null;
       $("send").disabled = true;
+      $("send").hidden = true;
+      $("stop").hidden = false;
       $("prompt").value = "";
       $("prompt").style.height = "auto";
       const startedAt = Date.now();
@@ -2919,6 +2954,17 @@
         }
       } catch (error) {
         typingRow.remove();
+        if (isStopError(error)) {
+          activeAbort = null;
+          const partial = changeJournal.some(function (entry) { return entry.seq > journalStart && !entry.reverted; });
+          const stoppedText = "Stopped. No further changes were made." + (partial ? " Use Revert below to remove what was already created." : "");
+          setProcessState("done", "Stopped by you");
+          if (assistantMessage) { assistantMessage.bubble.classList.remove("error"); assistantMessage.bubble.textContent = stoppedText; }
+          else assistantMessage = appendMessage("assistant", stoppedText);
+          chatHistory.push({ role: "assistant", content: stoppedText });
+          await sendTelemetry("Cockpit task stopped", "info", "The designer stopped a running UX Direct task.", { durationMs: Date.now() - startedAt });
+          return;
+        }
         const detail = error && error.message ? error.message : "Unknown UX Direct error.";
         setProcessState("error", "Task paused · " + detail.slice(0, 180));
         if (assistantMessage) {
@@ -2931,6 +2977,10 @@
       } finally {
         attachRevertButton(assistantMessage, changeJournal.filter(function (entry) { return entry.seq > journalStart && !entry.reverted; }));
         isSending = false;
+        stopRequested = false;
+        activeAbort = null;
+        $("stop").hidden = true;
+        $("send").hidden = false;
         $("send").disabled = !$("prompt").value.trim() || !verifiedFileKey;
         $("prompt").focus();
       }
@@ -2957,6 +3007,7 @@
     $("refreshStatus").addEventListener("click", function () { void refreshConnections(); });
     $("providerSelect").addEventListener("change", function () { void changeActiveProvider(this.value); });
     $("closeStatus").addEventListener("click", function () { toggleStatusPanel(false); });
+    $("stop").addEventListener("click", function (event) { event.preventDefault(); requestStop(); });
     $("chatForm").addEventListener("submit", function (event) {
       event.preventDefault();
       void submitPrompt($("prompt").value);
