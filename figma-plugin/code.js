@@ -3773,6 +3773,19 @@ async function uxdFindComponent(roots, kind, qualifiers) {
   var top = candidates[0];
   return top.variant && !qualifiers.length ? top.variant : uxdBestVariant(top.component, qualifiers);
 }
+// The left inset of content inside full-width sections of a screen: the most common x of their inner layers.
+function uxdContentInset(parent, except) {
+  var counts = {};
+  parent.children.forEach(function (section) {
+    if (section === except || section.visible === false || !section.children || section.width < parent.width - 1) return;
+    section.children.forEach(function (c) {
+      if (c.visible === false || c.x <= 0 || c.width >= section.width - 1) return;
+      counts[Math.round(c.x)] = (counts[Math.round(c.x)] || 0) + 1;
+    });
+  });
+  var best = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || a - b; })[0];
+  return best !== undefined && Number(best) <= 48 ? Number(best) : 0;
+}
 async function uxdInsertComponent(roots, op) {
   var kind = String(op.component || "button");
   var qualifiers = (Array.isArray(op.qualifiers) ? op.qualifiers : []).map(String).filter(function (q) { return q.length > 1; });
@@ -3800,7 +3813,22 @@ async function uxdInsertComponent(roots, op) {
       var left = gutter !== undefined ? Number(gutter) : 16;
       instance.x = left; instance.y = bottom + 16;
       if (mobile && typeof instance.resize === "function" && parent.width - 2 * left > instance.width) instance.resize(parent.width - 2 * left, instance.height);
-    } else if (mobile && parent.layoutMode === "VERTICAL" && "layoutSizingHorizontal" in instance) {
+    } else if (mobile && parent.layoutMode === "VERTICAL") {
+      // A screen with no side padding keeps its gutter inside full-width section frames (cards at x=20).
+      // Put the button in a transparent row with that inset, so it lines up instead of running edge to edge.
+      var inset = (parent.paddingLeft || 0) > 0 ? 0 : uxdContentInset(parent, instance);
+      if (inset > 0 && typeof figma.createFrame === "function") {
+        var row = figma.createFrame();
+        row.name = "Button row";
+        row.fills = [];
+        row.clipsContent = false;
+        row.layoutMode = "VERTICAL";
+        row.paddingLeft = inset; row.paddingRight = inset; row.paddingTop = 0; row.paddingBottom = 0;
+        parent.insertChild(parent.children.indexOf(instance), row);
+        row.appendChild(instance);
+        row.layoutSizingHorizontal = "FILL";
+        row.layoutSizingVertical = "HUG";
+      }
       instance.layoutSizingHorizontal = "FILL";
     }
   }
