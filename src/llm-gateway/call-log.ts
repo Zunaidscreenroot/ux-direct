@@ -148,13 +148,19 @@ export type CallStats = {
 };
 
 /** Analytics for the backend's Models view. */
-export async function readCallStats(hours: number): Promise<CallStats> {
+export type CallStatsSection = "models" | "roles" | "recent";
+const ALL_SECTIONS: CallStatsSection[] = ["models", "roles", "recent"];
+
+/** Call analytics. `sections` limits the queries run (the Models page loads one tab at a time). */
+export async function readCallStats(hours: number, sections: CallStatsSection[] = ALL_SECTIONS): Promise<CallStats> {
   const sql = await sqlClient();
+  const want = new Set(sections);
+  const none = Promise.resolve([] as Array<Record<string, unknown>>);
   const window = Math.max(1, Math.min(24 * 30, Math.round(hours))) + "h";
   if (!sql) return { window, totals: { calls: 0, ok: 0, tokens: 0, avgLatencyMs: 0 }, models: [], roles: [], recent: [] };
   const interval = Math.max(1, Math.min(24 * 30, Math.round(hours))) + " hours";
   const [models, roles, recent] = await Promise.all([
-    sql.query(
+    !want.has("models") ? none : sql.query(
       `SELECT gateway, provider, model, count(*)::int AS calls, count(*) FILTER (WHERE ok)::int AS ok,
          coalesce(sum(prompt_tokens),0)::bigint AS prompt_tokens, coalesce(sum(completion_tokens),0)::bigint AS completion_tokens,
          coalesce(sum(total_tokens),0)::bigint AS total_tokens,
@@ -164,11 +170,11 @@ export async function readCallStats(hours: number): Promise<CallStats> {
          (array_agg(error ORDER BY at DESC) FILTER (WHERE NOT ok))[1] AS last_error
        FROM public.uxd_llm_calls WHERE at > now() - $1::interval
        GROUP BY gateway, provider, model ORDER BY calls DESC LIMIT 200`, [interval]),
-    sql.query(
+    !want.has("roles") ? none : sql.query(
       `SELECT role, count(*)::int AS calls, count(*) FILTER (WHERE ok)::int AS ok,
          mode() WITHIN GROUP (ORDER BY provider || '/' || model) FILTER (WHERE ok) AS top_model
        FROM public.uxd_llm_calls WHERE at > now() - $1::interval GROUP BY role ORDER BY calls DESC LIMIT 50`, [interval]),
-    sql.query(
+    !want.has("recent") ? none : sql.query(
       `SELECT at, gateway, role, provider, model, ok, http_status, latency_ms, total_tokens, error
        FROM public.uxd_llm_calls ORDER BY at DESC LIMIT 100`),
   ]) as Array<Array<Record<string, unknown>>>;

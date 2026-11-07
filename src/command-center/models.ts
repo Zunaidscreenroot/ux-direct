@@ -1,4 +1,4 @@
-import { readCallStats, readModelUsage, type CallStats } from "@/src/llm-gateway/call-log";
+import { readCallStats, readModelUsage, type CallStats, type CallStatsSection } from "@/src/llm-gateway/call-log";
 import { gatewayAvailability, gatewayChatCompletion, gatewayEnv } from "@/src/llm-gateway/router";
 import { PROVIDERS, modelLimits, modelTier, providerKeys } from "@/src/llm-gateway/catalog";
 import { llmGatewayMode } from "@/src/providers/active-chat-provider";
@@ -9,9 +9,21 @@ export type ModelAnalytics = CallStats & {
   missingProviders: Array<{ id: string; label: string; secret: string }>;
 };
 
-/** Models view: what the gateway can call, and what was called (model, tokens, latency, errors). */
-export async function loadModelAnalytics(hours: number): Promise<ModelAnalytics> {
-  const [stats, availability] = await Promise.all([readCallStats(hours), gatewayAvailability()]);
+export type ModelsTab = "models" | "roles" | "providers" | "recent";
+export const MODELS_TABS: ModelsTab[] = ["models", "roles", "providers", "recent"];
+
+/**
+ * Models view: what the gateway can call, and what was called (model, tokens, latency, errors).
+ * `tab` loads only that tab's data: "models" also carries the top totals; "providers" runs no DB query.
+ * No tab = everything (old behaviour).
+ */
+export async function loadModelAnalytics(hours: number, tab?: ModelsTab): Promise<ModelAnalytics> {
+  const sections: CallStatsSection[] = !tab ? ["models", "roles", "recent"] : tab === "providers" ? [] : [tab];
+  const needProviders = !tab || tab === "providers";
+  const [stats, availability] = await Promise.all([
+    sections.length ? readCallStats(hours, sections) : Promise.resolve({ window: Math.max(1, Math.min(720, Math.round(hours))) + "h", totals: { calls: 0, ok: 0, tokens: 0, avgLatencyMs: 0 }, models: [], roles: [], recent: [] }),
+    needProviders ? gatewayAvailability() : Promise.resolve({ providers: [] as Array<{ id: string; label: string; models: string[] }> }),
+  ]);
   const configured = new Set(availability.providers.map((provider) => provider.id));
   return {
     ...stats,
@@ -24,7 +36,7 @@ export async function loadModelAnalytics(hours: number): Promise<ModelAnalytics>
         models: provider.models.map((model) => ({ id: model, tier: modelTier(model), ...modelLimits(def, model) })),
       };
     }),
-    missingProviders: PROVIDERS.filter((provider) => !configured.has(provider.id) && provider.keyEnv.length)
+    missingProviders: !needProviders ? [] : PROVIDERS.filter((provider) => !configured.has(provider.id) && provider.keyEnv.length)
       .map((provider) => ({ id: provider.id, label: provider.label, secret: provider.keyEnv[0] })),
   };
 }

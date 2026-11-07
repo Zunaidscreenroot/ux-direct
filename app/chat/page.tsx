@@ -21,7 +21,7 @@ type ActivityItem = {
   durationMs: number | null; model: string | null; summary: string; error: string; projectKey: string;
 };
 type ActivityPayload = {
-  items: ActivityItem[];
+  items: ActivityItem[]; total: number; nextOffset: number | null;
   summary: { windowDays: number; total: number; byOutcome: Record<ActivityItem["outcome"], number>; byDay: Array<{ day: string; count: number }> };
 };
 type ModelsPayload = {
@@ -45,6 +45,15 @@ const TABS: Array<{ id: Tab; label: string; glyph: string }> = [
   { id: "models", label: "Models", glyph: "◇" },
 ];
 const MODEL_WINDOWS = [1, 24, 168];
+type ModelsTab = "models" | "roles" | "providers" | "recent";
+// Models page: top stats stay; each tab's data is fetched only when the tab is opened.
+const MODEL_TABS: Array<{ id: ModelsTab; label: string }> = [
+  { id: "models", label: "By model" },
+  { id: "roles", label: "By agent role" },
+  { id: "providers", label: "Free providers" },
+  { id: "recent", label: "Recent calls" },
+];
+const LIST_PAGE = 6;
 const formatTokens = (value: number) => value >= 1_000_000 ? (value / 1_000_000).toFixed(1) + "M" : value >= 1000 ? (value / 1000).toFixed(1) + "k" : String(value);
 const formatMs = (value: number) => value >= 1000 ? (value / 1000).toFixed(1) + "s" : value + "ms";
 // Skeleton only: planned command-center sections, not implemented yet.
@@ -75,7 +84,9 @@ export default function CommandCenter() {
   const [busy, setBusy] = useState(false);
   const [chatError, setChatError] = useState("");
   const [activity, setActivity] = useState<ActivityPayload | null>(null);
-  const [models, setModels] = useState<ModelsPayload | null>(null);
+  const [modelTab, setModelTab] = useState<ModelsTab>("models");
+  const [modelData, setModelData] = useState<Partial<Record<ModelsTab, ModelsPayload>>>({});
+  const [moreBusy, setMoreBusy] = useState(false);
   const [modelHours, setModelHours] = useState(24);
   const [providerCheck, setProviderCheck] = useState<{ busy: boolean; message?: string; results?: Array<{ provider: string; model: string; ok: boolean; status: number; latencyMs: number; error?: string }> }>({ busy: false });
   const [dataBusy, setDataBusy] = useState(false);
@@ -108,29 +119,65 @@ export default function CommandCenter() {
     setLocked({ message: payload.error || "Command center access key is required." });
   }, []);
 
-  const loadView = useCallback(async (view: "activity" | "models", hours = 24) => {
+  const fetchView = useCallback(async (query: string): Promise<unknown | null> => {
+    const response = await fetch("/api/command-center?" + query, { cache: "no-store", headers: { [ACCESS_HEADER]: accessKey } });
+    if (response.status === 401 || response.status === 503 && (await response.clone().json().catch(() => ({}))).locked) { await handleLocked(response); return null; }
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Could not load data.");
+    setLocked(null);
+    return payload;
+  }, [accessKey, handleLocked]);
+
+  const loadActivity = useCallback(async (more = false) => {
+    if (more) setMoreBusy(true); else setDataBusy(true);
+    setDataError("");
+    try {
+      const offset = more && activity?.nextOffset ? activity.nextOffset : 0;
+      const payload = await fetchView("view=activity&offset=" + offset + "&limit=" + LIST_PAGE) as ActivityPayload | null;
+      if (!payload) return;
+      setActivity((current) => more && current ? { ...payload, items: [...current.items, ...payload.items] } : payload);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : "Could not load data.");
+    } finally {
+      if (more) setMoreBusy(false); else setDataBusy(false);
+    }
+  }, [activity?.nextOffset, fetchView]);
+
+  const loadModelTab = useCallback(async (tab: ModelsTab, hours: number, reset = false) => {
     setDataBusy(true);
     setDataError("");
     try {
-      const response = await fetch("/api/command-center?view=" + view + (view === "models" ? "&hours=" + hours : ""), { cache: "no-store", headers: { [ACCESS_HEADER]: accessKey } });
-      if (response.status === 401 || response.status === 503 && (await response.clone().json().catch(() => ({}))).locked) { await handleLocked(response); return; }
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Could not load " + view + ".");
-      setLocked(null);
-      if (view === "activity") setActivity(payload as ActivityPayload);
-      else setModels(payload as ModelsPayload);
+      // The "models" tab also carries the top stats, so it is always loaded first.
+      const tabs: ModelsTab[] = tab === "models" ? ["models"] : reset ? ["models", tab] : [tab];
+      const results = await Promise.all(tabs.map((item) => fetchView("view=models&tab=" + item + "&hours=" + hours)));
+      if (results.some((result) => !result)) return;
+      setModelData((current) => {
+        const next = reset ? {} : { ...current };
+        tabs.forEach((item, index) => { next[item] = results[index] as ModelsPayload; });
+        return next;
+      });
     } catch (error) {
       setDataError(error instanceof Error ? error.message : "Could not load data.");
     } finally {
       setDataBusy(false);
     }
-  }, [accessKey, handleLocked]);
+  }, [fetchView]);
 
   useEffect(() => {
     if (!historyReady) return;
-    if (activeTab === "activity" && !activity) void loadView("activity");
-    if (activeTab === "models" && !models) void loadView("models", modelHours);
-  }, [activeTab, historyReady, activity, models, modelHours, loadView]);
+    if (activeTab === "activity" && !activity) void loadActivity();
+    if (activeTab === "models" && !modelData.models) void loadModelTab("models", modelHours);
+  }, [activeTab, historyReady, activity, modelData.models, modelHours, loadActivity, loadModelTab]);
+
+  function openModelTab(tab: ModelsTab) {
+    setModelTab(tab);
+    if (!modelData[tab]) void loadModelTab(tab, modelHours);
+  }
+
+  function changeModelHours(hours: number) {
+    setModelHours(hours);
+    void loadModelTab(modelTab, hours, true);
+  }
 
   async function checkProviders() {
     setProviderCheck({ busy: true });
@@ -249,6 +296,8 @@ export default function CommandCenter() {
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendText(); }
   }
 
+  const models = modelData.models || null;
+  const tabData = modelData[modelTab] || null;
   const activeTitle = TABS.find((tab) => tab.id === activeTab)?.label || "Chat";
   const lockPanel = locked && <form className="ud-cc-lock" onSubmit={unlock}>
     <strong>Command center locked</strong>
@@ -339,7 +388,7 @@ export default function CommandCenter() {
 
         {activeTab === "activity" && <section className="ud-connections-workspace">
           <div className="ud-page-overline">FIGMA PLUGIN · LAST 7 DAYS</div>
-          <div className="ud-connections-heading"><div><h1>Plugin activity.</h1><p>Every recorded plugin task from the last 7 days, newest first.</p></div><button className="ud-secondary-button" onClick={() => void loadView("activity")} disabled={dataBusy}>{dataBusy ? "Loading…" : "Refresh ↻"}</button></div>
+          <div className="ud-connections-heading"><div><h1>Plugin activity.</h1><p>Every recorded plugin task from the last 7 days, newest first.</p></div><button className="ud-secondary-button" onClick={() => void loadActivity()} disabled={dataBusy}>{dataBusy ? "Loading…" : "Refresh ↻"}</button></div>
           {lockPanel}
           {dataError && <div className="ud-chat-error" role="alert">{dataError}</div>}
           {activity && <>
@@ -356,29 +405,33 @@ export default function CommandCenter() {
               {item.error && <p className="ud-cc-error-text">{item.error}</p>}
               <small>{[formatWhen(item.at), item.model, item.durationMs !== null ? Math.round(item.durationMs / 1000) + "s" : ""].filter(Boolean).join(" · ")}</small>
             </article>)}</div> : <p className="ud-cc-empty">No plugin runs in the last 7 days.</p>}
+            {activity.nextOffset !== null && <div className="ud-cc-more"><button className="ud-secondary-button" onClick={() => void loadActivity(true)} disabled={moreBusy}>{moreBusy ? "Loading…" : "View more (" + (activity.total - activity.items.length) + " more) ▾"}</button></div>}
           </>}
         </section>}
         {activeTab === "models" && <section className="ud-connections-workspace">
           <div className="ud-page-overline">MODEL GATEWAY · MODE {models ? models.mode.toUpperCase() : "…"}</div>
           <div className="ud-connections-heading"><div><h1>Models.</h1><p>Every model call: which free model answered, tokens, latency and errors. Gateway rows run inside the Worker; FreeLLMAPI rows go to the Mac.</p></div>
             <div className="ud-cc-actions">
-              {MODEL_WINDOWS.map((hours) => <button key={hours} className={"ud-secondary-button" + (modelHours === hours ? " active" : "")} onClick={() => { setModelHours(hours); void loadView("models", hours); }} disabled={dataBusy}>{hours === 1 ? "1h" : hours === 24 ? "24h" : "7d"}</button>)}
-              <button className="ud-secondary-button" onClick={() => void loadView("models", modelHours)} disabled={dataBusy}>{dataBusy ? "Loading…" : "Refresh ↻"}</button>
+              {MODEL_WINDOWS.map((hours) => <button key={hours} className={"ud-secondary-button" + (modelHours === hours ? " active" : "")} onClick={() => changeModelHours(hours)} disabled={dataBusy}>{hours === 1 ? "1h" : hours === 24 ? "24h" : "7d"}</button>)}
+              <button className="ud-secondary-button" onClick={() => void loadModelTab(modelTab, modelHours, true)} disabled={dataBusy}>{dataBusy ? "Loading…" : "Refresh ↻"}</button>
             </div>
           </div>
           {lockPanel}
           {dataError && <div className="ud-chat-error" role="alert">{dataError}</div>}
-          {models && <>
-            <div className="ud-cc-stats">
-              <div><b>{models.totals.calls}</b><span>Calls ({models.window})</span></div>
-              <div><b>{models.totals.calls ? Math.round(models.totals.ok / models.totals.calls * 100) : 0}%</b><span>Success</span></div>
-              <div><b>{formatTokens(models.totals.tokens)}</b><span>Tokens</span></div>
-              <div><b>{formatMs(models.totals.avgLatencyMs)}</b><span>Median latency</span></div>
-            </div>
-            <h2 className="ud-cc-section">By model</h2>
-            {models.models.length ? <div className="ud-cc-table-wrap"><table className="ud-cc-table">
+          {models && <div className="ud-cc-stats">
+            <div><b>{models.totals.calls}</b><span>Calls ({models.window})</span></div>
+            <div><b>{models.totals.calls ? Math.round(models.totals.ok / models.totals.calls * 100) : 0}%</b><span>Success</span></div>
+            <div><b>{formatTokens(models.totals.tokens)}</b><span>Tokens</span></div>
+            <div><b>{formatMs(models.totals.avgLatencyMs)}</b><span>Median latency</span></div>
+          </div>}
+          <div className="ud-cc-tabs" role="tablist" aria-label="Model sections">
+            {MODEL_TABS.map((tab) => <button key={tab.id} role="tab" aria-selected={modelTab === tab.id} className={"ud-cc-tab" + (modelTab === tab.id ? " active" : "")} onClick={() => openModelTab(tab.id)}>{tab.label}</button>)}
+          </div>
+          <div role="tabpanel">
+            {!tabData && <p className="ud-cc-empty">{dataBusy ? "Loading…" : "Nothing loaded yet."}</p>}
+            {modelTab === "models" && tabData && (tabData.models.length ? <div className="ud-cc-table-wrap"><table className="ud-cc-table">
               <thead><tr><th>Model</th><th>Via</th><th>Calls</th><th>Errors</th><th>Tokens in / out</th><th>p50 / p95</th><th>Last</th></tr></thead>
-              <tbody>{models.models.map((row) => <tr key={row.gateway + row.provider + row.model} title={row.lastError || ""}>
+              <tbody>{tabData.models.map((row) => <tr key={row.gateway + row.provider + row.model} title={row.lastError || ""}>
                 <td><strong>{row.model}</strong><small>{row.provider}</small></td>
                 <td><span className={"ud-status-pill " + (row.gateway === "uxd" ? "ok" : "muted")}>{row.gateway === "uxd" ? "gateway" : "freellmapi"}</span></td>
                 <td>{row.calls}</td>
@@ -387,32 +440,30 @@ export default function CommandCenter() {
                 <td>{formatMs(row.p50LatencyMs)} / {formatMs(row.p95LatencyMs)}</td>
                 <td>{formatWhen(row.lastAt)}</td>
               </tr>)}</tbody>
-            </table></div> : <p className="ud-cc-empty">No model calls in this window yet.</p>}
-            {models.roles.length > 0 && <>
-              <h2 className="ud-cc-section">By agent role</h2>
-              <div className="ud-cc-list">{models.roles.map((role) => <article className="ud-cc-row" key={role.role}>
-                <div className="ud-cc-row-top"><strong>{role.role}</strong><span className="ud-status-pill muted">{role.calls} calls · {role.calls ? Math.round(role.ok / role.calls * 100) : 0}% ok</span></div>
-                {role.topModel && <small>Most used: {role.topModel}</small>}
+            </table></div> : <p className="ud-cc-empty">No model calls in this window yet.</p>)}
+            {modelTab === "roles" && tabData && (tabData.roles.length ? <div className="ud-cc-list">{tabData.roles.map((role) => <article className="ud-cc-row" key={role.role}>
+              <div className="ud-cc-row-top"><strong>{role.role}</strong><span className="ud-status-pill muted">{role.calls} calls · {role.calls ? Math.round(role.ok / role.calls * 100) : 0}% ok</span></div>
+              {role.topModel && <small>Most used: {role.topModel}</small>}
+            </article>)}</div> : <p className="ud-cc-empty">No agent-role calls in this window yet.</p>)}
+            {modelTab === "providers" && tabData && <>
+              <div className="ud-cc-actions ud-cc-tab-actions"><button className="ud-secondary-button" onClick={() => void checkProviders()} disabled={providerCheck.busy}>{providerCheck.busy ? "Checking…" : "Check providers live"}</button></div>
+              {providerCheck.message && <p className="ud-cc-empty">{providerCheck.message}</p>}
+              {providerCheck.results && <div className="ud-cc-list">{providerCheck.results.map((row) => <article className="ud-cc-row" key={row.provider}>
+                <div className="ud-cc-row-top"><strong>{row.provider} · {row.model}</strong><span className={"ud-status-pill " + (row.ok ? "ok" : "error")}>{row.ok ? "works · " + formatMs(row.latencyMs) : "failed · " + (row.status || "timeout")}</span></div>
+                {row.error && <p className="ud-cc-error-text">{row.error}</p>}
+              </article>)}</div>}
+              <div className="ud-cc-list">{tabData.providers.map((provider) => <article className="ud-cc-row" key={provider.id}>
+                <div className="ud-cc-row-top"><strong>{provider.label}</strong><span className="ud-status-pill ok">connected</span></div>
+                <small>{provider.models.map((model) => model.id + " (" + model.tier + ", " + model.rpm + " rpm" + (model.rpd ? ", " + model.rpd + "/day" : "") + ")").join(" · ")}</small>
+              </article>)}
+              {tabData.missingProviders.map((provider) => <article className="ud-cc-row" key={provider.id}>
+                <div className="ud-cc-row-top"><strong>{provider.label}</strong><span className="ud-status-pill muted">no key</span></div>
+                <small>Add the Worker secret {provider.secret} to use it.</small>
               </article>)}</div>
             </>}
-            <h2 className="ud-cc-section">Free providers <button className="ud-secondary-button" onClick={() => void checkProviders()} disabled={providerCheck.busy}>{providerCheck.busy ? "Checking…" : "Check providers live"}</button></h2>
-            {providerCheck.message && <p className="ud-cc-empty">{providerCheck.message}</p>}
-            {providerCheck.results && <div className="ud-cc-list">{providerCheck.results.map((row) => <article className="ud-cc-row" key={row.provider}>
-              <div className="ud-cc-row-top"><strong>{row.provider} · {row.model}</strong><span className={"ud-status-pill " + (row.ok ? "ok" : "error")}>{row.ok ? "works · " + formatMs(row.latencyMs) : "failed · " + (row.status || "timeout")}</span></div>
-              {row.error && <p className="ud-cc-error-text">{row.error}</p>}
-            </article>)}</div>}
-            <div className="ud-cc-list">{models.providers.map((provider) => <article className="ud-cc-row" key={provider.id}>
-              <div className="ud-cc-row-top"><strong>{provider.label}</strong><span className="ud-status-pill ok">connected</span></div>
-              <small>{provider.models.map((model) => model.id + " (" + model.tier + ", " + model.rpm + " rpm" + (model.rpd ? ", " + model.rpd + "/day" : "") + ")").join(" · ")}</small>
-            </article>)}
-            {models.missingProviders.map((provider) => <article className="ud-cc-row" key={provider.id}>
-              <div className="ud-cc-row-top"><strong>{provider.label}</strong><span className="ud-status-pill muted">no key</span></div>
-              <small>Add the Worker secret {provider.secret} to use it.</small>
-            </article>)}</div>
-            <h2 className="ud-cc-section">Recent calls</h2>
-            {models.recent.length ? <div className="ud-cc-table-wrap"><table className="ud-cc-table">
+            {modelTab === "recent" && tabData && (tabData.recent.length ? <div className="ud-cc-table-wrap"><table className="ud-cc-table">
               <thead><tr><th>When</th><th>Role</th><th>Model</th><th>Status</th><th>Latency</th><th>Tokens</th></tr></thead>
-              <tbody>{models.recent.map((row, index) => <tr key={row.at + index} title={row.error || ""}>
+              <tbody>{tabData.recent.map((row, index) => <tr key={row.at + index} title={row.error || ""}>
                 <td>{formatWhen(row.at)}</td>
                 <td>{row.role}</td>
                 <td><strong>{row.model}</strong><small>{row.gateway === "uxd" ? "gateway · " : "freellmapi · "}{row.provider}</small></td>
@@ -420,8 +471,8 @@ export default function CommandCenter() {
                 <td>{formatMs(row.latencyMs)}</td>
                 <td>{formatTokens(row.tokens)}</td>
               </tr>)}</tbody>
-            </table></div> : <p className="ud-cc-empty">No calls recorded yet.</p>}
-          </>}
+            </table></div> : <p className="ud-cc-empty">No calls recorded yet.</p>)}
+          </div>
         </section>}
       </section>
       {mobileNavOpen && <button className="ud-mobile-scrim" onClick={() => setMobileNavOpen(false)} aria-label="Close navigation" />}
