@@ -1582,19 +1582,38 @@ async function writeCanvasCommand(payload, options) {
     throw new Error(matches.length ? "Property name " + requested + " is ambiguous; use its full key." :
       "Instance has no property " + requested + ". Available: " + (available || "none") + ".");
   }
-  function applyInstanceProperties(instance, requested) {
-    if (!requested || typeof requested !== "object" || Array.isArray(requested)) throw new Error("instanceProperties must be an object.");
+  // lenient (generated screens): skip a property the component doesn't have instead of failing the build.
+  function applyInstanceProperties(instance, requested, lenient) {
+    if (!requested || typeof requested !== "object" || Array.isArray(requested)) {
+      if (lenient) return [];
+      throw new Error("instanceProperties must be an object.");
+    }
     var definitions = instance.componentProperties || {};
     var resolved = {};
     Object.keys(requested).slice(0, 30).forEach(function (name) {
-      var key = resolveInstancePropertyKey(definitions, name);
+      var key;
+      try { key = resolveInstancePropertyKey(definitions, name); }
+      catch (error) { if (lenient) return; throw error; }
       var definition = definitions[key];
       var value = requested[name];
+      if (lenient && definition.type === "BOOLEAN" && typeof value === "string" && /^(true|false)$/i.test(value)) value = /^true$/i.test(value);
+      if (lenient && ((definition.type === "BOOLEAN") !== (typeof value === "boolean"))) return;
       if (definition.type === "BOOLEAN" && typeof value !== "boolean") throw new Error("Property " + name + " expects true/false.");
       if (definition.type !== "BOOLEAN" && typeof value !== "string") throw new Error("Property " + name + " expects a string value.");
       resolved[key] = value;
     });
-    instance.setProperties(resolved);
+    if (!Object.keys(resolved).length) return [];
+    try { instance.setProperties(resolved); }
+    catch (error) {
+      // A model-invented variant value ("State=Hover" on a set without Hover) made setProperties
+      // abort the whole generated screen. Leniently apply each property alone, keep the ones Figma
+      // accepts and leave the rest on the default variant. Explicit edits still report the error.
+      if (!lenient) throw error;
+      Object.keys(resolved).forEach(function (key) {
+        var single = {}; single[key] = resolved[key];
+        try { instance.setProperties(single); } catch (_) { delete resolved[key]; }
+      });
+    }
     return Object.keys(resolved);
   }
   function buildNativeReaction(spec, index) {
@@ -1904,7 +1923,7 @@ async function writeCanvasCommand(payload, options) {
       }
       // Instances keep their component's intrinsic size unless the plan sets one explicitly.
       else if (typeof node.resize === "function" && (type !== "INSTANCE" || Number.isFinite(spec.width) || Number.isFinite(spec.height))) node.resize(width, height);
-      if (type === "INSTANCE" && spec.instanceProperties) applyInstanceProperties(node, spec.instanceProperties);
+      if (type === "INSTANCE" && spec.instanceProperties) applyInstanceProperties(node, spec.instanceProperties, true);
       if (type === "INSTANCE" && spec.textOverrides) await applyInstanceTextOverrides(node, spec.textOverrides);
       if (type === "INSTANCE" && spec.monochrome && typeof spec.monochrome === "object") await monochromeClone(node, spec.monochrome);
       if (type === "VECTOR") {
@@ -4507,20 +4526,37 @@ function uxdIconTargetInfo(node) {
   // Data rows ("Balance  ₹12,400", "Due date  12 Nov") show a value, not an action: no icon.
   if (texts.some(uxdIsDataValueText)) return null;
   var size = typeof texts[0].fontSize === "number" ? texts[0].fontSize : 14;
-  return { id: node.id, name: node.name, label: label, fontSize: size };
+  return { id: node.id, name: node.name, label: label, fontSize: size, button: uxdIsButtonLike(node, texts) };
+}
+// A button: named like one, or a filled/outlined rounded box of 24–64px holding one label.
+// Data rows ("Row · Loan Amount": label + value, no box) are not buttons.
+var UXD_BUTTON_NAME = /\b(button|btn|cta)\b/i;
+function uxdIsButtonLike(node, texts) {
+  if (UXD_BUTTON_NAME.test(String(node.name || ""))) return true;
+  if (/\brow\b/i.test(String(node.name || "")) || texts.length !== 1) return false;
+  var h = node.height || 0;
+  if (h < 24 || h > 64) return false;
+  function visiblePaint(list) { return Array.isArray(list) && list.some(function (p) { return p && p.visible !== false && (p.opacity === undefined || p.opacity > 0); }); }
+  var boxed = visiblePaint(node.fills) || visiblePaint(node.strokes);
+  var radius = typeof node.cornerRadius === "number" ? node.cornerRadius : (node.topLeftRadius || 0);
+  return boxed && (radius > 0 || node.cornerRadius === figma.mixed);
 }
 async function localFindIconTargets(payload) {
   var roots = figma.currentPage.selection.slice();
   if (!roots.length) throw new Error("Select the buttons, rows or screen that need icons.");
   var out = [], seen = {};
-  function add(info) { if (info && !seen[info.id] && out.length < 20) { seen[info.id] = 1; out.push(info); } }
+  function add(info, nested) { if (info && !seen[info.id] && out.length < 40) { seen[info.id] = 1; info.selected = !nested; out.push(info); } }
   roots.forEach(function (root) {
     var self = uxdIconTargetInfo(root);
-    if (self) { add(self); return; }
+    if (self) { add(self, false); return; }
     if (root.type === "INSTANCE") return;
-    uxdDescendants(root, function (c) { return c.type === "FRAME" || c.type === "COMPONENT"; }).forEach(function (c) { add(uxdIconTargetInfo(c)); });
+    uxdDescendants(root, function (c) { return c.type === "FRAME" || c.type === "COMPONENT"; }).forEach(function (c) { add(uxdIconTargetInfo(c), true); });
   });
-  return { ok: true, targets: out };
+  // Inside a selected screen, icons go on buttons only; rows are used only when the selection
+  // has no button at all (e.g. a selected list). A directly selected row still counts.
+  var buttons = out.filter(function (t) { return t.button || t.selected; });
+  if (buttons.some(function (t) { return t.button; })) out = buttons;
+  return { ok: true, targets: out.slice(0, 20) };
 }
 function uxdIconColor(target) {
   var sources = target.type === "TEXT" ? [target] : uxdDescendants(target, function (c) { return c.type === "TEXT" && c.visible !== false; });
@@ -4589,6 +4625,12 @@ async function localInsertIcons(payload) {
       target.visible = false;
     } else if (uxdHasAutoLayout(target)) {
       target.insertChild(0, icon);
+      if (target.layoutMode === "HORIZONTAL" && (Number(target.itemSpacing) || 0) < 4 && target.primaryAxisAlignItems !== "SPACE_BETWEEN") {
+        // The icon must not touch its label.
+        var gap = size <= 16 ? 6 : 8;
+        hidden.push({ id: target.id, prop: "itemSpacing", before: target.itemSpacing, after: gap });
+        target.itemSpacing = gap;
+      }
       if (target.counterAxisAlignItems === "MIN" && target.layoutMode === "HORIZONTAL") {
         hidden.push({ id: target.id, prop: "counterAxisAlignItems", before: "MIN", after: "CENTER" });
         target.counterAxisAlignItems = "CENTER";

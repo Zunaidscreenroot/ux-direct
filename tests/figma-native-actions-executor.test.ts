@@ -188,6 +188,32 @@ test("INSTANCE elements and create-instance place real components with property 
   await assert.rejects(write({ operation: "set-instance-properties", nodeId: instance.id, instanceProperties: { Missing: "x" } }), /no property Missing/);
 });
 
+test("a generated INSTANCE with an invented variant value keeps the default variant instead of failing the screen", async () => {
+  const { page, write } = createRuntime();
+  const button = makeNode("COMPONENT", { name: "Button", width: 120, height: 44 });
+  button.instanceDefaults = { "Label#1:0": { type: "TEXT", value: "Button" }, "State": { type: "VARIANT", value: "Default" } };
+  const screen = makeNode("FRAME", { name: "Screen", layoutMode: "VERTICAL" });
+  page.appendChild(button); page.appendChild(screen);
+  const original = button.createInstance;
+  button.createInstance = () => {
+    const instance = original();
+    const set = instance.setProperties;
+    instance.setProperties = (values: Record<string, unknown>) => {
+      if (values.State && values.State !== "Default" && values.State !== "Disabled") throw new Error("in setProperties: Unable to find a variant with those property values");
+      set(values);
+    };
+    return instance;
+  };
+  const created = await write({ operation: "create-elements", target: "node", parentNodeId: screen.id, elements: [
+    { type: "INSTANCE", name: "CTA", componentId: button.id, instanceProperties: { Label: "Apply now", State: "Hover", Size: "XL" } },
+  ] });
+  assert.equal(created.ok, true);
+  const instance = screen.children[0];
+  assert.equal(instance.componentProperties["Label#1:0"].value, "Apply now");
+  assert.equal(instance.componentProperties.State.value, "Default");
+  await assert.rejects(write({ operation: "set-instance-properties", nodeId: instance.id, instanceProperties: { State: "Hover" } }), /Unable to find a variant/);
+});
+
 test("add-component-property links a text layer and keeps its current text as the default", async () => {
   const { page, write } = createRuntime();
   const component = makeNode("COMPONENT", { name: "Chip" });
