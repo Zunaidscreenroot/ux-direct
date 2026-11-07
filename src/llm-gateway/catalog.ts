@@ -146,7 +146,7 @@ export function freeModelsFromListing(provider: ProviderDef, payload: unknown): 
     const record = row as Record<string, unknown>;
     const id = typeof record.id === "string" ? record.id.replace(/^models\//, "") : "";
     if (!id) continue;
-    if (/embed|whisper|tts|speech|audio|image|guard|moderation|vision-preview|live|native|transcri|rerank|aqa|imagen|veo|learnlm|gemma-3n|compound|allam|playai|orpheus|safeguard/i.test(id)) continue;
+    if (/embed|whisper|tts|speech|audio|image|guard|moderation|vision-preview|live|native|transcri|rerank|aqa|imagen|veo|learnlm|gemma-3n|compound|allam|playai|orpheus|safeguard|customtools|computer-use|robotics/i.test(id)) continue;
     if (provider.id === "openrouter") {
       const pricing = record.pricing && typeof record.pricing === "object" ? record.pricing as Record<string, unknown> : {};
       const free = id.endsWith(":free") && Number(pricing.prompt ?? 0) === 0 && Number(pricing.completion ?? 0) === 0;

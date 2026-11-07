@@ -81,6 +81,7 @@ export default function CommandCenter() {
   const [knowledge, setKnowledge] = useState<KnowledgePayload | null>(null);
   const [models, setModels] = useState<ModelsPayload | null>(null);
   const [modelHours, setModelHours] = useState(24);
+  const [providerCheck, setProviderCheck] = useState<{ busy: boolean; message?: string; results?: Array<{ provider: string; model: string; ok: boolean; status: number; latencyMs: number; error?: string }> }>({ busy: false });
   const [dataBusy, setDataBusy] = useState(false);
   const [dataError, setDataError] = useState("");
   const abortRef = useRef<AbortController | null>(null);
@@ -136,6 +137,20 @@ export default function CommandCenter() {
     if (activeTab === "knowledge" && !knowledge) void loadView("knowledge");
     if (activeTab === "models" && !models) void loadView("models", modelHours);
   }, [activeTab, historyReady, activity, knowledge, models, modelHours, loadView]);
+
+  async function checkProviders() {
+    setProviderCheck({ busy: true });
+    try {
+      const response = await fetch("/api/command-center?view=models-check", { cache: "no-store", headers: { [ACCESS_HEADER]: accessKey } });
+      const payload = await response.json() as { throttled?: boolean; retryAfterSeconds?: number; error?: string; log?: { ok: boolean; error?: string }; results?: Array<{ provider: string; model: string; ok: boolean; status: number; latencyMs: number; error?: string }> };
+      if (!response.ok) throw new Error(payload.error || "Check failed.");
+      if (payload.throttled) { setProviderCheck({ busy: false, message: "Checked a moment ago. Try again in " + payload.retryAfterSeconds + "s." }); return; }
+      const ok = (payload.results || []).filter((row) => row.ok).length;
+      setProviderCheck({ busy: false, results: payload.results, message: ok + " of " + (payload.results || []).length + " providers answered." + (payload.log && !payload.log.ok ? " Call log not writable: " + payload.log.error : "") });
+    } catch (error) {
+      setProviderCheck({ busy: false, message: error instanceof Error ? error.message : "Check failed." });
+    }
+  }
 
   function navigate(next: Tab) {
     setActiveTab(next);
@@ -402,7 +417,12 @@ export default function CommandCenter() {
                 {role.topModel && <small>Most used: {role.topModel}</small>}
               </article>)}</div>
             </>}
-            <h2 className="ud-cc-section">Free providers</h2>
+            <h2 className="ud-cc-section">Free providers <button className="ud-secondary-button" onClick={() => void checkProviders()} disabled={providerCheck.busy}>{providerCheck.busy ? "Checking…" : "Check providers live"}</button></h2>
+            {providerCheck.message && <p className="ud-cc-empty">{providerCheck.message}</p>}
+            {providerCheck.results && <div className="ud-cc-list">{providerCheck.results.map((row) => <article className="ud-cc-row" key={row.provider}>
+              <div className="ud-cc-row-top"><strong>{row.provider} · {row.model}</strong><span className={"ud-status-pill " + (row.ok ? "ok" : "error")}>{row.ok ? "works · " + formatMs(row.latencyMs) : "failed · " + (row.status || "timeout")}</span></div>
+              {row.error && <p className="ud-cc-error-text">{row.error}</p>}
+            </article>)}</div>}
             <div className="ud-cc-list">{models.providers.map((provider) => <article className="ud-cc-row" key={provider.id}>
               <div className="ud-cc-row-top"><strong>{provider.label}</strong><span className="ud-status-pill ok">connected</span></div>
               <small>{provider.models.map((model) => model.id + " (" + model.tier + ", " + model.rpm + " rpm" + (model.rpd ? ", " + model.rpd + "/day" : "") + ")").join(" · ")}</small>
