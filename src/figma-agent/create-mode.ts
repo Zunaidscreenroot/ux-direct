@@ -59,7 +59,7 @@ export function fileHeaderComponent(canvas: Rec, width: number): Rec | null {
 
 /** A component the journey's first screen used (its app bar, its primary button), by exact id. */
 export type KitComponent = { id: string; name: string; width: number; height: number };
-export type ScreenKit = { header?: KitComponent; button?: KitComponent };
+export type ScreenKit = { header?: KitComponent; button?: KitComponent; title?: string; gutter?: number; background?: string };
 
 /**
  * The kit's components join the catalogue first (a variant id the catalogue lists only by its set),
@@ -84,7 +84,7 @@ export function createModeCanvas(canvas: unknown, size: { width: number; height:
     ...base,
     scope: "new-screen",
     nodes: [{ id: CREATE_FRAME_ID, name: createFrameName(prompt), type: "FRAME", x: 0, y: 0, width: size.width, height: size.height,
-      fillColors: [fileBackground(base) ?? "#FFFFFF"], layoutMode: "VERTICAL", children }],
+      fillColors: [kit?.background && HEX.test(kit.background) ? kit.background.toUpperCase() : fileBackground(base) ?? "#FFFFFF"], layoutMode: "VERTICAL", children }],
   };
 }
 

@@ -77,3 +77,20 @@ test("JSON mode always mentions json, so Groq does not refuse the request", () =
   const ok = providerBody(groq, "openai/gpt-oss-120b", { ...body, messages: [{ role: "system", content: "Return JSON." }] }, true);
   assert.equal((ok.messages as unknown[]).length, 1);
 });
+
+test("a journey screen shows its own title in the kit app bar, with the first screen's gutter and background", () => {
+  const kit = { header: { id: "10:1", name: "App bar", width: 393, height: 56 }, title: "Confirm payment", gutter: 20, background: "#F4F6FA" };
+  const canvas = createModeCanvas({ nodes: [], components: [] }, { width: 393, height: 852 }, "confirm", kit);
+  const noBar = { summary: "Confirm the payment.", theme: { background: "#FFFFFF" }, sections: [
+    { name: "Summary", surface: "card", blocks: [{ type: "stat", label: "Amount", value: "₹12,570" }] },
+    { name: "Actions", surface: "plain", blocks: [{ type: "button", label: "Confirm and pay", variant: "primary" }] },
+  ] };
+  const out = expandBlockSpec(noBar, canvas, { create: true, screenTitle: "Confirm payment", gutter: 20, background: "#F4F6FA" });
+  assert.ok(out.plan, out.errors.join("; "));
+  const header = all(out.plan!.elements as N[]).find((n) => n.type === "INSTANCE" && n.componentId === "10:1");
+  assert.ok(header, "app bar added even though the model left it out");
+  assert.equal((header!.textOverrides as Record<string, string>).__title, "Confirm payment");
+  assert.equal(out.plan!.frame.backgroundColor, "#F4F6FA");
+  const sections = out.plan!.elements.slice(1) as N[];
+  assert.ok(sections.every((n) => n.paddingLeft === 20 || n.x === 20), "every section sits on the 20px gutter");
+});

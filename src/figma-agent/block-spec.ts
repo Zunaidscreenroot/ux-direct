@@ -573,7 +573,8 @@ type Ctx = { b: Builder; t: BlockTheme; bg: string; componentIds: Set<string>; s
   /** Create mode: the file's primary button component, so full-width primary actions are instances of it. */
   button?: ButtonComponent | null;
   /** Improve only: the source's own texts, so the renderer never adds copy the source did not have. */
-  sourceTexts?: Set<string> | null };
+  sourceTexts?: Set<string> | null;
+  screenTitle?: string | null };
 
 const TONE_OPTIONS: Record<string, RegExp> = {
   success: /^(success|positive|current|active|paid|completed?|approved|on ?track|green)$/i,
@@ -717,7 +718,7 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
           ...(header.instanceProperties ? { instanceProperties: { ...header.instanceProperties } } : {}),
           ...(header.textOverrides ? { textOverrides: { ...header.textOverrides } } : {}) };
         // A new screen reuses the file's app bar component: its title becomes this screen's title.
-        const newTitle = clean(block.title ?? block.text, 120);
+        const newTitle = clean(ctx.screenTitle || block.title || block.text, 120);
         if (header.fromCatalogue && newTitle) node.textOverrides = { ...(node.textOverrides ?? {}), __title: newTitle };
         b.headerNode = node;
         return node;
@@ -1621,14 +1622,19 @@ export function isBlockSpec(value: unknown): boolean {
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
 }
 
-export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean; skeleton?: boolean; create?: boolean; kitButtonId?: string | null } = {}): BlockExpansion {
+export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean; skeleton?: boolean; create?: boolean; kitButtonId?: string | null;
+  /** Journey screens: the screen's own title (its app bar shows it, whatever the model wrote), and the first screen's side gutter. */
+  screenTitle?: string | null; gutter?: number | null; background?: string | null } = {}): BlockExpansion {
   const spec = asRec(value) ?? {};
   const sourceNodes = arr(canvas.nodes);
   const source = asRec(sourceNodes[0]) ?? {};
   const sourceFill = Array.isArray(source.fillColors) ? hex(source.fillColors[0]) : null;
   const rawFrame = asRec(spec.frame) ?? {};
   const ctaFill = options.monochrome ? null : sourceCtaFill(options.sourceCanvas ?? canvas);
-  const theme = snapThemeToStyles(resolveTheme(spec.theme ?? rawFrame.theme, hex(rawFrame.backgroundColor) ?? sourceFill, ctaFill), asRec(canvas.styles));
+  // A journey screen keeps the first screen's background, whatever the model's theme says.
+  const kitBackground = options.background ? hex(options.background) : null;
+  const themeInput = kitBackground ? { ...(asRec(spec.theme ?? rawFrame.theme) ?? {}), background: kitBackground } : spec.theme ?? rawFrame.theme;
+  const theme = snapThemeToStyles(resolveTheme(themeInput, kitBackground ?? hex(rawFrame.backgroundColor) ?? sourceFill, ctaFill), asRec(canvas.styles));
   const componentIds = new Set(arr(canvas.components).map((c) => asRec(c)?.id).filter((id): id is string => typeof id === "string"));
   const b = new Builder(theme, collectSourceTokens(canvas, componentIds));
   const improveSource = asRec(arr((options.sourceCanvas ?? canvas).nodes)[0]);
@@ -1639,12 +1645,13 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     return set.size ? set : null;
   })() : null;
   const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds, skeleton: options.skeleton === true, badge: options.monochrome ? null : findBadgeComponent(canvas.components), sourceTexts,
-    button: options.create && !options.monochrome ? findButtonComponent(canvas.components, options.kitButtonId) : null };
+    button: options.create && !options.monochrome ? findButtonComponent(canvas.components, options.kitButtonId) : null,
+    screenTitle: options.create ? clean(options.screenTitle, 120) || null : null };
 
   const sourceWidth = typeof source.width === "number" ? source.width : 0;
   const sourceHeight = typeof source.height === "number" ? source.height : 0;
   const frameWidth = Math.round(Math.max(280, Math.min(1440, typeof rawFrame.width === "number" ? rawFrame.width : sourceWidth || 360)));
-  const pad = options.componentSelection ? 12 : 16;
+  const pad = options.componentSelection ? 12 : typeof options.gutter === "number" && options.gutter >= 8 && options.gutter <= 40 ? grid4(options.gutter) : 16;
   const gap = options.componentSelection ? 12 : 16;
   const content = frameWidth - pad * 2;
 
@@ -1652,6 +1659,11 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   const elements: NativeNode[] = [];
   let blockCount = 0;
   const sections = mergeExtraSections(arr(spec.sections).map(asRec).filter((x): x is Rec => !!x));
+  // A journey screen always opens with the file's app bar showing its own title, even when the model left it out.
+  if (ctx.screenTitle && b.source?.header?.fromCatalogue && sections.length &&
+      !sections.some((sec) => sectionBlocks(sec).some((bl) => blockType(bl) === "app_bar"))) {
+    sections.unshift({ name: "Header", surface: "plain", blocks: [{ type: "app_bar", title: ctx.screenTitle, back: true }] });
+  }
   if (!sections.length) errors.push("sections must be a non-empty array of {name, blocks:[...]}.");
   for (const [index, section] of sections.slice(0, 8).entries()) {
     const blocks = sectionBlocks(section);

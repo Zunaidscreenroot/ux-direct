@@ -235,3 +235,19 @@ test("journey wiring: links inside instances fall back to the instance, success 
   assert.equal(wired.entry, "Manage loans");
   assert.deepEqual(page.flowStartingPoints.map((f: any) => f.nodeId), ["e1"], "the start moves to the true entry");
 });
+
+test("a step's main button never links back to an earlier step that shares a word, and hover swaps are not links", async () => {
+  const s = (id: string, name: string, x: number, kids: any[]): any => ({ id, type: "FRAME", name, x, y: 0, width: 360, height: 800, children: kids });
+  const hover = { reactions: [{ trigger: { type: "ON_HOVER" }, actions: [{ type: "NODE", destinationId: "variant:2", navigation: "CHANGE_TO" }] }] };
+  const one = s("j1", "Pay EMI / 1 · Loan details", 0, [button("j1b", "Continue")]);
+  const two = s("j2", "Pay EMI / 2 · Payment method", 400, [button("j2b", "Continue")]);
+  const three = s("j3", "Pay EMI / 3 · Confirm", 800, [button("j3b", "Confirm payment")]);
+  const four = s("j4", "Pay EMI / 4 · Verify OTP", 1200, [button("j4b", "Verify and pay", hover)]);
+  const five = s("j5", "Pay EMI / 5 · Payment successful", 1600, [button("j5b", "Done")]);
+  const nodes: Record<string, any> = { j1: one, j2: two, j3: three, j4: four, j5: five };
+  const run = runtime([one, two, three, four, five], nodes);
+  const plan = await run("prototype-wire", {});
+  const map = Object.fromEntries(plan.links.map((l: any) => [l.label, l.to]));
+  assert.equal(map["Confirm payment"], "Pay EMI / 4 · Verify OTP");
+  assert.equal(map["Verify and pay"], "Pay EMI / 5 · Payment successful", "a hover variant swap does not count as the button's own link");
+});
