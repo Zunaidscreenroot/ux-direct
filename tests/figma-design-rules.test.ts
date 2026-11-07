@@ -80,3 +80,25 @@ test("hygiene fix snaps to the file's own spacing scale and radii when rules are
   assert.equal(pill.cornerRadius, 10, "a pill keeps its fully rounded ends");
   assert.equal(result.counts.radius, 1);
 });
+
+test("an older server that rejects designRules gets the same request again without them", async () => {
+  const ui = readFileSync(join(process.cwd(), "figma-plugin/ui.html"), "utf8");
+  const match = /(async function postJsonWithRules[\s\S]*?\n    \}\n)/.exec(ui);
+  assert.ok(match);
+  const bodies: any[] = [];
+  const fetch = async (_url: string, init: any) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    const strict = "designRules" in body;
+    const text = strict ? JSON.stringify({ error: "invalid", details: [{ message: "Unrecognized key: 'designRules'" }] }) : "{\"ok\":true}";
+    return { status: strict ? 400 : 200, clone() { return { text: async () => text }; }, json: async () => JSON.parse(text) };
+  };
+  const sandbox: Record<string, any> = { fetch, console: { warn() {} } };
+  runInNewContext(match[1] + "\nthis.fn = postJsonWithRules;", sandbox);
+  const ok = await sandbox.fn("https://x/api", { prompt: "p", designRules: "spacing 8/16" });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(JSON.parse(JSON.stringify(bodies)), [{ prompt: "p", designRules: "spacing 8/16" }, { prompt: "p" }]);
+  bodies.length = 0;
+  await sandbox.fn("https://x/api", { prompt: "p" });
+  assert.equal(bodies.length, 1, "no rules, no retry");
+});

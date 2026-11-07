@@ -1079,10 +1079,7 @@
 
     async function requestStructuralLint(body) {
       try {
-        const response = await fetch(API + "/api/assistant/figma-agent/lint", {
-          method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
-          cache: "no-store", body: JSON.stringify({ ...body, ...(await designRulesField()) })
-        });
+        const response = await postJsonWithRules(API + "/api/assistant/figma-agent/lint", { ...body, ...(await designRulesField()) });
         const result = await response.json().catch(function () { return {}; });
         return response.ok && result.ok === true && Array.isArray(result.issues) ? result : null;
       } catch (_) { return null; }
@@ -1712,15 +1709,10 @@
       const localReadMs = Date.now() - taskStartedAt;
       const serverStartedAt = Date.now();
       const rulesField = await designRulesField();
-      const response = await fetch(API + "/api/assistant/figma-agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning, capabilities: PLUGIN_CAPABILITIES,
+      const response = await postJsonWithRules(API + "/api/assistant/figma-agent", ({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning, capabilities: PLUGIN_CAPABILITIES,
           ...(designOptions && designOptions.variation ? { variation: designOptions.variation } : {}),
           ...(designOptions && designOptions.state ? { state: designOptions.state } : {}),
-          ...(createMode ? { mode: "create" } : {}), ...rulesField })
-      });
+          ...(createMode ? { mode: "create" } : {}), ...rulesField }));
       const payload = await response.json().catch(function () { return {}; });
       const serverMs = Date.now() - serverStartedAt;
       if (!response.ok || payload.ok !== true || !payload.plan || !Array.isArray(payload.plan.elements)) {
@@ -2552,10 +2544,7 @@
       return bytes;
     }
     async function postQuickTask(path, body) {
-      const response = await fetch(API + path, {
-        method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        cache: "no-store", body: JSON.stringify(body)
-      });
+      const response = await postJsonWithRules(API + path, body);
       const payload = await response.json().catch(function () { return {}; });
       if (!response.ok || payload.ok !== true) {
         const details = Array.isArray(payload.details)
@@ -2861,6 +2850,20 @@
     async function designRulesField() {
       const text = String(await currentDesignRulesText() || "").trim();
       return text ? { designRules: text.slice(0, 4000) } : {};
+    }
+    // An older server rejects the unknown designRules key with a 400; then the same request is retried without it.
+    async function postJsonWithRules(url, body) {
+      const send = function (data) {
+        return fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, cache: "no-store", body: JSON.stringify(data) });
+      };
+      const response = await send(body);
+      if (response.status !== 400 || !body || !body.designRules) return response;
+      const text = await response.clone().text().catch(function () { return ""; });
+      if (!/designRules/.test(text)) return response;
+      const rest = Object.assign({}, body);
+      delete rest.designRules;
+      console.warn("[uxd-design-rules] server does not accept designRules yet; sent without them.");
+      return send(rest);
     }
     async function runDesignRulesTask(task, stage) {
       if (task.mode === "show") {
