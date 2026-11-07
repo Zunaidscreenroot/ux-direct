@@ -14,7 +14,8 @@ const PROVIDER = "https://freellmapi.test/v1/chat/completions";
 const realFetch = globalThis.fetch;
 const calls: string[] = [];
 let scores: number[] = [];
-let iterationMode: "good" | "drops" = "good";
+let iterationMode: "good" | "drops" | "invents-once" = "good";
+let iterationCalls = 0;
 const ok = (content: unknown, model = "model-a") => new Response(JSON.stringify({
   model, choices: [{ finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(content) } }],
 }), { status: 200, headers: { "content-type": "application/json" } });
@@ -39,7 +40,10 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   if (body.includes("Your UX Lead reviewed your whole screen")) {
     calls.push("iteration:" + seat);
-    return ok(iterationMode === "good" ? revisedScreen : { sections: [header, actions] }, "designer-model");
+    iterationCalls += 1;
+    if (iterationMode === "invents-once" && iterationCalls === 1) return ok({ ...revisedScreen, sections: [{ name: "Banner", surface: "plain", blocks: [{ type: "text", text: "Everything is on schedule" }] }, ...revisedScreen.sections] }, "designer-model");
+    if (iterationMode === "invents-once") assert.match(body, /added text that is not in the source: Everything is on schedule/);
+    return ok(iterationMode === "drops" ? { sections: [header, actions] } : revisedScreen, "designer-model");
   }
   calls.push(body.includes("YOUR SEAT: Product Designer") ? "planner:product" : "planner");
   return ok(firstScreen);
@@ -62,6 +66,7 @@ const canvas = {
 
 async function run(leadScores: number[]) {
   calls.length = 0;
+  iterationCalls = 0;
   scores = [...leadScores];
   const { POST } = await import("../app/api/assistant/figma-agent/route");
   const response = await POST(new Request("https://ux-direct.test/api/assistant/figma-agent", {
@@ -177,6 +182,15 @@ test("studio: per-card amounts in a primary label are one action type", () => {
   assert.equal(deterministicLeadNotes(cards(["Pay now", "Pay ₹12,570", "Pay ₹2,290 now"])).length, 0);
   const notes = deterministicLeadNotes(cards(["Pay now", "View details"]));
   assert.ok(notes.some((entry) => entry.code === "primary" && entry.severity === "high"));
+});
+
+test("studio route: a refused iteration gets one retry with exactly what went wrong", async () => {
+  iterationMode = "invents-once";
+  const { status, row, body } = await run([50, 80]);
+  iterationMode = "good";
+  assert.equal(status, 200);
+  assert.equal(row, "review 50% ×new text → 80% ✓");
+  assert.doesNotMatch(JSON.stringify(body.plan), /Everything is on schedule/);
 });
 
 test("studio: each seat gets its role's knowledge", async () => {

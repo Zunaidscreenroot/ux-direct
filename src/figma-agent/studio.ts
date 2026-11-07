@@ -262,7 +262,7 @@ export async function leadReview(spec: Rec, context: { prompt: string; role: Tas
     origin: context.origin,
     timeoutMs: context.timeoutMs,
     signal: context.signal,
-    maxAttempts: 1,
+    maxAttempts: 2,
     anyObject: true,
     accept: (data) => (Array.isArray(data.notes) || typeof data.score === "number" ? null : "missing notes"),
   }).catch(() => null);
