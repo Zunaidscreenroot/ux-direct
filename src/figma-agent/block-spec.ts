@@ -607,12 +607,15 @@ function findBadgeComponent(components: unknown): BadgeComponent | null {
  * or a component named "Primary button". Secondary and text buttons stay drawn (variants differ too
  * much between files to pick them safely).
  */
-export function findButtonComponent(components: unknown, kitButtonId?: string | null): ButtonComponent | null {
+export function findButtonComponent(components: unknown, kitButtonId?: string | null, kitProps?: Record<string, string | boolean> | null): ButtonComponent | null {
   const list = arr(components).map(asRec).filter((c): c is Rec => !!c && typeof c.id === "string");
   const okHeight = (c: Rec) => typeof c.height !== "number" || c.height >= 32 && c.height <= 64;
   if (kitButtonId) {
     const kit = list.find((c) => c.id === kitButtonId);
-    if (kit && okHeight(kit)) return { id: kitButtonId, height: typeof kit.height === "number" ? Math.round(kit.height) : 48 };
+    // Only variant values: a text property would be the first screen's label.
+    const variants = kitProps ? Object.fromEntries(Object.entries(kitProps).filter((e): e is [string, string] => typeof e[1] === "string" &&
+      asRec(asRec(kit?.properties)?.[e[0]])?.type !== "TEXT" && !/label|text|title/i.test(e[0]))) : {};
+    if (kit && okHeight(kit)) return { id: kitButtonId, height: typeof kit.height === "number" ? Math.round(kit.height) : 48, ...(Object.keys(variants).length ? { instanceProperties: variants } : {}) };
   }
   for (const c of list) {
     const name = String(c.name ?? "");
@@ -1414,6 +1417,56 @@ function relayout(node: NativeNode): number {
   return node.height;
 }
 
+/**
+ * Improve never shows a source string more often than the source did, and never invents a layer name
+ * as copy: the page title in the app bar AND as a heading, the card title twice per card, an inline
+ * "Pay now" text beside the Pay now button, a logo turned into the text "slice" (tester T12).
+ * Extra copies go first where the same card already shows the text; labels in buttons, app bars,
+ * badges and tabs are kept.
+ */
+export function dedupeImproveTexts(elements: NativeNode[], sourceCounts: Map<string, number>, warnings: string[]): number {
+  type Occ = { node: NativeNode; parent: NativeNode | null; card: NativeNode | null; keep: boolean };
+  const byKey = new Map<string, Occ[]>();
+  const strays: Occ[] = [];
+  const walk = (node: NativeNode, parent: NativeNode | null, card: NativeNode | null, keep: boolean) => {
+    const isCard = node.type === "FRAME" && typeof node.color === "string" && Number(node.cornerRadius ?? 0) > 0;
+    const keepHere = keep || node.type === "INSTANCE" || /\b(button|app bar|header|badge|chip|tab|nav|status)\b/i.test(node.name);
+    if (node.type === "TEXT" && typeof node.text === "string") {
+      const k = textKey(node.text);
+      const occ = { node, parent, card, keep: keepHere };
+      if (!sourceCounts.has(k)) { if (/^[a-z][a-z0-9_-]{1,15}$/.test(String(node.text).trim())) strays.push(occ); return; }
+      byKey.set(k, [...(byKey.get(k) ?? []), occ]);
+      return;
+    }
+    if (node.type === "INSTANCE") return;
+    for (const child of node.children ?? []) walk(child, node, isCard ? node : card, keepHere);
+  };
+  for (const el of elements) walk(el, null, null, false);
+  const drop: Occ[] = [...strays.filter((o) => !o.keep)];
+  for (const [k, occs] of byKey) {
+    let excess = occs.length - Math.max(1, sourceCounts.get(k) ?? 1);
+    if (excess <= 0) continue;
+    const seen = new Set<NativeNode | null>();
+    for (const o of occs) {
+      if (excess > 0 && !o.keep && o.card && seen.has(o.card)) { drop.push(o); excess -= 1; }
+      seen.add(o.card);
+    }
+    for (const o of [...occs].reverse()) if (excess > 0 && !o.keep && !drop.includes(o)) { drop.push(o); excess -= 1; }
+  }
+  for (const o of drop) {
+    if (!o.parent?.children) continue;
+    o.parent.children = o.parent.children.filter((c) => c !== o.node);
+  }
+  // A wrapper left with nothing in it goes too.
+  const prune = (nodes: NativeNode[]): NativeNode[] => nodes.filter((n) => {
+    if (n.children) n.children = prune(n.children);
+    return !(n.type === "FRAME" && n.children && n.children.length === 0 && n.noFill === true);
+  });
+  for (const el of elements) if (el.children) el.children = prune(el.children);
+  if (drop.length) warnings.push("Removed " + drop.length + " repeated or invented text layer(s) the source did not have.");
+  return drop.length;
+}
+
 /** Tighten an over-tall render: card padding 16→12, stack gaps 12→8, two stacked buttons side by side. */
 function compactToBudget(elements: NativeNode[]) {
   const visit = (node: NativeNode) => {
@@ -1629,7 +1682,7 @@ export function isBlockSpec(value: unknown): boolean {
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
 }
 
-export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean; skeleton?: boolean; create?: boolean; kitButtonId?: string | null;
+export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean; skeleton?: boolean; create?: boolean; kitButtonId?: string | null; kitButtonProps?: Record<string, string | boolean> | null;
   /** Journey screens: the screen's own title (its app bar shows it, whatever the model wrote), and the first screen's side gutter. */
   screenTitle?: string | null; gutter?: number | null; background?: string | null } = {}): BlockExpansion {
   const spec = asRec(value) ?? {};
@@ -1651,8 +1704,14 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     walkTexts(improveSource, 0);
     return set.size ? set : null;
   })() : null;
+  const sourceTextCounts = sourceTexts ? (() => {
+    const counts = new Map<string, number>();
+    const walk = (n: Rec, d: number) => { if (d > 14) return; if (n.type === "TEXT" && typeof n.text === "string") { const k = textKey(n.text); counts.set(k, (counts.get(k) ?? 0) + 1); } for (const c of arr(n.children)) { const r = asRec(c); if (r) walk(r, d + 1); } };
+    walk(improveSource!, 0);
+    return counts;
+  })() : null;
   const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds, skeleton: options.skeleton === true, badge: options.monochrome ? null : findBadgeComponent(canvas.components), sourceTexts,
-    button: options.create && !options.monochrome ? findButtonComponent(canvas.components, options.kitButtonId) : null,
+    button: options.create && !options.monochrome ? findButtonComponent(canvas.components, options.kitButtonId, options.kitButtonProps) : null,
     screenTitle: options.create ? clean(options.screenTitle, 120) || null : null,
     componentSizes: new Map(arr(canvas.components).map(asRec).filter((c): c is Rec => !!c && typeof c.id === "string" && typeof c.height === "number")
       .map((c) => [c.id as string, { width: typeof c.width === "number" ? c.width : 0, height: c.height as number }])) };
@@ -1759,6 +1818,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     if (fidelity.unplaced.length && options.allowClones === false) b.warnings.push(fidelity.unplaced.length + " source graphic(s) were not copied: this plugin build cannot copy layers. Re-import the latest UX Direct plugin zip.");
     else if (fidelity.unplaced.length) b.warnings.push("Could not place " + fidelity.unplaced.length + " source graphic(s): " + fidelity.unplaced.slice(0, 5).join(", ") + ".");
   }
+  if (sourceTextCounts) dedupeImproveTexts(elements, sourceTextCounts, b.warnings);
   capTypeScale(elements, 5, b.warnings);
   polishRows(elements, b.warnings);
   elements.forEach(relayout);

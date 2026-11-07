@@ -58,7 +58,7 @@ export function fileHeaderComponent(canvas: Rec, width: number): Rec | null {
 }
 
 /** A component the journey's first screen used (its app bar, its primary button), by exact id. */
-export type KitComponent = { id: string; name: string; width: number; height: number };
+export type KitComponent = { id: string; name: string; width: number; height: number; properties?: Record<string, string | boolean> };
 export type ScreenKit = { header?: KitComponent; button?: KitComponent; title?: string; gutter?: number; background?: string };
 
 /**
@@ -76,10 +76,12 @@ function withKit(base: Rec, kit: ScreenKit | null | undefined): Rec {
 /** The request canvas with its (empty or absent) nodes replaced by one empty frame of the target size. */
 export function createModeCanvas(canvas: unknown, size: { width: number; height: number }, prompt: string, kit?: ScreenKit | null): Rec {
   const base = withKit(asRec(canvas) ?? {}, kit);
-  const header = kit?.header ? { id: kit.header.id, name: kit.header.name, height: kit.header.height } : fileHeaderComponent(base, size.width);
+  const header = kit?.header ? { id: kit.header.id, name: kit.header.name, height: kit.header.height, properties: kit.header.properties } : fileHeaderComponent(base, size.width);
   // The header is an instance with no texts: there is still nothing to preserve, only something to reuse.
   const children = header ? [{ id: CREATE_FRAME_ID + ":header", name: String(header.name).slice(0, 80), type: "INSTANCE", x: 0, y: 0,
-    width: size.width, height: Math.round(Number(header.height)), mainComponentId: header.id, children: [] }] : [];
+    width: size.width, height: Math.round(Number(header.height)), mainComponentId: header.id, children: [],
+    // Variant and boolean values only: a text property would carry the first screen's title.
+    ...(kit?.header?.properties ? { componentProperties: Object.fromEntries(Object.entries(kit.header.properties).filter(([key]) => !/label|text|title/i.test(key))) } : {}) }] : [];
   return {
     ...base,
     scope: "new-screen",
