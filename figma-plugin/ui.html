@@ -3260,7 +3260,7 @@
     // buttons, rows) by id, its size and background, and its facts (amounts, names, IDs) so every
     // later screen shows the same values instead of drifting (₹12,500 → ₹14,500).
     async function readScreen(frameId, depth) {
-      const canvas = await runNativeCanvasCommand("read-canvas", { scope: "selection", nodeIds: [frameId], maxDepth: depth || 8, maxNodes: 1200, includeStyles: false, includeVariables: false, includeComponents: false }, 90000).catch(function () { return null; });
+      const canvas = await runNativeCanvasCommand("read-canvas", { scope: "selection", nodeIds: [frameId], maxDepth: Math.max(depth || 12, 12), maxNodes: 1200, includeStyles: false, includeVariables: false, includeComponents: false }, 90000).catch(function () { return null; });
       return canvas && Array.isArray(canvas.nodes) ? canvas.nodes[0] : null;
     }
     function screenFacts(root) {
@@ -3291,7 +3291,8 @@
           if (["FRAME", "INSTANCE", "GROUP", "COMPONENT"].indexOf(node.type) >= 0 && Number(node.width) < W * 0.97) {
             const texts = [];
             flattenTree(node.children, function (n) { if (n.type === "TEXT" && typeof n.text === "string" && n.text.trim()) texts.push(n.text.trim().slice(0, 80)); });
-            if (texts.length >= 3 && texts.length <= 30 && texts.some(function (t) { return AMOUNT.test(t); })) {
+            // An amount is not required: a card's values can sit deeper than the read reached.
+            if (texts.length >= 3 && texts.length <= 30) {
               const have = {};
               texts.join(" ").toLowerCase().split(/[^a-z]+/).forEach(function (w) { if (wanted[w]) have[w] = true; });
               found.push({ id: node.id, path: path, name: node.name, texts: texts, score: Object.keys(have).length });
@@ -3334,7 +3335,14 @@
     function journeyKitParts(root) {
       if (!root) return { kit: null, frame: null };
       const W = Number(root.width) || 0, H = Number(root.height) || 0;
-      const desc = function (n) { return { id: String(n.mainComponentId).slice(0, 100), name: String(n.name || "Component").slice(0, 120), width: Math.round(Number(n.width) || W), height: Math.round(Number(n.height) || 48) }; };
+      // The id is the component set's; its variant values pick the exact variant the screen used.
+      const desc = function (n) {
+        const out = { id: String(n.mainComponentId).slice(0, 100), name: String(n.name || "Component").slice(0, 120), width: Math.round(Number(n.width) || W), height: Math.round(Number(n.height) || 48) };
+        const props = {};
+        Object.keys(n.componentProperties || {}).slice(0, 12).forEach(function (k) { const v = n.componentProperties[k]; if (typeof v === "boolean" || typeof v === "string" && v.length <= 120) props[String(k).slice(0, 60)] = v; });
+        if (Object.keys(props).length) out.properties = props;
+        return out;
+      };
       const kids = Array.isArray(root.children) ? root.children : [];
       const top = kids[0];
       const kit = {};

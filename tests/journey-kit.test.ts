@@ -111,3 +111,24 @@ test("an alert keeps its short CTA inline in a plain section, and a screen has o
   const card = nodes.find((n) => n.componentId === "30:3");
   assert.equal(card!.height, 220, "instance keeps its own height");
 });
+
+test("improve shows a source string no more often than the source, and drops invented layer-name text", async () => {
+  const { dedupeImproveTexts } = await import("../src/figma-agent/block-spec");
+  const t = (text: string): N => ({ type: "TEXT", name: "Text", text, width: 100, height: 20 });
+  const card = (kids: N[]): N => ({ type: "FRAME", name: "Card", color: "#FFFFFF", cornerRadius: 12, width: 320, height: 100, children: kids });
+  const elements: N[] = [
+    { type: "FRAME", name: "Header", noFill: true, width: 360, height: 64, children: [{ type: "FRAME", name: "App bar · Manage Loans", width: 360, height: 64, children: [t("Manage Loans")] }] },
+    { type: "FRAME", name: "Title", noFill: true, width: 360, height: 30, children: [t("Manage Loans")] },
+    card([t("Personal Loan"), t("Personal Loan"), t("slice"), { type: "FRAME", name: "Primary button", width: 80, height: 36, children: [t("Pay now")] }, t("Pay now")]),
+  ];
+  const counts = new Map([["manage loans", 1], ["personal loan", 1], ["pay now", 1]]);
+  const removed = dedupeImproveTexts(elements as unknown as Parameters<typeof dedupeImproveTexts>[0], counts, []);
+  assert.equal(removed, 4);
+  assert.equal(elements[1].children!.length, 0);
+  assert.deepEqual(elements[2].children!.map((n) => n.type === "TEXT" ? n.text : n.name), ["Personal Loan", "Primary button"]);
+});
+
+test("the journey kit button keeps the first screen's variant, not its label", () => {
+  const found = findButtonComponent([{ id: "5:5", name: "Button", height: 48, properties: { Type: { type: "VARIANT", options: ["Primary", "Secondary"] }, Label: { type: "TEXT" } } }], "5:5", { Type: "Primary", Label: "Pay now", State: "Default" });
+  assert.deepEqual(found, { id: "5:5", height: 48, instanceProperties: { Type: "Primary", State: "Default" } });
+});
