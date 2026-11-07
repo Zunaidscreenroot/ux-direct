@@ -2937,7 +2937,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -4031,6 +4031,7 @@ function uxdSnapProp(node, prop) {
   UXD_HYGIENE_SNAPSHOT.items.push({ node: node, prop: prop, before: before === undefined ? null : before });
 }
 async function uxdSetPropValue(node, prop, value) {
+  if (prop === "reactions" && typeof node.setReactionsAsync === "function") return node.setReactionsAsync(value || []);
   if (prop === "textStyleId" && typeof node.setTextStyleIdAsync === "function") return node.setTextStyleIdAsync(value || "");
   if (prop === "fillStyleId" && typeof node.setFillStyleIdAsync === "function") return node.setFillStyleIdAsync(value || "");
   if (prop === "strokeStyleId" && typeof node.setStrokeStyleIdAsync === "function") return node.setStrokeStyleIdAsync(value || "");
@@ -4796,6 +4797,135 @@ async function localInsertIcons(payload) {
   return { ok: true, inserted: inserted, skipped: skipped, createdIds: created, restore: hidden };
 }
 // uxd-icons:end
+// uxd-handoff:start
+// Developer handoff, no model. "add handoff notes" puts native Figma annotations (visible in Dev Mode)
+// on the screen, buttons, inputs and cards: measured specs as annotation properties plus the states a
+// developer must build. "wire the prototype" links buttons across 2+ screens by label (Back -> back,
+// "Pay now" -> the "Pay" screen, Continue/Next -> the next screen left to right). Both snapshot the
+// property they change, so Revert is exact, and neither touches layers that already have their own.
+var UXD_HANDOFF_PREFIX = "Handoff · ";
+var UXD_INPUT_NAME = /\b(input|field|text ?field|search ?bar|textbox|dropdown|select)\b/i;
+var UXD_CARD_NAME = /\b(card|tile|list ?item|row|cell)\b/i;
+function uxdFirstText(node) {
+  if (node.type === "TEXT") return String(node.characters || "").trim();
+  var t = uxdDescendants(node, function (n) { return n.type === "TEXT" && n.visible !== false && String(n.characters || "").trim(); })[0];
+  return t ? String(t.characters).trim() : "";
+}
+function uxdHandoffKind(node) {
+  if (node.type !== "FRAME" && node.type !== "INSTANCE" && node.type !== "COMPONENT") return "";
+  var name = String(node.name || "");
+  if (UXD_BUTTON_NAME.test(name)) return "button";
+  if (UXD_INPUT_NAME.test(name)) return "input";
+  if (UXD_CARD_NAME.test(name)) return "card";
+  return "";
+}
+function uxdHandoffNote(node, kind, root) {
+  var label = uxdFirstText(node).slice(0, 40);
+  var w = Math.round(node.width), h = Math.round(node.height);
+  if (node === root) return { text: UXD_HANDOFF_PREFIX + "Screen \"" + node.name + "\", " + w + "×" + h + ". Build top to bottom; spacing and colours are on each annotated layer.",
+    props: ["width", "height"] };
+  if (kind === "button") return { text: UXD_HANDOFF_PREFIX + "Button \"" + label + "\". States: default, pressed, disabled, loading." +
+    (h < 44 ? " Height is " + h + "px; keep the tap area at least 44px." : ""), props: ["width", "height", "cornerRadius", "fills", "padding"] };
+  if (kind === "input") return { text: UXD_HANDOFF_PREFIX + "Input \"" + label + "\". States: empty, focused, filled, error (message below the field), disabled.",
+    props: ["width", "height", "cornerRadius", "strokes", "padding"] };
+  return { text: UXD_HANDOFF_PREFIX + node.name.split(/\s+[·•|\/–—-]\s+/)[0] + ". Long text truncates to 1 line; values come from data, format as shown.",
+    props: ["width", "cornerRadius", "fills", "padding", "itemSpacing"] };
+}
+function uxdHandoffProps(node, props) {
+  return props.filter(function (type) {
+    if (type === "padding") return node.layoutMode && node.layoutMode !== "NONE";
+    if (type === "itemSpacing") return node.layoutMode && node.layoutMode !== "NONE";
+    if (type === "cornerRadius") return typeof node.cornerRadius === "number" && node.cornerRadius > 0;
+    if (type === "fills") return Array.isArray(node.fills) && node.fills.length > 0;
+    if (type === "strokes") return Array.isArray(node.strokes) && node.strokes.length > 0;
+    return true;
+  }).map(function (type) { return { type: type }; });
+}
+async function localHandoffNotes() {
+  var roots = figma.currentPage.selection.filter(function (n) { return ["FRAME", "COMPONENT", "INSTANCE"].indexOf(n.type) >= 0; }).slice(0, 8);
+  if (!roots.length) throw new Error("Select a screen to add handoff notes.");
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  UXD_HYGIENE_SNAPSHOT = { keys: {}, items: [] };
+  var notes = [], skipped = 0;
+  roots.forEach(function (root) {
+    var targets = [{ node: root, kind: "screen" }];
+    uxdDescendants(root, function (n) { return n.visible !== false; }).forEach(function (n) {
+      if (targets.length >= 40 || uxdInsideInstance(n)) return;
+      var kind = uxdHandoffKind(n);
+      if (!kind) return;
+      for (var p = n.parent; p && p !== root; p = p.parent) if (uxdHandoffKind(p) === kind) return;
+      targets.push({ node: n, kind: kind });
+    });
+    targets.forEach(function (t) {
+      var node = t.node;
+      if (!("annotations" in node)) { skipped++; return; }
+      var note = uxdHandoffNote(node, t.kind, root);
+      var keep = (node.annotations || []).filter(function (a) { return String(a.labelMarkdown || a.label || "").indexOf(UXD_HANDOFF_PREFIX) !== 0; });
+      uxdSnapProp(node, "annotations");
+      try { node.annotations = keep.concat([{ labelMarkdown: note.text, properties: uxdHandoffProps(node, note.props) }]); }
+      catch (_) {
+        try { node.annotations = keep.concat([{ labelMarkdown: note.text }]); } catch (__) { skipped++; return; }
+      }
+      notes.push({ id: node.id, kind: t.kind, name: node.name, note: note.text.slice(UXD_HANDOFF_PREFIX.length, UXD_HANDOFF_PREFIX.length + 120) });
+    });
+  });
+  var snapshot = UXD_HYGIENE_SNAPSHOT.items.map(function (item) {
+    var after = uxdCloneValue(item.node[item.prop]);
+    return { id: item.node.id, prop: item.prop, before: item.before, after: after === undefined ? null : after };
+  });
+  UXD_HYGIENE_SNAPSHOT = null;
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  return { ok: true, notes: notes, skipped: skipped, snapshot: snapshot };
+}
+var UXD_BACK_LABEL = /^(back|go back|cancel|close|wapas|peeche|piche)\b/i;
+var UXD_NEXT_LABEL = /\b(continue|next|proceed|submit|confirm|get started|sign ?in|log ?in|sign ?up|verify|done|aage|save)\b/i;
+var UXD_SCREEN_STOP = { screen: 1, page: 1, view: 1, the: 1, a: 1, an: 1, and: 1, of: 1, to: 1, my: 1, your: 1, v1: 1, v2: 1, v3: 1, new: 1, copy: 1 };
+function uxdWords(text) {
+  return String(text || "").toLowerCase().split(/[^a-z0-9]+/).filter(function (w) { return w.length > 1 && !UXD_SCREEN_STOP[w] && !/^\d+$/.test(w); });
+}
+async function localPrototypeWire(payload) {
+  var screens = figma.currentPage.selection.filter(function (n) { return n.type === "FRAME" && n.parent && n.parent.type === "PAGE"; });
+  if (screens.length < 2) throw new Error("Select 2 or more top-level screens to wire together.");
+  screens = screens.slice(0, 12).sort(function (a, b) { return Math.abs(a.y - b.y) > a.height / 2 ? a.y - b.y : a.x - b.x; });
+  var fix = payload && payload.fix === true;
+  var links = [];
+  screens.forEach(function (screen, index) {
+    uxdDescendants(screen, function (n) { return n.visible !== false && (n.type === "FRAME" || n.type === "INSTANCE") && UXD_BUTTON_NAME.test(String(n.name || "")); })
+      .forEach(function (button) {
+        if (links.length >= 60 || (button.reactions && button.reactions.length) || typeof button.setReactionsAsync !== "function") return;
+        for (var p = button.parent; p && p !== screen; p = p.parent) if (p.type === "INSTANCE" || UXD_BUTTON_NAME.test(String(p.name || ""))) return;
+        var label = uxdFirstText(button) || button.name;
+        if (UXD_BACK_LABEL.test(label.trim())) { links.push({ button: button, label: label, screen: screen.name, action: "BACK" }); return; }
+        var words = uxdWords(label), best = null, bestScore = 0;
+        screens.forEach(function (other) {
+          if (other === screen) return;
+          var score = uxdWords(other.name).filter(function (w) { return words.indexOf(w) >= 0; }).length;
+          if (score > bestScore) { best = other; bestScore = score; }
+        });
+        if (!best && UXD_NEXT_LABEL.test(label) && index + 1 < screens.length) best = screens[index + 1];
+        if (best) links.push({ button: button, label: label, screen: screen.name, action: "NAVIGATE", destination: best });
+      });
+  });
+  var snapshot = [];
+  if (fix && links.length) {
+    if (typeof figma.commitUndo === "function") figma.commitUndo();
+    for (var i = 0; i < links.length; i++) {
+      var l = links[i];
+      var action = l.action === "BACK" ? { type: "BACK" } : { type: "NODE", destinationId: l.destination.id, navigation: "NAVIGATE",
+        transition: { type: "DISSOLVE", easing: { type: "EASE_OUT" }, duration: 0.3 }, preserveScrollPosition: false };
+      try {
+        await l.button.setReactionsAsync([{ trigger: { type: "ON_CLICK" }, actions: [action] }]);
+        snapshot.push({ id: l.button.id, prop: "reactions", before: [], after: uxdCloneValue(l.button.reactions) || [] });
+        l.done = true;
+      } catch (_) { l.done = false; }
+    }
+    if (typeof figma.commitUndo === "function") figma.commitUndo();
+  }
+  return { ok: true, screens: screens.map(function (s) { return s.name; }),
+    links: links.map(function (l) { return { screen: l.screen, label: l.label.slice(0, 40), action: l.action, to: l.destination ? l.destination.name : "", done: l.done === true }; }),
+    snapshot: snapshot };
+}
+// uxd-handoff:end
 // uxd-detached:start
 // Detached-instance rescue, no model: frames that were detached from a component (Figma keeps
 // detachedInfo on them) are found and, on "relink", replaced by a fresh instance of that component
@@ -4987,6 +5117,8 @@ async function runLocalTask(message) {
     else if (message.op === "consistency") result = await localConsistency(payload);
     else if (message.op === "restore-missing-texts") result = await localRestoreMissingTexts(payload);
     else if (message.op === "detached-rescue") result = await localDetachedRescue(payload);
+    else if (message.op === "handoff-notes") result = await localHandoffNotes(payload);
+    else if (message.op === "prototype-wire") result = await localPrototypeWire(payload);
     else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
     else if (message.op === "trigger-undo") {
       if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");
@@ -5021,7 +5153,7 @@ sendSelection();
 // opens its panel (network runs there) and the panel runs the task once the file is verified.
 var UXD_QUICK_ACTION_SUGGESTIONS = ["fix hygiene", "add icons to these buttons", "fill with realistic data", "check hygiene",
   "ux audit", "add empty, loading and error states", "make 3 variations", "make this card cleaner", "show design rules", "revert",
-  "check consistency", "find detached components"];
+  "check consistency", "find detached components", "add handoff notes", "wire the prototype"];
 var UXD_PENDING_QUICK_PROMPT = "";
 function uxdQuickActionSuggestions(query) {
   var q = String(query || "").trim().toLowerCase();
