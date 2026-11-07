@@ -489,3 +489,25 @@ test("ring pairing leaves long metric lists and long CTA labels stacked", () => 
   assert.ok(!card.children!.some((n) => n.name === "Body"));
   assert.ok(!card.children!.some((n) => n.name === "Alert"));
 });
+
+test("a source text keeps its accent colour and style when the spec reuses the same copy", () => {
+  const source = { nodes: [{ name: "Loans", type: "FRAME", width: 360, height: 800, fillColors: ["#0E0F12"], children: [
+    { type: "TEXT", name: "Product", text: "Personal Loan", fontSize: 16, fontStyle: "Semi Bold", fillColors: ["#22D3EE"], textStyleId: "S:brand" },
+    { type: "TEXT", name: "Body", text: "Outstanding", fontSize: 12, fontStyle: "Regular", fillColors: ["#FFFFFF"] },
+    { type: "TEXT", name: "Dup A", text: "Pay now", fontSize: 14, fontStyle: "Semi Bold", fillColors: ["#FF0000"] },
+    { type: "TEXT", name: "Dup B", text: "Pay now", fontSize: 14, fontStyle: "Semi Bold", fillColors: ["#00FF00"] },
+  ] }], components: [] };
+  const spec = { summary: "Loan card.", sections: [
+    { name: "A", blocks: [{ type: "heading", title: "Loans" }] },
+    { name: "Loan", surface: "card", title: "Personal Loan", blocks: [{ type: "row", label: "Outstanding", value: "₹1,000" }, { type: "text", text: "Pay now" }] },
+    { name: "C", blocks: [{ type: "text", text: "Footer" }] },
+  ], learningCandidate: null };
+  const out = expandBlockSpec(spec, source);
+  assert.ok(out.plan, out.errors.join("; "));
+  const found: Record<string, N> = {};
+  walk(out.plan!.elements as N[], (n) => { if (n.type === "TEXT") found[String(n.text)] = n; });
+  assert.equal(String(found["Personal Loan"].color).toUpperCase(), "#22D3EE");
+  assert.equal(found["Personal Loan"].textStyleId, "S:brand");
+  assert.notEqual(String(found["Pay now"].color).toUpperCase(), "#FF0000", "ambiguous copy keeps the renderer colour");
+  assert.notEqual(String(found["Pay now"].color).toUpperCase(), "#00FF00");
+});

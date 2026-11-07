@@ -156,7 +156,11 @@ export function resolveTheme(raw: unknown, sourceBackground: string | null, sour
 type SourceText = { size: number; weight: string; color: string | null; textStyleId: string | null };
 type SourceHeader = { componentId: string; name: string; height: number; instanceProperties?: Record<string, string | boolean>; textOverrides?: Record<string, string> };
 /** What the selected source screen already uses: its type scale, text styles and header component. */
-export type SourceTokens = { sizes: number[]; texts: SourceText[]; header: SourceHeader | null };
+export type SourceTokens = { sizes: number[]; texts: SourceText[]; header: SourceHeader | null; byText?: Map<string, SourceText> };
+
+function textKey(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
 
 function isBoldWeight(weight: string): boolean {
   return /semi|bold|black|heavy|extra/i.test(weight);
@@ -165,6 +169,9 @@ function isBoldWeight(weight: string): boolean {
 export function collectSourceTokens(canvas: Record<string, unknown>, componentIds: Set<string>): SourceTokens {
   const texts: SourceText[] = [];
   const seen = new Set<string>();
+  // The same string in the source (a product title in the brand cyan) keeps its own colour and style.
+  const byText = new Map<string, SourceText>();
+  const repeated = new Set<string>();
   const root = asRec(arr(canvas.nodes)[0]);
   const walk = (node: Rec, insideInstance: boolean, depth: number) => {
     if (depth > 12 || texts.length >= 60) return;
@@ -174,7 +181,15 @@ export function collectSourceTokens(canvas: Record<string, unknown>, componentId
       const color = Array.isArray(node.fillColors) ? hex(node.fillColors[0]) : null;
       const textStyleId = typeof node.textStyleId === "string" && node.textStyleId ? node.textStyleId : null;
       const key = [node.fontSize, weight, color, textStyleId].join("|");
-      if (!seen.has(key)) { seen.add(key); texts.push({ size: Math.round(node.fontSize), weight, color, textStyleId }); }
+      const token = { size: Math.round(node.fontSize), weight, color, textStyleId };
+      if (!seen.has(key)) { seen.add(key); texts.push(token); }
+      const k = typeof node.text === "string" ? textKey(node.text) : "";
+      if (k && byText.size < 300) {
+        const prior = byText.get(k);
+        // A string that appears with two different looks is ambiguous: keep neither.
+        if (prior && (prior.color !== color || prior.size !== token.size)) repeated.add(k);
+        else if (!prior) byText.set(k, token);
+      }
     }
     for (const child of arr(node.children)) {
       const rec = asRec(child);
@@ -203,7 +218,8 @@ export function collectSourceTokens(canvas: Record<string, unknown>, componentId
       ...(Object.keys(instanceProperties).length ? { instanceProperties } : {}),
       ...(Object.keys(textOverrides).length ? { textOverrides } : {}) };
   }
-  return { sizes: [...new Set(texts.map((t) => t.size))].sort((a, b) => a - b), texts, header };
+  for (const k of repeated) byText.delete(k);
+  return { sizes: [...new Set(texts.map((t) => t.size))].sort((a, b) => a - b), texts, header, byText };
 }
 
 // ---------------------------------------------------------------------------
@@ -251,9 +267,16 @@ class Builder {
    * Snap a requested size to the source type scale (within 2px) and adopt the matching source
    * text's weight, colour and text style, so variations reuse the screen's typography.
    */
-  private sourceType(name: string, size: number, weight: string, color: string) {
+  private sourceType(name: string, size: number, weight: string, color: string, value = "") {
     const src = this.source;
     if (!src || !src.texts.length) return { size, weight, color, textStyleId: null as string | null };
+    const own = value ? src.byText?.get(textKey(value)) : undefined;
+    const neutralRequest = color === this.theme.text || color === this.theme.muted;
+    if (own && neutralRequest && own.color) {
+      // Same copy as the source: keep its accent colour, and its text style when the size still fits.
+      const fits = Math.abs(own.size - size) <= 2;
+      return { size: fits ? own.size : size, weight: fits ? own.weight : weight, color: own.color, textStyleId: fits ? own.textStyleId : null };
+    }
     const nearest = src.sizes.reduce((best, s) => Math.abs(s - size) < Math.abs(best - size) ? s : best, src.sizes[0]);
     const snapped = Math.abs(nearest - size) <= 2 ? nearest : size;
     const same = src.texts.filter((t) => t.size === snapped);
@@ -271,7 +294,7 @@ class Builder {
 
   text(name: string, value: string, width: number, opts: TextOpts): NativeNode {
     this.count += 1;
-    const type = this.sourceType(name, opts.size ?? 14, opts.weight ?? "Regular", opts.color);
+    const type = this.sourceType(name, opts.size ?? 14, opts.weight ?? "Regular", opts.color, value);
     let size = type.size;
     // One unbreakable token (an amount, a loan ID) never wraps mid-word: shrink it to fit, to 11px.
     const token = !/\s/.test(value.trim());
