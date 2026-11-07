@@ -6,7 +6,7 @@ process.env.FREELLMAPI_BASE_URL = "https://freellmapi.test/v1";
 process.env.FREELLMAPI_API_KEY = "test-key";
 process.env.UXD_LEAD_REVIEW = "on";
 
-import { deterministicLeadNotes, designerPersona, gatewaySeat, inventedTexts, leadApproves, lostTexts, missingFromSpec, seatKnowledge, STUDIO, taskOwner } from "../src/figma-agent/studio";
+import { deterministicLeadNotes, designerPersona, gatewaySeat, inventedTexts, sourceContentTexts, leadApproves, lostTexts, missingFromSpec, seatKnowledge, STUDIO, taskOwner } from "../src/figma-agent/studio";
 import { agencyEnabled } from "../src/figma-agent/agency";
 import { detectTaskRole } from "../src/figma-agent/agent-roles";
 
@@ -154,6 +154,22 @@ test("studio: merged repeated cards count as lost content; invented text is foun
   const source = ["Personal Loan", "Personal Loan", "Personal Loan", "PL1", "PL2", "PL3", "Pay now"];
   assert.equal(missingFromSpec(three, source.slice(0, 6)).length, 0);
   assert.deepEqual(inventedTexts({ sections: [{ blocks: [{ type: "banner", text: "On schedule" }, { type: "button", label: "Pay now" }] }] }, source), ["On schedule"]);
+});
+
+test("studio: logo and chevron texts are decoration, not required content, and flagged when shown", () => {
+  const nodes = [{ type: "FRAME", width: 360, height: 800, children: [
+    { type: "INSTANCE", name: "Loan Card", width: 320, height: 144, children: [
+      { type: "GROUP", name: "slice logo", width: 48, height: 20, children: [{ type: "TEXT", text: "slice", width: 30, height: 12 }] },
+      { type: "TEXT", text: "Outstanding", width: 80, height: 16 }, { type: "TEXT", text: "₹45,000", width: 80, height: 16 },
+      { type: "TEXT", text: ">", width: 8, height: 16 },
+    ] }] }];
+  const read = sourceContentTexts(nodes);
+  assert.deepEqual(read.content, ["Outstanding", "₹45,000"]);
+  assert.deepEqual(read.decorative, ["slice", ">"]);
+  const spec = { sections: [{ blocks: [{ type: "text", text: "slice" }, { type: "list", items: [{ label: "Outstanding", value: "₹45,000" }] }] }] };
+  const notes = deterministicLeadNotes(spec, read.content, read.decorative);
+  assert.ok(notes.some((entry) => /glyph text shown as content: slice/.test(entry.issue)));
+  assert.ok(!notes.some((entry) => /missing|invented/i.test(entry.issue)));
 });
 
 test("studio: each seat gets its role's knowledge", async () => {

@@ -89,6 +89,7 @@ export function designerPersona(role: TaskRole, prompt = ""): string {
   const seat = taskOwner(role, prompt);
   return "YOUR SEAT: " + member(seat).title + " at UX Direct. " + member(seat).does +
     " You alone design this whole screen, top to bottom, with one mindset: repeated cards use the same structure, blocks and emphasis." +
+    " Logo names and chevron glyphs (>, ›) in the layers are decoration, never text blocks." +
     " The UX Lead reviews your finished screen and you iterate on the notes, so do it right the first time: keep every source text and value, no generic filler, no invented content.";
 }
 
@@ -164,16 +165,53 @@ export function inventedTexts(spec: Rec, sourceTexts: string[], prompt = ""): st
   return out;
 }
 
+/** A text with no letters or digits (">", "›", "•", "|"): a glyph, not content. */
+export const isGlyphText = (text: string) => !/[\p{L}\p{N}]/u.test(text);
+
+/**
+ * The source's content texts, counted, from the full layer read: skips glyph-only texts and texts
+ * inside small marks (logo or icon groups ≤ 64 px), which are decoration, not content to keep.
+ * Returns { content, decorative } so the Lead can also flag decoration shown as content.
+ */
+export function sourceContentTexts(nodes: unknown[]): { content: string[]; decorative: string[] } {
+  const content: string[] = [];
+  const decorative: string[] = [];
+  const visit = (items: unknown[], inMark: boolean, depth: number) => {
+    if (depth > 14 || content.length + decorative.length >= 160) return;
+    for (const value of items) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const node = value as Rec;
+      if (node.visible === false || node.opacity === 0) continue;
+      const width = typeof node.width === "number" ? node.width : Infinity;
+      const height = typeof node.height === "number" ? node.height : Infinity;
+      const mark = inMark || (node.type !== "TEXT" && depth > 0 && width <= 64 && height <= 64);
+      if (node.type === "TEXT" && typeof node.text === "string" && node.text.trim()) {
+        const text = node.text.trim().slice(0, 240);
+        (mark || isGlyphText(text) ? decorative : content).push(text);
+      }
+      if (Array.isArray(node.children)) visit(node.children, mark, depth + 1);
+    }
+  };
+  visit(nodes, false, 0);
+  return { content, decorative };
+}
+
 /** Amounts, counts, dates and percentages: never allowed to disappear in an iteration. */
 export const isValueText = (text: string) => /[\d₹$€£%]/.test(text);
 
 /** What the Lead can see for sure without a model: missing source content, competing primaries, duplicated content. */
-export function deterministicLeadNotes(spec: Rec, sourceTexts: string[] = []): LeadNote[] {
+export function deterministicLeadNotes(spec: Rec, sourceTexts: string[] = [], decorative: string[] = []): LeadNote[] {
   const notes: LeadNote[] = [];
   const missing = sourceTexts.length ? [...new Set(missingFromSpec(spec, sourceTexts))] : [];
   if (missing.length) notes.push({ severity: "high", issue: "Source content missing from the screen (" + missing.length + "): " + missing.slice(0, 8).join(", "),
     fix: "Put every one of these exact texts back, in the block that matches its meaning (amounts as values, never dropped)." });
-  const invented = sourceTexts.length ? inventedTexts(spec, sourceTexts) : [];
+  const shownDecoration = [...new Set(decorative.map((text) => text.trim()))].filter((text) => {
+    const key = norm(text);
+    return specTexts(spec).some((item) => item === key) && !sourceTexts.some((source) => norm(source) === key);
+  });
+  if (shownDecoration.length) notes.push({ severity: "medium", issue: "Logo or icon glyph text shown as content: " + shownDecoration.slice(0, 4).join(", "),
+    fix: "Remove these texts from the blocks; logos and chevrons are not content (rows get their chevron from the block)." });
+  const invented = sourceTexts.length ? inventedTexts(spec, [...sourceTexts, ...decorative]) : [];
   if (invented.length) notes.push({ severity: "medium", issue: "Text not in the source (invented): " + invented.slice(0, 6).join(", "),
     fix: "Remove invented headings, banners, buttons and captions; use only the source's own texts." });
   const sections = Array.isArray(spec.sections) ? spec.sections as Rec[] : [];
@@ -205,9 +243,9 @@ const LEAD_SYSTEM = [
 export interface LeadReview { notes: LeadNote[]; score: number | null; model?: string; ms: number }
 
 /** The Lead's top-to-bottom review. A high deterministic note caps the score below the bar. */
-export async function leadReview(spec: Rec, context: { prompt: string; role: TaskRole; sourceTexts: string[]; origin: string; brain: string; knowledge?: string; round?: number; signal?: AbortSignal; timeoutMs: number }): Promise<LeadReview> {
+export async function leadReview(spec: Rec, context: { prompt: string; role: TaskRole; sourceTexts: string[]; decorativeTexts?: string[]; origin: string; brain: string; knowledge?: string; round?: number; signal?: AbortSignal; timeoutMs: number }): Promise<LeadReview> {
   const started = Date.now();
-  const notes = deterministicLeadNotes(spec, context.sourceTexts);
+  const notes = deterministicLeadNotes(spec, context.sourceTexts, context.decorativeTexts ?? []);
   const result = await callFigmaJsonModel({
     system: LEAD_SYSTEM +
       (context.knowledge ? "\nUX LEAD KNOWLEDGE (review checklist and critique format):\n" + context.knowledge.slice(0, 3000) : "") +
