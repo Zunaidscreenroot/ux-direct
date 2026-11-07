@@ -39,6 +39,7 @@ test("labels map to icons deterministically and SVGs are sanitized", () => {
   assert.equal(pickIconForLabel("Download statement"), "download");
   assert.equal(pickIconForLabel("Apply for loan"), "hand-coins");
   assert.equal(pickIconForLabel("Total outstanding"), null);
+  assert.equal(pickIconForLabel("Due"), "calendar");
   assert.equal(iconNameFromQuery("Credit Card icon"), "credit-card");
   assert.equal(sanitizeIconSvg(LUCIDE), LUCIDE);
   assert.equal(sanitizeIconSvg('<svg><script>alert(1)</script></svg>'), null);
@@ -183,4 +184,13 @@ test("data rows (label + amount/date value) get no auto icon; action rows still 
   figma.currentPage.selection = [list];
   const found = await run("find-icon-targets", {});
   assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((t: any) => t.id))), ["a1"]);
+});
+
+test("a selected data row is labelled by its label text, not its value, whatever the layer order", async () => {
+  const txt = (id: string, characters: string) => ({ id, type: "TEXT", characters, fontSize: 14, fills: [], x: 0, y: 0, width: 80, height: 18 });
+  const row: any = { id: "rd", type: "FRAME", name: "Row · Due", width: 320, height: 40, fills: [], children: [txt("v", "₹1,00,000"), txt("l", "Due")] };
+  const { figma, run } = makeRuntime({ rd: row });
+  figma.currentPage.selection = [row];
+  const found = await run("find-icon-targets", {});
+  assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((t: any) => [t.id, t.label]))), [["rd", "Due"]]);
 });

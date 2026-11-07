@@ -4521,9 +4521,11 @@ function uxdIconTargetInfo(node) {
   var kids = (node.children || []).filter(function (c) { return c.visible !== false; });
   var texts = kids.filter(function (c) { return c.type === "TEXT"; });
   if (!texts.length || texts.length > 2 || kids.some(uxdIsIconLike)) return null;
-  var label = String(texts[0].characters || "").trim();
+  // A row's label is its first non-value text ("Due" in "Due  ₹1,00,000"), whatever the layer order.
+  var labelText = texts.find(function (t) { return !uxdIsDataValueText(t); }) || texts[0];
+  var label = String(labelText.characters || "").trim();
   if (!label || label.length > 40) return null;
-  var size = typeof texts[0].fontSize === "number" ? texts[0].fontSize : 14;
+  var size = typeof labelText.fontSize === "number" ? labelText.fontSize : 14;
   // Data rows ("Balance  ₹12,400", "Due date  12 Nov") show a value, not an action: flagged, and only
   // used when the row itself is selected.
   return { id: node.id, name: node.name, label: label, fontSize: size, button: uxdIsButtonLike(node, texts), data: texts.some(uxdIsDataValueText) };
