@@ -4047,7 +4047,7 @@
         return { kind: "teach", rule: rule || text };
       }
       if (isQuestion) return { kind: "question" };
-      if (!ctx.lastDesign) return null;
+      if (!ctx.lastDesign) return explainTurn(text, actionVerb);
       // Praise or "keep it" about the last result: acknowledge, change nothing.
       if (/^(for me |to me |i think )?(it'?s |its |this is |ye |yeh )?(not cluttered|fine|good|ok(ay)?|great|perfect|nice|looks good|keep (it|this)|acha hai|achha hai|theek hai|thik hai|sahi hai|badhiya)\b/i.test(lower) &&
           !/\b(not (good|fine|ok|great|perfect|nice)|but|lekin|par)\b/i.test(lower)) return { kind: "keep" };
@@ -4058,31 +4058,68 @@
       const instruction = /^(use|apply|follow|make it|more|less|zyada|kam)\b/i.test(text) && text.split(/\s+/).length <= 12 &&
         !/\b(screens?|flows?|journeys?|new)\b/i.test(text);
       if (negative || instruction) return { kind: "redo", critique: text };
+      return explainTurn(text, actionVerb);
+    }
+    function explainTurn(text, actionVerb) {
+      // The designer explaining how things should be ("simplified means fewer colours and one CTA",
+      // "status chip hamesha title ke saath hona chahiye") is a lesson, saved without "remember".
+      // "simplified means …" defines a word; "simplify the cards" is a command.
+      const imperativeStart = new RegExp("^(please\\s+)?" + actionVerb + "\\b", "i").test(text) && !/^\S+\s+(means|is|are|ka|ki|ke|matlab)\b/i.test(text);
+      const explains = /\b(should|shouldn'?t|must|means|matlab|meaning|chahiye|hona chahiye|nahi hona|prefer|we use|our (app|users|brand|style|design)|is wrong because|galat hai|problem is|issue is|because|kyunki|kyuki|the reason)\b/i.test(text);
+      if (explains && !imperativeStart && text.split(/\s+/).length >= 4) return { kind: "explain", lesson: text };
       return null;
     }
     function learningAnswer() {
-      return "Yes. Three ways I learn, all saved in this Figma file so they apply to every later task:\n" +
-        "- **Tell me the rule**: start with **remember** (for example *remember: one primary button per screen*). I save it to this file's design rules and send it with every design task.\n" +
-        "- **Correct my output by hand**, then say **learn from my edits**. I compare your edits with what I made and keep the lessons.\n" +
-        "- **Tell me what's wrong** right after I make a screen (for example *this is not simplified*). I redo that screen with your feedback.";
+      return "Yes, and it's automatic. Whatever you tell me is saved two ways: to this file's design rules (sent with every task on this file) and to the shared knowledge base (every later task can retrieve it).\n" +
+        "- **Feedback on a screen I made** (for example *this is not simplified*): I save the lesson, then redo the screen with it.\n" +
+        "- **Explanations** (for example *simplified means fewer colours and one CTA*): saved as guidance.\n" +
+        "- **Rules** (*remember: …*, *from now on …*): saved as rules.\n" +
+        "- **Your manual corrections**: fix my output by hand, then say **learn from my edits**.";
     }
-    async function runTeachTurn(turn, stage) {
-      const rule = String(turn.rule || "").replace(/\s+/g, " ").trim().slice(0, 400);
-      if (rule.length < 4) return "Tell me the rule to remember, for example **remember: one primary button per screen**.";
-      stage("creating", "Saving to this file's design rules…");
+    // Automatic learning, two places: this file's design rules (sent with every task on the file, works
+    // offline) and the shared brain (a generic lesson every later task and file can retrieve).
+    async function appendDesignRuleLine(line) {
       const before = await localTask("get-design-rules", {});
       const previousText = String(before && before.text || "");
-      if (previousText.toLowerCase().indexOf(rule.toLowerCase()) >= 0) { stage("done", "Already remembered"); return "I already have that in this file's design rules: *" + rule + "*"; }
-      const nextText = (previousText ? previousText.replace(/\s+$/, "") + "\n" : "") + "- " + rule;
-      await localTask("set-design-rules", { text: nextText, rules: parseDesignRules(nextText) });
-      cachedDesignRules = nextText;
-      recordChange("Remembered: " + rule.slice(0, 60), async function () {
+      if (previousText.toLowerCase().indexOf(line.toLowerCase()) >= 0) return { added: false };
+      const nextText = (previousText ? previousText.replace(/\s+$/, "") + "\n" : "") + "- " + line;
+      await localTask("set-design-rules", { text: nextText.slice(-4000), rules: parseDesignRules(nextText.slice(-4000)) });
+      cachedDesignRules = nextText.slice(-4000);
+      recordChange("Remembered: " + line.slice(0, 60), async function () {
         await localTask("set-design-rules", { text: previousText, rules: before && before.rules || null });
         cachedDesignRules = previousText;
         return "rule removed";
       });
+      return { added: true };
+    }
+    async function saveBrainLesson(kind, text, request) {
+      try {
+        const response = await fetch(API + "/api/assistant/figma-agent/learn", {
+          method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, cache: "no-store",
+          body: JSON.stringify(Object.assign({ kind: kind, text: String(text).slice(0, 1200) }, request ? { request: String(request).slice(0, 5000) } : {}))
+        });
+        const result = await response.json().catch(function () { return {}; });
+        return response.ok && result.ok === true;
+      } catch (_) { return false; }
+    }
+    async function learnFromDesigner(kind, text, request) {
+      const clean = String(text || "").replace(/\s+/g, " ").trim().slice(0, 300);
+      const objective = String(request || "").split(/\nFEEDBACK ON THE PREVIOUS ATTEMPT/)[0].replace(/\s+/g, " ").trim().slice(0, 120);
+      const line = kind === "critique" ? "Feedback on \"" + objective + "\": " + clean + " (make the change obvious, never a near copy)" : clean;
+      const local = await appendDesignRuleLine(line).catch(function () { return { added: false, failed: true }; });
+      const brain = await saveBrainLesson(kind, clean, objective);
+      return { local: local, brain: brain };
+    }
+    async function runTeachTurn(turn, stage) {
+      const rule = String(turn.rule || "").replace(/\s+/g, " ").trim().slice(0, 400);
+      if (rule.length < 4) return "Tell me the rule to remember, for example **remember: one primary button per screen**.";
+      stage("creating", "Saving to this file's design rules and the knowledge base…");
+      const saved = await learnFromDesigner(turn.kind === "explain" ? "explanation" : "rule", rule, "");
       stage("done", "Remembered");
-      return "Saved to this file's design rules: *" + rule + "*\nEvery design task on this file now follows it. Say **show design rules** to see them all.";
+      if (saved.local && saved.local.added === false && !saved.local.failed) return "I already have that in this file's design rules: *" + rule + "*";
+      return "Saved: *" + rule + "*\n- This file's design rules: " + (saved.local && saved.local.added ? "yes" : "not saved") +
+        "\n- Knowledge base: " + (saved.brain ? "yes, so every later task can use it" : "not reachable right now, the file rule still applies") +
+        "\nSay **show design rules** to see them all.";
     }
     // The last screen UX Direct made in this chat, so feedback can redo it.
     let lastDesignRun = null;
@@ -4098,10 +4135,13 @@
         await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: run.sourceIds }, 30000).catch(function () { return null; });
         await refreshSelection();
       }
+      // Learn from the critique first, so the redo below already gets it in its design rules.
+      const learned = await learnFromDesigner("critique", turn.critique, run.prompt).catch(function () { return null; });
       const brief = run.prompt + "\nFEEDBACK ON THE PREVIOUS ATTEMPT (rejected by the designer): \"" + turn.critique +
         "\". Act on it: the change must be clearly visible against the source, not a near copy.";
       const answer = await createFigmaDesign(brief, report);
-      return "Redid it with your feedback (*" + turn.critique.slice(0, 120) + "*).\n" + answer;
+      return "Redid it with your feedback (*" + turn.critique.slice(0, 120) + "*)" +
+        (learned && (learned.brain || learned.local && learned.local.added) ? ", and saved the lesson" + (learned.brain ? " to the knowledge base" : " to this file's design rules") + " so I don't repeat it" : "") + ".\n" + answer;
     }
     function isAnsweringQuickTask(task) {
       if (!task) return false;
@@ -4155,6 +4195,7 @@
           const answer = turn.kind === "learning-question" ? learningAnswer()
             : turn.kind === "keep" ? "Got it, keeping it as it is. If there's a reason behind it you want me to apply everywhere, say **remember: …** and I'll save it."
             : turn.kind === "teach" ? await runTeachTurn(turn, stageFn)
+            : turn.kind === "explain" ? await runTeachTurn({ kind: "explain", rule: turn.lesson }, stageFn)
             : await runRedoTurn(turn, report);
           if (turn.kind === "redo" && lastDesignRun) { lastDesignRun.seqStart = seqStart; lastDesignRun.seqEnd = changeSeq; }
           if (turn.kind === "learning-question" || turn.kind === "keep") setProcessState("done", "Answered");

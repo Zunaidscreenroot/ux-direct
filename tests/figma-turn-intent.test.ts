@@ -64,3 +64,11 @@ test("objective playbook gives simplify concrete moves and honours a rejected at
   assert.equal(objectivePlaybook("add a loading state"), "");
   assert.match(objectivePlaybook("make it simple\nFEEDBACK ON THE PREVIOUS ATTEMPT (rejected by the designer): \"not simplified\""), /rejected the previous attempt/);
 });
+
+test("explanations are lessons; a critique with a reason still redoes the screen", () => {
+  const { classify } = load();
+  assert.deepEqual(classify("simplified means fewer colours and one primary CTA", {}), { kind: "explain", lesson: "simplified means fewer colours and one primary CTA" });
+  assert.equal(classify("status chip title ke saath hona chahiye", {}).kind, "explain");
+  assert.equal(classify("this is not simplified because the cards still use three colours", { lastDesign: true }).kind, "redo");
+  assert.equal(classify("make the cards flatter because they look heavy", {}), null, "an instruction with a reason is a normal request");
+});
