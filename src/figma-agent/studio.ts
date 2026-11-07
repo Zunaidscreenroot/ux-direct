@@ -240,8 +240,17 @@ export function deterministicLeadNotes(spec: Rec, sourceTexts: string[] = [], de
 const LEAD_SYSTEM = [
   "You are the UX Lead at UX Direct, a senior design lead reviewing your designer's finished screen, top to bottom, before it goes to the UX Director. Review UX and UI alike. Think like a senior lead at Apple: one clear goal per screen, ruthless hierarchy, consistency, content first. Be specific; never praise.",
   "Review the designed screen (a block spec) against the source text list and the user's request. Check: 1) the screen does what the user asked; 2) every source text and value is still shown; 3) hierarchy: one focal point per card/section, secondary info quieter; 4) consistency: repeated cards use the same structure, blocks and emphasis; 5) grouping: label/value pairs together, lists instead of many rows; 6) action priority: one primary action type; 7) right block per content (amount → stat/row value, % → ring/bar with the real value, status → badge); 8) visual: tones, emphasis and components used consistently; 9) no generic AI filler (invented headings, taglines, decorative text, features not in the source); 10) accessibility: labels present, status not by colour only.",
-  "Score the screen 0-100 against a top design agency's bar (70 = ready for the Director). Only raise issues the designer can fix with the block contract. Return {\"score\": number, \"notes\": [{\"severity\": \"high\"|\"medium\"|\"low\", \"issue\": string, \"fix\": string}]} with at most 6 notes, most important first.",
+  "Score with the rubric, not by feel, so every screen and domain is judged the same way: for each of the 10 checks answer true (passes) or false (a fix is needed that the designer can make with the block contract and the source content). Judge only what the block contract can change; never fail a check for polish the renderer controls (exact pixels, fonts, shadows) or for content the source does not have.",
+  "Return {\"checks\": {\"1\": boolean, ..., \"10\": boolean}, \"notes\": [{\"check\": number, \"severity\": \"high\"|\"medium\"|\"low\", \"issue\": string, \"fix\": string}]} with one note per failed check (at most 6, most important first), each naming the exact section/block and the fix.",
 ].join("\n");
+
+/** The Lead's score from the 10-check rubric: the share of checks passed, 0-100 (null without checks). */
+export function rubricScore(checks: unknown): number | null {
+  if (!checks || typeof checks !== "object") return null;
+  const values = (Array.isArray(checks) ? checks : Object.values(checks as Rec)).filter((value) => typeof value === "boolean") as boolean[];
+  if (values.length < 5) return null;
+  return Math.round((values.filter(Boolean).length / values.length) * 100);
+}
 
 export interface LeadReview { notes: LeadNote[]; score: number | null; model?: string; ms: number }
 
@@ -264,11 +273,13 @@ export async function leadReview(spec: Rec, context: { prompt: string; role: Tas
     signal: context.signal,
     maxAttempts: 2,
     anyObject: true,
-    accept: (data) => (Array.isArray(data.notes) || typeof data.score === "number" ? null : "missing notes"),
+    accept: (data) => (Array.isArray(data.notes) || typeof data.score === "number" || (data.checks && typeof data.checks === "object") ? null : "missing notes"),
   }).catch(() => null);
   let score: number | null = null;
   if (result && result.ok) {
-    if (typeof result.data.score === "number" && Number.isFinite(result.data.score)) score = Math.max(0, Math.min(100, Math.round(result.data.score <= 1 ? result.data.score * 100 : result.data.score)));
+    score = rubricScore(result.data.checks);
+    // Older-style answers with only a score still count.
+    if (score === null && typeof result.data.score === "number" && Number.isFinite(result.data.score)) score = Math.max(0, Math.min(100, Math.round(result.data.score <= 1 ? result.data.score * 100 : result.data.score)));
     for (const entry of (Array.isArray(result.data.notes) ? result.data.notes as unknown[] : []).slice(0, 6)) {
       if (!entry || typeof entry !== "object") continue;
       const record = entry as Rec;
