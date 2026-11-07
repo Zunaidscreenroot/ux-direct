@@ -42,6 +42,8 @@ export async function POST(request: Request) {
     outputRootId: z.string().max(100).optional(),
     /** States pack: the texts an empty/loading state drops on purpose are not "missing". */
     state: z.enum(SCREEN_STATES).optional(),
+    /** Accepted so the plugin can send the same body everywhere; lint thresholds are the plugin's. */
+    designRules: z.string().max(4000).optional(),
   }).strict().safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Lint input is invalid.", details: parsed.error.issues }, { status: 400, headers });
   if (JSON.stringify(parsed.data.outputCanvas ?? null).length > 400_000 || JSON.stringify(parsed.data.sourceCanvas ?? null).length > 400_000) {

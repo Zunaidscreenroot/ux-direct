@@ -6,6 +6,7 @@ import { normalizeUxAudit, formatUxAudit, compactAuditCanvas } from "@/src/figma
 import { auditImageSchema } from "@/src/figma-agent/audit-input";
 import { isAllowedPluginOrigin, pluginCorsHeaders, pluginOptions } from "@/src/figma-agent/route-cors";
 import { recordQuickTask } from "@/src/memory/task-run-log";
+import { designRulesBlock } from "@/src/figma-agent/design-rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,6 +39,8 @@ async function handleAuditTask(request: Request): Promise<Response> {
     canvas: z.unknown(),
     screens: z.array(z.object({ id: z.string().max(100), name: z.string().max(200), image: auditImageSchema.nullable().optional() }).strict()).max(6).optional(),
     styleCounts: z.object({ paint: z.number().int().min(0), text: z.number().int().min(0), variables: z.number().int().min(0) }).partial().optional(),
+    /** The file's own design rules: the UX audit judges spacing, type and colour against them. */
+    designRules: z.string().max(4000).optional(),
   }).strict().safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Review input is invalid.", details: parsed.error.issues }, { status: 400, headers });
   if (JSON.stringify(parsed.data.canvas ?? null).length > 900_000) {
@@ -75,6 +78,7 @@ async function handleAuditTask(request: Request): Promise<Response> {
       "Every finding must cite something visible in the screenshots or present in the layer tree (quote the text or name the element). Do not invent content. If screenshots are missing, say the audit is structural.",
       "Return JSON only: {summary:string, score:number 0-100, strengths:string[] (max 3), findings:[{severity:'high'|'medium'|'low', heuristic:string, screen:string, element:string, nodeId?:string, issue:string, fix:string}] (3-10 items, most severe first)}.",
       "nodeId must be an id from layerTree when you can match the element, otherwise omit it.",
+      designRulesBlock(parsed.data.designRules) ? designRulesBlock(parsed.data.designRules).trim() + "\nReport a deviation from these file rules as a finding (heuristic: \"File design rules\")." : "",
     ].filter(Boolean).join("\n"),
     user: userContent,
     accept: (data) => normalizeUxAudit(data) ? null : "response did not match the UX audit schema",

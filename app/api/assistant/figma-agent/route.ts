@@ -16,6 +16,7 @@ import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-prov
 import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
+import { designRulesBlock } from "@/src/figma-agent/design-rules";
 import { CREATE_DESIGN_SCOPE, CREATE_OPERATING_CONTRACT, createFrameSize, createModeCanvas, createScopeInstructions } from "@/src/figma-agent/create-mode";
 import { SCREEN_STATES, STATE_BRIEFS, stateDropsContent, stateFallbackSpec, stateGatePrompt } from "@/src/figma-agent/screen-states";
 import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, promptRequestsWireframe, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
@@ -532,6 +533,8 @@ export async function POST(request: Request) {
     mode: z.enum(["create"]).optional(),
     /** Target frame size for create mode; defaults by platform (360×800 mobile, 1440×1024 web). */
     frame: z.object({ width: z.number().int().min(200).max(2400), height: z.number().int().min(200).max(4000) }).strict().optional(),
+    /** The file's own design rules (spacing/radius/type scales, colours, tone), stored in the Figma file. */
+    designRules: z.string().max(4000).optional(),
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
   if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
@@ -679,8 +682,9 @@ export async function POST(request: Request) {
   const exampleInstructions = verifiedExample
     ? "\nVERIFIED TEAM EXAMPLE — the block structure of an earlier output that passed UX Direct's quality gate. Texts are replaced by <source text>. Follow its way of choosing sections and blocks for similar content; never copy it, and use only this screen's real content: " + verifiedExample
     : "";
+  const designRulesInstructions = designRulesBlock(parsedInput.data.designRules);
   const stateInstructions = parsedInput.data.state ? "\n" + STATE_BRIEFS[parsedInput.data.state] : "";
-  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + stateInstructions + "\n" + agentBrief.instructions + exampleInstructions, brain);
+  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + stateInstructions + designRulesInstructions + "\n" + agentBrief.instructions + exampleInstructions, brain);
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its configured free-model chain.
   // Both are bounded by compact retry and the shared generation deadline.
@@ -702,6 +706,7 @@ export async function POST(request: Request) {
     createMode ? "Create a NEW native Figma screen from the user prompt; there is no source screen." : "Create an improved native Figma variation of the selected source. The user prompt is the design change, not the procedure.",
     scopeInstructions,
     roleInstructions(taskRole, agentBrief.domain),
+    designRulesInstructions.trim(),
     "Preserve the screen/component scope, all meaningful source text and financial values, status, date, labels, rows, actions and relationships. Do not redesign it as a generic dashboard or generic stack of cards.",
     "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Preserve every listed text string exactly, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
     "Use the attached screenshot and source layers when available. Use semantic nested FRAMEs, Auto Layout for suitable cards and rows, clear hierarchy, strong contrast, consistent spacing and editable native shapes/text. Do not invent contractual financial details.",
@@ -716,6 +721,7 @@ export async function POST(request: Request) {
     createMode ? "Create a NEW native Figma screen from the user prompt as a BLOCK SPEC; there is no source screen, so ignore source-text rules below." : "Create an improved native Figma variation of the selected source as a BLOCK SPEC. The user prompt is the design change, not the procedure.",
     scopeInstructions,
     roleInstructions(taskRole, agentBrief.domain),
+    designRulesInstructions.trim(),
     "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Copy every listed text string exactly into block fields, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
     "Do not redesign it as a generic dashboard. Do not invent contractual financial details.",
     BLOCK_SPEC_CONTRACT,
