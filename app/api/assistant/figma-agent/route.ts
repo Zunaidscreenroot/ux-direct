@@ -922,15 +922,16 @@ export async function POST(request: Request) {
      * restore that dumps texts outside their cards), and must cover the source at least as well.
      */
     let refusal = "";
+    let refusalTexts: string[] = [];
     const directorKeeps = (spec: Record<string, unknown>, model?: string): boolean => {
       // Only content counts as lost: dropping a stray logo or chevron text is a fix, not a loss.
       const contentKeys = new Set(fullSource.map((text) => text.toLowerCase().replace(/\s+/g, " ").trim()));
       const lost = lostTexts(current.spec as Record<string, unknown>, spec).filter((text) => !fullSource.length || contentKeys.has(text.toLowerCase().replace(/\s+/g, " ").trim()) || isValueText(text));
-      if (lost.length) { refusal = "lost"; log("iteration dropped " + lost.length + " texts (" + lost.slice(0, 4).join(", ") + "); previous version kept"); return false; }
+      if (lost.length) { refusal = "lost"; refusalTexts = lost.slice(0, 8); log("iteration dropped " + lost.length + " texts (" + lost.slice(0, 4).join(", ") + "); previous version kept"); return false; }
       const known = [...(fullSource.length ? fullSource : sourceTexts), ...sourceRead.decorative];
       const inventedBefore = inventedTexts(current.spec as Record<string, unknown>, known, parsedInput.data.prompt).length;
       const invented = inventedTexts(spec, known, parsedInput.data.prompt);
-      if (invented.length > inventedBefore) { refusal = "new text"; log("iteration invented text (" + invented.slice(0, 4).join(", ") + "); previous version kept"); return false; }
+      if (invented.length > inventedBefore) { refusal = "new text"; refusalTexts = invented.slice(0, 8); log("iteration invented text (" + invented.slice(0, 4).join(", ") + "); previous version kept"); return false; }
       const candidate = renderCandidate(spec);
       const before = missingNow(current.spec);
       const after = missingNow(spec);
@@ -963,11 +964,24 @@ export async function POST(request: Request) {
       if (round > 1 && lastScore !== null && review.score !== null && review.score <= lastScore) { ledger.push("flat"); break; }
       if (review.score !== null) lastScore = review.score;
       if (timeLeft() < 35000) { ledger.push("time"); break; }
-      const revision = await reviseFromNotes(current.spec as Record<string, unknown>, review.notes, { ...shared, knowledge: designerKnowledge,
-        designRules: designRulesInstructions.trim(), timeoutMs: Math.min(70000, timeLeft() - 25000) });
-      if (!revision.spec) { ledger.push("×"); log("iteration failed: " + (revision.error || "no answer")); break; }
-      if (!directorKeeps(revision.spec, revision.model)) { ledger.push("×" + refusal); break; }
-      ledger.push("→");
+      // The designer gets one more try when the Director refuses for lost or invented text, with
+      // exactly what went wrong; a second refusal ends the loop.
+      let notes = review.notes;
+      let keptIteration = false;
+      for (let attempt = 0; attempt < 2 && !keptIteration; attempt++) {
+        if (attempt > 0 && (timeLeft() < 35000 || (refusal !== "lost" && refusal !== "new text"))) break;
+        const revision = await reviseFromNotes(current.spec as Record<string, unknown>, notes, { ...shared, knowledge: designerKnowledge,
+          designRules: designRulesInstructions.trim(), timeoutMs: Math.min(70000, timeLeft() - 25000) });
+        if (!revision.spec) { ledger.push("×"); log("iteration failed: " + (revision.error || "no answer")); break; }
+        keptIteration = directorKeeps(revision.spec, revision.model);
+        if (keptIteration) { ledger.push("→"); break; }
+        ledger.push("×" + refusal);
+        notes = [{ severity: "high", issue: refusal === "lost"
+          ? "Your last iteration dropped source content: " + refusalTexts.join(", ")
+          : "Your last iteration added text that is not in the source: " + refusalTexts.join(", "),
+        fix: refusal === "lost" ? "Keep every one of these texts, in its own card." : "Remove these texts; use only the source's own words." }, ...review.notes];
+      }
+      if (!keptIteration) break;
     }
     // Director's final call: the best-scored reviewed version (the earlier one on a tie).
     const best = reviewed.reduce<typeof reviewed[number] | null>((top, entry) => (!top || entry.score > top.score ? entry : top), null);
