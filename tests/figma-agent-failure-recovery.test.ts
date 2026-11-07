@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 process.env.ACTIVE_CHAT_PROVIDER = "freellmapi";
 process.env.FREELLMAPI_BASE_URL = "https://freellmapi.test/v1";
 process.env.FREELLMAPI_API_KEY = "test-key";
+// These cases script the monolithic planner; the agency route has its own test (agency-route).
+process.env.UXD_AGENCY = "off";
 
 const PROVIDER = "https://freellmapi.test/v1/chat/completions";
 type Reply = () => Response | Promise<Response>;
