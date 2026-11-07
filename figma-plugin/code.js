@@ -4032,6 +4032,7 @@ function uxdSnapProp(node, prop) {
 }
 async function uxdSetPropValue(node, prop, value) {
   if (prop === "reactions" && typeof node.setReactionsAsync === "function") return node.setReactionsAsync(value || []);
+  if (prop === "annotations") { node.annotations = uxdCleanAnnotations(value); return; }
   if (prop === "textStyleId" && typeof node.setTextStyleIdAsync === "function") return node.setTextStyleIdAsync(value || "");
   if (prop === "fillStyleId" && typeof node.setFillStyleIdAsync === "function") return node.setFillStyleIdAsync(value || "");
   if (prop === "strokeStyleId" && typeof node.setStrokeStyleIdAsync === "function") return node.setStrokeStyleIdAsync(value || "");
@@ -4811,6 +4812,17 @@ function uxdFirstText(node) {
   var t = uxdDescendants(node, function (n) { return n.type === "TEXT" && n.visible !== false && String(n.characters || "").trim(); })[0];
   return t ? String(t.characters).trim() : "";
 }
+// Figma reads annotations back with both label and labelMarkdown, but refuses both on write.
+function uxdCleanAnnotations(list) {
+  return (Array.isArray(list) ? list : []).map(function (a) {
+    var out = {};
+    if (a && a.labelMarkdown) out.labelMarkdown = String(a.labelMarkdown);
+    else if (a && a.label) out.label = String(a.label);
+    if (a && Array.isArray(a.properties) && a.properties.length) out.properties = a.properties.map(function (p) { return { type: p.type }; });
+    if (a && a.categoryId) out.categoryId = a.categoryId;
+    return out;
+  }).filter(function (a) { return a.labelMarkdown || a.label || a.properties; });
+}
 function uxdHandoffKind(node) {
   if (node.type !== "FRAME" && node.type !== "INSTANCE" && node.type !== "COMPONENT") return "";
   var name = String(node.name || "");
@@ -4850,7 +4862,7 @@ async function localHandoffNotes() {
   roots.forEach(function (root) {
     var targets = [{ node: root, kind: "screen" }];
     uxdDescendants(root, function (n) { return n.visible !== false; }).forEach(function (n) {
-      if (targets.length >= 40 || uxdInsideInstance(n)) return;
+      if (targets.length >= 40) return;
       var kind = uxdHandoffKind(n);
       if (!kind) return;
       for (var p = n.parent; p && p !== root; p = p.parent) if (uxdHandoffKind(p) === kind) return;
@@ -4860,8 +4872,12 @@ async function localHandoffNotes() {
       var node = t.node;
       if (!("annotations" in node)) { skipped++; return; }
       var note = uxdHandoffNote(node, t.kind, root);
-      var keep = (node.annotations || []).filter(function (a) { return String(a.labelMarkdown || a.label || "").indexOf(UXD_HANDOFF_PREFIX) !== 0; });
-      uxdSnapProp(node, "annotations");
+      var keep = uxdCleanAnnotations(node.annotations).filter(function (a) { return String(a.labelMarkdown || a.label || "").indexOf(UXD_HANDOFF_PREFIX) !== 0; });
+      // Revert goes back to the designer's own notes only, even after several runs.
+      if (UXD_HYGIENE_SNAPSHOT && !UXD_HYGIENE_SNAPSHOT.keys[node.id + "|annotations"]) {
+        UXD_HYGIENE_SNAPSHOT.keys[node.id + "|annotations"] = true;
+        UXD_HYGIENE_SNAPSHOT.items.push({ node: node, prop: "annotations", before: keep });
+      }
       try { node.annotations = keep.concat([{ labelMarkdown: note.text, properties: uxdHandoffProps(node, note.props) }]); }
       catch (_) {
         try { node.annotations = keep.concat([{ labelMarkdown: note.text }]); } catch (__) { skipped++; return; }

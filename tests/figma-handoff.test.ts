@@ -76,9 +76,18 @@ test("handoff notes annotate screen, buttons and inputs, keep the designer's not
   await run("handoff-notes", {});
   assert.equal(pay.annotations.length, 2, "re-running replaces only UX Direct notes");
 
+  // Figma reads notes back with both label and labelMarkdown and refuses both on write.
+  const strict = (node: any) => { let value = node.annotations; Object.defineProperty(node, "annotations", { get: () => value,
+    set: (v: any[]) => { if (v.some((a) => a.label && a.labelMarkdown)) throw new Error("both label and labelMarkdown"); value = v.map((a) => ({ ...a, label: a.labelMarkdown || a.label })); } }); };
+  strict(pay); strict(input);
+  pay.annotations = pay.annotations.map((a: any) => ({ labelMarkdown: a.labelMarkdown, properties: a.properties }));
   const again = await run("handoff-notes", {});
-  await run("restore-props", { items: again.snapshot });
   assert.equal(pay.annotations.length, 2);
+  const reverted = await run("restore-props", { items: again.snapshot });
+  assert.equal(reverted.missing, 0);
+  assert.equal(pay.annotations.length, 1, "Revert strips every UX Direct note, even after reruns");
+  assert.equal(pay.annotations[0].labelMarkdown, "Designer: use brand blue");
+  assert.equal(input.annotations.length, 0);
 });
 
 test("prototype wire links by screen name, Back and Continue, skips wired buttons, and reverts", async () => {
