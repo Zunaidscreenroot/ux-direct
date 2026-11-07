@@ -2696,8 +2696,8 @@
         "a different content density and grouping", "a different interaction pattern"];
       const jobs = [];
       const stateBriefs = {
-        empty: "EMPTY state: the user has no data yet. Keep the header, navigation, title and primary action exactly; replace the list/rows/cards with one centred empty-state block (simple illustration or icon, a short helpful headline, one line of guidance, and the primary action as a button).",
-        loading: "LOADING state: keep the header, navigation and title; replace content text, numbers and images with grey skeleton bars and blocks of the same size and position (radius 4–8, #E5E7EB), no spinners over content.",
+        empty: "EMPTY state: the user has no data yet. Keep the header, navigation and title exactly; replace the list/rows/cards with one centred empty-state block (simple illustration or icon, a short helpful headline, one line of guidance, and ONE button that starts the first item, e.g. \"Apply for a loan\" / \"Add account\"). Do not keep transactional buttons that need data (Pay now, View details, Download statement).",
+        loading: "LOADING state: keep the header, navigation and title; replace content text, numbers and images with grey skeleton bars and blocks of the same size and position (radius 4–8, #E5E7EB). Skeleton bars are plain rectangles with NO text inside them (no \"Loading\" labels), and no spinners over content.",
         error: "ERROR state: keep the whole screen and its content; add a clear inline error banner near the top (red/danger tint, icon, one-sentence cause, a Retry action), and mark any failed field or card.",
         success: "SUCCESS state: keep the screen; add a success confirmation (green tint banner or confirmation block with a check icon, one-sentence result, and the next primary action)."
       };
@@ -2732,7 +2732,7 @@
       const outcomes = new Array(jobs.length);
       let nextJob = 0;
       async function worker() {
-        while (nextJob < jobs.length) {
+        while (nextJob < jobs.length && !stopRequested) {
           const index = nextJob++;
           const job = jobs[index];
           const jobLabel = job.state ? job.state.charAt(0).toUpperCase() + job.state.slice(1) + " state" : "Variation";
@@ -2742,13 +2742,17 @@
               stage("creating", jobLabel + " " + (index + 1) + "/" + jobs.length + " · " + status);
             }, { placement: job.placement, variation: job.variation, sourceId: job.frame.id, state: job.state }));
             const timing = answer.split("\n").find(function (line) { return line.indexOf("Timing: ") === 0; });
-            outcomes[index] = { ok: true, text: "**" + (index + 1) + ". " + job.frame.name + "**: " + answer.split("\n")[0] + (timing ? "\n   " + timing : "") };
+            const lintLine = answer.split("\n").find(function (line) { return /structural lint/i.test(line) && line.indexOf("Timing: ") !== 0; });
+            outcomes[index] = { ok: true, text: "**" + (index + 1) + ". " + (job.state ? job.state.charAt(0).toUpperCase() + job.state.slice(1) + " · " : "") + job.frame.name + "**: " + answer.split("\n")[0] +
+              (lintLine ? "\n   " + lintLine.trim().slice(0, 220) : "") + (timing ? "\n   " + timing : "") };
           } catch (error) {
             outcomes[index] = { ok: false, text: "**" + (index + 1) + ". " + job.frame.name + "**: " + String(error && error.message || error).slice(0, 240) };
           }
         }
       }
       await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, worker));
+      // A stopped batch reports as stopped, not as N jobs that failed with a raw abort message.
+      if (stopRequested) throw new Error(STOP_MESSAGE);
       outcomes.forEach(function (o) { if (o) (o.ok ? results : failures).push(o.text); });
       const batchLine = "\nBatch time: " + ((Date.now() - batchStartedAt) / 1000).toFixed(1) + "s for " + jobs.length + " job(s), up to 3 in parallel.";
       stage(failures.length ? "error" : "done", results.length + "/" + jobs.length + " variation(s) created");
