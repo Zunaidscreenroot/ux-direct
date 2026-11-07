@@ -3929,7 +3929,7 @@ var UXD_DIRECT_SNAP_PROPS = ["fills", "strokes", "strokeWeight", "dashPattern", 
 // "tokens" (bind hard-coded colours / text to the file's exactly matching variable or style, so nothing
 // changes visually), "a11y" (WCAG contrast, 12px minimum text, 44px touch targets on auto-layout frames),
 // "layout" (auto layout on cleanly stacked frames). Instances, locked and hidden layers are never touched.
-var UXD_HYGIENE_GROUPS = ["spacing", "tokens", "a11y", "layout"];
+var UXD_HYGIENE_GROUPS = ["spacing", "tokens", "a11y", "layout", "names"];
 var UXD_HYGIENE_INTERACTIVE = /\b(button|btn|cta|icon[ -]?button|tab|chip|toggle|switch|checkbox|radio|link|close|back|menu|fab)\b/i;
 // includeInstanceChildren: text inside instances (button labels, card values) is where most contrast and
 // small-text findings live; those get instance overrides. Structure and tokens stay with the main component.
@@ -4088,6 +4088,20 @@ async function localRestoreProps(payload) {
   if (typeof figma.commitUndo === "function") figma.commitUndo();
   return { ok: true, restored: restored, changedSince: changedSince, missing: missing };
 }
+function uxdNearestColorKey(color, opacity, palette) {
+  var alpha = Math.round((opacity === undefined ? 1 : opacity) * 100);
+  var best = null, bestDist = 0.035; // ~9/255 per channel: imperceptible on screen
+  [palette.variables, palette.styles].forEach(function (map) {
+    map.forEach(function (_v, key) {
+      var parts = String(key).split("/");
+      if (Number(parts[1]) !== alpha || !/^[0-9A-F]{6}$/.test(parts[0])) return;
+      var c = { r: parseInt(parts[0].slice(0, 2), 16) / 255, g: parseInt(parts[0].slice(2, 4), 16) / 255, b: parseInt(parts[0].slice(4, 6), 16) / 255 };
+      var d = Math.sqrt(Math.pow(c.r - color.r, 2) + Math.pow(c.g - color.g, 2) + Math.pow(c.b - color.b, 2));
+      if (d < bestDist) { bestDist = d; best = key; }
+    });
+  });
+  return best;
+}
 async function uxdBindPaintToken(node, prop, palette, role) {
   var styleProp = prop === "fills" ? "fillStyleId" : "strokeStyleId";
   if (typeof node[styleProp] === "string" && node[styleProp]) return false;
@@ -4095,6 +4109,9 @@ async function uxdBindPaintToken(node, prop, palette, role) {
   var paint = uxdSingleSolid(node[prop]);
   if (!paint || (paint.boundVariables && paint.boundVariables.color)) return false;
   var key = uxdColorKey(paint.color, paint.opacity);
+  // No exact match: take the nearest file colour when it is visually the same (a renderer or a model
+  // rounding #0EA5E9 to #0EA4E8 must still land on the file's style, the way a designer would).
+  if (!palette.variables.has(key) && !palette.styles.has(key)) key = uxdNearestColorKey(paint.color, paint.opacity, palette) || key;
   var variable = uxdPickToken(palette.variables.get(key), role);
   if (variable && figma.variables && typeof figma.variables.setBoundVariableForPaint === "function") {
     if (node.type === "TEXT") await uxdLoadTextFonts(node);
@@ -4303,6 +4320,21 @@ async function localRestoreThemeModes(payload) {
   return { ok: true, restored: restored };
 }
 // uxd-theme:end
+function uxdRoleName(node) {
+  var kids = (node.children || []).filter(function (c) { return c && c.visible !== false; });
+  var texts = kids.filter(function (c) { return c.type === "TEXT"; });
+  var firstText = texts.length ? String(texts[0].characters || "").trim().replace(/\s+/g, " ") : "";
+  var short = firstText.length && firstText.length <= 24 ? firstText : "";
+  var filled = Array.isArray(node.fills) && node.fills.some(function (f) { return f && f.visible !== false && f.type === "SOLID" && (f.opacity === undefined || f.opacity > 0); });
+  var h = Number(node.height) || 0;
+  if (kids.length === 0) return filled ? "Shape" : "";
+  if (texts.length === 1 && kids.length <= 2 && filled && h >= 28 && h <= 60 && short) return "Button / " + short;
+  if (texts.length === 1 && kids.length <= 2 && filled && h < 28 && short) return "Badge / " + short;
+  if (filled && kids.length >= 2 && Number(node.cornerRadius) > 0) return short ? "Card / " + short : "Card";
+  if (node.layoutMode === "HORIZONTAL") return short ? "Row / " + short : "Row";
+  if (node.layoutMode === "VERTICAL") return short ? "Stack / " + short : "Stack";
+  return short ? "Group / " + short : "Group";
+}
 async function localApplyHygieneFixes(payload) {
   var groups = Array.isArray(payload.groups) ? payload.groups.filter(function (g) { return UXD_HYGIENE_GROUPS.indexOf(g) >= 0; }) : [];
   if (!groups.length) groups = ["spacing", "tokens"];
@@ -4312,7 +4344,7 @@ async function localApplyHygieneFixes(payload) {
   UXD_HYGIENE_SNAPSHOT = { keys: {}, items: [] };
   UXD_ACTIVE_RULES = uxdReadDesignRules().rules;
   var minText = UXD_ACTIVE_RULES && typeof UXD_ACTIVE_RULES.minText === "number" ? UXD_ACTIVE_RULES.minText : 12;
-  var counts = { spacing: 0, symmetry: 0, repeated: 0, radius: 0, colorVariables: 0, colorStyles: 0, textStyles: 0, contrast: 0, smallText: 0, touchTargets: 0, autoLayout: 0 };
+  var counts = { spacing: 0, symmetry: 0, repeated: 0, radius: 0, colorVariables: 0, colorStyles: 0, textStyles: 0, contrast: 0, smallText: 0, touchTargets: 0, autoLayout: 0, names: 0 };
   var skipped = [];
   function skip(message) { if (skipped.length < 8 && skipped.indexOf(message) < 0) skipped.push(message); }
   var has = function (g) { return groups.indexOf(g) >= 0; };
@@ -4430,6 +4462,19 @@ async function localApplyHygieneFixes(payload) {
         counts.touchTargets++;
       } catch (error) { skip("\"" + String(n.name).slice(0, 30) + "\": " + String(error && error.message || error).slice(0, 80)); }
     });
+  }
+  // Semantic layer names for containers still called "Frame 2095587013" / "Group 12" (own layers only).
+  if (has("names")) {
+    for (var nm = 0; nm < nodes.length; nm++) {
+      var layer = nodes[nm];
+      if (!/^(frame|group|rectangle|auto layout)(\s+\d+)?$/i.test(String(layer.name || "").trim())) continue;
+      if (!Array.isArray(layer.children) || layer.type === "INSTANCE") continue;
+      var role = uxdRoleName(layer);
+      if (!role || role === layer.name) continue;
+      uxdSnapProp(layer, "name");
+      layer.name = role;
+      counts.names++;
+    }
   }
   if (has("tokens")) {
     var palette = await uxdHygienePalette();
