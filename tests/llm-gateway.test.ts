@@ -170,7 +170,7 @@ test("agency seats get their own primary models, rotated across providers, with 
     { provider: byId("openrouter"), models: ["nvidia/nemotron-3-ultra-550b-a55b:free"] },
     { provider: byId("mistral"), models: ["mistral-code-latest", "ministral-14b-2512"] },
   ];
-  const rank = (role: "ux-designer" | "lead" | "chat" | "director", turn: number) => rankCandidates({
+  const rank = (role: "ux-designer" | "lead" | "chat" | "director" | "product-designer", turn: number) => rankCandidates({
     providers, role, promptTokens: 1_000, vision: false, usage: new Map(), cooldowns: new Map(), localHits: new Map(), random: fixedRandom, turn,
   });
   const designerA = rank("ux-designer", 0);
@@ -182,6 +182,11 @@ test("agency seats get their own primary models, rotated across providers, with 
   assert.ok(!["groq", "workers-ai"].includes(rank("director", 1)[0].provider.id));
   assert.match(rank("chat", 0)[0].model, /gpt-oss-20b/);
   assert.equal(rank("director", 0)[0].model, "gemini-3.1-pro-preview");
+  const product = rank("product-designer", 0);
+  assert.match(product[0].model, /gpt-oss-120b/);
+  assert.ok(!["gemini", "openrouter"].includes(product[0].provider.id), "product designer starts off the Lead's providers");
+  assert.ok(!["gemini", "openrouter"].includes(rank("product-designer", 1)[0].provider.id));
+  assert.equal(resolveRole(new Headers({ "X-UXD-Agent-Role": "product-designer" }), {}), "product-designer");
   assert.equal(chainRank(ROLE_ROUTES.director, "zai", "glm-4.5-flash", 0) > chainRank(ROLE_ROUTES.director, "groq", "openai/gpt-oss-120b", 0), true);
 });
 

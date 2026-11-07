@@ -1,8 +1,9 @@
 /**
  * Which free model each agency seat uses, with a deep fallback chain.
  *
- * Agency shape (Zunaid, 2026-11-07): Director → UX Lead → one UX designer + one UI designer, split by
- * task type. The Lead reviews both designers' work and the Director reviews the Lead's final, so
+ * Agency shape (Zunaid, 2026-11-07 06:10): Director → UX Lead → three designers by task type: UX designer
+ * (research, synthesis, audit, wireframes), UI designer (components, visual tweaks) and Product designer
+ * (anything needing both, e.g. fixing an existing screen; most of the work). One designer per screen. The Lead reviews both designers' work and the Director reviews the Lead's final, so
  * Director and Lead get the strongest models on different providers from the designers.
  *
  * Every seat names a primary pool (rotated per call, so parallel designers start on different
@@ -25,7 +26,7 @@ import type { Tier } from "./catalog";
 
 export type GatewayRole =
   // agency seats
-  | "director" | "lead" | "ux-designer" | "ui-designer" | "researcher" | "content-writer"
+  | "director" | "lead" | "product-designer" | "ux-designer" | "ui-designer" | "researcher" | "content-writer"
   | "accessibility" | "design-system" | "qa"
   // utility
   | "classifier" | "chat" | "fast-retry" | "default"
@@ -83,6 +84,14 @@ export const ROLE_ROUTES: Record<Exclude<GatewayRole, "planner" | "section-desig
     // Reviews designers' work, so it starts on other quotas (Gemini/OpenRouter) than they do (Groq/Workers AI).
     primary: [GEM_FLASH, OR_ULTRA],
     fallback: [GEM_PRO, OR_VL, GROQ_KIMI, GROQ_120, CEREBRAS, WAI_120, WAI_NEMO, MI_CODE, ZAI],
+  },
+  "product-designer": {
+    purpose: "Product designer: owns any task that needs both UX and UI (fix/improve an existing screen) end to end, one mind per screen; carries most of the work.",
+    tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 75_000, maxAttempts: 8,
+    // Strongest free models that are NOT the Lead's providers (Gemini/OpenRouter), rotated so the
+    // heaviest seat spreads over two quotas; deep fallbacks end on the Lead's providers.
+    primary: [GROQ_120, WAI_120],
+    fallback: [WAI_NEMO, CEREBRAS, GROQ_KIMI, MI_CODE, WAI_QWQ, GROQ_QWEN, GEM_FLASH, OR_ULTRA, GEM_PRO, OR_VL, ZAI],
   },
   "ux-designer": {
     purpose: "UX designer: research, synthesis, audit, benchmarking, flows and wireframes.",
@@ -162,6 +171,8 @@ export const ROLE_ALIASES: Record<string, keyof typeof ROLE_ROUTES> = {
   writer: "content-writer",
   "ux-director": "director",
   "ux-lead": "lead",
+  "product": "product-designer",
+  "productdesigner": "product-designer",
   "copywriter": "content-writer",
   "ux-writer": "content-writer",
   a11y: "accessibility",
