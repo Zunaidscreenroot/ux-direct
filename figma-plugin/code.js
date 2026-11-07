@@ -4304,8 +4304,36 @@ async function uxdFixTokenWrap(root) {
   }
   return fixed;
 }
+// A wrapping text (any words) that came out wider than its auto-layout column, even by 1-2px from
+// font metrics, is clipped at the column edge: it fills the column and wraps instead (any screen).
+async function uxdFitTextsToColumn(root) {
+  var fixed = 0;
+  var texts = root.findAll(function (n) {
+    if (n.type !== "TEXT" || n.visible === false || uxdInsideInstance(n) || n.layoutPositioning === "ABSOLUTE") return false;
+    var parent = n.parent;
+    if (!parent || parent.layoutMode !== "VERTICAL" || typeof parent.width !== "number") return false;
+    if (!/\s/.test(String(n.characters || "").trim())) return false;
+    var inner = parent.width - (parent.paddingLeft || 0) - (parent.paddingRight || 0);
+    return n.width > inner + 0.5 && n.layoutSizingHorizontal !== "FILL";
+  });
+  for (var i = 0; i < texts.length; i++) {
+    try {
+      await uxdLoadTextFonts(texts[i]);
+      texts[i].textAutoResize = "HEIGHT";
+      texts[i].layoutSizingHorizontal = "FILL";
+      fixed++;
+    } catch (_) {}
+  }
+  // A column that holds only text has nothing to mask: it never clips a text's last pixel.
+  root.findAll(function (n) {
+    return n.type === "FRAME" && n.clipsContent === true && n.layoutMode && n.layoutMode !== "NONE" && !uxdInsideInstance(n) &&
+      n.children.length > 0 && n.children.every(function (c) { return c.type === "TEXT"; });
+  }).forEach(function (frame) { try { frame.clipsContent = false; fixed++; } catch (_) {} });
+  return fixed;
+}
 async function uxdFixRowOverflow(root) {
   try { await uxdFixTokenWrap(root); } catch (_) {}
+  try { await uxdFitTextsToColumn(root); } catch (_) {}
   var fixed = 0, picks = [];
   var rows = root.findAll(function (n) { return n.type === "FRAME" && n.layoutMode === "HORIZONTAL" && n.layoutWrap !== "WRAP" && !uxdInsideInstance(n); });
   rows.forEach(function (row) {

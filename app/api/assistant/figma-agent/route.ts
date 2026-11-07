@@ -20,7 +20,7 @@ import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
 import { designRulesBlock } from "@/src/figma-agent/design-rules";
 import { canvasTexts, contentLocaleInstruction, inferContentLocale } from "@/src/figma-agent/content-locale";
-import { CREATE_DESIGN_SCOPE, CREATE_OPERATING_CONTRACT, createFrameSize, createModeCanvas, createScopeInstructions } from "@/src/figma-agent/create-mode";
+import { CREATE_DENSITY_RULE, CREATE_DESIGN_SCOPE, CREATE_OPERATING_CONTRACT, createFrameSize, createModeCanvas, createScopeInstructions } from "@/src/figma-agent/create-mode";
 import { SCREEN_STATES, STATE_BRIEFS, stateDropsContent, stateFallbackSpec, stateGatePrompt } from "@/src/figma-agent/screen-states";
 import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, promptRequestsWireframe, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
 import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
@@ -726,7 +726,7 @@ export async function POST(request: Request) {
   ].join("\n");
   const blockRecoverySystem = [
     UX_DIRECT_DESIGN_ROLE,
-    createMode ? "Create a NEW native Figma screen from the user prompt as a BLOCK SPEC; there is no source screen, so ignore source-text rules below." : "Create an improved native Figma variation of the selected source as a BLOCK SPEC. The user prompt is the design change, not the procedure.",
+    createMode ? "Create a NEW native Figma screen from the user prompt as a BLOCK SPEC; there is no source screen, so ignore source-text rules below. " + CREATE_DENSITY_RULE : "Create an improved native Figma variation of the selected source as a BLOCK SPEC. The user prompt is the design change, not the procedure.",
     scopeInstructions,
     roleInstructions(taskRole, agentBrief.domain),
     designRulesInstructions.trim(),
@@ -769,7 +769,7 @@ export async function POST(request: Request) {
     let planInput: unknown = candidateInput;
     let blockSpec: BlockSpecInfo | null = null;
     if (isBlockSpec(candidateInput)) {
-      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone, monochrome: wireframeRequest, contentDropped: stateDropsContent(screenState), skeleton: screenState === "loading" });
+      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone, monochrome: wireframeRequest, contentDropped: stateDropsContent(screenState), skeleton: screenState === "loading", create: createMode });
       blockSpec = { blocks: expansion.blockCount, nodes: expansion.nodeCount, warnings: expansion.warnings };
       if (!expansion.plan) {
         const issues = expansion.errors.slice(0, 4).join("; ");
