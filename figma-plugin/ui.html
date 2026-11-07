@@ -2327,7 +2327,9 @@
       // Realistic sample data (no model): "fill with realistic data", "dummy data bhar do", "use sample Indian names".
       if (count > 0 && !/lorem/i.test(text) && (
         /\b(fill|populate|add|put|use|replace|generate)\b[^.]{0,40}\b(realistic|real|dummy|sample|mock|fake|demo|test|indian)\b[^.]{0,20}\b(data|content|values|details|numbers|names|amounts)\b/i.test(text) ||
-        /\b(dummy|sample|mock|fake|realistic|demo)\s+data\b/i.test(text) || /\bdata\s+(bhar|bharo|daal|dal)/i.test(text))) {
+        /\b(dummy|sample|mock|fake|realistic|demo)\s+data\b/i.test(text) || /\bdata\s+(bhar|bharo|daal|dal)/i.test(text) ||
+        /\b(fill|use|give|try|generate)\b[^.]{0,15}\b(different|new|another|other|fresh)\s+(data|values|numbers|set)\b/i.test(text) ||
+        /\b(shuffle|re-?fill|regenerate)\b[^.]{0,15}\b(data|values|numbers)\b|\b(alag|dusra|naya)\s+data\b/i.test(text))) {
         return { kind: "fill-data", reshuffle: /\b(different|again|another|shuffle|new|naya|dusra|alag)\b/i.test(text) };
       }
       // One-click hygiene fix: "fix hygiene", "fix spacing", "tokenize colours", "fix contrast", "sab theek kar do".
@@ -2655,11 +2657,13 @@
       stage("creating", "Filling realistic sample data (no model)…");
       const result = await localTask("fill-realistic-data", { seed: task.reshuffle ? String(Date.now()) : "" }, 60000);
       if (result.changed > 0) {
+        const snapshot = (result.edits || []).map(function (edit) { return { id: edit.id, text: edit.before, expect: edit.after }; });
         recordChange("Sample data fill", function () {
-          return localTask("commit-undo", {}).catch(function () {})
-            .then(function () { return localTask("trigger-undo", {}); })
-            .then(function () { return "undone with Figma undo"; });
-        }, { mustBeLatest: true });
+          return localTask("restore-texts", { edits: snapshot }).then(function (restore) {
+            return restore.restored + " value(s) restored" + (restore.changedSince ? ", " + restore.changedSince + " left as you edited them" : "") +
+              (restore.missing ? ", " + restore.missing + " layer(s) no longer exist" : "");
+          });
+        });
       }
       stage("done", "Sample data filled · " + result.changed + " value(s)");
       const lines = (result.samples || []).map(function (item) { return "- " + item.before + " → **" + item.after + "**"; });
@@ -2669,7 +2673,7 @@
         : "No values to fill. Amounts, dates, masked accounts, IDs, PAN, phone numbers, rates and person names are filled; labels, headings, buttons and statuses are left alone.") +
         (lines.length ? "\n\n" + lines.join("\n") + (result.changed > lines.length ? "\n- …and " + (result.changed - lines.length) + " more" : "") : "") +
         (result.lorem ? "\n\n" + result.lorem + " layer(s) still have lorem ipsum. Say **replace the lorem ipsum with realistic content** for that." : "") +
-        (result.changed ? "\nSay **fill different data** for a new set. One Revert (or Cmd/Ctrl+Z) undoes it." : "");
+        (result.changed ? "\nSay **fill different data** for a new set. Revert restores the original values, even after other edits." : "");
     }
     async function hygieneSnapshot(prompt) {
       try {
@@ -2691,11 +2695,21 @@
       stage("creating", "Fixing " + task.groups.map(function (g) { return names[g] || g; }).join(", ") + "…");
       const result = await localTask("apply-hygiene-fixes", { groups: task.groups }, 120000);
       if (result.total > 0) {
-        recordChange("Hygiene fix (" + task.groups.join(", ") + ")", function () {
-          return localTask("commit-undo", {}).catch(function () {})
-            .then(function () { return localTask("trigger-undo", {}); })
-            .then(function () { return "undone with Figma undo"; });
-        }, { mustBeLatest: true });
+        // Auto layout moves children, which a property snapshot cannot put back; that one case keeps Figma undo.
+        if (result.layoutChanged || !Array.isArray(result.snapshot)) {
+          recordChange("Hygiene fix (" + task.groups.join(", ") + ")", function () {
+            return localTask("commit-undo", {}).catch(function () {})
+              .then(function () { return localTask("trigger-undo", {}); })
+              .then(function () { return "undone with Figma undo"; });
+          }, { mustBeLatest: true });
+        } else {
+          const snapshot = result.snapshot;
+          recordChange("Hygiene fix (" + task.groups.join(", ") + ")", function () {
+            return localTask("restore-props", { items: snapshot }, 120000).then(function (restore) {
+              return restore.restored + " change(s) restored" + (restore.changedSince ? ", " + restore.changedSince + " left as you edited them" : "");
+            });
+          });
+        }
       }
       stage("verifying", "Re-scoring after the fix…");
       const after = result.total > 0 ? await hygieneSnapshot(prompt) : before;

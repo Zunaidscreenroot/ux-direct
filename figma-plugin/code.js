@@ -2917,7 +2917,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -3814,6 +3814,46 @@ function uxdPickToken(candidates, role) {
     return pa - pb || String(a.name).length - String(b.name).length || String(a.name).localeCompare(String(b.name));
   })[0];
 }
+// Snapshot of every property the hygiene fixer changes, so Revert can restore exactly those values
+// even after other edits (Figma undo only pops the latest step).
+var UXD_HYGIENE_SNAPSHOT = null;
+function uxdCloneValue(value) {
+  if (typeof value === "symbol" || value === undefined) return undefined;
+  try { return JSON.parse(JSON.stringify(value)); } catch (_) { return undefined; }
+}
+function uxdSnapProp(node, prop) {
+  if (!UXD_HYGIENE_SNAPSHOT) return;
+  var key = node.id + "|" + prop;
+  if (UXD_HYGIENE_SNAPSHOT.keys[key]) return;
+  var before = uxdCloneValue(node[prop]);
+  if (before === undefined && prop !== "minHeight" && prop !== "minWidth") return;
+  UXD_HYGIENE_SNAPSHOT.keys[key] = true;
+  UXD_HYGIENE_SNAPSHOT.items.push({ node: node, prop: prop, before: before === undefined ? null : before });
+}
+async function uxdSetPropValue(node, prop, value) {
+  if (prop === "textStyleId" && typeof node.setTextStyleIdAsync === "function") return node.setTextStyleIdAsync(value || "");
+  if (prop === "fillStyleId" && typeof node.setFillStyleIdAsync === "function") return node.setFillStyleIdAsync(value || "");
+  if (prop === "strokeStyleId" && typeof node.setStrokeStyleIdAsync === "function") return node.setStrokeStyleIdAsync(value || "");
+  node[prop] = value;
+}
+async function localRestoreProps(payload) {
+  var items = Array.isArray(payload.items) ? payload.items.slice(0, 3000) : [];
+  var restored = 0, changedSince = 0, missing = 0;
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  for (var i = items.length - 1; i >= 0; i--) {
+    var item = items[i];
+    var node = await figma.getNodeByIdAsync(String(item.id || ""));
+    if (!node || node.removed) { missing++; continue; }
+    if (JSON.stringify(uxdCloneValue(node[item.prop]) === undefined ? null : uxdCloneValue(node[item.prop])) !== JSON.stringify(item.after === undefined ? null : item.after)) { changedSince++; continue; }
+    try {
+      if (node.type === "TEXT") await uxdLoadTextFonts(node);
+      await uxdSetPropValue(node, item.prop, item.before);
+      restored++;
+    } catch (_) { missing++; }
+  }
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  return { ok: true, restored: restored, changedSince: changedSince, missing: missing };
+}
 async function uxdBindPaintToken(node, prop, palette, role) {
   var styleProp = prop === "fills" ? "fillStyleId" : "strokeStyleId";
   if (typeof node[styleProp] === "string" && node[styleProp]) return false;
@@ -3824,6 +3864,7 @@ async function uxdBindPaintToken(node, prop, palette, role) {
   var variable = uxdPickToken(palette.variables.get(key), role);
   if (variable && figma.variables && typeof figma.variables.setBoundVariableForPaint === "function") {
     if (node.type === "TEXT") await uxdLoadTextFonts(node);
+    uxdSnapProp(node, prop);
     node[prop] = [figma.variables.setBoundVariableForPaint(paint, "color", variable)];
     return "variable";
   }
@@ -3831,6 +3872,7 @@ async function uxdBindPaintToken(node, prop, palette, role) {
   if (!style) return false;
   if (node.type === "TEXT") await uxdLoadTextFonts(node);
   var setter = prop === "fills" ? "setFillStyleIdAsync" : "setStrokeStyleIdAsync";
+  uxdSnapProp(node, prop); uxdSnapProp(node, styleProp);
   if (typeof node[setter] === "function") await node[setter](style.id);
   else node[styleProp] = style.id;
   return "style";
@@ -3872,6 +3914,7 @@ async function localApplyHygieneFixes(payload) {
   var roots = figma.currentPage.selection.slice();
   if (!roots.length) throw new Error("Select the screen (or layers) to fix first.");
   var nodes = uxdHygieneNodes(roots);
+  UXD_HYGIENE_SNAPSHOT = { keys: {}, items: [] };
   var counts = { spacing: 0, symmetry: 0, colorVariables: 0, colorStyles: 0, textStyles: 0, contrast: 0, smallText: 0, touchTargets: 0, autoLayout: 0 };
   var skipped = [];
   function skip(message) { if (skipped.length < 8 && skipped.indexOf(message) < 0) skipped.push(message); }
@@ -3902,13 +3945,14 @@ async function localApplyHygieneFixes(payload) {
         if (prop === "itemSpacing" && frame.primaryAxisAlignItems === "SPACE_BETWEEN") return;
         if (uxdBound(frame, prop) || typeof frame[prop] !== "number") return;
         var snapped = uxdSnapToGrid(frame[prop]);
-        if (snapped !== frame[prop]) { frame[prop] = snapped; changed = true; }
+        if (snapped !== frame[prop]) { uxdSnapProp(frame, prop); frame[prop] = snapped; changed = true; }
       });
       if (changed) counts.spacing++;
       var left = frame.paddingLeft, right = frame.paddingRight;
       if (typeof left === "number" && typeof right === "number" && left !== right && Math.abs(left - right) <= 8 &&
           !uxdBound(frame, "paddingLeft") && !uxdBound(frame, "paddingRight")) {
         var both = Math.max(left, right);
+        uxdSnapProp(frame, "paddingLeft"); uxdSnapProp(frame, "paddingRight");
         frame.paddingLeft = both; frame.paddingRight = both; counts.symmetry++;
       }
     });
@@ -3917,7 +3961,7 @@ async function localApplyHygieneFixes(payload) {
     for (var a = 0; a < a11yTexts.length; a++) {
       var text = a11yTexts[a];
       if (typeof text.fontSize === "number" && text.fontSize < 12 && !uxdBound(text, "fontSize") && !(typeof text.textStyleId === "string" && text.textStyleId)) {
-        try { text.fontSize = 12; counts.smallText++; } catch (_) {}
+        try { uxdSnapProp(text, "fontSize"); text.fontSize = 12; counts.smallText++; } catch (_) {}
       }
       var fg = uxdSingleSolid(text.fills);
       var bg = uxdTextBackground(text);
@@ -3934,6 +3978,7 @@ async function localApplyHygieneFixes(payload) {
       var color = { r: fg.color.r, g: fg.color.g, b: fg.color.b };
       for (var step = 0; step < 40 && uxdContrast(color, bg) < required + 0.05; step++) color = uxdShiftColor(color, darken ? -0.06 : 0.06);
       if (uxdContrast(color, bg) < required) { skip("\"" + String(text.name).slice(0, 30) + "\" is already " + (darken ? "black" : "white") + "; darken its background to pass contrast"); continue; }
+      uxdSnapProp(text, "fills");
       text.fills = [{ type: "SOLID", color: color, opacity: fg.opacity === undefined ? 1 : fg.opacity, visible: true }];
       counts.contrast++;
     }
@@ -3944,8 +3989,8 @@ async function localApplyHygieneFixes(payload) {
         return;
       }
       try {
-        if (n.height < 44) n.minHeight = 44;
-        if (n.width < 44) n.minWidth = 44;
+        if (n.height < 44) { uxdSnapProp(n, "minHeight"); n.minHeight = 44; }
+        if (n.width < 44) { uxdSnapProp(n, "minWidth"); n.minWidth = 44; }
         counts.touchTargets++;
       } catch (error) { skip("\"" + String(n.name).slice(0, 30) + "\": " + String(error && error.message || error).slice(0, 80)); }
     });
@@ -3971,6 +4016,7 @@ async function localApplyHygieneFixes(payload) {
         if (node.type === "TEXT" && textStyles.length) {
           var match = uxdMatchTextStyle(node, textStyles);
           if (match) {
+            uxdSnapProp(node, "textStyleId");
             if (typeof node.setTextStyleIdAsync === "function") await node.setTextStyleIdAsync(match.id);
             else node.textStyleId = match.id;
             counts.textStyles++;
@@ -3981,7 +4027,13 @@ async function localApplyHygieneFixes(payload) {
   }
   if (typeof figma.commitUndo === "function") figma.commitUndo();
   var total = Object.keys(counts).reduce(function (sum, key) { return sum + counts[key]; }, 0);
-  return { ok: true, groups: groups, counts: counts, total: total, checked: nodes.length, skipped: skipped };
+  var snapshot = UXD_HYGIENE_SNAPSHOT.items.map(function (item) {
+    var after = uxdCloneValue(item.node[item.prop]);
+    return { id: item.node.id, prop: item.prop, before: item.before, after: after === undefined ? null : after };
+  });
+  UXD_HYGIENE_SNAPSHOT = null;
+  return { ok: true, groups: groups, counts: counts, total: total, checked: nodes.length, skipped: skipped,
+    snapshot: snapshot, layoutChanged: counts.autoLayout > 0 };
 }
 // uxd-hygiene-fix:end
 // uxd-fill-data:start
@@ -4073,12 +4125,13 @@ async function localFillRealisticData(payload) {
   });
   for (var f = 0; f < plan.length; f++) { try { await uxdLoadTextFonts(plan[f].node); } catch (_) {} }
   if (typeof figma.commitUndo === "function") figma.commitUndo();
-  var changed = 0, samples = [], skipped = 0;
+  var changed = 0, samples = [], skipped = 0, edits = [];
   for (var i = 0; i < plan.length; i++) {
     try {
       var before = plan[i].node.characters;
       plan[i].node.characters = plan[i].value;
       changed++;
+      edits.push({ id: plan[i].node.id, before: before, after: plan[i].value });
       if (samples.length < 6) samples.push({ before: before, after: plan[i].value });
     } catch (_) { skipped++; }
   }
@@ -4086,7 +4139,23 @@ async function localFillRealisticData(payload) {
   var repeated = 0;
   seen.forEach(function (count) { if (count > 1) repeated += count; });
   var lorem = texts.filter(function (t) { return /lorem ipsum|dolor sit amet/i.test(t.characters); }).length;
-  return { ok: true, checked: texts.length, changed: changed, repeated: repeated, skipped: skipped, samples: samples, lorem: lorem };
+  return { ok: true, checked: texts.length, changed: changed, repeated: repeated, skipped: skipped, samples: samples, lorem: lorem, edits: edits };
+}
+// Snapshot revert: put each text back only if it still shows what UX Direct wrote, so a revert works
+// after unrelated Figma edits (Figma undo would pop whatever happened last) and never clobbers a
+// designer's own later change.
+async function localRestoreTexts(payload) {
+  var items = Array.isArray(payload.edits) ? payload.edits.slice(0, 800) : [];
+  var restored = 0, changedSince = 0, missing = 0;
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  for (var i = 0; i < items.length; i++) {
+    var node = await figma.getNodeByIdAsync(String(items[i].id || ""));
+    if (!node || node.type !== "TEXT" || node.removed) { missing++; continue; }
+    if (node.characters !== String(items[i].expect)) { changedSince++; continue; }
+    try { await uxdLoadTextFonts(node); node.characters = String(items[i].text); restored++; } catch (_) { missing++; }
+  }
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  return { ok: true, restored: restored, changedSince: changedSince, missing: missing };
 }
 // uxd-fill-data:end
 async function runLocalTask(message) {
@@ -4104,6 +4173,8 @@ async function runLocalTask(message) {
     else if (message.op === "apply-direct-edits") result = await localApplyDirectEdits(payload);
     else if (message.op === "apply-hygiene-fixes") result = await localApplyHygieneFixes(payload);
     else if (message.op === "fill-realistic-data") result = await localFillRealisticData(payload);
+    else if (message.op === "restore-texts") result = await localRestoreTexts(payload);
+    else if (message.op === "restore-props") result = await localRestoreProps(payload);
     else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
     else if (message.op === "trigger-undo") {
       if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");

@@ -30,6 +30,10 @@ test("sample-data prompts route to the deterministic filler", () => {
     assert.equal(classify(prompt, frame)?.kind, "fill-data", prompt);
   }
   assert.equal(classify("fill different sample data", frame).reshuffle, true);
+  for (const prompt of ["fill different data", "fill new values", "shuffle the data", "alag data daal do", "try another set"]) {
+    assert.equal(classify(prompt, frame)?.kind, "fill-data", prompt);
+    assert.equal(classify(prompt, frame).reshuffle, true, prompt);
+  }
   assert.equal(classify("Replace the lorem ipsum with realistic loan content", frame).kind, "rewrite-text", "lorem stays on the model rewrite path");
   assert.notEqual(classify("fill with realistic data", { selectionTypes: [] })?.kind, "fill-data");
 });
@@ -55,4 +59,22 @@ test("values keep their exact format and labels are never touched", () => {
   }
   assert.equal(b.fake("₹12,500", b.seeded("1:2")), b.fake("₹12,500", b.seeded("1:2")), "same layer, same value");
   assert.notEqual(b.fake("₹12,500", b.seeded("1:2")), b.fake("₹12,500", b.seeded("1:9")), "repeated rows differ");
+});
+
+test("revert restores from a snapshot, only where the text is still what UX Direct wrote", async () => {
+  const nodes: any = { "1": { id: "1", type: "TEXT", characters: "₹9,450", fontName: { family: "Inter", style: "Regular" }, getRangeAllFontNames() { return [this.fontName]; } },
+    "2": { id: "2", type: "TEXT", characters: "edited by designer", fontName: { family: "Inter", style: "Regular" }, getRangeAllFontNames() { return [this.fontName]; } } };
+  const posted: any[] = [];
+  const figma: any = {
+    fileKey: /UXD_ALLOWED_FILE_KEY = "([^"]+)"/.exec(code)![1], currentPage: { id: "0:1", type: "PAGE", children: [], selection: [], findOne: () => null }, root: { children: [] }, mixed: Symbol("m"),
+    viewport: { zoom: 1, bounds: {} }, ui: { postMessage: (m: any) => posted.push(m), onmessage: null }, showUI() {}, on() {}, closePlugin() {}, commitUndo() {},
+    listAvailableFontsAsync: async () => [], loadFontAsync: async () => {}, getNodeByIdAsync: async (id: string) => nodes[id] || null,
+  };
+  runInNewContext(code, { figma, __html__: "", console, atob, btoa, Promise, Map, Set, Symbol, Uint8Array, setTimeout, clearTimeout });
+  await figma.ui.onmessage({ type: "uxd-local-task", requestId: "r", op: "restore-texts", payload: { edits: [
+    { id: "1", text: "₹10,000", expect: "₹9,450" }, { id: "2", text: "₹10,000", expect: "₹7,200" }, { id: "3", text: "x", expect: "y" }] } });
+  const result = posted.find((m) => m.type === "uxd-local-result").result;
+  assert.equal(nodes["1"].characters, "₹10,000");
+  assert.equal(nodes["2"].characters, "edited by designer", "a later manual edit is kept");
+  assert.deepEqual([result.restored, result.changedSince, result.missing], [1, 1, 1]);
 });
