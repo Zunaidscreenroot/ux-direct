@@ -95,3 +95,15 @@ test("cleanup brief only for one selected section with children", async () => {
   assert.equal(sectionEditBrief("make the title blue", card), "");
   assert.equal(sectionEditBrief("make it cleaner", { nodes: [card.nodes[0], card.nodes[0]] }), "");
 });
+
+test("cleanup prompts on a selected part route to the native planner, not a new variation", () => {
+  const match = /function isDirectCanvasActionPrompt\(prompt\) \{[\s\S]*?\n    \}\n/.exec(ui);
+  assert.ok(match);
+  const sandbox: Record<string, any> = {};
+  runInNewContext(match[0] + "\nthis.f = isDirectCanvasActionPrompt;", sandbox);
+  for (const prompt of ["make this card cleaner", "simplify the header", "polish this loan card", "declutter the summary section"]) {
+    assert.equal(sandbox.f(prompt), true, prompt);
+  }
+  assert.equal(sandbox.f("make this screen cleaner"), false, "a whole screen stays on the variation path");
+  assert.equal(sandbox.f("polish this card as 2 variations"), false);
+});

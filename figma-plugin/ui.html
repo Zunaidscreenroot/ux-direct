@@ -999,6 +999,11 @@
     function isDirectCanvasActionPrompt(prompt) {
       const text = String(prompt || "").trim();
       if (!text) return false;
+      // Section edit: "make this card cleaner", "simplify the header", "polish this section" edit the
+      // selected part in place through the native planner, never as a new variation.
+      if (/\b(clean(er|up)?|simplif(y|ied)|declutter|tidy|neater|polish|less (busy|cluttered)|breathing room)\b/i.test(text) &&
+          /\b(this|the|selected|that)\s+(?:[\w-]+\s+){0,2}(card|section|row|header|footer|list|tile|widget|component|banner|form|module|block|panel|item|summary|table|chart|group|container|nav(?:bar)?|tab ?bar)s?\b/i.test(text) &&
+          !/\b(screens?|flows?|pages?|variations?|versions?|wireframes?)\b/i.test(text)) return true;
       // A short, broad instruction is a design task, not a one-node patch.
       // This keeps "refine this", "improve hierarchy", and "make this better"
       // on the screenshot-aware variation + visual QA path.

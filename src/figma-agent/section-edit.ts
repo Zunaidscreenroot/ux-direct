@@ -19,6 +19,7 @@ export function sectionEditBrief(prompt: string, canvas: unknown): string {
     "- Hierarchy: at most 3 type sizes (title, body, caption) and 2 weights; the key value is the single strongest element; secondary labels use a muted colour that still passes WCAG contrast.",
     "- Surfaces: one corner radius for the card and one for inner chips; at most one shadow or one border, not both; no nested card-in-card backgrounds.",
     "- Alignment: one left edge for text; numbers right-aligned in rows; use Auto Layout alignment instead of x/y nudges.",
+    "- Footprint: stay within the section's current size (height may change by at most ~10%); keep single-line titles on one line; keep the existing layout direction, brand/accent colours and icons.",
     "- Prefer update-node, set-fills, set-effects and apply-style; use 4–12 actions.",
   ].join("\n");
 }
