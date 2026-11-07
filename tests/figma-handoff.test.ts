@@ -156,3 +156,14 @@ test("Skip in an onboarding run goes past the other Skip screens to the first sc
   assert.deepEqual(links.filter((l: any) => l[1] === "Skip"), [["Intro 1", "Skip", "Dashboard"], ["Intro 2", "Skip", "Dashboard"]]);
   assert.deepEqual(links.filter((l: any) => l[1] === "Next"), [["Intro 1", "Next", "Intro 2"], ["Intro 2", "Next", "Dashboard"]]);
 });
+
+test("Skip skips the whole named run, even run screens without a Skip of their own", async () => {
+  const s = (id: string, name: string, x: number, kids: any[]): any => ({ id, type: "FRAME", name, x, y: 0, width: 360, height: 800, children: kids });
+  const one = s("a1", "Onboarding 1", 0, [button("a1s", "Skip"), button("a1n", "Next")]);
+  const two = s("a2", "Onboarding 2", 400, [button("a2p", "Previous"), button("a2f", "Finish")]);
+  const home = s("ah", "Home", 800, [button("ahx", "Profile")]);
+  const run = runtime([one, two, home], { a1: one, a2: two, ah: home });
+  const plan = await run("prototype-wire", {});
+  const skip = plan.links.find((l: any) => l.label === "Skip");
+  assert.equal(skip.to, "Home");
+});

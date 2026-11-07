@@ -5001,8 +5001,15 @@ async function localPrototypeWire(payload) {
   var hasSkip = screens.map(function (screen) {
     return uxdDescendants(screen, function (n) { return n.visible !== false && uxdLooksLikeButton(n) && UXD_SKIP_LABEL.test(String(uxdFirstText(n) || n.name).trim()); }).length > 0;
   });
+  // A run (onboarding, carousel, wizard) is the screens that share a name once step numbers are
+  // dropped ("Onboarding 1/2/3", "Step 2 of 4 · KYC"), plus any screen that has its own Skip.
+  function runKey(screen) {
+    return String(screen.name || "").toLowerCase().replace(/\b(step|slide|page|screen)\s*\d+(\s*(of|\/)\s*\d+)?\b/g, " ")
+      .replace(/\b\d+\s*(of|\/)\s*\d+\b/g, " ").replace(/[\d#·•|–—_-]+/g, " ").replace(/\s+/g, " ").trim();
+  }
   function afterSkip(index) {
-    for (var j = index + 1; j < screens.length; j++) if (!hasSkip[j]) return screens[j];
+    var key = runKey(screens[index]);
+    for (var j = index + 1; j < screens.length; j++) if (!hasSkip[j] && (!key || runKey(screens[j]) !== key)) return screens[j];
     return index + 1 < screens.length ? screens[screens.length - 1] : null;
   }
   screens.forEach(function (screen, index) {
