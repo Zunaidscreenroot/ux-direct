@@ -1806,7 +1806,7 @@
       }, 90000);
       const selectedNodes = Array.isArray(canvas && canvas.nodes) ? canvas.nodes : [];
       const expectsSelection = /\b(selected|selection|this frame|this screen|current frame|variation|variant|duplicate|redesign this|improve this)\b/i.test(prompt);
-      if (expectsSelection && selectedNodes.length === 0) {
+      if (expectsSelection && selectedNodes.length === 0 && !(designOptions && designOptions.forceCreate)) {
         throw new Error("Select the frame you want UX Direct to work from, then send the prompt again.");
       }
       if (expectsSelection && selectedNodes.length > 1) {
@@ -1916,6 +1916,7 @@
         throw new Error("Figma did not return the new frame ID. Inspect the current page before retrying.");
       }
       createdFrameId = root.id;
+      if (designOptions && typeof designOptions.onCreated === "function") designOptions.onCreated(root.id);
       const createdName = frameName;
       const createdId = root.id;
       recordChange("New screen \"" + createdName + "\"", function () {
@@ -2663,6 +2664,16 @@
       if (/\b(ux (audit|review|critique)|usability (review|audit|check)|heuristic|audit|critique|review (this|these|the|my)\b|give (me )?feedback|what('s| is) wrong|kahan (pe |par )?galat)/i.test(text)) {
         return { kind: "ux-audit" };
       }
+      // Journeys (flows of screens): "create a journey to pay overdue EMI" with nothing selected plans the
+      // steps and builds each screen; "add the missing states" on a selected flow adds success/failure;
+      // "next step" on one screen builds the screen that follows it. All are wired as a prototype.
+      const journeyWord = /\b(journey|user flow|flow|wizard|end[- ]to[- ]end)\b/i.test(text);
+      const makeWord = /\b(create|design|make|build|generate|draft|banao|bana do|bana|plan)\b/i.test(text);
+      if (count === 0 && journeyWord && makeWord && !/\b(variations?|variants?|versions?)\b/i.test(text)) return { kind: "journey-create" };
+      const flowFrames = types.filter(function (type) { return type === "FRAME"; }).length;
+      if (flowFrames >= 2 && flowFrames === count && /\b(missing|add|create|banao)\b/i.test(text) && /\bstates?\b/i.test(text) &&
+          !/\b(empty|loading|skeleton)\b/i.test(text)) return { kind: "flow-states" };
+      if (flowFrames === 1 && count === 1 && /\bnext\s+(step|screen|page)\b|\bagla\s+(step|screen)\b/i.test(text)) return { kind: "journey-next" };
       // States pack: "add empty, loading and error states", "error state banao" on one selected screen.
       const stateNames = [];
       if (/\b(empty|zero[- ]?(data|state)|no[- ]data|blank)\b/i.test(text)) stateNames.push("empty");
@@ -3240,6 +3251,122 @@
         notes.slice(0, 8).map(function (n) { return "- **" + n.name + "**: " + n.note; }).join("\n") +
         "\n\nOpen Dev Mode to see them. Running it again replaces only UX Direct's notes. Revert removes them.";
     }
+    // One shared kit for every screen of a journey: the components the first screen used (app bar,
+    // buttons, rows) by id, so each later screen reuses exactly those instead of new look-alikes.
+    async function journeyKit(frameId) {
+      const canvas = await runNativeCanvasCommand("read-canvas", { scope: "selection", nodeIds: [frameId], maxDepth: 6, maxNodes: 300, includeStyles: false, includeVariables: false, includeComponents: false }, 90000).catch(function () { return null; });
+      const root = canvas && Array.isArray(canvas.nodes) ? canvas.nodes[0] : null;
+      if (!root) return "";
+      const seen = {}, kit = [];
+      flattenTree(root.children, function (node, _parent, insideInstance) {
+        if (insideInstance || node.type !== "INSTANCE" || !node.mainComponentId || seen[node.mainComponentId] || kit.length >= 8) return;
+        seen[node.mainComponentId] = true;
+        kit.push("\"" + String(node.name || "Component").slice(0, 40) + "\" (componentId " + node.mainComponentId + ")");
+      });
+      return "SHARED KIT: this screen belongs to one journey. Use the same frame width, background, gutter and type scale as \"" + String(root.name).slice(0, 60) + "\"" +
+        (Number(root.width) ? " (" + Math.round(root.width) + "px wide)" : "") + (kit.length ? ", and reuse exactly these components from it: " + kit.join(", ") + ". The app bar on every step after the first has a back arrow." : ".");
+    }
+    async function wireScreens(ids, stage) {
+      if (ids.length < 2) return null;
+      stage("creating", "Wiring the journey as a prototype…");
+      await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: ids }, 30000);
+      const wired = await localTask("prototype-wire", { fix: true }, 120000);
+      if ((wired.snapshot || []).length) revertSnapshot("Journey prototype links", wired.snapshot);
+      return wired;
+    }
+    async function runJourneyTask(task, prompt, stage) {
+      const width = 393, gapX = 120;
+      const created = [];
+      const build = async function (step, index, total, slot, kit, extra) {
+        const name = step.frameName;
+        await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [] }, 30000).catch(function () { return null; });
+        let id = "";
+        await createFigmaDesign(step.prompt + (kit ? "\n\n" + kit : "") + (extra || ""), function (status) {
+          stage("creating", "Screen " + (index + 1) + "/" + total + " · " + name + " · " + status);
+        }, { placement: slot, exactPlacement: true, frameName: name, forceCreate: true, onCreated: function (frameId) { id = frameId; } });
+        if (id) created[index] = id;
+        return id;
+      };
+      if (task.kind === "journey-create") {
+        stage("planning", "Planning the journey's screens…");
+        const payload = await postQuickTask("/api/assistant/figma-agent/journey", { prompt: prompt });
+        const plan = payload.plan;
+        const steps = plan.steps.map(function (step, index) {
+          const total = plan.steps.filter(function (s) { return s.kind === "step"; }).length;
+          const role = step.kind === "success" ? "the journey's SUCCESS screen" : step.kind === "error" ? "the journey's FAILURE state (what went wrong, how to fix it, a Retry button and a way home)" : "step " + (index + 1) + " of " + total;
+          return {
+            frameName: String(plan.title).slice(0, 40) + " / " + (index + 1) + " · " + step.name,
+            prompt: "Create " + role + " of the journey \"" + plan.title + "\": a screen named \"" + step.name + "\". " + (step.purpose || "") +
+              " Its one primary action is \"" + step.primaryAction + "\" (a full-width primary button)." +
+              (index > 0 ? " The app bar shows a back arrow." : "") + "\n\nDesigner request: " + prompt,
+          };
+        });
+        const row = await findFreeCanvasSpot(0, 0, steps.length * width + (steps.length - 1) * gapX, 900);
+        const slot = function (index) { return { x: row.x + index * (width + gapX), y: row.y }; };
+        const firstId = await build(steps[0], 0, steps.length, slot(0), "", "");
+        const kit = firstId ? await journeyKit(firstId) : "";
+        let next = 1;
+        const worker = async function () {
+          while (next < steps.length && !stopRequested) {
+            const index = next++;
+            try { await build(steps[index], index, steps.length, slot(index), kit, ""); } catch (_) { /* reported below */ }
+          }
+        };
+        await Promise.all([worker(), worker(), worker()]);
+        if (stopRequested) throw new Error(STOP_MESSAGE);
+        const ids = created.filter(Boolean);
+        const wired = await wireScreens(ids, stage);
+        const links = wired ? (wired.links || []).filter(function (l) { return l.done; }).length : 0;
+        stage("done", "Journey · " + ids.length + " screen(s)");
+        return "Created the journey **" + plan.title + "**: " + ids.length + " of " + steps.length + " screens, left to right (" +
+          plan.steps.map(function (s) { return s.name; }).join(" → ") + ")." +
+          (wired ? "\nWired " + links + " link(s): main buttons move forward, back arrows go back, Retry returns to the failed step, Done returns to the start." : "") +
+          (wired && (wired.deadEnds || []).length ? "\nNo way forward yet on: " + wired.deadEnds.join(", ") + "." : "") +
+          "\nPress Present to try it. Revert removes the screens and links.";
+      }
+      const canvas = await runNativeCanvasCommand("read-canvas", { scope: "selection", maxDepth: 1, maxNodes: 40, includeStyles: false, includeVariables: false, includeComponents: false }, 60000);
+      const frames = (canvas && Array.isArray(canvas.nodes) ? canvas.nodes : []).filter(function (n) { return n.type === "FRAME"; })
+        .sort(function (a, b) { return Math.abs(Number(a.y) - Number(b.y)) > Number(a.height) / 2 ? Number(a.y) - Number(b.y) : Number(a.x) - Number(b.x); });
+      if (!frames.length) throw new Error("Select the journey's screens first.");
+      const last = frames[frames.length - 1];
+      const kit = await journeyKit(frames[0].id);
+      const startX = Math.max.apply(null, frames.map(function (f) { return Number(f.x) + Number(f.width); })) + gapX;
+      if (task.kind === "journey-next") {
+        const source = frames[0];
+        const name = String(source.name).replace(/\s*\/?\s*\d+\s*·.*$/, "").slice(0, 40) || "Journey";
+        const free = await findFreeCanvasSpot(startX, Number(source.y), width, Number(source.height) || 852);
+        await build({ frameName: name + " / Next step", prompt: "Create the NEXT screen of the journey that \"" + source.name + "\" belongs to: the step a person reaches by pressing that screen's primary button. Continue its task with real content, one primary action, and a back arrow in the app bar.\n\nDesigner request: " + prompt },
+          0, 1, free, kit, "");
+        const ids = [source.id].concat(created.filter(Boolean));
+        const wired = await wireScreens(ids, stage);
+        stage("done", "Next step created");
+        return created[0] ? "Created the next step to the right of **" + source.name + "**, with the same components." + (wired ? " Its main button now opens it, and the new screen's back arrow returns." : "") : "The next step could not be created.";
+      }
+      // flow-states: add the success and failure screens the flow is missing, from its last step.
+      const names = frames.map(function (f) { return String(f.name); });
+      const hasSuccess = names.some(function (n) { return /\b(success|successful|done|complete|completed|thank|receipt|confirmed|confirmation)\b/i.test(n); });
+      const hasError = names.some(function (n) { return /\b(fail|failed|failure|error|declined|unsuccessful)\b/i.test(n); });
+      const steps = frames.filter(function (f) { return !/\b(success|successful|fail|failed|failure|error|declined)\b/i.test(String(f.name)); });
+      const from = steps[steps.length - 1] || last;
+      const jobs = [];
+      if (!hasSuccess) jobs.push({ frameName: String(from.name).slice(0, 50) + " / Success", prompt: "Create the SUCCESS screen that follows \"" + from.name + "\" in this journey: confirm the result with the real values, say what happens next, and a Done button back to the start." });
+      if (!hasError) jobs.push({ frameName: String(from.name).slice(0, 50) + " / Error", prompt: "Create the FAILURE state of \"" + from.name + "\" in this journey: say what went wrong in plain words and how to fix it, keep the values the person entered, a Retry button and a secondary way home." });
+      if (!jobs.length) {
+        const wired = await wireScreens(frames.map(function (f) { return f.id; }), stage);
+        stage("done", "Flow already has its states");
+        return "This flow already has a success and a failure screen." + (wired ? " Its links were checked and wired." : "");
+      }
+      const free = await findFreeCanvasSpot(startX, Number(from.y), jobs.length * width + (jobs.length - 1) * gapX, Number(from.height) || 852);
+      for (let i = 0; i < jobs.length; i += 1) {
+        jobs[i].prompt += "\n\nDesigner request: " + prompt;
+        try { await build(jobs[i], i, jobs.length, { x: free.x + i * (width + gapX), y: free.y }, kit, ""); } catch (_) { /* reported below */ }
+      }
+      const ids = frames.map(function (f) { return f.id; }).concat(created.filter(Boolean));
+      const wired = await wireScreens(ids, stage);
+      stage("done", "Flow states added");
+      return "Added " + created.filter(Boolean).length + " missing state screen(s) (" + jobs.map(function (j) { return j.frameName.split(" / ").pop(); }).join(", ") + ") to the right of the flow, with the flow's own components." +
+        (wired ? " The flow is wired: Retry goes back, Done returns to the start." : "");
+    }
     async function runPrototypeWireTask(task, stage) {
       stage("creating", task.fix ? "Wiring buttons between the selected screens…" : "Planning prototype links…");
       const result = await localTask("prototype-wire", { fix: Boolean(task.fix) }, 120000);
@@ -3249,12 +3376,15 @@
       const lines = links.slice(0, 15).map(function (l) {
         return "- " + l.screen + ": **" + l.label + "** → " + (l.action === "BACK" ? "back" : l.to) + (task.fix && !l.done ? " (failed)" : "");
       }).join("\n");
+      const dead = (result.deadEnds || []).length ? "\n\nNo way forward yet on: " + result.deadEnds.slice(0, 6).join(", ") + ". Add a main button there, or name one after the next screen." : "";
       if (task.fix) {
-        if ((result.snapshot || []).length) revertSnapshot("Prototype links (" + result.snapshot.length + ")", result.snapshot);
-        return "Wired " + (result.snapshot || []).length + " button(s) on click, with a dissolve transition:\n" + lines +
+        const wired = links.filter(function (l) { return l.done; }).length;
+        if ((result.snapshot || []).length) revertSnapshot("Prototype links (" + wired + ")", result.snapshot);
+        return "Wired " + wired + " button(s) on click, with a dissolve transition:\n" + lines +
+          (result.flowStart ? "\n\nThe flow starts at **" + result.flowStart + "**." : "") + dead +
           "\n\nButtons that already had an interaction were left alone. Press Present to try it. Revert removes these links.";
       }
-      return "Planned " + links.length + " link(s):\n" + lines + "\n\nSay **wire the prototype** to apply them.";
+      return "Planned " + links.length + " link(s):\n" + lines + dead + "\n\nSay **wire the prototype** to apply them.";
     }
     // uxd-handoff:end
     async function runIconTask(task, stage) {
@@ -3620,6 +3750,7 @@
       if (task.kind === "detached") return runDetachedTask(task, stage);
       if (task.kind === "handoff") return runHandoffTask(stage);
       if (task.kind === "prototype-wire") return runPrototypeWireTask(task, stage);
+      if (task.kind === "journey-create" || task.kind === "journey-next" || task.kind === "flow-states") return runJourneyTask(task, prompt, stage);
       if (task.kind === "learn") return runLearnTask(task, stage);
       if (task.kind === "theme") return runThemeTask(task, stage);
       if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);

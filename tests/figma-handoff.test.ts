@@ -25,6 +25,10 @@ test("handoff and prototype prompts route to their tasks", () => {
   assert.deepEqual(classify("connect these screens", two), { kind: "prototype-wire", fix: true });
   assert.deepEqual(classify("show which buttons link the screens", two), { kind: "prototype-wire", fix: false });
   assert.equal(classify("relink detached components", two).kind, "detached");
+  assert.deepEqual(classify("create a journey to pay an overdue EMI", { selectionTypes: [] }), { kind: "journey-create" });
+  assert.deepEqual(classify("add the missing states to this flow", two), { kind: "flow-states" });
+  assert.deepEqual(classify("design the next step", one), { kind: "journey-next" });
+  assert.notEqual(classify("create a flow variation", two)?.kind, "journey-create");
 });
 
 function decorate(n: any, parent: any): any {
@@ -166,4 +170,41 @@ test("Skip skips the whole named run, even run screens without a Skip of their o
   const plan = await run("prototype-wire", {});
   const skip = plan.links.find((l: any) => l.label === "Skip");
   assert.equal(skip.to, "Home");
+});
+
+test("a journey wires Back icons, skips the failure state going forward, Retry goes back, Done returns to the start, and the flow gets a start", async () => {
+  const backIcon = (id: string) => ({ id, type: "INSTANCE", name: "Icon / arrow-left", width: 24, height: 24, children: [{ id: id + "v", type: "VECTOR", name: "Vector", width: 16, height: 16 }] });
+  const s1: any = { id: "s1", type: "FRAME", name: "My loans", x: 0, y: 0, width: 360, height: 800, children: [button("b1", "View details")] };
+  const s2: any = { id: "s2", type: "FRAME", name: "Loan details", x: 400, y: 0, width: 360, height: 800, children: [backIcon("i2"), button("b2", "Pay ₹8,450")] };
+  const s3: any = { id: "s3", type: "FRAME", name: "Payment successful", x: 800, y: 0, width: 360, height: 800, children: [button("b3", "Done")] };
+  const s4: any = { id: "s4", type: "FRAME", name: "Payment failed", x: 1200, y: 0, width: 360, height: 800, children: [button("b4", "Retry"), button("b5", "Go to home", { name: "Secondary button" })] };
+  const nodes: Record<string, any> = { s1, s2, s3, s4 };
+  const run = runtime([s3, s1, s4, s2], nodes);
+  const page: any = (s1 as any).parent;
+  page.flowStartingPoints = [];
+  const plan = await run("prototype-wire", {});
+  const map = Object.fromEntries(plan.links.map((l: any) => [l.label, l.action === "BACK" ? "back" : l.to]));
+  assert.equal(map["Icon / arrow-left"], "back", "app bar back icon");
+  assert.equal(map["Pay ₹8,450"], "Payment successful", "main button moves on, never into the failure state");
+  assert.equal(map["Done"], "My loans", "the end returns to the start");
+  assert.equal(map["Retry"], "back", "retry goes back to the step that failed");
+  assert.equal(map["Go to home"], "My loans");
+  assert.deepEqual(plan.deadEnds, []);
+  const wired = await run("prototype-wire", { fix: true });
+  assert.equal(page.flowStartingPoints[0].nodeId, "s1");
+  assert.equal(wired.flowStart, "My loans");
+});
+
+test("a journey's shared title words do not decide where a button goes", async () => {
+  const s1: any = { id: "j1", type: "FRAME", name: "Pay EMI / 1 · My loans", x: 0, y: 0, width: 360, height: 800, children: [button("c1", "Pay EMI")] };
+  const s2: any = { id: "j2", type: "FRAME", name: "Pay EMI / 2 · Choose amount", x: 400, y: 0, width: 360, height: 800, children: [button("c2", "Continue")] };
+  const s3: any = { id: "j3", type: "FRAME", name: "Pay EMI / 3 · Payment successful", x: 800, y: 0, width: 360, height: 800, children: [button("c3", "Done")] };
+  const s4: any = { id: "j4", type: "FRAME", name: "Pay EMI / 4 · Payment failed", x: 1200, y: 0, width: 360, height: 800, children: [button("c4", "Retry")] };
+  const run = runtime([s1, s2, s3, s4], { j1: s1, j2: s2, j3: s3, j4: s4 });
+  const plan = await run("prototype-wire", {});
+  const map = Object.fromEntries(plan.links.map((l: any) => [l.label, l.action === "BACK" ? "back" : l.to]));
+  assert.equal(map["Pay EMI"], "Pay EMI / 2 · Choose amount");
+  assert.equal(map["Continue"], "Pay EMI / 3 · Payment successful");
+  assert.equal(map["Done"], "Pay EMI / 1 · My loans");
+  assert.equal(map["Retry"], "back");
 });
