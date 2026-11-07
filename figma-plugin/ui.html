@@ -1081,7 +1081,7 @@
       try {
         const response = await fetch(API + "/api/assistant/figma-agent/lint", {
           method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
-          cache: "no-store", body: JSON.stringify(body)
+          cache: "no-store", body: JSON.stringify({ ...body, ...(await designRulesField()) })
         });
         const result = await response.json().catch(function () { return {}; });
         return response.ok && result.ok === true && Array.isArray(result.issues) ? result : null;
@@ -1711,6 +1711,7 @@
       stage("planning", "Analysing rendered appearance and native layers together…");
       const localReadMs = Date.now() - taskStartedAt;
       const serverStartedAt = Date.now();
+      const rulesField = await designRulesField();
       const response = await fetch(API + "/api/assistant/figma-agent", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
@@ -1718,7 +1719,7 @@
         body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning, capabilities: PLUGIN_CAPABILITIES,
           ...(designOptions && designOptions.variation ? { variation: designOptions.variation } : {}),
           ...(designOptions && designOptions.state ? { state: designOptions.state } : {}),
-          ...(createMode ? { mode: "create" } : {}) })
+          ...(createMode ? { mode: "create" } : {}), ...rulesField })
       });
       const payload = await response.json().catch(function () { return {}; });
       const serverMs = Date.now() - serverStartedAt;
@@ -2425,6 +2426,13 @@
       if (/\b(revert|undo|roll ?back|reverse (it|this|that|the (last )?change))\b|\bgo back to (the )?(previous|original|old|earlier)\b|\brestore (it|this|that|the (previous|original|old)|previous|original)\b|\b(wapas|vapas|waapas)\b|pehle (jaisa|jaise|wala)|purana (wala|jaisa)|\bcancel (the |this |that |my )?(last )?(change|edit)s?\b/i.test(text)) {
         return { kind: "revert", all: /\b(all|everything|sab|saare|sare)\b/i.test(text) };
       }
+      // Per-file design rules ("DESIGN.md"): "set design rules: spacing 4/8/16, radius 8/16…", "show design rules".
+      if (/\bdesign[ .-]?(rules|md|system rules|guidelines)\b/i.test(text)) {
+        if (/\b(clear|reset|remove|delete)\b/i.test(text)) return { kind: "design-rules", mode: "clear" };
+        const body = /\bdesign[ .-]?(?:rules|md|system rules|guidelines)\b\s*(?:are|is|=|:|-)\s*([\s\S]+)$/i.exec(text);
+        if (body && body[1].trim().length > 3) return { kind: "design-rules", mode: "set", text: body[1].trim().slice(0, 4000) };
+        return { kind: "design-rules", mode: "show" };
+      }
       if (!/\b(background|bg)\s*(colou?r|fill|ka colou?r|ka rang)\b|\b(colou?r|fill)\b/i.test(text) && /\b(remove|erase|delete|cut ?out|clear|hatao|hata do|nikal)\b[^.]{0,25}\b(background|bg)\b|\bbackground\s*(removal|remover|remove)\b|\b(background|bg)\b[^.]{0,15}\b(hatao|hata do|remove)\b/i.test(text)) {
         return { kind: "remove-background" };
       }
@@ -2772,7 +2780,7 @@
         : "Auditing usability and flow with the free model…");
       const result = await postQuickTask("/api/assistant/figma-agent/audit", {
         kind: kind === "hygiene" ? "hygiene" : "ux", prompt: prompt, canvas: { nodes: tree.nodes, truncated: tree.truncated },
-        screens: kind === "hygiene" ? undefined : screens, styleCounts: tree.styleCounts || undefined
+        screens: kind === "hygiene" ? undefined : screens, styleCounts: tree.styleCounts || undefined, ...(await designRulesField())
       });
       stage("done", kind === "hygiene" ? "Hygiene check complete" : "UX audit complete");
       return String(result.text || "Review complete.");
@@ -2801,6 +2809,85 @@
         (result.lorem ? "\n\n" + result.lorem + " layer(s) still have lorem ipsum. Say **replace the lorem ipsum with realistic content** for that." : "") +
         (result.changed ? "\nSay **fill different data** for a new set. Revert restores the original values, even after other edits." : "");
     }
+    // uxd-design-rules:start
+    function parseDesignRules(text) {
+      const src = String(text || "");
+      const nums = function (pattern) {
+        const m = pattern.exec(src);
+        if (!m) return [];
+        const list = (m[m.length - 1].match(/\d+(?:\.\d+)?/g) || []).map(Number).filter(function (n) { return n > 0 && n <= 200; });
+        return Array.from(new Set(list)).sort(function (a, b) { return a - b; });
+      };
+      const rules = {};
+      const spacing = nums(/\b(spacing|spaces?|gaps?|padding)\b\s*(?:scale)?\s*[:=]?\s*((?:\d+(?:\.\d+)?\s*(?:px)?\s*[,/|]?\s*){2,})/i);
+      const radii = nums(/\b(radius|radii|corners?|corner radius)\b\s*[:=]?\s*((?:\d+(?:\.\d+)?\s*(?:px)?\s*[,/|]?\s*){1,})/i);
+      const typeScale = nums(/\b(type(?: scale)?|font sizes?|text sizes?|typography)\b\s*[:=]?\s*((?:\d+(?:\.\d+)?\s*(?:px)?\s*[,/|]?\s*){2,})/i);
+      if (spacing.length) rules.spacing = spacing;
+      if (radii.length) rules.radii = radii;
+      if (typeScale.length) rules.typeScale = typeScale;
+      const min = /\bmin(?:imum)?\.?\s*(?:text|font)(?:\s*size)?\s*[:=]?\s*(\d+)/i.exec(src);
+      if (min) rules.minText = Math.max(8, Math.min(24, Number(min[1])));
+      const colors = {};
+      const colorPattern = /([A-Za-z][A-Za-z /-]{1,24}?)\s*[:=]?\s*(#[0-9a-f]{6})\b/gi;
+      let match;
+      while ((match = colorPattern.exec(src))) colors[match[1].trim().toLowerCase()] = match[2].toUpperCase();
+      if (Object.keys(colors).length) rules.colors = colors;
+      const font = /\bfont(?:\s*family)?\s*[:=]\s*([A-Za-z][A-Za-z0-9 ]{1,30}?)(?=[,.;\n]|$)/i.exec(src);
+      if (font) rules.font = font[1].trim();
+      const tone = /\b(?:tone|voice)\s*[:=]?\s*([A-Za-z][A-Za-z ,-]{1,40}?)(?=[.;\n]|$)/i.exec(src);
+      if (tone) rules.tone = tone[1].trim();
+      return rules;
+    }
+    function describeDesignRules(rules) {
+      if (!rules) return [];
+      const lines = [];
+      if (rules.spacing) lines.push("- Spacing scale: " + rules.spacing.join(", ") + " px (hygiene fix snaps padding and gaps to these)");
+      if (rules.radii) lines.push("- Corner radii: " + rules.radii.join(", ") + " px (hygiene fix snaps radii to these)");
+      if (rules.typeScale) lines.push("- Type scale: " + rules.typeScale.join(", ") + " px");
+      if (rules.minText) lines.push("- Minimum text size: " + rules.minText + " px");
+      if (rules.colors) lines.push("- Colours: " + Object.keys(rules.colors).map(function (k) { return k + " " + rules.colors[k]; }).join(", "));
+      if (rules.font) lines.push("- Font: " + rules.font);
+      if (rules.tone) lines.push("- Copy tone: " + rules.tone);
+      return lines;
+    }
+    let cachedDesignRules = null;
+    async function currentDesignRulesText() {
+      if (cachedDesignRules === null) {
+        try { cachedDesignRules = (await localTask("get-design-rules", {})).text || ""; } catch (_) { cachedDesignRules = ""; }
+      }
+      return cachedDesignRules;
+    }
+    // Sent only when the file has rules, so files without rules keep the exact old request body.
+    async function designRulesField() {
+      const text = String(await currentDesignRulesText() || "").trim();
+      return text ? { designRules: text.slice(0, 4000) } : {};
+    }
+    async function runDesignRulesTask(task, stage) {
+      if (task.mode === "show") {
+        const current = await localTask("get-design-rules", {});
+        if (!current.text) return "This file has no design rules yet. Set them once and every UX Direct task follows them, for example:\n" +
+          "**design rules: spacing 4/8/12/16/24, radius 8/16, type 12/14/16/20/28, min text 12, primary #2563EB, font: Inter, tone: clear and formal**";
+        return "Design rules for this file (shared with everyone on it):\n" + (describeDesignRules(current.rules).join("\n") || "- (free text only)") +
+          "\n\nFull text:\n> " + String(current.text).replace(/\n/g, "\n> ") + "\n\nChange them with **design rules: …**, or **clear design rules**.";
+      }
+      stage("creating", task.mode === "clear" ? "Clearing the file's design rules…" : "Saving the file's design rules…");
+      const rules = task.mode === "clear" ? null : parseDesignRules(task.text);
+      const result = await localTask("set-design-rules", { text: task.mode === "clear" ? "" : task.text, rules: rules });
+      cachedDesignRules = task.mode === "clear" ? "" : task.text;
+      const previous = result.previous || {};
+      recordChange(task.mode === "clear" ? "Design rules cleared" : "Design rules saved", async function () {
+        await localTask("set-design-rules", { text: previous.text || "", rules: previous.rules || null });
+        cachedDesignRules = previous.text || "";
+        return "previous design rules restored";
+      });
+      stage("done", task.mode === "clear" ? "Design rules cleared" : "Design rules saved");
+      if (task.mode === "clear") return "Cleared this file's design rules. UX Direct is back to its defaults (4px grid, 12px minimum text).";
+      const lines = describeDesignRules(rules);
+      return "Saved design rules in this Figma file, so everyone on the file shares them.\n" + (lines.join("\n") || "- Saved as free text (no scales recognised)") +
+        "\n\nThey are sent with every design task, and **fix hygiene** now uses them as its thresholds.";
+    }
+    // uxd-design-rules:end
+
     async function runIconTask(task, stage) {
       const ids = selectedIds();
       if (!ids.length) throw new Error("Select the buttons, rows or icon to change.");
@@ -2853,7 +2940,7 @@
       try {
         const tree = await localTask("read-tree", { maxDepth: 12, maxNodes: 800 });
         const result = await postQuickTask("/api/assistant/figma-agent/audit", {
-          kind: "hygiene", prompt: prompt, canvas: { nodes: tree.nodes, truncated: tree.truncated }, styleCounts: tree.styleCounts || undefined
+          kind: "hygiene", prompt: prompt, canvas: { nodes: tree.nodes, truncated: tree.truncated }, styleCounts: tree.styleCounts || undefined, ...(await designRulesField())
         });
         return result.report && typeof result.report.score === "number" ? result.report : null;
       } catch (error) {
@@ -2892,6 +2979,7 @@
       const lines = [];
       if (c.spacing) lines.push("- Snapped padding/gaps to the 4px grid on " + c.spacing + " frame(s)");
       if (c.symmetry) lines.push("- Made left/right padding equal on " + c.symmetry + " frame(s)");
+      if (c.radius) lines.push("- Snapped " + c.radius + " corner radius value(s) to the file's design rules");
       if (c.repeated) lines.push("- Matched padding, gap and radius on " + c.repeated + " repeated item(s) to the rest of their group");
       if (c.colorVariables) lines.push("- Bound " + c.colorVariables + " hard-coded colour(s) to matching colour variables");
       if (c.colorStyles) lines.push("- Applied matching colour styles to " + c.colorStyles + " layer(s)");
@@ -3106,6 +3194,7 @@
       if (task.kind === "hygiene-fix") return runHygieneFixTask(task, prompt, stage);
       if (task.kind === "fill-data") return runFillDataTask(task, stage);
       if (task.kind === "icon") return runIconTask(task, stage);
+      if (task.kind === "design-rules") return runDesignRulesTask(task, stage);
       if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);
       if (task.kind === "flow-variations" || task.kind === "screen-variations" || task.kind === "states-pack") return runVariationsTask(task, prompt, stage);
       throw new Error("Unknown quick task.");
