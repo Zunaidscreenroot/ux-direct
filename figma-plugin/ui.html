@@ -4143,9 +4143,12 @@
       return "Redid it with your feedback (*" + turn.critique.slice(0, 120) + "*)" +
         (learned && (learned.brain || learned.local && learned.local.added) ? ", and saved the lesson" + (learned.brain ? " to the knowledge base" : " to this file's design rules") + " so I don't repeat it" : "") + ".\n" + answer;
     }
-    function isAnsweringQuickTask(task) {
+    function isAnsweringQuickTask(task, prompt) {
       if (!task) return false;
-      if (["hygiene", "ux-audit", "revert"].indexOf(task.kind) >= 0) return true;
+      // "what is wrong here?" is a question to answer in a few lines, not a full audit run.
+      // Only an explicit ask ("audit / review / critique this") runs the audit from a question.
+      if (task.kind === "ux-audit") return /\b(audit|review|critique|heuristics?|usability (check|test))\b/i.test(String(prompt || ""));
+      if (["hygiene", "revert"].indexOf(task.kind) >= 0) return true;
       if (["consistency", "detached", "prototype-wire"].indexOf(task.kind) >= 0) return task.fix === false;
       if (task.kind === "design-rules") return task.mode === "show";
       if (task.kind === "learn") return task.preview === true;
@@ -4208,7 +4211,7 @@
           hasAttachment: Boolean(attachedImageData)
         });
         // A question only reaches a quick task that answers it without changing the canvas.
-        const quickTask = turn && turn.kind === "question" && !isAnsweringQuickTask(classifiedQuick) ? null : classifiedQuick;
+        const quickTask = turn && turn.kind === "question" && !isAnsweringQuickTask(classifiedQuick, prompt) ? null : classifiedQuick;
         const directEdit = parseDirectEdit(prompt, {
           selectionTypes: (currentSelection.selection || []).map(function (node) { return node.type; })
         });

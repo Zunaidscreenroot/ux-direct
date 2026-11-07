@@ -49,13 +49,16 @@ test("teaching saves a rule; feedback needs a previous screen", () => {
 });
 
 test("a question only reaches quick tasks that answer without changing the canvas", () => {
-  const { answering } = load();
+  const { answering, classify } = load();
   assert.equal(answering({ kind: "hygiene" }), true);
   assert.equal(answering({ kind: "consistency", fix: false }), true);
   assert.equal(answering({ kind: "consistency", fix: true }), false);
   assert.equal(answering({ kind: "hygiene-fix", groups: ["spacing"] }), false);
   assert.equal(answering({ kind: "design-rules", mode: "show" }), true);
   assert.equal(answering(null), false);
+  assert.equal(answering({ kind: "ux-audit" }, "what is wrong here?"), false);
+  assert.equal(answering({ kind: "ux-audit" }, "can you audit this screen?"), true);
+  assert.equal(classify("what is wrong here?", {}).kind, "question");
 });
 
 test("objective playbook gives simplify concrete moves and honours a rejected attempt", () => {
