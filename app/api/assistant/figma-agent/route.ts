@@ -911,6 +911,11 @@ export async function POST(request: Request) {
         const designed = report.runs.filter((run) => run.outcome === "designed").length;
         attemptTimes.push({ attempt: "agency (" + designed + "/" + report.runs.length + " sections designed, " + report.concurrency + " parallel)",
           ms: Date.now() - agencyStarted, outcome: candidate.stage === "ok" ? "ok" : candidate.error.slice(0, 120) });
+        // One Timing row per designer, so a section that fell back shows why.
+        for (const run of report.runs.filter((entry) => entry.outcome !== "kept")) {
+          attemptTimes.push({ attempt: "· " + run.designer + " designer: " + run.section, ms: run.ms,
+            outcome: run.outcome === "designed" ? "ok" + (run.restoredTexts ? " (+" + run.restoredTexts + " restored)" : "") : "fallback: " + (run.error || "rejected").slice(0, 100) });
+        }
         attemptLog.push({ model: "agency: " + (models.join(", ") || "none"), result: candidate.stage === "ok" ? "passed" : candidate.stage + ": " + candidate.error });
         if (candidate.stage === "ok" && candidate.plan && candidate.quality) {
           agencyReport = { ...agencyReport, used: true, gate: "ok" };

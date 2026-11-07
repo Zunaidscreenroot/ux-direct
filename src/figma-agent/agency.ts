@@ -235,22 +235,43 @@ export function droppedTexts(sourceTexts: string[], blocks: unknown): string[] {
  * Accepts a designer's section if it keeps the section's content: >30% dropped → rejected
  * (the source section is used); a few dropped texts are appended back as plain rows.
  */
+const VALUE = /[\d₹$€£%]/;
+const FORBIDDEN_BLOCKS = new Set(["app_bar", "custom", "bottom_nav"]);
+
+/**
+ * Accepts a designer's section only if it keeps the section's content and structure:
+ * - every value (anything with a digit, ₹ or %) must survive — a dropped amount is a hard fail;
+ * - at most 30% of the plain labels may be dropped, and those are appended back;
+ * - no app bar / bottom nav / custom node trees (another designer's job, or layouts the
+ *   renderer squeezes), and no card nested in a card section;
+ * - the source's container (card or plain), title and badge are kept: the Director owns structure.
+ */
 export function groundDesignerSection(item: WorkItem, data: Rec): { section: Rec; restored: number } | { error: string } {
   const raw = data.section && typeof data.section === "object" && !Array.isArray(data.section) ? data.section as Rec : data;
-  const blocks = Array.isArray(raw.blocks) ? (raw.blocks as unknown[]).filter((block) => block && typeof block === "object" && typeof (block as Rec).type === "string") : [];
+  const blocks = Array.isArray(raw.blocks) ? (raw.blocks as unknown[]).filter((block) => block && typeof block === "object" && typeof (block as Rec).type === "string") as Rec[] : [];
   if (!blocks.length) return { error: "no blocks" };
-  if (blocks.some((block) => (block as Rec).type === "app_bar") && item.index > 0) return { error: "app_bar outside the header" };
+  const forbidden = blocks.find((block) => FORBIDDEN_BLOCKS.has(String(block.type)));
+  if (forbidden) return { error: String(forbidden.type) + " block not allowed in a section" };
+  const sourceSurface = item.source.surface === "card" ? "card" : "plain";
+  if (sourceSurface === "card" && blocks.some((block) => block.type === "card")) return { error: "card nested in a card section" };
   const dropped = droppedTexts(item.sourceTexts, blocks);
+  const droppedValues = dropped.filter((text) => VALUE.test(text));
+  if (droppedValues.length) return { error: "dropped values: " + droppedValues.slice(0, 4).join(", ") };
   if (item.sourceTexts.length && dropped.length / item.sourceTexts.length > 0.3) {
     return { error: "dropped " + dropped.length + "/" + item.sourceTexts.length + " source texts" };
   }
   const restored = dropped.length ? [{ type: "list", items: dropped.map((text) => ({ label: text })) }] : [];
-  const surface = raw.surface === "card" || raw.surface === "plain" ? raw.surface : item.source.surface;
+  const sourceTitle = typeof item.source.title === "string" ? item.source.title : "";
+  const title = sourceTitle || (typeof raw.title === "string" ? raw.title.trim().slice(0, 80) : "");
+  // A badge the blocks already show would render twice (finding: "Delinquent" duplicated).
+  const badge = (item.source.badge ?? raw.badge) as Rec | undefined;
+  const blockCorpus = norm(blockTexts(blocks).join(" \u0001 "));
+  const keepBadge = badge && typeof badge === "object" && typeof badge.text === "string" && !blockCorpus.includes(norm(badge.text));
   const section: Rec = {
-    name: typeof raw.name === "string" && raw.name.trim() ? raw.name.trim().slice(0, 60) : item.name,
-    ...(surface ? { surface } : {}),
-    ...(typeof raw.title === "string" && raw.title.trim() ? { title: raw.title.trim().slice(0, 80) } : {}),
-    ...(raw.badge && typeof raw.badge === "object" ? { badge: raw.badge } : {}),
+    name: item.name,
+    surface: sourceSurface,
+    ...(title ? { title } : {}),
+    ...(keepBadge ? { badge } : {}),
     blocks: [...blocks, ...restored],
   };
   return { section, restored: dropped.length };
@@ -296,6 +317,7 @@ function designerSystem(item: WorkItem, context: AgencyContext): string {
     context.designRules ? context.designRules : "",
     context.brain ? "TEAM KNOWLEDGE (the quality standard to follow):\n" + context.brain : "",
     "Design ONLY your section. Do not add an app bar, navigation, or content from other sections. Copy every source text of your section exactly into block fields; never invent data, features or actions.",
+    "HARD CHECKS (an answer that fails any is thrown away): every amount, number, percentage and date in sourceTexts appears exactly; keep the section's container (sourceSection.surface) — do not add a card block inside a card section; no custom, app_bar or bottom_nav blocks; a label and its value stay in the same row/stat; a progress_ring keeps its real percent and its label text.",
     BLOCK_SPEC_CONTRACT,
     "RETURN only: {\"section\": {\"name\": string, \"surface\": \"plain\"|\"card\", \"title\"?: string, \"badge\"?: {text, tone}, \"blocks\": [ ... ]}}. No theme, no other sections, no markdown.",
   ].filter(Boolean).join("\n");
@@ -360,9 +382,9 @@ export async function runAgency(canvas: Rec, context: AgencyContext, options: { 
         origin: context.origin,
         timeoutMs: options.deadlineMs ?? 45000,
         signal: deadline.signal,
-        maxAttempts: 1,
+        // A rejected answer gets one more try (`auto` may route it to another model).
+        maxAttempts: 2,
         anyObject: true,
-        fast: true,
         accept: (data) => {
           const grounded = groundDesignerSection(item, data);
           if ("error" in grounded) return grounded.error;
@@ -376,7 +398,7 @@ export async function runAgency(canvas: Rec, context: AgencyContext, options: { 
         runs.push({ ...base, ok: true, ms, model: result.model, outcome: "designed", ...(restored ? { restoredTexts: restored } : {}) });
         return { item, section: accepted };
       }
-      const error = result.ok ? "rejected" : (result.errors[0] || result.error).slice(0, 160);
+      const error = result.ok ? "rejected" : (result.errors.slice(-2).join(" | ") || result.error).slice(0, 200);
       if (QUOTA_ERROR.test(error)) quotaHits += 1;
       runs.push({ ...base, ok: false, ms, outcome: "fallback", error });
       return { item, section: item.source };

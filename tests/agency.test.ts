@@ -76,3 +76,22 @@ test("concurrency stays under the Worker's 6 connections; roles and route wiring
   // The agency runs before the monolithic planner, which stays the fallback.
   assert.ok(route.indexOf("runAgency(canvas") < route.indexOf("modelLoop: for"));
 });
+
+test("hard checks: dropped values, custom trees and nested cards are rejected; container is locked", () => {
+  const order = planWorkOrder(loanCanvas, improve)!;
+  const details = order.items[2];
+  const dropValue = groundDesignerSection(details, { section: { blocks: [{ type: "list", items: [
+    { label: "Loan ID" }, { label: "Tenure", value: "24 months" }, { label: "Status", value: "Current" }] }] } });
+  assert.ok("error" in dropValue && /dropped values: PL123/.test(dropValue.error));
+  const full = [{ type: "list", items: [{ label: "Loan ID", value: "PL123" }, { label: "Tenure", value: "24 months" }, { label: "Status", value: "Current" }] }];
+  assert.ok("error" in groundDesignerSection(details, { section: { blocks: [...full, { type: "custom", node: { type: "FRAME" } }] } }));
+  const summary = order.items[1]; // a card section in the source
+  const summaryBlocks = [{ type: "list", items: [{ label: "Outstanding", value: "₹45,000" }, { label: "EMI", value: "₹8,450" }, { label: "Paid", value: "60%" }] }];
+  assert.ok("error" in groundDesignerSection(summary, { section: { blocks: [{ type: "card", blocks: summaryBlocks }] } }));
+  const flattened = groundDesignerSection(summary, { section: { name: "Random", surface: "plain", blocks: summaryBlocks } });
+  assert.ok(!("error" in flattened));
+  if (!("error" in flattened)) {
+    assert.equal(flattened.section.surface, "card");
+    assert.equal(flattened.section.name, "Loan summary");
+  }
+});
