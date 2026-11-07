@@ -891,7 +891,7 @@ export async function POST(request: Request) {
   const agencySource = rawSourceCanvas ?? canvas;
   const truncatedNames = agencyEligible ? truncatedContentNames(agencySource) : [];
   if (agencyEligible && truncatedNames.length > 0) {
-    attemptTimes.push({ attempt: "agency skipped: layer tree incomplete (" + truncatedNames.length + " unread: " + truncatedNames.slice(0, 4).join(", ") + "); single planner with screenshot", ms: 0, outcome: "skipped" });
+    attemptTimes.push({ attempt: "section pass skipped: " + truncatedNames.length + " layer(s) not read (" + truncatedNames.slice(0, 4).join(", ") + ")", ms: 0, outcome: "skipped" });
   }
   if (agencyEligible && truncatedNames.length === 0) {
     const agencyStarted = Date.now();
@@ -899,12 +899,12 @@ export async function POST(request: Request) {
       prompt: parsedInput.data.prompt, role: taskRole,
       directorBrief: agentBrief.instructions, designRules: designRulesInstructions.trim(),
       brain: brain.contextText.slice(0, 6000), origin: new URL(request.url).origin,
-    }, { deadlineMs: 45000 }).catch(() => null);
+    }).catch(() => null);
     if (agency) {
       const { spec: agencySpec, ...report } = agency;
       agencyReport = { ...report, used: false };
       if (agencySpec) {
-        const stabilized = stabilizeBlockSpec({ ...agencySpec, frame: { name: selectedName + " · agency" } }, canvas, parsedInput.data.prompt);
+        const stabilized = stabilizeBlockSpec({ ...agencySpec, frame: { name: selectedName + " · variation" } }, canvas, parsedInput.data.prompt);
         let specInput: unknown = applyVariationDirection(stabilized.spec, variationDirection);
         let candidate = renderCandidate(specInput);
         let repairedTexts = 0;
@@ -918,17 +918,20 @@ export async function POST(request: Request) {
         }
         const models = [...new Set(report.runs.map((run) => run.model).filter(Boolean))];
         const designed = report.runs.filter((run) => run.outcome === "designed").length;
-        attemptTimes.push({ attempt: "agency (" + designed + "/" + report.runs.length + " sections designed, " + report.concurrency + " parallel)",
+        attemptTimes.push({ attempt: "sections " + designed + "/" + report.runs.length + " (" + report.concurrency + " parallel)",
           ms: Date.now() - agencyStarted, outcome: candidate.stage === "ok" ? "ok" : candidate.error.slice(0, 120) });
         // One Timing row per designer, so a section that fell back shows why.
         for (const run of report.runs.filter((entry) => entry.outcome !== "kept")) {
-          attemptTimes.push({ attempt: "· " + run.designer + " designer: " + run.section, ms: run.ms,
-            outcome: run.outcome === "designed" ? "ok" + (run.restoredTexts ? " (+" + run.restoredTexts + " restored)" : "") : "fallback: " + (run.error || "rejected").slice(0, 100) });
+          // Neutral wording: the plugin shows this line, and the team structure stays backend-only.
+          attemptTimes.push({ attempt: "· " + run.section, ms: run.ms,
+            outcome: run.outcome === "designed"
+              ? "ok" + (run.rounds && run.rounds > 1 ? ", " + run.rounds + " rounds" : "") + (run.openIssues ? ", " + run.openIssues + " open" : "") + (run.restoredTexts ? ", +" + run.restoredTexts + " restored" : "")
+              : "kept source: " + (run.error || "rejected").slice(0, 100) });
         }
-        attemptLog.push({ model: "agency: " + (models.join(", ") || "none"), result: candidate.stage === "ok" ? "passed" : candidate.stage + ": " + candidate.error });
+        attemptLog.push({ model: models.join(", ") || "none", result: candidate.stage === "ok" ? "passed" : candidate.stage + ": " + candidate.error });
         if (candidate.stage === "ok" && candidate.plan && candidate.quality) {
           agencyReport = { ...agencyReport, used: true, gate: "ok" };
-          return respond({ candidate, spec: specInput, learningCandidate: null, servedModel: "agency: " + (models.join(", ") || "auto"),
+          return respond({ candidate, spec: specInput, learningCandidate: null, servedModel: models.join(", ") || "auto",
             isRecovery: false, finishReason: "stop", modelIndex: 0, themeLocked: stabilized.themeLocked, repairedTexts });
         }
         agencyReport = { ...agencyReport, gate: candidate.stage + ": " + candidate.error.slice(0, 200) };

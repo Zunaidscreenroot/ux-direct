@@ -126,3 +126,17 @@ test("Director coverage: texts the source split missed go into a kept More detai
   const all = order.items.flatMap((item) => item.sourceTexts);
   for (let i = 0; i < 9; i++) assert.ok(all.includes("Extra value ₹" + (i + 1) + "00"), "missing extra " + i);
 });
+
+test("reviewer's deterministic points and the 50-seat roster", async () => {
+  const { deterministicReview } = await import("../src/figma-agent/agency");
+  const { AGENCY_ROSTER, rosterSeats } = await import("../src/figma-agent/agency-roster");
+  const issues = deterministicReview({ blocks: [
+    { type: "buttons", items: [{ label: "Pay", variant: "primary" }, { label: "Later", variant: "primary" }] },
+    { type: "row", label: "A", value: "₹1" }, { type: "row", label: "B", value: "₹2" }, { type: "row", label: "Pay" },
+  ] });
+  assert.ok(issues.some((issue) => /primary buttons/.test(issue.issue)));
+  assert.ok(issues.some((issue) => /row blocks/.test(issue.issue)));
+  assert.ok(issues.some((issue) => /Repeated content/.test(issue.issue)));
+  assert.equal(rosterSeats(), 50);
+  assert.ok(AGENCY_ROSTER.some((role) => role.id === "reviewer" && role.modelRole === "critic"));
+});
