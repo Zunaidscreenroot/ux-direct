@@ -1236,6 +1236,38 @@ function polishRows(nodes: NativeNode[], warnings: string[]) {
   if (stacked) warnings.push("Stacked " + stacked + " row(s) whose label had no room to stay on one line.");
 }
 
+/** Recompute hug heights bottom-up after a layout change (flow children only). */
+function relayout(node: NativeNode): number {
+  const kids = node.children ?? [];
+  kids.forEach(relayout);
+  if (node.type !== "FRAME" || !kids.length || node.layoutSizingVertical === "FIXED") return node.height;
+  const flow = kids.filter((c) => c.layoutPositioning !== "ABSOLUTE");
+  const pt = Number(node.paddingTop ?? 0), pb = Number(node.paddingBottom ?? 0), gap = Number(node.itemSpacing ?? 0);
+  if (node.layoutMode === "VERTICAL") node.height = pt + pb + flow.reduce((s, c) => s + c.height, 0) + Math.max(0, flow.length - 1) * gap;
+  else if (node.layoutMode === "HORIZONTAL" && node.layoutWrap !== "WRAP") node.height = pt + pb + flow.reduce((m, c) => Math.max(m, c.height), 0);
+  return node.height;
+}
+
+/** Tighten an over-tall render: card padding 16→12, stack gaps 12→8, two stacked buttons side by side. */
+function compactToBudget(elements: NativeNode[]) {
+  const visit = (node: NativeNode) => {
+    (node.children ?? []).forEach(visit);
+    if (node.type !== "FRAME") return;
+    if (node.layoutMode === "VERTICAL" && node.name === "Actions") {
+      const buttons = (node.children ?? []).filter((c) => /button/i.test(String(c.name)) && c.layoutMode === "HORIZONTAL");
+      if (buttons.length === 2 && node.children!.length === 2 && buttons.every((c) => textWidth(String(c.children?.[0]?.text ?? ""), 15) + 32 <= node.width / 2 - 6)) {
+        node.layoutMode = "HORIZONTAL"; node.itemSpacing = 12; node.counterAxisAlignItems = "CENTER";
+        node.primaryAxisSizingMode = "FIXED"; node.counterAxisSizingMode = "AUTO";
+        buttons.forEach((c) => { c.layoutGrow = 1; c.width = Math.floor((node.width - 12) / 2); });
+      }
+    }
+    if (node.layoutMode === "VERTICAL" && Number(node.itemSpacing) >= 12) node.itemSpacing = 8;
+    if (!node.noFill && Number(node.paddingTop) === 16 && Number(node.paddingBottom) === 16) { node.paddingTop = 12; node.paddingBottom = 12; }
+  };
+  elements.forEach(visit);
+  elements.forEach(relayout);
+}
+
 function countNodes(nodes: NativeNode[]): number {
   return nodes.reduce((sum, node) => sum + 1 + (node.children ? countNodes(node.children) : 0), 0);
 }
@@ -1498,7 +1530,18 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   bindFileStyles(elements, asRec(canvas.styles), b.warnings);
   const nodeCount = countNodes(elements);
 
-  const contentHeight = rootPad[0] + rootPad[2] + elements.reduce((sum, node) => sum + node.height, 0) + Math.max(0, elements.length - 1) * gap;
+  let rootGap = gap;
+  const measure = () => rootPad[0] + rootPad[2] + elements.reduce((sum, node) => sum + node.height, 0) + Math.max(0, elements.length - 1) * rootGap;
+  // Improve keeps the source screen's height budget: when the render runs over by more than 10%,
+  // tighten spacing on the grid and put two stacked actions side by side before letting it grow.
+  const budget = sourceHeight > 0 && typeof rawFrame.height !== "number" && arr(source.children).length > 0 ? sourceHeight : 0;
+  if (budget && measure() > budget * 1.1) {
+    rootGap = Math.min(rootGap, 12);
+    compactToBudget(elements);
+    if (measure() > budget * 1.1) b.warnings.push("The improved screen is " + Math.round(measure()) + "px tall against the source's " + budget + "px: the spec adds content the source did not have.");
+  }
+  const gapUsed = rootGap;
+  const contentHeight = measure();
   const requestedHeight = typeof rawFrame.height === "number" ? rawFrame.height : sourceHeight || 800;
   const fits = contentHeight <= requestedHeight;
   const frame: Rec = {
@@ -1508,7 +1551,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     width: frameWidth,
     height: Math.round(Math.max(360, Math.min(4096, fits ? requestedHeight : contentHeight))),
     backgroundColor: theme.background,
-    layoutMode: "VERTICAL", itemSpacing: gap,
+    layoutMode: "VERTICAL", itemSpacing: gapUsed,
     paddingTop: rootPad[0], paddingRight: rootPad[1], paddingBottom: rootPad[2], paddingLeft: rootPad[3],
     primaryAxisAlignItems: "MIN", counterAxisAlignItems: "MIN",
     primaryAxisSizingMode: fits ? "FIXED" : "AUTO", counterAxisSizingMode: "FIXED",

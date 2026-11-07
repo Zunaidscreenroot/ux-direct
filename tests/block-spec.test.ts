@@ -577,3 +577,20 @@ test("badges become instances of the file's status chip set, by exact option or 
   assert.deepEqual(inst[1].instanceProperties, { Type: "Delinquent" });
   assert.deepEqual(inst[1].textOverrides, { __title: "Overdue" });
 });
+
+test("improve tightens spacing to keep the source height budget before letting the screen grow", () => {
+  const source = { nodes: [{ name: "Loans", type: "FRAME", width: 360, height: 800, fillColors: ["#FFFFFF"], children: [{ type: "TEXT", name: "T", text: "Loans", fontSize: 20 }] }], components: [] };
+  const card = (i: number) => ({ name: "Loan " + i, surface: "card", title: "Loan " + i, blocks: [
+    { type: "stat_row", items: [{ label: "Outstanding", value: "₹1,000" }, { label: "EMI", value: "₹100" }] },
+    { type: "list", items: [{ label: "Due date", value: "5 Dec" }, { label: "Tenure", value: "24 months" }] },
+    { type: "buttons", items: [{ label: "Pay" }, { label: "Details" }] },
+  ] });
+  const spec = { summary: "Loans.", sections: [{ name: "Header", blocks: [{ type: "app_bar", title: "Loans" }] }, card(1), card(2), card(3)], learningCandidate: null };
+  const loose = expandBlockSpec(spec, { ...source, nodes: [{ ...source.nodes[0], children: [] }] });
+  const tight = expandBlockSpec(spec, source);
+  assert.ok(loose.plan && tight.plan);
+  assert.ok(Number(tight.plan!.frame.height) < Number(loose.plan!.frame.height), tight.plan!.frame.height + " < " + loose.plan!.frame.height);
+  const actions: N[] = [];
+  walk(tight.plan!.elements as N[], (n) => { if (n.name === "Actions") actions.push(n); });
+  assert.ok(actions.every((n) => n.layoutMode === "HORIZONTAL"), "two short stacked actions go side by side");
+});
