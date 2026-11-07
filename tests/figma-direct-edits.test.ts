@@ -147,6 +147,12 @@ const CASES: Array<[any, string, any[]]> = [
   [FRAME, "detach instance", [{ target: "self", action: "detach" }]],
   [FRAME, "bring to front", [{ target: "self", action: "front" }]],
   [FRAME, "delete hidden layers", [{ target: "self", action: "deleteHidden" }]],
+  [TWO, "wrap these rows in auto layout", [{ target: "self", action: "wrap" }]],
+  [TWO, "wrap the selected cards in a vertical auto layout frame", [{ target: "self", action: "wrap" }]],
+  [FRAME, "make this button disabled", [{ target: "self", noun: "button", action: "variant" }]],
+  [FRAME, "set the tab to active", [{ target: "self", noun: "tab", action: "variant" }]],
+  [FRAME, "add a primary button", [{ target: "self", action: "insertComponent" }]],
+  [FRAME, "insert a small outline icon", [{ target: "self", action: "insertComponent" }]],
   [FRAME, "show hidden layers", [{ target: "self", set: { showHidden: true } }]],
   // Several edits in one prompt
   [FRAME, "make the text white and the background black", [{ target: "text", set: { fill: "#FFFFFF" } }, { target: "bg", set: { fill: "#000000" } }]],
@@ -177,7 +183,7 @@ test("every common Figma edit prompt becomes a deterministic edit", () => {
 });
 
 test("design, generation and unclear prompts are left to the model", () => {
-  for (const prompt of ["improve this screen", "make a dark mode version", "make 3 variations", "add a primary button",
+  for (const prompt of ["improve this screen", "make a dark mode version", "make 3 variations", "add a new onboarding screen", "add a soft shadow to the card and a new screen",
     "make it look like the card above", "create a variation with a stronger CTA", "make the card bigger", "insert image of a cat",
     "do a UX audit", "run a hygiene check", "translate this to Hindi", "make this copy shorter", "revert this change", "undo",
     "rename layers", "what is wrong here", "make it pop", "use the primary colour", "apply the Primary/500 style", "export as SVG"]) {
@@ -372,4 +378,43 @@ test("one new text never overwrites every text in a frame (finding 66)", () => {
   const code = readFileSync(join(process.cwd(), "figma-plugin/code.js"), "utf8");
   assert.ok(code.includes('if (op.set && typeof op.set.text === "string" && texts.length > 1) {'));
   assert.ok(code.includes("the new text would replace "));
+});
+
+test("state switch, wrap and component insert run without a model", async () => {
+  const r = runtime();
+  const withCriteria = (n: any) => { n.findAllWithCriteria = ({ types }: any) => n.findAll((c: any) => types.includes(c.type)); };
+  [r.screen, r.card].forEach(withCriteria);
+  r.page.findAll = (fn: any) => { const out: any[] = []; const walk = (x: any) => (x.children || []).forEach((c: any) => { if (fn(c)) out.push(c); walk(c); }); walk(r.page); return out; };
+  withCriteria(r.page);
+  const lib = r.make({ type: "FRAME", name: "Library", x: 1000 });
+  const set: any = r.make({ type: "FRAME", name: "Button" }, lib);
+  set.type = "COMPONENT_SET";
+  const mk = (name: string) => {
+    const c: any = r.make({ type: "COMPONENT", name }, set);
+    c.createInstance = () => { const i = r.make({ type: "INSTANCE", name: "Button" }, r.page); i.getMainComponentAsync = async () => c; return i; };
+    return c;
+  };
+  const primary = mk("Type=Primary, State=Default");
+  mk("Type=Secondary, State=Default");
+  const disabled = mk("Type=Primary, State=Disabled");
+  set.defaultVariant = primary;
+  set.componentPropertyDefinitions = { Type: { type: "VARIANT", variantOptions: ["Primary", "Secondary"] }, State: { type: "VARIANT", variantOptions: ["Default", "Disabled"] } };
+  let props: any = null;
+  r.button.getMainComponentAsync = async () => primary;
+  r.button.setProperties = (p: any) => { props = p; };
+
+  await r.apply("make this button disabled", [r.button]);
+  assert.deepEqual(plain(props), { State: "Disabled" });
+  await assert.rejects(r.apply("set the button to checked", [r.button]), /no "checked" variant/);
+  assert.ok(disabled);
+
+  const before = r.card.children.length;
+  const result = await r.apply("add a primary button", [r.card]);
+  assert.equal(r.card.children.length, before + 1, "instance placed inside the selected frame");
+  const added = r.card.children[r.card.children.length - 1];
+  assert.equal(added.type, "INSTANCE");
+  assert.equal(await added.getMainComponentAsync(), primary, "picked the Primary variant, not a disabled one");
+  assert.ok(added.y >= 148, "placed below the existing content");
+  assert.match(JSON.stringify(result), /from your components/);
+  await assert.rejects(r.apply("add a toggle", [r.card]), /No toggle component/);
 });

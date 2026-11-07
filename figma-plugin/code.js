@@ -3673,7 +3673,127 @@ async function uxdRunStructural(action, nodes, op, notes) {
     await write({ operation: "wrap-in-auto-layout", nodeIds: ids, autoLayout: { layoutMode: horizontal ? "HORIZONTAL" : "VERTICAL" } });
     return "wrapped in " + (horizontal ? "a horizontal" : "a vertical") + " auto layout frame";
   }
+  if (action === "variant") return uxdSwitchVariant(nodes, String(op.value || ""));
+  if (action === "insertComponent") return uxdInsertComponent(nodes, op);
   throw new Error("Unknown action " + action + ".");
+}
+var UXD_VARIANT_SYNONYMS = {
+  enabled: ["enabled", "default", "normal", "rest", "idle"], default: ["default", "enabled", "normal", "rest"],
+  active: ["active", "selected", "on", "current"], inactive: ["inactive", "default", "off", "unselected"],
+  selected: ["selected", "active", "on", "checked"], unselected: ["unselected", "default", "inactive", "off"],
+  checked: ["checked", "on", "selected"], unchecked: ["unchecked", "off", "default", "unselected"],
+  hover: ["hover", "hovered"], hovered: ["hovered", "hover"], pressed: ["pressed", "active", "down"],
+  focused: ["focused", "focus"], disabled: ["disabled", "inactive"], loading: ["loading", "busy"], error: ["error", "invalid", "danger"]
+};
+var UXD_NEGATIVE_STATES = { enabled: true, default: true, inactive: true, unselected: true, unchecked: true };
+// Picks a variant option for a state word, or a boolean variant named after it ("Disabled=true").
+function uxdPickVariantOption(defs, value) {
+  var wanted = UXD_VARIANT_SYNONYMS[value] || [value];
+  var keys = Object.keys(defs || {}).filter(function (k) { return defs[k] && defs[k].type === "VARIANT"; });
+  for (var w = 0; w < wanted.length; w++) {
+    for (var i = 0; i < keys.length; i++) {
+      var options = defs[keys[i]].variantOptions || [];
+      for (var o = 0; o < options.length; o++) if (String(options[o]).trim().toLowerCase() === wanted[w]) return { prop: keys[i], option: options[o] };
+    }
+  }
+  var base = UXD_NEGATIVE_STATES[value] ? null : value;
+  var boolKey = keys.find(function (k) { return String(k).trim().toLowerCase() === (base || ""); });
+  if (boolKey) {
+    var yes = (defs[boolKey].variantOptions || []).find(function (o) { return /^(true|yes|on)$/i.test(String(o)); });
+    if (yes) return { prop: boolKey, option: yes };
+  }
+  return null;
+}
+async function uxdSwitchVariant(nodes, value) {
+  var instances = [];
+  nodes.forEach(function (n) {
+    if (n.type === "INSTANCE") { if (instances.indexOf(n) < 0) instances.push(n); return; }
+    if ("findAllWithCriteria" in n) n.findAllWithCriteria({ types: ["INSTANCE"] }).forEach(function (i) { if (instances.indexOf(i) < 0 && !(i.parent && i.parent.type === "INSTANCE")) instances.push(i); });
+  });
+  if (!instances.length) throw new Error("Select a component instance to change its state.");
+  var changed = 0, missing = [];
+  for (var i = 0; i < instances.length; i++) {
+    var main = await instances[i].getMainComponentAsync();
+    var set = main && main.parent && main.parent.type === "COMPONENT_SET" ? main.parent : null;
+    var pick = set ? uxdPickVariantOption(set.componentPropertyDefinitions, value) : null;
+    if (!pick) { missing.push(instances[i].name); continue; }
+    var props = {}; props[pick.prop] = pick.option;
+    instances[i].setProperties(props);
+    changed++;
+  }
+  if (!changed) throw new Error("\"" + missing[0] + "\" has no \"" + value + "\" variant. Add that variant to its component set first.");
+  return changed + " instance(s) set to " + value + (missing.length ? " (" + missing.length + " had no " + value + " variant)" : "");
+}
+function uxdComponentScore(name, kind, qualifiers) {
+  var lower = String(name || "").toLowerCase();
+  var kindPattern = kind === "textfield" ? /text ?field|input|field/ : kind === "searchbar" ? /search/ : new RegExp("\\b" + kind + "s?\\b");
+  if (!kindPattern.test(lower)) return -1;
+  var score = 1;
+  qualifiers.forEach(function (q) { if (lower.indexOf(q) >= 0) score += 3; });
+  if (/disabled|hover|pressed|focus|error|loading/.test(lower)) score -= 2;
+  return score;
+}
+function uxdBestVariant(component, qualifiers) {
+  if (component.type !== "COMPONENT_SET") return component;
+  var best = component.defaultVariant || component.children[0], bestScore = -1;
+  component.children.forEach(function (child) {
+    if (child.type !== "COMPONENT") return;
+    var score = 0, lower = String(child.name || "").toLowerCase();
+    qualifiers.forEach(function (q) { if (lower.indexOf(q) >= 0) score += 3; });
+    if (/disabled|hover|pressed|focus|error|loading/.test(lower)) score -= 2;
+    if (child === component.defaultVariant) score += 1;
+    if (score > bestScore) { best = child; bestScore = score; }
+  });
+  return best;
+}
+// Finds the file's own component for "add a primary button": first ones the selected screen already uses,
+// then components on this page. Never invents a component.
+async function uxdFindComponent(roots, kind, qualifiers) {
+  var candidates = [];
+  function consider(node, bonus) {
+    if (!node || node.removed) return;
+    var target = node.type === "COMPONENT" && node.parent && node.parent.type === "COMPONENT_SET" ? node.parent : node;
+    var score = uxdComponentScore(target.name + (target !== node ? " " + node.name : ""), kind, qualifiers);
+    if (score >= 0) candidates.push({ component: target, score: score + bonus, variant: target !== node ? node : null });
+  }
+  for (var r = 0; r < roots.length; r++) {
+    var used = "findAllWithCriteria" in roots[r] ? roots[r].findAllWithCriteria({ types: ["INSTANCE"] }) : [];
+    for (var u = 0; u < used.length && u < 200; u++) {
+      if (used[u].parent && used[u].parent.type === "INSTANCE") continue;
+      consider(await used[u].getMainComponentAsync(), 2);
+    }
+  }
+  if (!candidates.length) figma.currentPage.findAllWithCriteria({ types: ["COMPONENT_SET", "COMPONENT"] }).forEach(function (c) {
+    if (c.type === "COMPONENT" && c.parent && c.parent.type === "COMPONENT_SET") return;
+    consider(c, 0);
+  });
+  if (!candidates.length) return null;
+  candidates.sort(function (a, b) { return b.score - a.score; });
+  var top = candidates[0];
+  return top.variant && !qualifiers.length ? top.variant : uxdBestVariant(top.component, qualifiers);
+}
+async function uxdInsertComponent(roots, op) {
+  var kind = String(op.component || "button");
+  var qualifiers = (Array.isArray(op.qualifiers) ? op.qualifiers : []).map(String).filter(function (q) { return q.length > 1; });
+  var root = roots[0];
+  var parent = root.type === "INSTANCE" || !("appendChild" in root) ? root.parent : root;
+  var component = await uxdFindComponent(roots, kind, qualifiers);
+  if (!component) throw new Error("No " + kind + " component found in this screen or on this page. Create or import one, then try again.");
+  var instance = component.createInstance();
+  if (parent === root.parent && parent && "insertChild" in parent) {
+    parent.insertChild(parent.children.indexOf(root) + 1, instance);
+    if (!("layoutMode" in parent) || parent.layoutMode === "NONE") { instance.x = root.x; instance.y = root.y + root.height + 16; }
+  } else {
+    parent.appendChild(instance);
+    if (!("layoutMode" in parent) || parent.layoutMode === "NONE") {
+      var kids = parent.children.filter(function (c) { return c !== instance && c.visible !== false; });
+      var bottom = kids.reduce(function (m, c) { return Math.max(m, c.y + c.height); }, 0);
+      var left = kids.length ? kids.reduce(function (m, c) { return Math.min(m, c.x); }, Infinity) : 16;
+      instance.x = left; instance.y = bottom + 16;
+    }
+  }
+  figma.currentPage.selection = [instance];
+  return "placed \"" + (component.parent && component.parent.type === "COMPONENT_SET" ? component.parent.name + " / " + component.name : component.name) + "\" from your components";
 }
 async function localApplyDirectEdits(payload) {
   var ops = Array.isArray(payload.ops) ? payload.ops.slice(0, 30) : [];
