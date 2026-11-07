@@ -169,3 +169,23 @@ test("planner wait returns the agents that answered and caches the full brief fo
     globalThis.fetch = realFetch;
   }
 });
+
+test("parallel variations of one frame share one set of agent calls", async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    return new Response(JSON.stringify({ model: "m", choices: [{ message: { content: JSON.stringify({ domain: "fintech", userGoal: "Pay", hierarchy: ["EMI"] }) } }] }), { status: 200 });
+  }) as typeof fetch;
+  const input = { prompt: "variation of the shared frame", role: detectTaskRole("improve"), designScope: "selected_screen_or_frame",
+    selectedNode: { name: "Shared", type: "FRAME", width: 360, height: 800 }, sourceTexts: SOURCE,
+    components: [], renderedScreen: null, origin: "https://ux-direct.test" };
+  try {
+    const [a, b] = await Promise.all([runSubAgents(input, { waitMs: 1000 }), runSubAgents(input, { waitMs: 1000 })]);
+    assert.equal(calls, 2, "detector + analyst once, not twice");
+    assert.equal(a.instructions, b.instructions);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

@@ -158,6 +158,7 @@ const SCOUT_SYSTEM = [
 const BRIEF_CACHE = new Map<string, { at: number; brief: AgentBrief }>();
 const BRIEF_TTL_MS = 15 * 60 * 1000;
 const BRIEF_CACHE_SIZE = 30;
+const IN_FLIGHT = new Map<string, { full: Promise<AgentBrief>; partial: () => AgentBrief }>();
 
 function briefCacheKey(input: SubAgentInput): string {
   return [input.role.id, input.designScope, input.prompt.trim().toLowerCase(), input.selectedNode.name,
@@ -166,6 +167,7 @@ function briefCacheKey(input: SubAgentInput): string {
 
 export function clearBriefCache(): void {
   BRIEF_CACHE.clear();
+  IN_FLIGHT.clear();
 }
 
 /**
@@ -181,14 +183,23 @@ export async function runSubAgents(input: SubAgentInput, options: { waitMs?: num
   if (hit && Date.now() - hit.at < BRIEF_TTL_MS) {
     return { ...hit.brief, runs: hit.brief.runs.map((run) => ({ ...run, ms: 0, cached: true })) };
   }
-  const stage = startSubAgents(input);
-  const full = stage.full.then((brief) => {
-    if (brief.runs.some((run) => run.ok)) {
-      if (BRIEF_CACHE.size >= BRIEF_CACHE_SIZE) BRIEF_CACHE.delete(BRIEF_CACHE.keys().next().value as string);
-      BRIEF_CACHE.set(key, { at: Date.now(), brief });
-    }
-    return brief;
-  });
+  // Parallel variations of one frame start together: the second joins the first's agents
+  // instead of calling them again, so the batch makes one set of agent calls.
+  let shared = IN_FLIGHT.get(key);
+  if (!shared) {
+    const stage = startSubAgents(input);
+    const fullBrief = stage.full.then((brief) => {
+      if (brief.runs.some((run) => run.ok)) {
+        if (BRIEF_CACHE.size >= BRIEF_CACHE_SIZE) BRIEF_CACHE.delete(BRIEF_CACHE.keys().next().value as string);
+        BRIEF_CACHE.set(key, { at: Date.now(), brief });
+      }
+      return brief;
+    }).finally(() => IN_FLIGHT.delete(key));
+    shared = { full: fullBrief, partial: stage.partial };
+    IN_FLIGHT.set(key, shared);
+  }
+  const stage = shared;
+  const full = shared.full;
   const waitMs = Number(options.waitMs);
   if (!Number.isFinite(waitMs) || waitMs <= 0) return full;
   let timer: ReturnType<typeof setTimeout> | undefined;

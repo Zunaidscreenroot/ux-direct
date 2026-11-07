@@ -64,7 +64,8 @@ export async function loadVerifiedExample(projectKey: string, designScope: strin
     if (!Array.isArray(rows)) return "";
     const example = pickVerifiedExample(rows as VerifiedRun[], designScope);
     const text = example ? JSON.stringify(example) : "";
-    return text.length > 2600 ? "" : text;
+    // A full screen spec is 3–8k chars; the old 2.6k cap dropped most examples entirely.
+    return text.length > 9000 ? "" : text;
   } catch {
     return "";
   }

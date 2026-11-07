@@ -263,8 +263,8 @@ type CanvasNode = {
   childCount?: number; children?: CanvasNode[];
 };
 /** Model-facing canvas budget: deep enough for card internals (rows, badges, icons) of a full screen. */
-const COMPACT_NODE_LIMIT = 220;
-const COMPACT_DEPTH_LIMIT = 6;
+const COMPACT_NODE_LIMIT = 400;
+const COMPACT_DEPTH_LIMIT = 8;
 function compactNode(value: unknown, state: { count: number }, depth = 0): CanvasNode | null {
   if (!value || typeof value !== "object" || Array.isArray(value) || state.count >= COMPACT_NODE_LIMIT) return null;
   const node = value as Record<string, unknown>;
@@ -619,12 +619,14 @@ export async function POST(request: Request) {
       query: buildBrainQuery({ prompt: parsedInput.data.prompt, frameName: selectedName, designScope,
         nodes: Array.isArray(canvas.nodes) ? canvas.nodes : [] }),
       scopeKeys: resolveBrainScopes(parsedInput.data.prompt + "\n" + JSON.stringify(canvas.nodes).slice(0, 1500)),
-      limit: 6,
-      maxChars: 6000,
+      // Tokens are free and the planner prompt is ~21k tokens: a 5k-char brain slice was the
+      // smallest part of it. Give the planner up to 12 memories / ~16k chars of team knowledge.
+      limit: 12,
+      maxChars: 16000,
       includeKnowledge: true,
     }), BRAIN_WAIT_MS);
     brain = {
-      contextText: retrieved.contextText.slice(0, 7000),
+      contextText: retrieved.contextText.slice(0, 17000),
       status: retrieved.retrieval.status,
       memoryCount: Math.max(0, retrieved.retrieval.memoryCount || 0),
       knowledgeChunkCount: Math.max(0, retrieved.retrieval.knowledgeChunkCount || 0),

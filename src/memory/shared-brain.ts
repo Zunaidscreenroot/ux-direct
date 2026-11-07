@@ -66,7 +66,9 @@ export type BrainFeedbackInput = {
 };
 
 const MAX_CONTEXT_CHARS = 5200;
-const MAX_MEMORIES = 10;
+/** Callers may ask for more context than the default (the Figma planner uses ~16k chars). */
+const MAX_CONTEXT_CHARS_CEILING = 20000;
+const MAX_MEMORIES = 12;
 const MAX_CHUNKS = 8;
 const ALLOWED_SOURCES = new Set(["ux-direct", "ux-audit", "figma-plugin", "chatgpt", "local-model", "benchmark", "knowledge-ingestion"]);
 const FEEDBACK_KINDS = new Set([
@@ -152,15 +154,17 @@ export function sanitizeLegacyLearningPolicyMemory(memory: BrainMemory): BrainMe
 
 function compactContext(memories: BrainMemory[], knowledge: BrainKnowledgeChunk[], maxChars = MAX_CONTEXT_CHARS): string {
   const sections: string[] = [];
+  // A caller with a large budget gets each memory and reference in full, not just its opening.
+  const wide = maxChars > MAX_CONTEXT_CHARS;
   for (const memory of memories.slice(0, MAX_MEMORIES)) {
     const header = `[Approved product memory · scope: ${memory.project_key} · type: ${memory.memory_type} · origin: ${memory.source_product}] ${memory.title}`;
-    const body = String(memory.content || "").replace(/\s+/g, " ").slice(0, 620);
+    const body = String(memory.content || "").replace(/\s+/g, " ").slice(0, wide ? 1400 : 620);
     const tags = Array.isArray(memory.tags) && memory.tags.length ? ` Tags: ${memory.tags.slice(0, 8).join(", ")}.` : "";
     sections.push(`${header}\n${body}${tags}`);
   }
   for (const chunk of knowledge.slice(0, MAX_CHUNKS)) {
     const source = chunk.source_url ? ` Source: ${chunk.source_url}` : "";
-    sections.push(`[Approved reference · scope: ${chunk.project_key} · ${chunk.source_authority}] ${chunk.title}${source}\n${String(chunk.content || "").replace(/\s+/g, " ").slice(0, 700)}`);
+    sections.push(`[Approved reference · scope: ${chunk.project_key} · ${chunk.source_authority}] ${chunk.title}${source}\n${String(chunk.content || "").replace(/\s+/g, " ").slice(0, wide ? 1600 : 700)}`);
   }
   let context = "";
   for (const section of sections) {
@@ -186,7 +190,7 @@ export async function retrieveBrainContext(input: {
   const query = textValue(input.query, 8000, "query");
   const scopeKeys = [...new Set((input.scopeKeys.length ? input.scopeKeys : ["UX_SHARED_BRAIN"]).map(normalizeScope))].slice(0, 12);
   const limit = Math.max(1, Math.min(12, Math.floor(input.limit ?? 6)));
-  const maxChars = Math.max(600, Math.min(MAX_CONTEXT_CHARS, Math.floor(input.maxChars ?? MAX_CONTEXT_CHARS)));
+  const maxChars = Math.max(600, Math.min(MAX_CONTEXT_CHARS_CEILING, Math.floor(input.maxChars ?? MAX_CONTEXT_CHARS)));
   try {
     const memoryPromise = supabaseRequest("rpc/uxd_brain_search_memories", {
       method: "POST",
