@@ -111,3 +111,21 @@ test("style lock compares card instances and labels inside them, also within one
   assert.equal(c1.paddingTop, 8);
   assert.equal(c1.children[0].children[0].characters, "Pay Now");
 });
+
+test("across screens, the Nth card is compared with the Nth card, so a featured first card keeps its look", async () => {
+  const card = (id: string, radius: number) => ({ id, type: "INSTANCE", name: "Loan Card", layoutMode: "VERTICAL", cornerRadius: radius,
+    paddingTop: 16, paddingRight: 16, paddingBottom: 16, paddingLeft: 16, itemSpacing: 8, fills: [], width: 328, height: 160, visible: true, children: [] });
+  const screens: any[] = [];
+  const nodes: Record<string, any> = {};
+  [[12, 0, 0], [12, 0, 0], [4, 4, 0]].forEach((radii, i) => {
+    const cards = radii.map((r, j) => card("s" + i + "c" + j, r));
+    cards.forEach((c) => { nodes[c.id] = c; });
+    const s = { id: "s" + i, type: "FRAME", name: "QA lock " + (i + 1), width: 360, height: 800, visible: true, children: cards };
+    nodes[s.id] = s; screens.push(s);
+  });
+  const { figma, run } = runtime(nodes);
+  figma.currentPage.selection = screens;
+  const report = await run("consistency", { fix: true });
+  assert.deepEqual(report.findings.map((f: any) => [f.element, f.expected, f.found]).sort(), [["Loan Card #1", "12", ["4"]], ["Loan Card #2", "0", ["4"]]].sort());
+  assert.deepEqual(screens.map((s) => s.children.map((c: any) => c.cornerRadius)), [[12, 0, 0], [12, 0, 0], [12, 0, 0]]);
+});
