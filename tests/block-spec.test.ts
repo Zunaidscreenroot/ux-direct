@@ -414,8 +414,13 @@ test("progress ring value is centred across the ring; repeated rows share one le
   const all: Array<Record<string, unknown>> = [];
   (function walk(nodes: Array<Record<string, unknown>>) { for (const n of nodes) { all.push(n); walk((n.children as never) || []); } })(out.plan!.elements as never);
   const value = all.find((n) => n.name === "Progress value" || String(n.name).includes("80%") && n.type === "TEXT" && n.textAlignHorizontal === "CENTER")!;
-  assert.equal(value.width, 72);
-  assert.equal(value.textAutoResize, "HEIGHT");
+  // The value hugs its text (a fixed box got narrowed and wrapped "60 / %"); the ring's Auto Layout centres it.
+  assert.equal(value.textAutoResize, "WIDTH_AND_HEIGHT");
+  assert.ok((value.width as number) < 72 && (value.width as number) >= 20);
+  const ring = all.find((n) => n.name === "Progress ring")!;
+  assert.equal(ring.layoutMode, "HORIZONTAL");
+  assert.equal(ring.primaryAxisAlignItems, "CENTER");
+  assert.equal(ring.counterAxisAlignItems, "CENTER");
   const rows = all.filter((n) => n.type === "FRAME" && /\b(EMI|Due|Paid|Outstanding)\b/.test(String(n.name)) && /Row/.test(String(n.name)));
   assert.equal(rows.length, 4);
   for (const row of rows) assert.equal((row.children as Array<Record<string, unknown>>)[0].width, 36, String(row.name) + " starts with a 36px leading slot");
@@ -674,4 +679,19 @@ test("a copied source chevron replaces the generated chevron glyph in the same c
   walk(out.plan!.elements as N[], (n) => all.push(n));
   assert.equal(all.filter((n) => n.type === "TEXT" && n.text === "›").length, 0, "no generated chevron left");
   assert.equal(all.filter((n) => n.type === "CLONE" && n.sourceNodeId === "1:5").length, 1, "one copied chevron");
+});
+
+test("improve never adds image placeholders the source does not have", () => {
+  const source = { nodes: [{ id: "1:1", name: "Loans", type: "FRAME", width: 360, height: 800, fillColors: ["#121212"], children: [
+    { id: "1:2", name: "Title", type: "TEXT", text: "Manage Loans", x: 16, y: 16, width: 200, height: 24 },
+  ] }], components: [] };
+  const spec = { summary: "Loan cards with thumbnails.", frame: { name: "Loans" }, sections: [
+    { name: "Header", blocks: [{ type: "heading", title: "Manage Loans" }] },
+    { name: "Loan", surface: "card", blocks: [{ type: "image", label: "Loan thumbnail" }, { type: "row", label: "Personal Loan" }] },
+    { name: "Help", blocks: [{ type: "text", text: "Need help?" }] },
+  ] };
+  const out = expandBlockSpec(spec, source, { sourceCanvas: source });
+  assert.ok(out.plan, out.errors.join("; "));
+  assert.ok(!texts(out.plan!.elements as N[]).includes("Loan thumbnail"));
+  assert.ok(out.warnings.some((w) => /Dropped an image placeholder/.test(w)));
 });

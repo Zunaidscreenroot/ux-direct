@@ -792,11 +792,12 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       const centerText = explicitCenter || (!ctx.sourceTexts || ctx.sourceTexts.has(textKey(Math.round(pct) + "%")) ? Math.round(pct) + "%" : "");
       const pctNode = centerText ? b.text("Progress value", centerText, size, { size: 15, weight: "Semi Bold", color: t.text, bg, align: "CENTER" }) : null;
       if (pctNode) {
-        // The value spans the ring box and is centred by its Auto Layout, never over the stroke.
-        pctNode.width = size;
-        pctNode.x = 0;
-        pctNode.textAutoResize = "HEIGHT";
-        pctNode.layoutSizingHorizontal = "FIXED";
+        // The value hugs its text and is centred by the ring's Auto Layout: a fixed-width box was
+        // narrowed during the build and wrapped "60%" into "60 / %" (T11).
+        pctNode.width = Math.min(size, Math.ceil(textWidth(centerText, 15)) + 2);
+        pctNode.x = Math.round((size - pctNode.width) / 2);
+        pctNode.textAutoResize = "WIDTH_AND_HEIGHT";
+        pctNode.layoutSizingHorizontal = "HUG";
         pctNode.y = Math.round((size - pctNode.height) / 2);
       }
       const ring = b.canvas("Progress ring", size, size, pctNode ? [track, arc, pctNode] : [track, arc], pctNode ? [pctNode] : []);
@@ -956,6 +957,9 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
     case "image": {
       // A loading state draws text-free skeleton shapes, never "Illustration"/"Loading" boxes.
       if (ctx.skeleton) return skeletonNode(ctx, { ...block, lines: 1 }, W);
+      // Improve: a placeholder box is invented media (an "Illustration" on every card cost 180px
+      // each; T12). The source's real images and logos are copied in by restoreSourceFidelity.
+      if (ctx.sourceTexts) { b.warnings.push("Dropped an image placeholder: an improve keeps only the source's own images."); return null; }
       const caption = clean(block.label ?? block.alt ?? block.text, 120) || "Illustration";
       const h = Math.max(48, Math.min(320, typeof block.height === "number" ? block.height : 140));
       const txt = b.text("Image label", caption, W - 32, { size: 13, color: t.muted, bg: t.surfaceAlt, align: "CENTER" });
@@ -1152,7 +1156,8 @@ function pairCardBlocks(ctx: Ctx, first: Rec, second: Rec, width: number, depth:
     if (lbl) head.push(b.text("Progress label", lbl, width, { size: 14, weight: "Semi Bold", color: t.text, bg }));
     if (caption) head.push(b.text("Progress caption", caption, width, { size: 12, color: t.muted, bg }));
     const gap = 12;
-    const fitsIn = (cellW: number) => [16, 14].find((size) => items.every((item) => (!item.value || textWidth(item.value, size) <= cellW) &&
+    // 12% headroom: the file's own text style can run wider than the estimate (PL12345678 clipped; T11).
+    const fitsIn = (cellW: number) => [16, 14].find((size) => items.every((item) => (!item.value || textWidth(item.value, size) * 1.12 <= cellW) &&
       (!item.label || item.label.split(/\s+/).every((word) => textWidth(word, 12) <= cellW))));
     const across = Math.floor((restW - gap * (items.length - 1)) / items.length);
     const acrossSize = fitsIn(across);
@@ -1688,7 +1693,7 @@ export const BLOCK_SPEC_CONTRACT = [
   "- card {title?, subtitle?, badge?: {text, tone}, blocks:[...]}  — a card inside a plain section (cards do not nest)",
   "- component {componentId, name, instanceProperties?, height?}  — a REAL design-system component; componentId must be an exact id from canvas.components; prefer this for buttons, inputs, tabs, nav, list items when the file has them",
   "- custom {node: native FRAME/TEXT/RECTANGLE/ELLIPSE tree with type,name,width,height,color,...}  — escape hatch ONLY for something no block can express; keep it small",
-  "LAYOUT: inside a card, put a progress_ring directly before its stat_row (they render side by side), and an alert (banner) directly before its one action button (the button renders inline beside it). Keep the source's card count and screen height; do not add full-width buttons the source did not have.",
+  "LAYOUT: inside a card, put a progress_ring directly before its stat_row (they render side by side), and an alert (banner) directly before its one action button (the button renders inline beside it). Keep the source's card count and screen height; do not add full-width buttons or image placeholders the source did not have.",
   "tone values: success|warning|danger|info|neutral. Budget: about 15–35 blocks, max 105 native layers after rendering.",
   "Copy every meaningful source string (labels, amounts, dates, statuses, actions) into block fields exactly as written. Put content in the block that matches its meaning (amount → stat or row value, status → badge/status, % paid ring → progress_ring).",
 ].join("\n");

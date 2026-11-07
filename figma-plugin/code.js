@@ -4062,7 +4062,7 @@ function uxdSingleSolid(paints) {
   return visible.length === 1 && visible[0].type === "SOLID" && paints.length === 1 ? visible[0] : null;
 }
 async function uxdHygienePalette() {
-  var palette = { styles: new Map(), variables: new Map() };
+  var palette = { styles: new Map(), variables: new Map(), usedVariables: new Map() };
   try {
     var styles = await figma.getLocalPaintStylesAsync();
     styles.forEach(function (style) {
@@ -4117,8 +4117,10 @@ async function uxdHygienePalette() {
             seenIds[alias.id + "|" + vkey] = true;
             var used = await figma.variables.getVariableByIdAsync(alias.id).catch(function () { return null; });
             if (used && used.resolvedType === "COLOR") {
-              var list = palette.variables.get(vkey) || [];
-              if (!list.some(function (v) { return v.id === used.id; })) palette.variables.set(vkey, list.concat([used]));
+              // Kept apart: the file's own local variables and styles win; a borrowed variable only
+              // binds a colour nothing local matches (a root on the file's background style stays).
+              var list = palette.usedVariables.get(vkey) || [];
+              if (!list.some(function (v) { return v.id === used.id; })) palette.usedVariables.set(vkey, list.concat([used]));
             }
           }
         }
@@ -4341,7 +4343,17 @@ async function uxdBindPaintToken(node, prop, palette, role) {
     return "variable";
   }
   var style = uxdPickToken(palette.styles.get(key), role);
-  if (!style) return false;
+  if (!style) {
+    var exact = uxdColorKey(paint.color, paint.opacity);
+    // The source already paints with it, so its scopes are not second-guessed here.
+    var usedList = palette.usedVariables ? palette.usedVariables.get(exact) : null;
+    var borrowed = usedList && usedList.length ? uxdPickToken(usedList, role) || usedList[0] : null;
+    if (!borrowed || !figma.variables || typeof figma.variables.setBoundVariableForPaint !== "function") return false;
+    if (node.type === "TEXT") await uxdLoadTextFonts(node);
+    uxdSnapProp(node, prop);
+    node[prop] = [figma.variables.setBoundVariableForPaint(paint, "color", borrowed)];
+    return "variable";
+  }
   if (node.type === "TEXT") await uxdLoadTextFonts(node);
   var setter = prop === "fills" ? "setFillStyleIdAsync" : "setStrokeStyleIdAsync";
   uxdSnapProp(node, prop); uxdSnapProp(node, styleProp);

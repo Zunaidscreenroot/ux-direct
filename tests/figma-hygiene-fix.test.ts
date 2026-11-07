@@ -310,3 +310,15 @@ test("token fix names the text sizes the file has no style for instead of leavin
   const result = await r.fix(["tokens"]);
   assert.ok(result.skipped.some((s: string) => /10px Regular: this file has no text style/.test(s)), result.skipped.join("; "));
 });
+
+test("colours the file's screens bind to variables are reused, but the file's own styles win", async () => {
+  const r = runtime();
+  const bound = (hex: string) => [{ type: "SOLID", color: r.rgb(hex), opacity: 1, visible: true, boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:3" } } }];
+  // Another screen on the page (not built by UX Direct) binds white and #383838 to a variable.
+  const other = r.make({ type: "FRAME", name: "Source screen", fills: bound("#FFFFFF") });
+  r.make({ type: "FRAME", name: "Source card", fills: bound("#383838") }, other);
+  const card = r.make({ type: "FRAME", name: "Card", fills: [{ type: "SOLID", color: r.rgb("#383838"), opacity: 1, visible: true }] }, r.screen);
+  await r.fix(["tokens"]);
+  assert.equal(r.screen.fillStyleId, "S:white", "the file's own background style still wins");
+  assert.equal(card.fills[0].boundVariables.color.id, "VariableID:3", "a colour with no local token reuses the variable the source binds");
+});
