@@ -1084,7 +1084,8 @@
     async function runStructuralLintGate(options) {
       function lintBody(outputCanvas) {
         return { prompt: options.prompt, sourceCanvas: options.sourceCanvas, outputCanvas: outputCanvas,
-          sourceRootId: options.sourceRootId || undefined, outputRootId: options.outputRootId || undefined };
+          sourceRootId: options.sourceRootId || undefined, outputRootId: options.outputRootId || undefined,
+          ...(options.state ? { state: options.state } : {}) };
       }
       let lint = await requestStructuralLint(lintBody(options.outputCanvas));
       const unproven = lint && lint.content && lint.content.partial === true &&
@@ -1616,7 +1617,8 @@
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         cache: "no-store",
         body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning, capabilities: PLUGIN_CAPABILITIES,
-          ...(designOptions && designOptions.variation ? { variation: designOptions.variation } : {}) })
+          ...(designOptions && designOptions.variation ? { variation: designOptions.variation } : {}),
+          ...(designOptions && designOptions.state ? { state: designOptions.state } : {}) })
       });
       const payload = await response.json().catch(function () { return {}; });
       const serverMs = Date.now() - serverStartedAt;
@@ -1771,7 +1773,8 @@
       stage("verifying", "Structural lint · checking overlap, clipping and source content…");
       const lint = await runStructuralLintGate({
         prompt: prompt, sourceCanvas: canvas, outputCanvas: verified,
-        sourceRootId: sourceNode && sourceNode.id, outputRootId: createdFrameId
+        sourceRootId: sourceNode && sourceNode.id, outputRootId: createdFrameId,
+        state: designOptions && designOptions.state ? designOptions.state : undefined
       });
       let visualNote = "\n\nPost-variation visual QA disabled as requested; native layer read-back passed." +
         "\n" + lint.text;
@@ -2329,6 +2332,18 @@
       if (/\b(ux (audit|review|critique)|usability (review|audit|check)|heuristic|audit|critique|review (this|these|the|my)\b|give (me )?feedback|what('s| is) wrong|kahan (pe |par )?galat)/i.test(text)) {
         return { kind: "ux-audit" };
       }
+      // States pack: "add empty, loading and error states", "error state banao" on one selected screen.
+      const stateNames = [];
+      if (/\b(empty|zero[- ]?(data|state)|no[- ]data|blank)\b/i.test(text)) stateNames.push("empty");
+      if (/\b(loading|skeleton|shimmer|loader)\b/i.test(text)) stateNames.push("loading");
+      if (/\b(error|failure|failed|offline)\b/i.test(text)) stateNames.push("error");
+      if (/\b(success|confirmation|done)\b/i.test(text) && /\bstates?\b/i.test(text)) stateNames.push("success");
+      const stateFrames = types.filter(function (type) { return containerTypes.includes(type); }).length;
+      if (stateFrames === 1 && count === 1 && /\b(states?|screens?|versions?|variants?)\b/i.test(text) &&
+          (stateNames.length || /\b(all |the |missing |edge[- ]case |ui )?states\b/i.test(text)) &&
+          !/\b(state management|statement)\b/i.test(text)) {
+        return { kind: "states-pack", states: stateNames.length ? stateNames : ["empty", "loading", "error"] };
+      }
       const variationWord = /\b(variations?|variants?|versions?|alternatives?|options|explorations?|directions?)\b/i.test(text);
       const countMatch = /\b([2-4]|two|three|four)\s+(?:different\s+|more\s+|new\s+)?(variations?|variants?|versions?|alternatives?|options|directions?)\b/i.exec(text);
       const wordCounts = { two: 2, three: 3, four: 4 };
@@ -2680,7 +2695,21 @@
       const directions = ["a different layout and hierarchy", "a different visual style and colour treatment",
         "a different content density and grouping", "a different interaction pattern"];
       const jobs = [];
-      if (task.kind === "flow-variations") {
+      const stateBriefs = {
+        empty: "EMPTY state: the user has no data yet. Keep the header, navigation, title and primary action exactly; replace the list/rows/cards with one centred empty-state block (simple illustration or icon, a short helpful headline, one line of guidance, and the primary action as a button).",
+        loading: "LOADING state: keep the header, navigation and title; replace content text, numbers and images with grey skeleton bars and blocks of the same size and position (radius 4–8, #E5E7EB), no spinners over content.",
+        error: "ERROR state: keep the whole screen and its content; add a clear inline error banner near the top (red/danger tint, icon, one-sentence cause, a Retry action), and mark any failed field or card.",
+        success: "SUCCESS state: keep the screen; add a success confirmation (green tint banner or confirmation block with a check icon, one-sentence result, and the next primary action)."
+      };
+      if (task.kind === "states-pack") {
+        const frame = frames[0];
+        task.states.forEach(function (state, index) {
+          jobs.push({ frame: frame, state: state,
+            placement: { x: Number(frame.x) + (index + 1) * (Number(frame.width) + 120), y: Number(frame.y) },
+            prompt: "Create the " + state + " state of this screen as a new frame named \"" + String(frame.name).slice(0, 60) + " / " + state.charAt(0).toUpperCase() + state.slice(1) + "\". " +
+              stateBriefs[state] + " Use the same components, colours, typography and spacing as the source screen.\n\nDesigner request: " + prompt });
+        });
+      } else if (task.kind === "flow-variations") {
         const bottom = Math.max.apply(null, frames.map(function (frame) { return Number(frame.y) + Number(frame.height); }));
         const names = frames.map(function (frame) { return frame.name; }).join(" → ");
         frames.forEach(function (frame, index) {
@@ -2706,11 +2735,12 @@
         while (nextJob < jobs.length) {
           const index = nextJob++;
           const job = jobs[index];
-          stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + job.frame.name + "…");
+          const jobLabel = job.state ? job.state.charAt(0).toUpperCase() + job.state.slice(1) + " state" : "Variation";
+          stage("creating", jobLabel + " " + (index + 1) + "/" + jobs.length + " · " + job.frame.name + "…");
           try {
             const answer = String(await createFigmaDesign(job.prompt, function (status) {
-              stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + status);
-            }, { placement: job.placement, variation: job.variation, sourceId: job.frame.id }));
+              stage("creating", jobLabel + " " + (index + 1) + "/" + jobs.length + " · " + status);
+            }, { placement: job.placement, variation: job.variation, sourceId: job.frame.id, state: job.state }));
             const timing = answer.split("\n").find(function (line) { return line.indexOf("Timing: ") === 0; });
             outcomes[index] = { ok: true, text: "**" + (index + 1) + ". " + job.frame.name + "**: " + answer.split("\n")[0] + (timing ? "\n   " + timing : "") };
           } catch (error) {
@@ -2722,6 +2752,11 @@
       outcomes.forEach(function (o) { if (o) (o.ok ? results : failures).push(o.text); });
       const batchLine = "\nBatch time: " + ((Date.now() - batchStartedAt) / 1000).toFixed(1) + "s for " + jobs.length + " job(s), up to 3 in parallel.";
       stage(failures.length ? "error" : "done", results.length + "/" + jobs.length + " variation(s) created");
+      if (task.kind === "states-pack") {
+        return results.length + " of " + jobs.length + " state screen(s) created to the right of the source (" + task.states.join(", ") + ")." +
+          (results.length ? "\n" + results.join("\n") : "") + (failures.length ? "\n\nNot created:\n" + failures.join("\n") : "") + batchLine +
+          "\nThe original screen was not changed.";
+      }
       return (task.kind === "flow-variations"
         ? "Flow variation: " + results.length + " of " + jobs.length + " screens created in a new row below the original flow."
         : results.length + " of " + jobs.length + " variations created to the right of the source screen.") +
@@ -2818,7 +2853,7 @@
       if (task.kind === "rename-layers") return runTextTask("rename", prompt, stage);
       if (task.kind === "hygiene-fix") return runHygieneFixTask(task, prompt, stage);
       if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);
-      if (task.kind === "flow-variations" || task.kind === "screen-variations") return runVariationsTask(task, prompt, stage);
+      if (task.kind === "flow-variations" || task.kind === "screen-variations" || task.kind === "states-pack") return runVariationsTask(task, prompt, stage);
       throw new Error("Unknown quick task.");
     }
 
