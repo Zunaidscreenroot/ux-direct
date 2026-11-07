@@ -5,7 +5,7 @@ import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
 import { detectDomain, detectTaskRole, roleInstructions } from "@/src/figma-agent/agent-roles";
 import { runSubAgents, subAgentsEnabled, type AgentBrief } from "@/src/figma-agent/sub-agents";
-import { agencyEnabled, agencyHandlesRole, runAgency, type AgencyResult } from "@/src/figma-agent/agency";
+import { agencyEnabled, agencyHandlesRole, runAgency, truncatedContentNodes, type AgencyResult } from "@/src/figma-agent/agency";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { buildBrainQuery } from "@/src/memory/brain-query";
@@ -884,7 +884,13 @@ export async function POST(request: Request) {
   // UX Director agency: the source screen's sections go to specialist designers in parallel
   // (small calls), the Director merges them and the same gates check the result. A failed gate
   // falls through to the monolithic planner below with most of the 200 s budget left.
-  if (agencyEnabled() && blockMode && !createMode && !screenState && !componentSelection && !referenceImage && agencyHandlesRole(taskRole)) {
+  const agencyEligible = agencyEnabled() && blockMode && !createMode && !screenState && !componentSelection && !referenceImage && agencyHandlesRole(taskRole);
+  // Designers see only the layer tree; a tree with hidden (unread) content would make them drop it.
+  const truncatedNodes = agencyEligible ? truncatedContentNodes(canvas) : 0;
+  if (agencyEligible && truncatedNodes > 0) {
+    attemptTimes.push({ attempt: "agency skipped: layer tree incomplete (" + truncatedNodes + " unread container(s)); single planner with screenshot", ms: 0, outcome: "skipped" });
+  }
+  if (agencyEligible && truncatedNodes === 0) {
     const agencyStarted = Date.now();
     const agency = await runAgency(canvas, {
       prompt: parsedInput.data.prompt, role: taskRole,

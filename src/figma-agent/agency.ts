@@ -118,6 +118,30 @@ export function agencyHandlesRole(role: TaskRole): boolean {
   return ["improve", "variation", "wireframe", "content"].includes(role.id);
 }
 
+/**
+ * Designers work from the layer tree only (no screenshot), so the agency runs only when that
+ * tree really holds the screen's content. A node whose childCount is larger than the children
+ * that were read (depth or node cap, collapsed instances) hides texts — tester finding: a loan
+ * card read as an instance with no children lost every ₹ value and "Personal Loan". Small
+ * icons are ignored. Returns the number of truncated content nodes (0 = complete).
+ */
+export function truncatedContentNodes(canvas: Rec): number {
+  let truncated = 0;
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    const node = value as Rec;
+    if (node.visible === false) return;
+    const children = Array.isArray(node.children) ? node.children : [];
+    const width = typeof node.width === "number" ? node.width : 999;
+    const height = typeof node.height === "number" ? node.height : 999;
+    const icon = width <= 48 && height <= 48;
+    if (!icon && typeof node.childCount === "number" && node.childCount > children.length && !["VECTOR", "BOOLEAN_OPERATION"].includes(String(node.type))) truncated += 1;
+    for (const child of children) visit(child);
+  };
+  for (const node of Array.isArray(canvas.nodes) ? canvas.nodes : []) visit(node);
+  return truncated + (canvas.truncated === true ? 1 : 0);
+}
+
 const MAX_BLOCKS_PER_DESIGNER = 12;
 const MAX_DESIGNERS = 10;
 
@@ -254,6 +278,11 @@ export function groundDesignerSection(item: WorkItem, data: Rec): { section: Rec
   if (forbidden) return { error: String(forbidden.type) + " block not allowed in a section" };
   const sourceSurface = item.source.surface === "card" ? "card" : "plain";
   if (sourceSurface === "card" && blocks.some((block) => block.type === "card")) return { error: "card nested in a card section" };
+  // An added ring or bar must show a real source percentage (finding: an empty "Paid" ring).
+  const sourceCorpus = norm(item.sourceTexts.join(" \u0001 "));
+  const fakeProgress = blocks.find((block) => (block.type === "progress_ring" || block.type === "progress_bar") &&
+    !(typeof block.percent === "number" && sourceCorpus.includes(String(Math.round(block.percent)))));
+  if (fakeProgress) return { error: String(fakeProgress.type) + " without a source percentage" };
   const dropped = droppedTexts(item.sourceTexts, blocks);
   const droppedValues = dropped.filter((text) => VALUE.test(text));
   if (droppedValues.length) return { error: "dropped values: " + droppedValues.slice(0, 4).join(", ") };

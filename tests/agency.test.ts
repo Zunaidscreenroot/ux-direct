@@ -95,3 +95,16 @@ test("hard checks: dropped values, custom trees and nested cards are rejected; c
     assert.equal(flattened.section.name, "Loan summary");
   }
 });
+
+test("agency only runs on a complete layer tree; fake progress rings are rejected", async () => {
+  const { truncatedContentNodes } = await import("../src/figma-agent/agency");
+  assert.equal(truncatedContentNodes(loanCanvas), 0);
+  const truncated = { nodes: [frame("Screen", [{ type: "INSTANCE", name: "Loan card", width: 328, height: 160, childCount: 6 },
+    { type: "INSTANCE", name: "icon", width: 24, height: 24, childCount: 2 }], { childCount: 2 })] };
+  assert.equal(truncatedContentNodes(truncated), 1);
+  const order = planWorkOrder(loanCanvas, improve)!;
+  const summary = order.items[1];
+  const rows = [{ type: "list", items: [{ label: "Outstanding", value: "₹45,000" }, { label: "EMI", value: "₹8,450" }, { label: "Paid", value: "60%" }] }];
+  assert.ok("error" in groundDesignerSection(summary, { blocks: [...rows, { type: "progress_ring", label: "Paid" }] }));
+  assert.ok(!("error" in groundDesignerSection(summary, { blocks: [...rows, { type: "progress_ring", percent: 60, label: "Paid" }] })));
+});
