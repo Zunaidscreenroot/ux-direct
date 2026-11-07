@@ -209,7 +209,8 @@ export function auditDesignPlanQuality(
     const childWidthLimit = width - padding(container, "paddingLeft") - padding(container, "paddingRight");
     const fixedVertical = layoutMode === "VERTICAL" &&
       container.primaryAxisSizingMode !== "AUTO" && container.layoutSizingVertical !== "HUG";
-    const fixedHorizontal = layoutMode === "HORIZONTAL" &&
+    // A wrapping row moves overflow to the next line instead of overflowing.
+    const fixedHorizontal = layoutMode === "HORIZONTAL" && container.layoutWrap !== "WRAP" &&
       container.primaryAxisSizingMode !== "AUTO" && container.layoutSizingHorizontal !== "HUG";
 
     if (isFrame && container.noFill !== true && hexToRgb(container.color) === null) {

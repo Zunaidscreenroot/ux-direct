@@ -128,6 +128,8 @@ const CASES: Array<[any, string, any[]]> = [
   // Content and names
   [FRAME, "change text to \"Pay now\"", [{ target: "text", set: { text: "Pay now" } }]],
   [TEXT, "change text to Pay now", [{ target: "text", set: { text: "Pay now" } }]],
+  [FRAME, "Change the title to \"My Loans\"", [{ target: "text", noun: "title", set: { text: "My Loans" } }]],
+  [FRAME, "change the button text to \"Pay EMI\"", [{ target: "text", noun: "button", set: { text: "Pay EMI" } }]],
   [TEXT, "replace \"₹10,000\" with \"₹5,000\"", [{ target: "text", set: { replace: { from: "₹10,000", to: "₹5,000" } } }]],
   [FRAME, "rename this to Header", [{ target: "self", set: { name: "Header" } }]],
   // Layer actions
@@ -365,3 +367,9 @@ test("from/to copy edits are applied in place, without a model or a new frame", 
   assert.equal(r.body.characters, "Pay ₹10,000 by 5 Dec", "layers without the text are not touched");
 });
 
+
+test("one new text never overwrites every text in a frame (finding 66)", () => {
+  const code = readFileSync(join(process.cwd(), "figma-plugin/code.js"), "utf8");
+  assert.ok(code.includes('if (op.set && typeof op.set.text === "string" && texts.length > 1) {'));
+  assert.ok(code.includes("the new text would replace "));
+});

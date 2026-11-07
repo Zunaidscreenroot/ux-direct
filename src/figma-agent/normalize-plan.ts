@@ -142,7 +142,15 @@ export function repairPlanGeometry(value: unknown): unknown {
         // them squashed logos, charts and badges to a few pixels (Test #1 retest).
         // Small hug-width pills (badges, chips) size to their content, so they keep it too.
         const rigid = (child: RepairGeometryRecord) => child.type === "CLONE" || (child.type === "INSTANCE" && repairGeometryNumber(child, "width", 1) <= 96)
-          || (child.type !== "TEXT" && child.layoutSizingHorizontal === "HUG" && repairGeometryNumber(child, "width", 1) <= 160);
+          || (child.type !== "TEXT" && child.layoutSizingHorizontal === "HUG" && repairGeometryNumber(child, "width", 1) <= 160)
+          // An amount or ID is one token: squeezing it wrapped "₹12,000" into "₹12, / 000" (finding 59).
+          || (child.type === "TEXT" && typeof child.text === "string" && child.text.trim().length <= 16 && !/\s/.test(child.text.trim()));
+        // A single-token text keeps its natural one-line width (not an inflated planned width).
+        for (const child of flow) {
+          if (child.type !== "TEXT" || !rigid(child)) continue;
+          const natural = Math.ceil(String(child.text).trim().length * repairGeometryNumber(child, "fontSize", 14) * 0.6) + 4;
+          child.width = Math.min(repairGeometryNumber(child, "width", natural), natural);
+        }
         const rigidTotal = flow.filter(rigid).reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "width", 1)), 0);
         const flexTotal = Math.max(1, currentTotal - rigidTotal);
         const flexBudget = Math.max(1, contentBudget - rigidTotal);
@@ -161,6 +169,15 @@ export function repairPlanGeometry(value: unknown): unknown {
           }
         }
         flow.forEach((child, index) => { if (!rigid(child)) fitWidth(child, widths[index], mode); });
+        // Rigid parts (logos, badges, amounts) alone can be wider than the row ("Card header" was the
+        // top preflight reject, finding 65): the row wraps onto a second line instead of overflowing.
+        const finalTotal = flow.reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "width", 1)), 0);
+        if (finalTotal > contentBudget + 1) {
+          node.layoutWrap = "WRAP";
+          node.counterAxisSizingMode = "AUTO";
+          if (node.layoutSizingVertical === "FIXED") node.layoutSizingVertical = "HUG";
+          for (const child of flow) if (repairGeometryNumber(child, "width", 1) > contentBudget) fitWidth(child, contentBudget, mode);
+        }
         // Frames also use fixed allocated widths here; FILL could re-distribute
         // uneven columns and invalidate the geometry that was just repaired.
         flow.filter(child => child.type !== "TEXT" && !rigid(child)).forEach(child => {
