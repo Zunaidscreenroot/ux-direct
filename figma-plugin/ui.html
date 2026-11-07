@@ -2906,7 +2906,13 @@
         targets = (await localTask("find-icon-targets", {})).targets || [];
         if (!targets.length) throw new Error("No buttons or rows without an icon were found in the selection. Select a button and say, for example, **add a wallet icon**.");
         stage("creating", "Picking icons for " + targets.length + " label(s)…");
-        response = await postQuickTask("/api/assistant/figma-agent/icon", { labels: targets.map(function (t) { return t.label; }) });
+        try {
+          response = await postQuickTask("/api/assistant/figma-agent/icon", { labels: targets.map(function (t) { return t.label; }) });
+        } catch (error) {
+          // No label matched (e.g. only tabs like "Active" are left): report them instead of failing.
+          if (!/no \w+ icon found/i.test(String(error && error.message || ""))) throw error;
+          response = { icons: [] };
+        }
       }
       const icons = response.icons || [];
       const items = [];
@@ -2916,7 +2922,8 @@
         if (icon && icon.svg) items.push({ targetId: target.id, svg: icon.svg, name: icon.name });
         else if (target.label) unmatched.push(target.label);
       });
-      if (!items.length) throw new Error("No matching icon for: " + unmatched.slice(0, 6).join(", ") + ". Select one and name it, e.g. **add a bank icon**.");
+      if (!items.length) return "No icons were placed. No icon fits: " + unmatched.slice(0, 8).join(", ") +
+        ". Buttons and rows that already have an icon are skipped. Select a layer and name the icon, e.g. **add a bank icon**.";
       stage("creating", "Placing " + items.length + " icon(s)…");
       const result = await localTask("insert-icons", { items: items }, 60000);
       if ((result.createdIds || []).length) {
