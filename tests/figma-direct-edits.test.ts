@@ -340,7 +340,10 @@ test("layer actions, hidden layers and unknown targets", async () => {
   await r.apply("hide this", [r.body]);
   assert.equal(r.body.visible, false);
   await r.apply("duplicate this", [r.card]);
-  assert.equal(r.screen.children.filter((c: any) => c.name === "Card copy").length, 1);
+  // Like Cmd+D: same name, placed right after the source in the same container.
+  const cards = r.screen.children.filter((c: any) => c.name === "Card");
+  assert.equal(cards.length, 2);
+  assert.equal(r.screen.children.indexOf(cards[1]), r.screen.children.indexOf(r.card) + 1);
   const handover = await r.apply("make the avatar red", [r.screen]);
   assert.equal(handover.needsModel, true, "an unknown named target goes to the model instead of guessing");
   await assert.rejects(r.apply("padding 24", [r.title]), /has no padding/);

@@ -269,6 +269,7 @@
     }
     let attachedImageData = null;
     let attachedImageName = "";
+    let lastTargetIds = [];
     let isSending = false;
     // uxd-stop-task:start
     // Stop: every backend fetch of the running task shares one AbortController, and every canvas
@@ -3604,6 +3605,14 @@
       await sendTelemetry("Cockpit chat request started", "info", "The in-Figma UX Direct conversation received a user prompt.", { selectedCount: (currentSelection.selection || []).length });
       try {
         await refreshSelection();
+        // A Revert or a deleted copy can leave nothing selected: work on the last target again instead of
+        // failing with "select a frame" (the designer did not change their focus).
+        const selectedNow = (currentSelection.selection || []).map(function (node) { return node.id; }).filter(Boolean);
+        if (selectedNow.length) lastTargetIds = selectedNow.slice(0, 20);
+        else if (lastTargetIds.length && !/\b(create|new screen|from scratch)\b/i.test(prompt)) {
+          await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: lastTargetIds }, 30000).catch(function () { return null; });
+          await refreshSelection();
+        }
         const quickTask = classifyQuickTask(prompt, {
           selectionTypes: (currentSelection.selection || []).map(function (node) { return node.type; }),
           hasAttachment: Boolean(attachedImageData)
