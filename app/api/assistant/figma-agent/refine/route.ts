@@ -1,3 +1,4 @@
+import { providerFetch } from "@/src/providers/provider-fetch";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
@@ -145,7 +146,7 @@ export async function POST(request: Request) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), figmaAttemptTimeoutMs(activeProvider, modelIndex, 60000, 45000));
     try {
-      const response = await fetch(endpoint, {
+      const response = await providerFetch(endpoint, {
         method: "POST",
         headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", Accept: "application/json",
             ...figmaRoutingHeaders(activeProvider),

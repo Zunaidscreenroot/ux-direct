@@ -1,3 +1,4 @@
+import { providerFetch } from "@/src/providers/provider-fetch";
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -899,7 +900,7 @@ export async function POST(request: Request) {
         const userContent: string | Array<Record<string, unknown>> = modelImages.length
           ? [{ type: "text", text: modelUserText }, ...modelImages]
           : modelUserText;
-        const response = await fetch(endpoint, {
+        const response = await providerFetch(endpoint, {
           method: "POST",
           headers: {
             Authorization: "Bearer " + key,

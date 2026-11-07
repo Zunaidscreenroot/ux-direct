@@ -1,3 +1,4 @@
+import { providerFetch } from "@/src/providers/provider-fetch";
 import { NextResponse } from "next/server";
 import { OPENROUTER_MODELS, OPENROUTER_MODEL_LABELS } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
@@ -35,7 +36,7 @@ export async function GET(request: Request) {
     : activeProvider.baseUrl.replace(/\/+$/, "") + "/models";
   const auditBase = (process.env.UX_AUDIT_BASE_URL?.trim() || "https://uxaudit.zunaid-cb7.workers.dev").replace(/\/+$/, "");
   const [keyResult, auditResult, brainResult] = await Promise.allSettled([
-    activeProvider.configured && key ? fetch(providerHealthUrl, {
+    activeProvider.configured && key ? providerFetch(providerHealthUrl, {
       headers: { Authorization: "Bearer " + key },
       cache: "no-store",
       signal: AbortSignal.timeout(8000),

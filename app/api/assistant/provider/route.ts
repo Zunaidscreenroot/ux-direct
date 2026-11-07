@@ -1,3 +1,4 @@
+import { providerFetch } from "@/src/providers/provider-fetch";
 import { NextResponse } from "next/server";
 import { readR2Json } from "@/src/storage/r2-json-store";
 import { isAllowedFigmaFileKey } from "@/src/security/figma-access";
@@ -93,7 +94,7 @@ async function warmFreeLlmApi() {
   if (!provider.configured) return { ok: false, provider: provider.id, error: provider.configurationError || "FreeLLMAPI is not configured." };
   const startedAt = Date.now();
   try {
-    const response = await fetch(provider.baseUrl + "/models", {
+    const response = await providerFetch(provider.baseUrl + "/models", {
       headers: { Authorization: "Bearer " + provider.apiKey, Accept: "application/json" },
       cache: "no-store",
       signal: AbortSignal.timeout(90_000),
