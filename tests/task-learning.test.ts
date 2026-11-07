@@ -53,7 +53,8 @@ test("a verified block layout becomes a structure-only lesson (finding 49)", asy
   assert.ok(candidate);
   const text = JSON.stringify(candidate);
   for (const leaked of ["Manage loans", "₹8,450", "Pay EMI", "Paid"]) assert.ok(!text.includes(leaked), "leaked " + leaked);
-  assert.match(candidate.title, /app_bar, button, stat_row/);
+  assert.equal(candidate.title, "Verified Figma layout for selected screen or frame", "one memory per scope");
+  assert.match(candidate.normalizedRule, /app_bar, button, stat_row/);
   const lesson = buildVerifiedTaskLesson({ id: "r", outcome: "verified", project: "ux-direct", taskContext: "improve hierarchy of this screen", candidate } as never);
   assert.ok(lesson, "passes the relevance and safety filters");
   assert.equal(lesson.memoryType, "approved_pattern");
