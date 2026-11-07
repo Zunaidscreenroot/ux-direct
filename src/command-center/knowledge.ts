@@ -53,5 +53,6 @@ export async function loadSharedKnowledge(limit = 100): Promise<{ rules: Knowled
     listBrainFeedback({ status: "approved", limit }),
     listBrainKnowledgeDocuments({ status: "approved", limit }),
   ]);
-  return { rules: rules.map(normalizeRule), documents: documents.map(normalizeDocument) };
+  // Knowledge-base entries (version_label "kb-entry") have their own page section.
+  return { rules: rules.map(normalizeRule), documents: documents.filter((row) => row.version_label !== "kb-entry").map(normalizeDocument) };
 }

@@ -288,7 +288,6 @@
     let providerHealthy = false;
     let figmaBridgeHealthy = false;
     let brainHealthy = null;
-    let auditHealthy = null;
     let chatgptState = "unknown";
     let nativeHealthReport = null;
     let nativeHealthRunning = false;
@@ -587,8 +586,6 @@
         figmaBridgeHealthy ? "This plugin session is sending fresh heartbeats." : "The plugin bridge is unavailable or the session is stale.", figmaBridgeHealthy);
       renderService("brain", "Shared Knowledge Base", brainHealthy === true ? "Connected" : brainHealthy === false ? "Unavailable" : "Not checked",
         brainHealthy === true ? "Approved UX Direct memories are reachable." : brainHealthy === false ? "Chat may continue with reduced context; brain diagnostics are unavailable." : "Waiting for provider diagnostics.", brainHealthy);
-      renderService("audit", "UX Audit service", auditHealthy === true ? "Connected" : auditHealthy === false ? "Unavailable" : "Not checked",
-        auditHealthy === true ? "UX Audit endpoint is reachable." : auditHealthy === false ? "UX Audit could not be reached." : "Waiting for service diagnostics.", auditHealthy);
       const chatHealthy = chatgptState === "connected";
       renderService("chatgpt", "ChatGPT monitor · MCP", chatHealthy ? "Active" : chatgptState === "idle" ? "Idle" : "Not verified",
         chatHealthy ? "Recent authenticated ChatGPT activity was detected." : chatgptState === "idle" ? "No MCP request in the recent activity window. The in-Figma cockpit does not depend on ChatGPT to send design requests." : "Connection activity has not been confirmed.", chatgptState === "connected" ? true : chatgptState === "idle" ? null : false);
@@ -770,11 +767,9 @@
           const data = await results[1].value.json();
           providerHealthy = data.connected === true;
           brainHealthy = data.brain && typeof data.brain.reachable === "boolean" ? data.brain.reachable : null;
-          auditHealthy = data.uxAudit && typeof data.uxAudit.reachable === "boolean" ? data.uxAudit.reachable : null;
         } else {
           providerHealthy = false;
           brainHealthy = null;
-          auditHealthy = null;
         }
         if (results[2].status === "fulfilled" && results[2].value.ok) {
           const data = await results[2].value.json();

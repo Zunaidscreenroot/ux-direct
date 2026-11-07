@@ -9,7 +9,7 @@ const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8"
 test("general assistant chat exposes OpenRouter Auto as its only model option", () => {
   assert.deepEqual(OPENROUTER_MODELS, ["openrouter/auto"]);
   assert.deepEqual(OPENROUTER_MODEL_LABELS, ["OpenRouter Auto · low-cost routing"]);
-  assert.ok(UX_DIRECT_DESIGN_ROLE.toLowerCase().includes("ui/ux designer"));
+  assert.ok(UX_DIRECT_DESIGN_ROLE.includes("UX Director"));
 });
 
 test("assistant chat uses one server-selected provider/model and applies OpenRouter-only routing options conditionally", () => {

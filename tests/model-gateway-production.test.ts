@@ -10,7 +10,7 @@ test("home opens the streamlined command center: chat, shared knowledge, plugin 
   const chat = read("app/chat/page.tsx");
   assert.ok(page.includes('redirect("/chat")'));
   assert.ok(chat.includes("Message UX Direct"));
-  assert.ok(chat.includes("Shared knowledge"));
+  assert.ok(chat.includes("Knowledge base"));
   assert.ok(chat.includes("Plugin activity"));
   assert.ok(chat.includes('mode: "command-center"'));
   assert.equal(chat.includes("ia-demo"), false);

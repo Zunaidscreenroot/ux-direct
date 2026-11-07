@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { assessBrainRelevance } from "./learning-signal";
 import { neonRequest as supabaseRequest } from "./neon-rest";
+import { detectDomain } from "@/src/figma-agent/agent-roles";
+import { retrieveKnowledge } from "@/src/knowledge/store";
+import type { KnowledgePack } from "@/src/knowledge/retrieve";
 
 export type BrainMemory = {
   id: string;
@@ -44,6 +47,9 @@ export type BrainContext = {
     memoryIds: string[];
     chunkIds: string[];
     chars: number;
+    /** Curated UX knowledge entries (core corpus + owner entries) packed into this context. */
+    uxKnowledgeIds: string[];
+    uxKnowledgeChars: number;
   };
 };
 
@@ -186,11 +192,32 @@ export async function retrieveBrainContext(input: {
   memoryTypes?: string[];
   maxChars?: number;
   includeKnowledge?: boolean;
+  /** Agency seat or task role asking (e.g. "reviewer", "ui-designer"); tunes the UX knowledge picked. */
+  role?: string;
+  /** Product domain (e.g. "fintech"); detected from the query when omitted. */
+  domain?: string;
+  /** Share of maxChars reserved for curated UX knowledge (0–0.7, default 0.4). 0 turns it off. */
+  uxKnowledgeShare?: number;
+  /** Skip the identity entries (design-only calls do not need "what is UX Direct"). */
+  skipIdentity?: boolean;
 }): Promise<BrainContext> {
   const query = textValue(input.query, 8000, "query");
   const scopeKeys = [...new Set((input.scopeKeys.length ? input.scopeKeys : ["UX_SHARED_BRAIN"]).map(normalizeScope))].slice(0, 12);
   const limit = Math.max(1, Math.min(12, Math.floor(input.limit ?? 6)));
   const maxChars = Math.max(600, Math.min(MAX_CONTEXT_CHARS_CEILING, Math.floor(input.maxChars ?? MAX_CONTEXT_CHARS)));
+  const share = Math.max(0, Math.min(0.7, input.uxKnowledgeShare ?? 0.4));
+  const domain = input.domain || (() => {
+    const detected = detectDomain(query, []);
+    return detected.score ? detected.domain.id : undefined;
+  })();
+  const uxKnowledgePromise: Promise<KnowledgePack> = share > 0
+    ? retrieveKnowledge({
+        query, role: input.role, domain, limit: 10,
+        maxChars: Math.floor(maxChars * share),
+        skipIds: input.skipIdentity ? ["identity-ux-direct", "identity-voice"] : undefined,
+      }).catch(() => ({ text: "", ids: [], chars: 0 }))
+    : Promise.resolve({ text: "", ids: [], chars: 0 });
+  const joinContext = (brainText: string, ux: KnowledgePack) => [brainText, ux.text].filter(Boolean).join("\n\n");
   try {
     const memoryPromise = supabaseRequest("rpc/uxd_brain_search_memories", {
       method: "POST",
@@ -212,12 +239,13 @@ export async function retrieveBrainContext(input: {
           console.warn("[uxd-brain] knowledge retrieval degraded:", error instanceof Error ? error.message.slice(0, 180) : "unknown");
           return [];
         });
-    const [memoryResult, knowledgeResult] = await Promise.all([memoryPromise, knowledgePromise]);
+    const [memoryResult, knowledgeResult, uxKnowledge] = await Promise.all([memoryPromise, knowledgePromise, uxKnowledgePromise]);
     const memories = (Array.isArray(memoryResult) ? memoryResult as BrainMemory[] : [])
       .map(sanitizeLegacyLearningPolicyMemory)
       .filter((memory): memory is BrainMemory => memory !== null);
     const knowledge = Array.isArray(knowledgeResult) ? knowledgeResult as BrainKnowledgeChunk[] : [];
-    const contextText = compactContext(memories, knowledge, maxChars);
+    const brainText = compactContext(memories, knowledge, Math.max(400, maxChars - uxKnowledge.chars - 2));
+    const contextText = joinContext(brainText, uxKnowledge);
     const memoryIds = memories.map(memory => memory.id).filter(safeUuid);
     if (memoryIds.length) {
       // Await the write so Cloudflare can finish it before the request lifecycle ends.
@@ -230,21 +258,25 @@ export async function retrieveBrainContext(input: {
     return {
       memories, knowledge, contextText,
       retrieval: {
-        status: knowledgeFailed ? "degraded" : memories.length || knowledge.length ? "complete" : "empty",
+        status: knowledgeFailed ? "degraded" : memories.length || knowledge.length || uxKnowledge.ids.length ? "complete" : "empty",
         memoryCount: memories.length,
         knowledgeChunkCount: knowledge.length,
         maxChars,
         memoryIds,
         chunkIds: knowledge.map(chunk => chunk.chunk_id).filter(Boolean),
         chars: contextText.length,
+        uxKnowledgeIds: uxKnowledge.ids,
+        uxKnowledgeChars: uxKnowledge.chars,
       },
     };
   } catch (error) {
     console.warn("[uxd-brain] retrieval degraded:", error instanceof Error ? error.message.slice(0, 200) : "unknown");
     const disabled = !process.env.DATABASE_URL && !process.env.POSTGRES_PRISMA_URL && !process.env.POSTGRES_URL_NON_POOLING;
-    return { memories: [], knowledge: [], contextText: "", retrieval: {
+    // The curated UX knowledge ships with the code, so it still reaches the model when the database is down.
+    const uxKnowledge = await uxKnowledgePromise;
+    return { memories: [], knowledge: [], contextText: uxKnowledge.text, retrieval: {
       status: disabled ? "disabled" : "degraded", memoryCount: 0, knowledgeChunkCount: 0, maxChars,
-      memoryIds: [], chunkIds: [], chars: 0,
+      memoryIds: [], chunkIds: [], chars: uxKnowledge.chars, uxKnowledgeIds: uxKnowledge.ids, uxKnowledgeChars: uxKnowledge.chars,
     } };
   }
 }
