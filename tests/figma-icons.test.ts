@@ -287,3 +287,18 @@ test("'add icons to these rows' includes label+value rows and makes room in abso
   await run("restore-props", { items: result.restore });
   assert.equal(r1.children[0].x, 16);
 });
+
+test("rows whose label names no icon carry the kind of value they show", async () => {
+  const txt = (id: string, characters: string) => ({ id, type: "TEXT", characters, fontSize: 14, fills: [], x: 0, y: 0, width: 80, height: 18 });
+  const row = (id: string, label: string, value: string): any => ({ id, type: "FRAME", name: "Row", width: 320, height: 40, fills: [], children: [txt(id + "l", label), txt(id + "v", value)] });
+  const rows = { a: row("a", "Fare", "$1,250"), b: row("b", "Rate", "8.5%"), c: row("c", "Check-in", "12 Dec"), d: row("d", "Gate", "B12") };
+  const { figma, run } = makeRuntime(rows);
+  figma.currentPage.selection = Object.values(rows);
+  const found = await run("find-icon-targets", { rows: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((t: any) => [t.label, t.valueKind]))),
+    [["Fare", "currency"], ["Rate", "percent"], ["Check-in", "date"], ["Gate", null]]);
+  assert.equal(pickIconForLabel("Taxes"), "receipt");
+  assert.equal(pickIconForLabel("Apply coupon"), "badge-percent");
+  assert.equal(pickIconForLabel("Total"), null, "a bare 'Total' still gets no label icon; the value kind decides");
+  assert.match(ui, /currency: "banknote", percent: "percent", date: "calendar", time: "clock"/);
+});

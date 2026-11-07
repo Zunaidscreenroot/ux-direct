@@ -143,3 +143,16 @@ test("prototype Revert works when Figma normalises the reactions it read back", 
   assert.equal(restored.restored, 1);
   assert.equal(hb.reactions.length, 0);
 });
+
+test("Skip in an onboarding run goes past the other Skip screens to the first screen without one", async () => {
+  const s = (id: string, name: string, x: number, kids: any[]): any => ({ id, type: "FRAME", name, x, y: 0, width: 360, height: 800, children: kids });
+  const one = s("o1", "Intro 1", 0, [button("k1", "Skip"), button("n1", "Next")]);
+  const two = s("o2", "Intro 2", 400, [button("k2", "Skip"), button("n2", "Next")]);
+  const home = s("hm", "Dashboard", 800, [button("x", "Profile")]);
+  const nodes: Record<string, any> = { o1: one, o2: two, hm: home };
+  const run = runtime([home, two, one], nodes);
+  const plan = await run("prototype-wire", {});
+  const links = plan.links.map((l: any) => [l.screen, l.label, l.to]);
+  assert.deepEqual(links.filter((l: any) => l[1] === "Skip"), [["Intro 1", "Skip", "Dashboard"], ["Intro 2", "Skip", "Dashboard"]]);
+  assert.deepEqual(links.filter((l: any) => l[1] === "Next"), [["Intro 1", "Next", "Intro 2"], ["Intro 2", "Next", "Dashboard"]]);
+});
