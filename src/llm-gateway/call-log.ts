@@ -201,3 +201,49 @@ export async function readCallStats(hours: number, sections: CallStatsSection[] 
     })),
   };
 }
+
+export type BudgetStats = {
+  today: { calls: number; tokens: number };
+  last24h: { calls: number; ok: number; tokens: number; promptTokens: number; completionTokens: number };
+  last3h: { calls: number; tokens: number };
+  hourly: Array<{ hour: string; calls: number; tokens: number }>;
+  roles: Array<{ role: string; calls: number; ok: number; tokens: number; promptTokens: number; completionTokens: number; topModel: string }>;
+};
+
+/** Token budget view: today (UTC), last 24 h by role and by hour, last 3 h for the pace. */
+export async function readBudgetStats(): Promise<BudgetStats> {
+  const sql = await sqlClient();
+  const empty: BudgetStats = { today: { calls: 0, tokens: 0 }, last24h: { calls: 0, ok: 0, tokens: 0, promptTokens: 0, completionTokens: 0 }, last3h: { calls: 0, tokens: 0 }, hourly: [], roles: [] };
+  if (!sql) return empty;
+  const [totals, hourly, roles] = await Promise.all([
+    sql.query(
+      `SELECT
+         count(*) FILTER (WHERE at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc')::int AS today_calls,
+         coalesce(sum(total_tokens) FILTER (WHERE at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'), 0)::bigint AS today_tokens,
+         count(*)::int AS calls, count(*) FILTER (WHERE ok)::int AS ok,
+         coalesce(sum(total_tokens), 0)::bigint AS tokens,
+         coalesce(sum(prompt_tokens), 0)::bigint AS prompt_tokens,
+         coalesce(sum(completion_tokens), 0)::bigint AS completion_tokens,
+         count(*) FILTER (WHERE at > now() - interval '3 hours')::int AS calls_3h,
+         coalesce(sum(total_tokens) FILTER (WHERE at > now() - interval '3 hours'), 0)::bigint AS tokens_3h
+       FROM public.uxd_llm_calls WHERE at > now() - interval '24 hours'`),
+    sql.query(
+      `SELECT date_trunc('hour', at) AS hour, count(*)::int AS calls, coalesce(sum(total_tokens), 0)::bigint AS tokens
+       FROM public.uxd_llm_calls WHERE at > now() - interval '24 hours' GROUP BY 1 ORDER BY 1`),
+    sql.query(
+      `SELECT coalesce(role, 'default') AS role, count(*)::int AS calls, count(*) FILTER (WHERE ok)::int AS ok,
+         coalesce(sum(total_tokens), 0)::bigint AS tokens, coalesce(sum(prompt_tokens), 0)::bigint AS prompt_tokens,
+         coalesce(sum(completion_tokens), 0)::bigint AS completion_tokens,
+         mode() WITHIN GROUP (ORDER BY provider || '/' || model) FILTER (WHERE ok) AS top_model
+       FROM public.uxd_llm_calls WHERE at > now() - interval '24 hours' GROUP BY 1 ORDER BY tokens DESC LIMIT 60`),
+  ]) as Array<Array<Record<string, unknown>>>;
+  const t = totals[0] || {};
+  const n = (value: unknown) => Number(value) || 0;
+  return {
+    today: { calls: n(t.today_calls), tokens: n(t.today_tokens) },
+    last24h: { calls: n(t.calls), ok: n(t.ok), tokens: n(t.tokens), promptTokens: n(t.prompt_tokens), completionTokens: n(t.completion_tokens) },
+    last3h: { calls: n(t.calls_3h), tokens: n(t.tokens_3h) },
+    hourly: hourly.map((row) => ({ hour: new Date(String(row.hour)).toISOString(), calls: n(row.calls), tokens: n(row.tokens) })),
+    roles: roles.map((row) => ({ role: String(row.role), calls: n(row.calls), ok: n(row.ok), tokens: n(row.tokens), promptTokens: n(row.prompt_tokens), completionTokens: n(row.completion_tokens), topModel: String(row.top_model || "") })),
+  };
+}

@@ -88,3 +88,30 @@
 .ud-cc-tab:focus-visible{outline:2px solid #9cf0d4;outline-offset:2px}
 .ud-cc-tab-actions{margin:0 0 12px}
 .ud-cc-more{display:flex;justify-content:center;margin:14px 0 4px}
+
+.ud-budget{margin:0 0 22px}
+.ud-budget-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px}
+.ud-budget-head .ud-cc-section{margin:0}
+.ud-budget-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:0 0 12px}
+.ud-budget-card{display:flex;flex-direction:column;gap:7px;padding:15px 16px;border:1px solid #293649;border-radius:12px;background:#111823;min-width:0}
+.ud-budget-card span{font-size:10px;color:#8191a7;text-transform:uppercase;letter-spacing:.06em}
+.ud-budget-card b{font:600 24px Manrope,sans-serif;color:#f3f7fd}
+.ud-budget-card b em{font:500 11px Manrope,sans-serif;color:#8191a7;font-style:normal}
+.ud-budget-card small{color:#7d8ca1;font-size:10px;line-height:1.55;overflow-wrap:anywhere}
+.ud-budget-bar,.ud-budget-share{height:6px;border-radius:99px;background:#1c2736;overflow:hidden}
+.ud-budget-bar i,.ud-budget-share i{display:block;height:100%;border-radius:inherit;background:#5fd4b0}
+.ud-budget-share{width:80px;margin:0 0 3px}
+.ud-budget-acc{border:1px solid #243145;border-radius:12px;background:#0f1520;margin:0 0 8px;padding:0 14px}
+.ud-budget-acc[open]{padding-bottom:14px}
+.ud-budget-acc summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:10px;padding:13px 0;font:600 12px Manrope,sans-serif;color:#dce5f3}
+.ud-budget-acc summary::-webkit-details-marker{display:none}
+.ud-budget-acc summary::before{content:"▸";color:#6e7d91;margin-right:8px;transition:transform .15s}
+.ud-budget-acc[open] summary::before{transform:rotate(90deg)}
+.ud-budget-acc summary span{margin-left:auto;color:#6e7d91;font:400 10px 'DM Mono',monospace}
+.ud-budget-acc .ud-cc-row .ud-cc-table-wrap{margin-top:6px}
+.ud-budget-hours{display:flex;align-items:flex-end;gap:3px;height:120px;padding:8px 0 0}
+.ud-budget-hours div{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;min-width:0}
+.ud-budget-hours i{display:block;width:100%;max-width:18px;border-radius:3px 3px 0 0;background:#3d8f79}
+.ud-budget-hours small{font:8px 'DM Mono',monospace;color:#627087;margin-top:3px}
+.ud-budget-notes{margin:0;padding-left:18px;color:#9aa8bd;font-size:11px;line-height:1.7}
+@media (max-width:560px){.ud-budget-cards{grid-template-columns:1fr}.ud-budget-share{width:56px}}

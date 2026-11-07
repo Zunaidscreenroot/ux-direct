@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { commandCenterLockedResponse, isCommandCenterAuthorized } from "@/src/command-center/access";
 import { ACTIVITY_WINDOW_DAYS, loadRecentActivity, summarizeActivity } from "@/src/command-center/activity";
 import { loadSharedKnowledge } from "@/src/command-center/knowledge";
-import { MODELS_TABS, checkGatewayProviders, loadModelAnalytics } from "@/src/command-center/models";
+import { MODELS_TABS, checkGatewayProviders, loadModelAnalytics, loadModelBudget } from "@/src/command-center/models";
 import { pageParams, slicePage } from "@/src/command-center/paging";
 
 export const runtime = "nodejs";
@@ -27,6 +27,9 @@ export async function GET(request: Request) {
     }
     if (view === "models-check") {
       return NextResponse.json(await checkGatewayProviders(), { headers });
+    }
+    if (view === "models-budget") {
+      return NextResponse.json(await loadModelBudget(), { headers });
     }
     if (view === "models") {
       const params = new URL(request.url).searchParams;

@@ -124,6 +124,35 @@ export function modelLimits(provider: ProviderDef, model: string): { rpm: number
   return { rpm: provider.rpm, rpd: provider.rpd };
 }
 
+/**
+ * Published daily limits per model, with where each number comes from. Providers that publish no
+ * daily token figure return tpd undefined: the budget view shows "unknown" instead of guessing.
+ */
+export type DailyLimits = { rpd?: number; tpd?: number; source: string };
+
+const GROQ_TPD: Array<[RegExp, number]> = [
+  [/gpt-oss-(120|20)b/, 200_000], [/qwen3-32b/, 500_000], [/llama-3\.3-70b/, 100_000],
+  [/llama-4-scout/, 500_000], [/llama-4-maverick/, 500_000], [/kimi-k2/, 300_000], [/llama-3\.1-8b/, 500_000],
+];
+
+export function modelDailyLimits(provider: ProviderDef, model: string): DailyLimits {
+  const { rpd } = modelLimits(provider, model);
+  switch (provider.id) {
+    case "groq": {
+      const tpd = GROQ_TPD.find(([pattern]) => pattern.test(model))?.[1];
+      return { rpd, tpd, source: "Groq free plan limits table (console.groq.com/docs/rate-limits)" + (tpd ? "" : "; no token/day figure for this model") };
+    }
+    case "cerebras": return { rpd, tpd: 1_000_000, source: "Cerebras free tier: 1M tokens/day per model" };
+    case "gemini": return { rpd, source: "Gemini API free tier: requests/day per model; no daily token cap published" };
+    case "openrouter": return { rpd: undefined, source: "OpenRouter: " + (provider.accountRpd ?? 1000) + " free-model requests/day for the whole account (shared by all :free models)" };
+    case "mistral": return { source: "Mistral free tier: per-second and per-minute limits only (admin.mistral.ai/plateforme/limits); no daily cap" };
+    case "workers-ai": return { source: "Workers AI: 10,000 neurons/day (not tokens; neurons per token vary by model)" };
+    case "zai": return { source: "Z.ai: glm-4.5-flash is free; no daily limit published" };
+    case "github": return { rpd, source: "GitHub Models free: requests/day per model; tokens per request capped" };
+    default: return { rpd, source: "not published" };
+  }
+}
+
 type Env = Record<string, string | undefined>;
 
 function csv(value: string | undefined): string[] {

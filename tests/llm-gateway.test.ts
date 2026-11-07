@@ -229,3 +229,45 @@ test("OpenRouter paid models are never routed, even when pinned or listed in an 
   });
   assert.deepEqual(ranked, []);
 });
+
+test("budget view sums published daily limits only, shares OpenRouter's account cap and groups roles by seat", async () => {
+  const { buildBudget } = await import("../src/command-center/models");
+  const now = Date.UTC(2026, 10, 7, 12, 0, 0);
+  const usageRow = (provider: string, model: string, today: number, tokensToday: number) => ({ provider, model, lastMinute: 0, today, tokensToday, calls24h: today, ok24h: today, avgLatencyMs: 0 });
+  const budget = buildBudget({
+    now,
+    providers: [
+      { id: "groq", label: "Groq", models: ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"] },
+      { id: "openrouter", label: "OpenRouter", models: ["a:free", "b:free"] },
+      { id: "mistral", label: "Mistral", models: ["mistral-code-latest"] },
+    ],
+    usage: [usageRow("groq", "openai/gpt-oss-120b", 100, 50_000), usageRow("openrouter", "a:free", 30, 9_000), usageRow("openrouter", "b:free", 20, 1_000), usageRow("mistral", "mistral-code-latest", 5, 2_000)],
+    stats: {
+      today: { calls: 155, tokens: 62_000 },
+      last24h: { calls: 200, ok: 190, tokens: 80_000, promptTokens: 60_000, completionTokens: 20_000 },
+      last3h: { calls: 30, tokens: 12_000 },
+      hourly: [],
+      roles: [
+        { role: "section-designer", calls: 10, ok: 10, tokens: 10_000, promptTokens: 8_000, completionTokens: 2_000, topModel: "groq/x" },
+        { role: "ux-designer", calls: 5, ok: 5, tokens: 5_000, promptTokens: 4_000, completionTokens: 1_000, topModel: "" },
+        { role: "lead", calls: 10, ok: 9, tokens: 15_000, promptTokens: 12_000, completionTokens: 3_000, topModel: "gemini/y" },
+      ],
+    },
+  });
+  // Groq: 1000 + 1000 requests/day; OpenRouter: one shared 1000; Mistral: none published.
+  assert.equal(budget.requests.limit, 3_000);
+  assert.equal(budget.requests.used, 150);
+  assert.equal(budget.requests.coveredModels, 4);
+  assert.equal(budget.requests.totalModels, 5);
+  // Only gpt-oss-120b publishes a token/day cap (200k); the new qwen id has none.
+  assert.equal(budget.tokens.limit, 200_000);
+  assert.equal(budget.tokens.remaining, 150_000);
+  assert.equal(budget.tokens.usedToday, 62_000);
+  assert.equal(budget.pace.tokensPerHour, 4_000);
+  assert.equal(budget.pace.projected24hTokens, 96_000);
+  assert.equal(budget.pace.hoursUntilRequestsOut, null, "2850 left at 10/h lasts past the reset");
+  assert.deepEqual(budget.roles.map((row) => [row.seat, row.tokens]), [["ux-designer", 15_000], ["lead", 15_000]]);
+  assert.equal(budget.roles[0].share, 50);
+  assert.equal(budget.providers.find((provider) => provider.id === "mistral")!.models[0].rpd, undefined);
+  assert.equal(budget.resetsAt, "2026-11-08T00:00:00.000Z");
+});
