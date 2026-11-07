@@ -1809,8 +1809,10 @@
         const free = await findFreeCanvasSpot(rootX, rootY, Number(plan.frame.width) || 393, Number(plan.frame.height) || 800);
         rootX = free.x; rootY = free.y;
       }
-      const frameName = String(designOptions && designOptions.frameName || plan.frame.name || "UX Direct Variation").slice(0, 80);
-      stage("creating", "Creating a separate editable variation; the original stays untouched…");
+      // A new screen from a prompt is not a variation of anything: drop a "· variation" suffix the plan may add.
+      const rawFrameName = String(designOptions && designOptions.frameName || plan.frame.name || (createMode ? "New screen" : "UX Direct Variation"));
+      const frameName = (createMode ? rawFrameName.replace(/\s*[·•|–—-]?\s*\b(variation|variant|option)\b(\s*\d+)?\s*$/i, "").trim() || "New screen" : rawFrameName).slice(0, 80);
+      stage("creating", createMode ? "Creating the new screen…" : "Creating a separate editable variation; the original stays untouched…");
       const buildStartedAt = Date.now();
       try {
       const rootResult = await runNativeCanvasCommand("write-canvas", {
@@ -2968,8 +2970,7 @@
         const current = await localTask("get-design-rules", {});
         if (!current.text) return "This file has no design rules yet. Set them once and every UX Direct task follows them, for example:\n" +
           "**design rules: spacing 4/8/12/16/24, radius 8/16, type 12/14/16/20/28, min text 12, primary #2563EB, font: Inter, tone: clear and formal**";
-        return "Design rules for this file (shared with everyone on it):\n" + (describeDesignRules(current.rules).join("\n") || "- (free text only)") +
-          "\n\nFull text:\n> " + String(current.text).replace(/\n/g, "\n> ") + "\n\nChange them with **design rules: …**, or **clear design rules**.";
+        return "Design rules for this file (shared with everyone on it):\n" + (describeDesignRules(current.rules).length ? describeDesignRules(current.rules).join("\n") + "\n\nFull text:\n> " : "> ") + String(current.text).replace(/\n/g, "\n> ") + "\n\nChange them with **design rules: …**, or **clear design rules**.";
       }
       stage("creating", task.mode === "clear" ? "Clearing the file's design rules…" : "Saving the file's design rules…");
       const rules = task.mode === "clear" ? null : parseDesignRules(task.text);
@@ -2994,9 +2995,11 @@
     function learnRuleLine(change) {
       const px = function (v) { return typeof v === "number" ? Math.round(v * 10) / 10 + " px" : String(v); };
       const who = { text: "Text", button: "Button", frame: "Container" }[change.role] || "Layer";
+      // Text rules are scoped by role ("Card title", "Button label", "Body text"), so one title edit
+      // never becomes a rule for every text of that size.
+      const scope = change.textRole ? change.textRole.charAt(0).toUpperCase() + change.textRole.slice(1) : "Text";
       const subject = {
-        size: change.role === "text" ? "Text set at " + px(change.from) + " size" : who + " text size",
-        weight: change.from + " text weight", color: "Text colour " + change.from,
+        size: scope + " size", weight: scope + " weight", color: scope + " colour",
         radius: who + " corner radius", fill: who + " fill " + change.from, gap: who + " gap",
         padX: who + " side padding", padY: who + " top/bottom padding", height: "Button height"
       }[change.prop];

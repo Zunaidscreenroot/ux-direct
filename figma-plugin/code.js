@@ -5057,10 +5057,25 @@ function uxdLearnRole(node) {
   if (uxdLooksLikeButton(node)) return "button";
   return "frame";
 }
+// A text's role, so one edit becomes a scoped rule ("Card title size: 20 px"), never one for all text.
+function uxdLearnTextRole(node) {
+  var parent = node.parent;
+  if (parent && uxdLooksLikeButton(parent)) return "Button label";
+  var inCard = false;
+  for (var p = parent; p && p.type !== "PAGE"; p = p.parent) if (UXD_CARD_NAME.test(String(p.name || ""))) { inCard = true; break; }
+  var name = String(node.name || "");
+  var size = typeof node.fontSize === "number" ? node.fontSize : 14;
+  var bold = node.fontName && /bold|semi|medium|heavy|black/i.test(String(node.fontName.style || ""));
+  var role = /\b(title|heading|header|headline|h[1-3])\b/i.test(name) || size >= 22 || (bold && size >= 16) ? "title"
+    : size <= 12 ? "caption" : "body text";
+  if (role === "title" && !inCard && size >= 22) return "Screen title";
+  return (inCard ? "Card " : "") + role;
+}
 function uxdLearnValues(node) {
   var v = { role: uxdLearnRole(node) };
   if (node.type === "TEXT") {
     if (typeof node.fontSize === "number") v.size = node.fontSize;
+    v.textRole = uxdLearnTextRole(node);
     if (node.fontName && typeof node.fontName === "object" && typeof node.fontName.style === "string") v.weight = node.fontName.style;
     var th = uxdFillHex(node); if (th) v.color = th;
     return v;
@@ -5130,12 +5145,12 @@ async function localLearnCorrections(payload) {
     if (!now) return;
     var changed = false;
     Object.keys(base).forEach(function (prop) {
-      if (prop === "role" || now[prop] === undefined) return;
+      if (prop === "role" || prop === "textRole" || now[prop] === undefined) return;
       var from = base[prop], to = now[prop];
       if (typeof from === "number" ? Math.abs(from - to) < 0.5 : from === to) return;
       changed = true;
-      var key = base.role + "|" + prop + "|" + from + "|" + to;
-      if (!groups[key]) groups[key] = { role: base.role, prop: prop, from: from, to: to, layers: 0, sample: entry.node.name };
+      var key = base.role + "|" + (base.textRole || "") + "|" + prop + "|" + from + "|" + to;
+      if (!groups[key]) groups[key] = { role: base.role, textRole: base.textRole || "", prop: prop, from: from, to: to, layers: 0, sample: entry.node.name };
       groups[key].layers++;
     });
     if (changed) {
@@ -5143,6 +5158,7 @@ async function localLearnCorrections(payload) {
       if (payload.commit) {
         previous[entry.node.id] = entry.raw;
         now.role = base.role;
+        if (base.textRole) now.textRole = base.textRole;
         entry.node.setPluginData("uxdBaseline", JSON.stringify(now));
       }
     }
