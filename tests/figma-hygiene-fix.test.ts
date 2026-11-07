@@ -111,7 +111,7 @@ function runtime() {
     if (message.error) throw new Error(message.error);
     return message.result;
   }
-  return { fix, screen, title, faint, button, instance, instanceLabel, stack, rowA, rgb };
+  return { fix, screen, title, faint, button, instance, instanceLabel, stack, rowA, rgb, figma, posted };
 }
 
 test("spacing fix snaps to the 4px grid and evens near-symmetric padding", async () => {
@@ -164,4 +164,23 @@ test("accessibility fix reaches text inside instances as overrides, but structur
   await r.fix(["a11y", "spacing"]);
   assert.equal(inner.fontSize, 12, "small label inside an instance raised to 12px");
   assert.equal(r.instance.paddingLeft, 5, "instance padding is not changed");
+});
+
+test("hygiene revert restores the snapshot, keeping later manual edits", async () => {
+  const r = runtime();
+  const result = await r.fix(["spacing", "tokens", "a11y"]);
+  assert.ok(result.snapshot.length > 0);
+  assert.equal(result.layoutChanged, false);
+  const sandboxFigma = (r as any).figma;
+  r.button.paddingTop = 30; // designer edits after the fix
+  const posted: any[] = (r as any).posted;
+  posted.length = 0;
+  await sandboxFigma.ui.onmessage({ type: "uxd-local-task", requestId: "r2", op: "restore-props", payload: { items: result.snapshot } });
+  const restore = posted.find((m: any) => m.type === "uxd-local-result").result;
+  assert.ok(restore.restored > 0);
+  assert.equal(r.screen.paddingTop, 23, "grid snap undone");
+  assert.equal(r.screen.paddingLeft, 15);
+  assert.equal(r.faint.fontSize, 10, "small text restored");
+  assert.equal(r.title.textStyleId, "", "text style detached again");
+  assert.equal(r.button.fills[0].boundVariables, undefined, "variable binding removed");
 });
