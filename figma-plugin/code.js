@@ -4826,7 +4826,8 @@ async function localInsertIcons(payload) {
       if (first < size + 16) {
         // Make room: shift the row's content right by the missing space when it still fits in the row.
         var kids = (target.children || []).filter(function (c) { return c.visible !== false; });
-        var shift = size + 16 - first;
+        // The icon takes the label's old spot, so the row keeps its left margin.
+        var shift = size + 8;
         var right = kids.reduce(function (max, c) { return Math.max(max, c.x + c.width); }, 0);
         if (!kids.length || right + shift > target.width - 8 || kids.some(function (c) { return c.locked === true; })) {
           icon.remove(); skipped.push({ id: target.id, name: target.name, reason: "no room before the label, and the row is too full to shift its content" }); continue;

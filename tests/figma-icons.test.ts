@@ -271,7 +271,8 @@ test("'add icons to these rows' includes label+value rows and makes room in abso
   assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((x: any) => x.label))), ["EMI", "Next due", "Status"]);
   const result = await run("insert-icons", { items: found.targets.map((x: any) => ({ targetId: x.id, svg: LUCIDE, name: "calendar" })) });
   assert.equal(result.inserted.length, 3, JSON.stringify(result.skipped));
-  assert.ok(r1.children[0].x >= 16 + 20, "label shifted right to make room: " + JSON.stringify(r1.children.map((c: any) => [c.name, c.x])));
+  assert.equal(r1.children[1].x, 16, "icon keeps the row's left margin");
+  assert.ok(r1.children[0].x >= 16 + 20 + 8, "label shifted right to make room: " + JSON.stringify(r1.children.map((c: any) => [c.name, c.x])));
   await run("delete-created", { nodeIds: result.createdIds });
   await run("restore-props", { items: result.restore });
   assert.equal(r1.children[0].x, 16);
