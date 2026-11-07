@@ -39,3 +39,16 @@ export function commandCenterLockedResponse(): Response {
     { status: configured ? 401 : 503, headers: { "Cache-Control": "no-store", "X-Robots-Tag": "noindex" } },
   );
 }
+
+/**
+ * Knowledge-base edits change what every model is told, so they are never open to the internet:
+ * - with UX_DIRECT_COMMAND_CENTER_KEY set, the same key unlocks edits;
+ * - without it, edits need UX_DIRECT_KB_EDIT_OPEN=1 (owner opt-in for the open command center).
+ */
+export function knowledgeEditState(request: Request): { allowed: boolean; reason?: string } {
+  if (isCommandCenterConfigured()) {
+    return isCommandCenterAuthorized(request) ? { allowed: true } : { allowed: false, reason: "Enter the command center access key to edit knowledge." };
+  }
+  if ((process.env.UX_DIRECT_KB_EDIT_OPEN || "").trim() === "1") return { allowed: true };
+  return { allowed: false, reason: "Knowledge editing is locked. Set the Worker secret UX_DIRECT_COMMAND_CENTER_KEY (16+ characters) and enter it here, or set UX_DIRECT_KB_EDIT_OPEN=1." };
+}

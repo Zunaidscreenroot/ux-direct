@@ -4,6 +4,7 @@ import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } fr
 import "./chat.css";
 import { ThinkingOrb } from "thinking-orbs";
 import { MarkdownContent } from "@/src/components/markdown-content";
+import { KnowledgeBase } from "./knowledge-base";
 
 /**
  * UX Direct command center: a chat scoped to UX Direct data, the shared knowledge
@@ -33,17 +34,13 @@ type ModelsPayload = {
   providers: Array<{ id: string; label: string; models: Array<{ id: string; tier: string; rpm: number; rpd?: number }> }>;
   missingProviders: Array<{ id: string; label: string; secret: string }>;
 };
-type KnowledgePayload = {
-  rules: Array<{ id: string; title: string; rule: string; scope: string; kind: string; source: string; status: string; updatedAt: string }>;
-  documents: Array<{ id: string; title: string; projectKey: string; sourceType: string; status: string; updatedAt: string }>;
-};
 
 const HISTORY_KEY = "ux-direct-command-chat-v1";
 const ACCESS_KEY_STORAGE = "ux-direct-command-key";
 const ACCESS_HEADER = "X-UXD-Command-Key";
 const TABS: Array<{ id: Tab; label: string; glyph: string }> = [
   { id: "chat", label: "Chat", glyph: "◌" },
-  { id: "knowledge", label: "Shared knowledge", glyph: "✦" },
+  { id: "knowledge", label: "Knowledge base", glyph: "✦" },
   { id: "activity", label: "Plugin activity", glyph: "⌁" },
   { id: "models", label: "Models", glyph: "◇" },
 ];
@@ -78,7 +75,6 @@ export default function CommandCenter() {
   const [busy, setBusy] = useState(false);
   const [chatError, setChatError] = useState("");
   const [activity, setActivity] = useState<ActivityPayload | null>(null);
-  const [knowledge, setKnowledge] = useState<KnowledgePayload | null>(null);
   const [models, setModels] = useState<ModelsPayload | null>(null);
   const [modelHours, setModelHours] = useState(24);
   const [providerCheck, setProviderCheck] = useState<{ busy: boolean; message?: string; results?: Array<{ provider: string; model: string; ok: boolean; status: number; latencyMs: number; error?: string }> }>({ busy: false });
@@ -112,7 +108,7 @@ export default function CommandCenter() {
     setLocked({ message: payload.error || "Command center access key is required." });
   }, []);
 
-  const loadView = useCallback(async (view: "activity" | "knowledge" | "models", hours = 24) => {
+  const loadView = useCallback(async (view: "activity" | "models", hours = 24) => {
     setDataBusy(true);
     setDataError("");
     try {
@@ -122,8 +118,7 @@ export default function CommandCenter() {
       if (!response.ok) throw new Error(payload.error || "Could not load " + view + ".");
       setLocked(null);
       if (view === "activity") setActivity(payload as ActivityPayload);
-      else if (view === "models") setModels(payload as ModelsPayload);
-      else setKnowledge(payload as KnowledgePayload);
+      else setModels(payload as ModelsPayload);
     } catch (error) {
       setDataError(error instanceof Error ? error.message : "Could not load data.");
     } finally {
@@ -134,9 +129,8 @@ export default function CommandCenter() {
   useEffect(() => {
     if (!historyReady) return;
     if (activeTab === "activity" && !activity) void loadView("activity");
-    if (activeTab === "knowledge" && !knowledge) void loadView("knowledge");
     if (activeTab === "models" && !models) void loadView("models", modelHours);
-  }, [activeTab, historyReady, activity, knowledge, models, modelHours, loadView]);
+  }, [activeTab, historyReady, activity, models, modelHours, loadView]);
 
   async function checkProviders() {
     setProviderCheck({ busy: true });
@@ -167,7 +161,6 @@ export default function CommandCenter() {
     setKeyDraft("");
     setLocked(null);
     setActivity(null);
-    setKnowledge(null);
   }
 
   function newChat() {
@@ -339,24 +332,9 @@ export default function CommandCenter() {
         </section>}
 
         {activeTab === "knowledge" && <section className="ud-connections-workspace">
-          <div className="ud-page-overline">SHARED BRAIN</div>
-          <div className="ud-connections-heading"><div><h1>Shared knowledge.</h1><p>Active rules and reference documents the plugin and chat learn from.</p></div><button className="ud-secondary-button" onClick={() => void loadView("knowledge")} disabled={dataBusy}>{dataBusy ? "Loading…" : "Refresh ↻"}</button></div>
+          <div className="ud-page-overline">UX DIRECT BRAIN</div>
           {lockPanel}
-          {dataError && <div className="ud-chat-error" role="alert">{dataError}</div>}
-          {knowledge && <>
-            <div className="ud-cc-stats"><div><b>{knowledge.rules.length}</b><span>Active rules</span></div><div><b>{knowledge.documents.length}</b><span>Reference documents</span></div></div>
-            <h2 className="ud-cc-section">Rules</h2>
-            {knowledge.rules.length ? <div className="ud-cc-list">{knowledge.rules.map((rule) => <article className="ud-cc-row" key={rule.id}>
-              <div className="ud-cc-row-top"><strong>{rule.title}</strong><span className="ud-status-pill muted">{rule.scope || "shared"}</span></div>
-              <p>{rule.rule}</p>
-              <small>{[rule.kind, rule.source, formatWhen(rule.updatedAt)].filter(Boolean).join(" · ")}</small>
-            </article>)}</div> : <p className="ud-cc-empty">No active rules yet.</p>}
-            <h2 className="ud-cc-section">Reference documents</h2>
-            {knowledge.documents.length ? <div className="ud-cc-list">{knowledge.documents.map((doc) => <article className="ud-cc-row" key={doc.id}>
-              <div className="ud-cc-row-top"><strong>{doc.title}</strong><span className="ud-status-pill muted">{doc.projectKey || "shared"}</span></div>
-              <small>{[doc.sourceType, formatWhen(doc.updatedAt)].filter(Boolean).join(" · ")}</small>
-            </article>)}</div> : <p className="ud-cc-empty">No reference documents yet. File uploads come later.</p>}
-          </>}
+          <KnowledgeBase accessHeader={ACCESS_HEADER} accessKey={accessKey} onLocked={handleLocked} />
         </section>}
 
         {activeTab === "activity" && <section className="ud-connections-workspace">

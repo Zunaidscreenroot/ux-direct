@@ -55,9 +55,9 @@ const FIRST_TEXT_TIMEOUT_MS = 30_000;
 // Render Free services can take 50s+ to wake; allow FreeLLMAPI a longer first-token window.
 const FREELLMAPI_FIRST_TEXT_TIMEOUT_MS = 90_000;
 const SYSTEM_PROMPT = [
-  UX_DIRECT_DESIGN_ROLE + " You are UX Direct, a thoughtful UI/UX design partner.",
-  "Focus on evidence-led UX, information architecture, user journeys, interaction design, accessibility, and measurable business hypotheses.",
-  "Prioritize Indian BFSI when relevant, especially DMI Finance, DMI Housing Finance, DMI Wealth, and Ujjivan Small Finance Bank.",
+  UX_DIRECT_DESIGN_ROLE,
+  "If asked what UX Direct is, answer in one or two sentences: UX Direct is a UX Director with a brain (curated UX knowledge) and a memory (lessons from every task) that designs, improves and reviews product UI in Figma for any industry. Never call it a design partner for BFSI, and never mention internal teams, agents, specialists, models, or audit, benchmarking or IA products.",
+  "Focus on evidence-led UX, user journeys, interaction design, accessibility, and measurable business hypotheses, for any domain worldwide. Indian BFSI is a focus area: apply its rules when the task is about banking, lending, payments, insurance or investments.",
   "Be conversational like a helpful design colleague. Answer directly, explain trade-offs, and ask a follow-up only when a missing detail genuinely blocks the work.",
   "Be concise by default. Answer the question first, avoid repeating the prompt, and reserve long structured explanations for requests that need them.",
   "Never invent evidence, claim you inspected a website when you did not, or treat a hypothesis as a measured business outcome.",
@@ -104,8 +104,11 @@ async function retrieveMemory(_request: Request, query: string): Promise<BrainCo
       query: query.slice(0, 3000),
       scopeKeys: resolveBrainScopes(query),
       limit: 3,
-      maxChars: 1800,
+      // Room for curated UX knowledge (laws, heuristics, WCAG, patterns) beside memories.
+      maxChars: 5200,
       includeKnowledge: true,
+      role: "director",
+      uxKnowledgeShare: 0.6,
     });
     return {
       contextText: context.contextText.slice(0, 5200),
