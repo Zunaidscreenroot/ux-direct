@@ -54,3 +54,11 @@
 .ud-cc-row small{color:#627087;font:9px 'DM Mono',monospace}
 .ud-cc-row .ud-cc-error-text{color:#e8a1ab}
 .ud-cc-empty{color:#6e7d91;font-size:12px}
+.ud-cc-actions{display:flex;flex-wrap:wrap;gap:6px}.ud-secondary-button.active{border-color:#2d4f4d;background:#182830;color:#9cf0d4}
+.ud-cc-table-wrap{overflow-x:auto;border:1px solid #243145;border-radius:12px;background:#0f1520}
+.ud-cc-table{width:100%;border-collapse:collapse;font-size:11px;color:#d5deeb}
+.ud-cc-table th{text-align:left;padding:9px 11px;color:#6c7c92;font:9px 'DM Mono',monospace;letter-spacing:.6px;border-bottom:1px solid #243145;white-space:nowrap}
+.ud-cc-table td{padding:9px 11px;border-bottom:1px solid #1b2533;vertical-align:top;white-space:nowrap}
+.ud-cc-table td strong{display:block;font-weight:600;max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.ud-cc-table td small{display:block;color:#6f8097;font-size:9px;margin-top:2px}
+.ud-cc-table tr:last-child td{border-bottom:0}
