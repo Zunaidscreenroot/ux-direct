@@ -103,7 +103,7 @@
 .ud-budget-share{width:80px;margin:0 0 3px}
 .ud-budget-acc{border:1px solid #243145;border-radius:12px;background:#0f1520;margin:0 0 8px;padding:0 14px}
 .ud-budget-acc[open]{padding-bottom:14px}
-.ud-budget-acc summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:10px;padding:13px 0;font:600 12px Manrope,sans-serif;color:#dce5f3}
+.ud-budget-acc summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:0;padding:13px 0;font:600 12px Manrope,sans-serif;color:#dce5f3}
 .ud-budget-acc summary::-webkit-details-marker{display:none}
 .ud-budget-acc summary::before{content:"▸";color:#6e7d91;margin-right:8px;transition:transform .15s}
 .ud-budget-acc[open] summary::before{transform:rotate(90deg)}

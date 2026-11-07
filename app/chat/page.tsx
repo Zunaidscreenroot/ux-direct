@@ -438,7 +438,7 @@ export default function CommandCenter() {
         </section>}
         {activeTab === "models" && <section className="ud-connections-workspace">
           <div className="ud-page-overline">MODEL GATEWAY · MODE {models ? models.mode.toUpperCase() : "…"}</div>
-          <div className="ud-connections-heading"><div><h1>Models.</h1><p>Every model call: which free model answered, tokens, latency and errors. Gateway rows run inside the Worker; FreeLLMAPI rows go to the Mac.</p></div>
+          <div className="ud-connections-heading"><div><h1>Models.</h1><p>Every model call: which free model answered, tokens, latency and errors, and how much of the free daily budget is left. All calls run through UX Direct&apos;s own gateway inside the Worker.</p></div>
             <div className="ud-cc-actions">
               {MODEL_WINDOWS.map((hours) => <button key={hours} className={"ud-secondary-button" + (modelHours === hours ? " active" : "")} onClick={() => changeModelHours(hours)} disabled={dataBusy}>{hours === 1 ? "1h" : hours === 24 ? "24h" : "7d"}</button>)}
               <button className="ud-secondary-button" onClick={() => void loadModelTab(modelTab, modelHours, true)} disabled={dataBusy}>{dataBusy ? "Loading…" : "Refresh ↻"}</button>
