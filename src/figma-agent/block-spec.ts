@@ -443,10 +443,23 @@ function mergeExtraSections(sections: Rec[]): Rec[] {
   return out;
 }
 
+const rowLeading = (block: Rec) => clean(block.icon ?? block.leading ?? block.avatar, 3);
+
+/**
+ * Repeated rows share one leading slot: when some rows of a group have a leading icon and others
+ * don't, the others get an empty 36px spacer so every label starts on the same x (create-mode
+ * retest: EMI/Paid had a check icon, Due/Outstanding sat flush-left).
+ */
+export function alignRowLeading(blocks: Rec[]): Rec[] {
+  const rows = blocks.filter((block) => blockType(block) === "row");
+  if (rows.length < 2 || !rows.some(rowLeading) || rows.every(rowLeading)) return blocks;
+  return blocks.map((block) => blockType(block) === "row" && !rowLeading(block) ? { ...block, leadingSpacer: true } : block);
+}
+
 function sectionBlocks(section: Rec): Rec[] {
   const raw = section.blocks ?? section.children ?? section.items ?? section.content ?? section.rows ?? section.elements;
   if (Array.isArray(raw)) {
-    return raw.map((item) => typeof item === "string" ? { type: "text", text: item } : asRec(item)).filter((x): x is Rec => !!x);
+    return alignRowLeading(raw.map((item) => typeof item === "string" ? { type: "text", text: item } : asRec(item)).filter((x): x is Rec => !!x));
   }
   // A "section" that is really a single block.
   return blockType(section) && blockType(section) !== "card" ? [section] : [];
@@ -616,6 +629,11 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
         return b.hstack("Leading", 0, [glyph], { fill, radius: 100, justify: "CENTER", align: "CENTER", pad: [0, 0, 0, 0], hugWidth: false, fixedHeight: 36 });
       })() : null;
       if (leading) { leading.width = 36; leading.layoutSizingHorizontal = "FIXED"; leading.primaryAxisSizingMode = "FIXED"; }
+      const spacer = !leading && block.leadingSpacer === true
+        ? (() => { const node = b.hstack("Leading spacer", 0, [], { pad: [0, 0, 0, 0], hugWidth: false, fixedHeight: 36 });
+          node.width = 36; node.layoutSizingHorizontal = "FIXED"; node.primaryAxisSizingMode = "FIXED"; return node; })()
+        : null;
+      const slot = leading ?? spacer;
       const gap = 12;
       const rightWidth = right.reduce((s, n) => s + n.width, 0) + Math.max(0, right.length - 1) * gap;
       // A long value would crush the label: stack vertically instead of colliding.
@@ -626,14 +644,14 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
         if (status) kids.push(badgeNode(ctx, status, tone(block.statusTone ?? block.tone ?? status)));
         return b.vstack(label(lbl, "Row"), W, kids, { gap: 4, pad: [8, 0, 8, 0] });
       }
-      const leftWidth = Math.max(40, W - rightWidth - (right.length ? gap : 0) - (leading ? 36 + gap : 0));
+      const leftWidth = Math.max(40, W - rightWidth - (right.length ? gap : 0) - (slot ? 36 + gap : 0));
       const labelNode = b.text("Row label", lbl, leftWidth, { size: 14, color: t.text, bg });
       let left: NativeNode = labelNode;
       if (caption) left = b.vstack(label(lbl, "Row text"), leftWidth, [labelNode, b.text("Row caption", caption, leftWidth, { size: 12, color: t.muted, bg })], { gap: 2 });
       left.layoutSizingHorizontal = "FILL";
       left.layoutGrow = 1;
       // Trailing items sit directly in the row (no wrapper) to keep the tree shallow.
-      return b.hstack(label(lbl, "Row"), W, [...(leading ? [leading] : []), left, ...right], { gap, pad: [10, 0, 10, 0], justify: "SPACE_BETWEEN" });
+      return b.hstack(label(lbl, "Row"), W, [...(slot ? [slot] : []), left, ...right], { gap, pad: [10, 0, 10, 0], justify: "SPACE_BETWEEN" });
     }
     case "badge": {
       const value = clean(block.text ?? block.label ?? block.value, 40);
@@ -650,6 +668,10 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       b.count += 2;
       const centerText = clean(block.center ?? block.centerText, 12) || Math.round(pct) + "%";
       const pctNode = b.text("Progress value", centerText, size, { size: 15, weight: "Semi Bold", color: t.text, bg, align: "CENTER" });
+      // The ring is an absolute canvas: a hugging token ("80%") would sit at x=0 over the stroke.
+      pctNode.width = size;
+      pctNode.x = 0;
+      pctNode.textAutoResize = "HEIGHT";
       pctNode.layoutSizingHorizontal = "FIXED";
       pctNode.y = Math.round((size - pctNode.height) / 2);
       const ring = b.canvas("Progress ring", size, size, [track, arc, pctNode]);
@@ -906,7 +928,7 @@ function expandCard(ctx: Ctx, block: Rec, width: number, depth: number, nameFall
     const headerKids = [titleNode, badgeNodeValue].filter((x): x is NativeNode => !!x);
     kids.push(headerKids.length > 1 ? b.hstack("Card header", inner, headerKids, { gap: 12, justify: "SPACE_BETWEEN", align: "MIN" }) : headerKids[0]);
   }
-  for (const child of arr(block.blocks ?? block.children ?? block.items ?? block.content)) {
+  for (const child of alignRowLeading(arr(block.blocks ?? block.children ?? block.items ?? block.content).map(asRec).filter((x): x is Rec => !!x))) {
     const rec = asRec(child);
     if (!rec) continue;
     const type = blockType(rec);

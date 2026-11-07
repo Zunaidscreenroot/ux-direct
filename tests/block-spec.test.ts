@@ -396,3 +396,28 @@ test("a spec with more than 8 sections is merged, not rejected (top block-spec f
   const text = JSON.stringify(exp.plan);
   for (let i = 0; i < 11; i += 1) assert.ok(text.includes('"Item ' + i + '"'), "kept Item " + i);
 });
+
+test("progress ring value is centred across the ring; repeated rows share one leading slot", async () => {
+  const { expandBlockSpec, alignRowLeading } = await import("../src/figma-agent/block-spec");
+  const spec = { sections: [
+    { name: "Progress", blocks: [{ type: "progress_ring", percent: 80, label: "80% repaid" }] },
+    { name: "Schedule", blocks: [
+      { type: "row", label: "EMI", value: "₹4,500", icon: "✓" },
+      { type: "row", label: "Due", value: "12 Nov" },
+      { type: "row", label: "Paid", value: "₹36,000", icon: "✓" },
+      { type: "row", label: "Outstanding", value: "₹1,07,649" },
+    ] },
+    { name: "Actions", blocks: [{ type: "button", label: "Pay now" }] },
+  ] };
+  const out = expandBlockSpec(spec, lightCanvas);
+  assert.ok(out.plan, JSON.stringify(out.errors));
+  const all: Array<Record<string, unknown>> = [];
+  (function walk(nodes: Array<Record<string, unknown>>) { for (const n of nodes) { all.push(n); walk((n.children as never) || []); } })(out.plan!.elements as never);
+  const value = all.find((n) => n.name === "Progress value" || String(n.name).includes("80%") && n.type === "TEXT" && n.textAlignHorizontal === "CENTER")!;
+  assert.equal(value.width, 72);
+  assert.equal(value.textAutoResize, "HEIGHT");
+  const rows = all.filter((n) => n.type === "FRAME" && /\b(EMI|Due|Paid|Outstanding)\b/.test(String(n.name)) && /Row/.test(String(n.name)));
+  assert.equal(rows.length, 4);
+  for (const row of rows) assert.equal((row.children as Array<Record<string, unknown>>)[0].width, 36, String(row.name) + " starts with a 36px leading slot");
+  assert.equal(alignRowLeading([{ type: "row", label: "A" }, { type: "row", label: "B" }]).some((b) => b.leadingSpacer), false, "no icons, no spacers");
+});

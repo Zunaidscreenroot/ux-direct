@@ -207,6 +207,27 @@ export function lintLayout(tree: CanvasTree): { issues: StructuralLintIssue[]; o
     }
   }
 
+  // Text over a circle/ring (progress ring value, avatar initials) must sit on its centre: an
+  // off-centre label crosses the stroke (create-mode retest: "80%" left-aligned over the ring).
+  const circles = tree.nodes.filter(node => node.type === "ELLIPSE" && node.rect && node.rect.w >= 24 && node.rect.h >= 24 && !node.imageFill);
+  for (const text of readable) {
+    for (const circle of circles) {
+      const hit = intersection(text.rect!, circle.rect!);
+      if (!hit || hit.w * hit.h < text.rect!.w * text.rect!.h * 0.5) continue;
+      const dx = Math.abs(text.rect!.x + text.rect!.w / 2 - (circle.rect!.x + circle.rect!.w / 2));
+      const dy = Math.abs(text.rect!.y + text.rect!.h / 2 - (circle.rect!.y + circle.rect!.h / 2));
+      if (dx <= Math.max(4, circle.rect!.w * 0.12) && dy <= Math.max(4, circle.rect!.h * 0.12)) continue;
+      overlaps += 1;
+      issues.push({
+        severity: "medium",
+        issue: "Text sits off-centre over a circle or ring and crosses its stroke.",
+        evidence: label(text) + " is " + Math.round(dx) + "px/" + Math.round(dy) + "px off the centre of " + label(circle) + ".",
+        fix: "Give the text the circle's width with textAlignHorizontal CENTER and centre it vertically.",
+      });
+      break;
+    }
+  }
+
   for (const node of tree.nodes) {
     if (!node.rect || !node.clipAncestors.length) continue;
     const isText = node.type === "TEXT" && !!node.text.trim();

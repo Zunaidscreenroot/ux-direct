@@ -158,3 +158,13 @@ test("a label repeated on two source cards is counted per copy (finding 53)", ()
   assert.equal(result.passed, false);
   assert.match(summarizeStructuralLint(result), /3\/4 source texts kept/);
 });
+
+test("text off-centre over a progress ring is flagged; centred ring text passes", () => {
+  const ring = (label: N) => canvas(frame("out", [
+    frame("ring", [{ id: "e1", type: "ELLIPSE", name: "Track", x: 0, y: 0, width: 72, height: 72 }, label], { x: 16, y: 60, width: 72, height: 72 }),
+  ], { x: 500 }));
+  const off = runStructuralLint({ prompt: "create a loan dashboard", sourceCanvas: null, outputCanvas: ring(text("p", "80%", 0, 26, 34, 20)) });
+  assert.ok(off.issues.some((i) => /off-centre over a circle/.test(i.issue)), JSON.stringify(off.issues));
+  const centred = runStructuralLint({ prompt: "create a loan dashboard", sourceCanvas: null, outputCanvas: ring(text("p", "80%", 0, 26, 72, 20, { textAlignHorizontal: "CENTER" })) });
+  assert.equal(centred.issues.some((i) => /off-centre over a circle/.test(i.issue)), false);
+});

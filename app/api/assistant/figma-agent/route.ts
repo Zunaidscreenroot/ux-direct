@@ -927,9 +927,18 @@ export async function POST(request: Request) {
     // One extra same-mode retry for a transient upstream failure (FreeLLMAPI `auto` 502s while it
     // rotates keys or the tunnel blips), so a hiccup doesn't drop us straight to the compact prompt.
     let transientRetried = false;
-    for (let recoveryAttempt = 0; recoveryAttempt < attemptsForModel; recoveryAttempt += 1) {
-      const isRecovery = recoveryAttempt === 1;
+    // A compact retry that answered with a rejected spec (not a timeout) gets one repair pass with
+    // the validator's feedback while budget remains: a fast model just answered, so a fixed spec
+    // beats the source fallback (2026-11-07 retest: mistral-small answered in 21 s with no
+    // renderable sections and ~80 s of budget was left unused).
+    let compactRejected = false;
+    for (let recoveryAttempt = 0; recoveryAttempt < attemptsForModel + (compactRejected ? 1 : 0); recoveryAttempt += 1) {
+      const isRecovery = recoveryAttempt >= 1;
       const remainingMs = generationDeadlineMs - (Date.now() - generationStartedAt);
+      if (recoveryAttempt === 2 && remainingMs < 35000) {
+        errors.push("Not enough budget left to repair the " + model + " compact spec.");
+        break modelLoop;
+      }
       if (remainingMs < 20000) {
         errors.push("Generation deadline reached before " + model + (isRecovery ? " compact retry" : "") + " could run.");
         break modelLoop;
@@ -1157,6 +1166,7 @@ export async function POST(request: Request) {
           errors.push(attemptName + ": " + candidate.error);
           if (!attemptLog.some((entry) => entry.model === attemptName)) attemptLog.push({ model: attemptName, result: candidate.stage + ": " + candidate.error });
           if (!isRecovery) continue;
+          if (recoveryAttempt === 1 && isFreeLlmApi && validationFeedback) { compactRejected = true; continue; }
           break;
         }
         attemptLog.push({ model: attemptName, result: repairedTexts ? "passed after restoring " + repairedTexts + " source texts" : "passed" });
