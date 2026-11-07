@@ -80,6 +80,7 @@ const ElementFieldsSchema = z.object({
   strokeStyleId: z.string().trim().min(1).max(300).optional(),
   textStyleId: z.string().trim().min(1).max(300).optional(),
   textOverrides: z.record(z.string().max(120), z.string().max(500)).optional(),
+  hidePlaceholderTexts: z.boolean().optional(),
   effectStyleId: z.string().trim().min(1).max(300).optional(),
   gridStyleId: z.string().trim().min(1).max(300).optional(),
   noFill: z.boolean().optional(),
