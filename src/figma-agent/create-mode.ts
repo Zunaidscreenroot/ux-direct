@@ -57,10 +57,26 @@ export function fileHeaderComponent(canvas: Rec, width: number): Rec | null {
   return fits[0] ?? null;
 }
 
+/** A component the journey's first screen used (its app bar, its primary button), by exact id. */
+export type KitComponent = { id: string; name: string; width: number; height: number };
+export type ScreenKit = { header?: KitComponent; button?: KitComponent; title?: string; gutter?: number; background?: string };
+
+/**
+ * The kit's components join the catalogue first (a variant id the catalogue lists only by its set),
+ * so every screen of a journey reuses the exact app bar and button of the first one.
+ */
+function withKit(base: Rec, kit: ScreenKit | null | undefined): Rec {
+  if (!kit) return base;
+  const extra = [kit.header, kit.button].filter((c): c is KitComponent => !!c && typeof c.id === "string");
+  if (!extra.length) return base;
+  const rest = arr(base.components).filter((c) => !extra.some((k) => k.id === asRec(c)?.id));
+  return { ...base, components: [...extra.map((k) => ({ id: k.id, name: k.name, type: "COMPONENT", width: k.width, height: k.height, uses: 999, source: "journey-kit" })), ...rest] };
+}
+
 /** The request canvas with its (empty or absent) nodes replaced by one empty frame of the target size. */
-export function createModeCanvas(canvas: unknown, size: { width: number; height: number }, prompt: string): Rec {
-  const base = asRec(canvas) ?? {};
-  const header = fileHeaderComponent(base, size.width);
+export function createModeCanvas(canvas: unknown, size: { width: number; height: number }, prompt: string, kit?: ScreenKit | null): Rec {
+  const base = withKit(asRec(canvas) ?? {}, kit);
+  const header = kit?.header ? { id: kit.header.id, name: kit.header.name, height: kit.header.height } : fileHeaderComponent(base, size.width);
   // The header is an instance with no texts: there is still nothing to preserve, only something to reuse.
   const children = header ? [{ id: CREATE_FRAME_ID + ":header", name: String(header.name).slice(0, 80), type: "INSTANCE", x: 0, y: 0,
     width: size.width, height: Math.round(Number(header.height)), mainComponentId: header.id, children: [] }] : [];
@@ -68,7 +84,7 @@ export function createModeCanvas(canvas: unknown, size: { width: number; height:
     ...base,
     scope: "new-screen",
     nodes: [{ id: CREATE_FRAME_ID, name: createFrameName(prompt), type: "FRAME", x: 0, y: 0, width: size.width, height: size.height,
-      fillColors: [fileBackground(base) ?? "#FFFFFF"], layoutMode: "VERTICAL", children }],
+      fillColors: [kit?.background && HEX.test(kit.background) ? kit.background.toUpperCase() : fileBackground(base) ?? "#FFFFFF"], layoutMode: "VERTICAL", children }],
   };
 }
 

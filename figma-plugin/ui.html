@@ -1848,7 +1848,9 @@
       const response = await postJsonWithRules(API + "/api/assistant/figma-agent", ({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning, capabilities: PLUGIN_CAPABILITIES,
           ...(designOptions && designOptions.variation ? { variation: designOptions.variation } : {}),
           ...(designOptions && designOptions.state ? { state: designOptions.state } : {}),
-          ...(createMode ? { mode: "create" } : {}), ...rulesField }));
+          ...(createMode ? { mode: "create" } : {}),
+          ...(createMode && designOptions && designOptions.kit ? { kit: designOptions.kit } : {}),
+          ...(createMode && designOptions && designOptions.frame ? { frame: designOptions.frame } : {}), ...rulesField }));
       const payload = await response.json().catch(function () { return {}; });
       const serverMs = Date.now() - serverStartedAt;
       if (!response.ok || payload.ok !== true || !payload.plan || !Array.isArray(payload.plan.elements)) {
@@ -3268,20 +3270,92 @@
       });
       return texts;
     }
-    function journeyKitFrom(root) {
+    // The item a journey is about, on a screen that lists several (an overdue EMI journey from a loans
+    // list → the overdue loan's card): the smallest group with an amount whose texts share the most
+    // words with the request. Status words count with their usual synonyms.
+    const FOCUS_SYNONYMS = { overdue: "overdue delinquent due late missed pending", due: "due overdue pending", pay: "pay payment paid", payment: "pay payment", failed: "failed declined error", active: "active current" };
+    const FOCUS_STOP = /^(the|and|for|with|from|into|this|that|create|make|design|build|journey|flow|screen|screens|user|new|please|full|complete|end|banao|bana)$/;
+    const AMOUNT = /[₹$€£]\s?\d|\b\d{1,3}(,\d{2,3})+\b/;
+    function focusItem(root, prompt) {
+      if (!root || !prompt) return null;
+      const W = Number(root.width) || 0;
+      const words = String(prompt).toLowerCase().match(/[a-z]{3,}/g) || [];
+      const wanted = {};
+      words.filter(function (w) { return !FOCUS_STOP.test(w); }).forEach(function (w) { (FOCUS_SYNONYMS[w] || w).split(" ").forEach(function (x) { wanted[x] = true; }); });
+      if (!Object.keys(wanted).length) return null;
+      const found = [];
+      const walk = function (nodes, chain) {
+        (Array.isArray(nodes) ? nodes : []).forEach(function (node) {
+          if (!node) return;
+          const path = chain.concat([node.id]);
+          if (["FRAME", "INSTANCE", "GROUP", "COMPONENT"].indexOf(node.type) >= 0 && Number(node.width) < W * 0.97) {
+            const texts = [];
+            flattenTree(node.children, function (n) { if (n.type === "TEXT" && typeof n.text === "string" && n.text.trim()) texts.push(n.text.trim().slice(0, 80)); });
+            if (texts.length >= 3 && texts.length <= 30 && texts.some(function (t) { return AMOUNT.test(t); })) {
+              const have = {};
+              texts.join(" ").toLowerCase().split(/[^a-z]+/).forEach(function (w) { if (wanted[w]) have[w] = true; });
+              found.push({ id: node.id, path: path, name: node.name, texts: texts, score: Object.keys(have).length });
+            }
+          }
+          walk(node.children, path);
+        });
+      };
+      walk(root.children, []);
+      const top = Math.max.apply(null, [0].concat(found.map(function (f) { return f.score; })));
+      if (!top) return null;
+      const tied = found.filter(function (f) { return f.score === top; }).sort(function (a, b) { return a.texts.length - b.texts.length; });
+      const pick = tied[0];
+      // A word every item has (EMI on every loan card) picks none: two unrelated items tie.
+      const related = function (a, b) { return a.path.indexOf(b.id) >= 0 || b.path.indexOf(a.id) >= 0; };
+      if (tied.some(function (f) { return f !== pick && !related(f, pick); })) return null;
+      return { name: pick.name, texts: pick.texts };
+    }
+    function journeyKitFrom(root, prompt) {
       if (!root) return "";
+      const focus = focusItem(root, prompt);
       const seen = {}, kit = [];
       flattenTree(root.children, function (node, _parent, insideInstance) {
         if (insideInstance || node.type !== "INSTANCE" || !node.mainComponentId || seen[node.mainComponentId] || kit.length >= 8) return;
         seen[node.mainComponentId] = true;
         kit.push("\"" + String(node.name || "Component").slice(0, 40) + "\" (componentId " + node.mainComponentId + ")");
       });
-      const facts = screenFacts(root).map(function (t) { return t.text; })
+      const facts = (focus ? focus.texts : screenFacts(root).map(function (t) { return t.text; }))
         .filter(function (t) { return /[₹$€£]\s?\d|\b\d{1,3}(,\d{2,3})+\b|\b[A-Z]{2,}\d{4,}\b|\b\d{1,2}\s+[A-Z][a-z]{2}\b/.test(t) && t.length <= 40; });
-      return "SHARED KIT: this screen belongs to one journey. Use the same frame width, background colour, gutter, app bar and type scale as \"" + String(root.name).slice(0, 60) + "\"" +
+      return "SHARED KIT: this screen belongs to one journey. Use the same frame width, background colour, gutter, app bar component and type scale as the screen \"" + String(root.name).slice(0, 60) + "\" (its app bar shows THIS screen's own title, not that screen's name)" +
         (Number(root.width) ? " (" + Math.round(root.width) + "px wide)" : "") + (kit.length ? ", and reuse exactly these components from it: " + kit.join(", ") + "." : ".") +
         " Every step after the first has the same app bar with a back arrow, and its primary action is the same full-width primary button at the bottom." +
+        (focus ? "\nTHE ITEM THIS JOURNEY IS ABOUT (use its values, not the other items on that screen): " + focus.texts.slice(0, 14).join(" · ") + "." : "") +
         (facts.length ? "\nSHARED FACTS (the same across every screen of the journey; never change these values): " + facts.slice(0, 10).join(" · ") + "." : "");
+    }
+    // The exact app bar and primary button instances of a journey's screen, so every later screen
+    // is built from the same components (by id) instead of hand-drawn look-alikes.
+    function journeyKitParts(root) {
+      if (!root) return { kit: null, frame: null };
+      const W = Number(root.width) || 0, H = Number(root.height) || 0;
+      const desc = function (n) { return { id: String(n.mainComponentId).slice(0, 100), name: String(n.name || "Component").slice(0, 120), width: Math.round(Number(n.width) || W), height: Math.round(Number(n.height) || 48) }; };
+      const kids = Array.isArray(root.children) ? root.children : [];
+      const top = kids[0];
+      const kit = {};
+      if (top && top.type === "INSTANCE" && top.mainComponentId && Number(top.width) >= W * 0.9 && Number(top.y || 0) <= 8 && Number(top.height) <= 140) kit.header = desc(top);
+      let best = null;
+      flattenTree(kids, function (node, _parent, insideInstance) {
+        if (insideInstance || node.type !== "INSTANCE" || !node.mainComponentId || (kit.header && node.mainComponentId === kit.header.id)) return;
+        const h = Number(node.height) || 0, w = Number(node.width) || 0;
+        if (h < 32 || h > 64 || w < W * 0.5) return;
+        const label = /\b(button|btn|cta|primary)\b/i.test(String(node.name || ""));
+        if (!label || /\b(secondary|outline|ghost|tertiary|text|link)\b/i.test(String(node.name || ""))) return;
+        if (!best || w > Number(best.width)) best = node;
+      });
+      if (best) kit.button = desc(best);
+      // The screen's side gutter (its padding, else where its content starts) and its background.
+      const inner = kids.filter(function (n) { return Number(n.width) < W * 0.97 && Number(n.x) > 0; }).map(function (n) { return Number(n.x); });
+      const padded = kids.filter(function (n) { return Number(n.width) >= W * 0.97 && Number(n.paddingLeft) > 0 && n.type !== "INSTANCE"; }).map(function (n) { return Number(n.paddingLeft); });
+      const gutter = Number(root.paddingLeft) > 0 ? Number(root.paddingLeft) : inner.length ? Math.min.apply(null, inner) : padded.length ? padded.sort(function (a, b) { return a - b; })[Math.floor(padded.length / 2)] : 0;
+      if (gutter >= 8 && gutter <= 40) kit.gutter = Math.round(gutter);
+      const bg = Array.isArray(root.fillColors) ? String(root.fillColors[0] || "") : "";
+      if (/^#[0-9a-f]{6}$/i.test(bg)) kit.background = bg.toUpperCase();
+      const frame = W >= 200 && H >= 200 ? { width: Math.round(Math.min(2400, W)), height: Math.round(Math.max(640, Math.min(1400, H))) } : null;
+      return { kit: Object.keys(kit).length ? kit : null, frame: frame };
     }
     async function wireScreens(ids, stage, replaceOn) {
       if (ids.length < 2) return null;
@@ -3305,10 +3379,11 @@
       return "step";
     };
     async function runJourneyTask(task, prompt, stage) {
-      const width = 393, gapX = 120;
+      let width = 393;
+      const gapX = 120;
       const created = [];
       const failed = [];
-      const build = async function (step, index, total, slot, kit) {
+      const build = async function (step, index, total, slot, kit, parts) {
         const name = step.frameName;
         let id = "";
         for (let attempt = 0; attempt < 2 && !id && !stopRequested; attempt += 1) {
@@ -3316,7 +3391,9 @@
           try {
             await createFigmaDesign(step.prompt + (kit ? "\n\n" + kit : ""), function (status) {
               stage("creating", "Screen " + (index + 1) + "/" + total + " · " + name + (attempt ? " (retry)" : "") + " · " + status);
-            }, { placement: slot, exactPlacement: true, frameName: name, forceCreate: true, onCreated: function (frameId) { id = frameId; } });
+            }, { placement: slot, exactPlacement: true, frameName: name, forceCreate: true, onCreated: function (frameId) { id = frameId; },
+              kit: parts && (parts.kit || step.title) ? Object.assign({}, parts.kit || {}, step.title ? { title: String(step.title).slice(0, 120) } : {}) : null,
+              frame: parts && parts.frame || null });
           } catch (error) {
             // A frame that was created and then failed checks is kept; only a missing screen is retried.
             if (attempt === 1 && !id) failed.push(name + ": " + String(error && error.message || error).slice(0, 120));
@@ -3326,8 +3403,8 @@
         return id;
       };
       const stepPrompt = function (plan, step, index, total) {
-        const role = step.kind === "success" ? "the journey's SUCCESS screen: the task is complete, so every status reads as done (e.g. Paid), never the status from before the task"
-          : step.kind === "error" ? "the journey's FAILURE state: what went wrong in plain words, how to fix it, a Retry primary button and a secondary way home; keep the values the person entered"
+        const role = step.kind === "success" ? "the journey's SUCCESS screen: the task is complete, so every status reads as done (e.g. Paid), never the status from before the task; it opens with a result_icon block (tone success) above the result title"
+          : step.kind === "error" ? "the journey's FAILURE state: what went wrong in plain words, how to fix it, a Retry primary button and a secondary way home; keep the values the person entered; it opens with a result_icon block (tone danger) above the error title"
           : "step " + (index + 1) + " of " + total;
         return "Create " + role + " of the journey \"" + plan.title + "\": a screen named \"" + step.name + "\". " + (step.purpose || "") +
           " Its one primary action is \"" + step.primaryAction + "\" (a full-width primary button)." + (index > 0 ? " The app bar shows a back arrow." : "") +
@@ -3341,31 +3418,35 @@
           const sel = (canvas && Array.isArray(canvas.nodes) ? canvas.nodes : []).find(function (n) { return n.type === "FRAME"; });
           if (sel) entry = await readScreen(sel.id, 8);
         }
+        if (entry && Number(entry.width) >= 200) width = Math.round(Number(entry.width));
         stage("planning", "Planning the journey's screens…");
-        const entryTexts = entry ? screenFacts(entry).slice(0, 25).map(function (t) { return t.text; }).join(" | ") : "";
+        const entryFocus = entry ? focusItem(entry, prompt) : null;
+        const entryTexts = entry ? (entryFocus ? "the item this journey is about: " + entryFocus.texts.slice(0, 14).join(" | ") + "; the rest of the screen: " : "") +
+          screenFacts(entry).slice(0, 25).map(function (t) { return t.text; }).join(" | ") : "";
         const payload = await postQuickTask("/api/assistant/figma-agent/journey", { prompt: entry
           ? (prompt + "\nThe journey starts from the existing screen \"" + String(entry.name).slice(0, 60) + "\" (its texts: " + entryTexts.slice(0, 1200) + "). Its first step IS that screen.").slice(0, 3900)
           : prompt });
         const plan = payload.plan;
         const total = plan.steps.filter(function (s) { return s.kind === "step"; }).length;
         const steps = plan.steps.map(function (step, index) {
-          return { frameName: String(plan.title).slice(0, 40) + " / " + (index + 1) + " · " + step.name, prompt: stepPrompt(plan, step, index, total), kind: step.kind };
+          return { frameName: String(plan.title).slice(0, 40) + " / " + (index + 1) + " · " + step.name, title: step.name, prompt: stepPrompt(plan, step, index, total), kind: step.kind };
         });
         const originX = entry ? Number(entry.x) : 0, originY = entry ? Number(entry.y) : 0;
         const row = entry ? { x: originX, y: originY } : await findFreeCanvasSpot(0, 0, steps.length * width + (steps.length - 1) * gapX, 900);
         const rest = entry ? await findFreeCanvasSpot(originX + Number(entry.width || width) + gapX, originY, (steps.length - 1) * (width + gapX), Number(entry.height) || 900) : null;
         const slot = function (index) { return entry ? { x: rest.x + (index - 1) * (width + gapX), y: rest.y } : { x: row.x + index * (width + gapX), y: row.y }; };
-        let kit = "";
-        if (entry) { created[0] = entry.id; kit = journeyKitFrom(entry); }
+        let kit = "", parts = null;
+        if (entry) { created[0] = entry.id; kit = journeyKitFrom(entry, prompt); parts = journeyKitParts(entry); }
         else {
           const firstId = await build(steps[0], 0, steps.length, slot(0), "");
-          kit = firstId ? journeyKitFrom(await readScreen(firstId, 8)) : "";
+          const first = firstId ? await readScreen(firstId, 8) : null;
+          kit = journeyKitFrom(first); parts = journeyKitParts(first);
         }
         let next = 1;
         const worker = async function () {
           while (next < steps.length && !stopRequested) {
             const index = next++;
-            await build(steps[index], index, steps.length, slot(index), kit);
+            await build(steps[index], index, steps.length, slot(index), kit, parts);
           }
         };
         await Promise.all([worker(), worker(), worker()]);
@@ -3381,6 +3462,7 @@
       const frames = (canvas && Array.isArray(canvas.nodes) ? canvas.nodes : []).filter(function (n) { return n.type === "FRAME"; })
         .sort(function (a, b) { return Math.abs(Number(a.y) - Number(b.y)) > Number(a.height) / 2 ? Number(a.y) - Number(b.y) : Number(a.x) - Number(b.x); });
       if (!frames.length) throw new Error("Select the journey's screens first.");
+      width = Math.round(Math.max.apply(null, frames.map(function (f) { return Number(f.width) || 393; })));
       const startX = Math.max.apply(null, frames.map(function (f) { return Number(f.x) + Number(f.width); })) + gapX;
       if (task.kind === "journey-next") {
         const source = await readScreen(frames[0].id, 8);
@@ -3388,10 +3470,27 @@
         const kit = journeyKitFrom(source);
         const name = String(frames[0].name).replace(/\s*\/?\s*\d+\s*·.*$/, "").slice(0, 40) || "Journey";
         const primary = texts.filter(function (t) { return t.text.length <= 24 && /^(pay|continue|next|proceed|confirm|submit|verify|save|done|apply|place|book|send|get|start)\b/i.test(t.text); }).pop();
+        // Flow context: the journey's other screens (same "Title /" prefix, else the same row), so the
+        // next step continues this task instead of repeating a screen that already exists.
+        const pageRead = await runNativeCanvasCommand("read-canvas", { scope: "current-page", maxDepth: 1, maxNodes: 300, includeStyles: false, includeVariables: false, includeComponents: false }, 60000).catch(function () { return null; });
+        const pageFrames = (pageRead && Array.isArray(pageRead.nodes) ? pageRead.nodes : []).filter(function (n) { return n.type === "FRAME" || n.type === "SECTION"; })
+          .reduce(function (all, n) { return all.concat(n.type === "SECTION" && Array.isArray(n.children) ? n.children.filter(function (c) { return c.type === "FRAME"; }) : n.type === "FRAME" ? [n] : []); }, []);
+        const self = frames[0];
+        const prefix = String(self.name).indexOf(" / ") > 0 ? String(self.name).split(" / ")[0].trim().toLowerCase() : "";
+        let siblings = prefix ? pageFrames.filter(function (f) { return String(f.name).split(" / ")[0].trim().toLowerCase() === prefix; }) : [];
+        if (siblings.length < 2) siblings = pageFrames.filter(function (f) { return Math.abs(Number(f.y) - Number(self.y)) < 60 && Math.abs(Number(f.x) - Number(self.x)) < 4000 && Math.abs(Number(f.width) - Number(self.width)) < 60; });
+        siblings.sort(function (a, b) { return Number(a.x) - Number(b.x); });
+        if (!siblings.some(function (f) { return f.id === self.id; })) siblings.push(self);
+        const flowNames = siblings.slice(0, 10).map(function (f) { return (f.id === self.id ? "[THIS SCREEN] " : "") + String(f.name).split(" / ").pop().slice(0, 50); });
+        const hasResult = siblings.some(function (f) { return f.id !== self.id && SCREEN_KIND(f.name, []) === "end"; });
+        const flowContext = siblings.length > 1
+          ? " The journey's screens, left to right: " + flowNames.join(" → ") + ". The next screen is none of these (never repeat one)." +
+            (hasResult ? " The journey already has its result screen, so the next screen is the step between this screen and that result (for example verification, OTP or processing after a payment method or review step)." : " If this screen is the last decision (review, confirm, payment method), the next screen is the result or processing screen.")
+          : "";
         const free = await findFreeCanvasSpot(startX, Number(frames[0].y), width, Number(frames[0].height) || 852);
         await build({ frameName: name + " / Next step", prompt: "Create the NEXT screen of the journey after \"" + frames[0].name + "\": the screen a person sees right after pressing " +
-          (primary ? "\"" + primary.text + "\"" : "its primary button") + " there. It continues that task (it is not the same screen again and not an earlier step): if that step completes the task, this is the result/confirmation screen. " +
-          "The current screen shows: " + texts.slice(0, 30).map(function (t) { return t.text; }).join(" | ").slice(0, 1500) + ". One primary action, and a back arrow in the app bar.\n\nDesigner request: " + prompt }, 0, 1, free, kit);
+          (primary ? "\"" + primary.text + "\"" : "its primary button") + " there. It continues that task (it is not the same screen again and not an earlier step): if that step completes the task, this is the result/confirmation screen." + flowContext + " " +
+          "The current screen shows: " + texts.slice(0, 30).map(function (t) { return t.text; }).join(" | ").slice(0, 1500) + ". One primary action, and a back arrow in the app bar. It is the same task in the same product: keep its item, amounts, IDs and names exactly, and never invent people, recipients or accounts the screen does not show.\n\nDesigner request: " + prompt }, 0, 1, free, kit, journeyKitParts(source));
         if (!created[0]) throw new Error("The next step could not be created." + (failed.length ? " " + failed[0] : ""));
         const wired = await wireScreens([frames[0].id, created[0]], stage, [frames[0].id]);
         const linked = wired && (wired.links || []).some(function (l) { return l.done && l.screenId === frames[0].id && l.toId === created[0]; });
@@ -3409,8 +3508,8 @@
       const kit = journeyKitFrom(read[0]);
       const fromTexts = screenFacts(fromRead).slice(0, 30).map(function (t) { return t.text; }).join(" | ").slice(0, 1500);
       const jobs = [];
-      if (!hasSuccess) jobs.push({ frameName: String(from.name).slice(0, 50) + " / Success", prompt: "Create the SUCCESS screen that follows \"" + from.name + "\" in this journey (it shows: " + fromTexts + "): confirm the result with the same values, every status reads as done, say what happens next, a Done primary button back to the start. Same layout, app bar and button as the other steps." });
-      if (!hasError) jobs.push({ frameName: String(from.name).slice(0, 50) + " / Error", prompt: "Create the FAILURE state of \"" + from.name + "\" in this journey (it shows: " + fromTexts + "): an error icon, what went wrong in plain words and how to fix it, keep the values the person entered, a Retry primary button and a secondary way home. Same layout, app bar and button as the other steps; no placeholder text." });
+      if (!hasSuccess) jobs.push({ frameName: String(from.name).slice(0, 50) + " / Success", prompt: "Create the SUCCESS screen that follows \"" + from.name + "\" in this journey (it shows: " + fromTexts + "): a result_icon block (tone success) above the title, confirm the result with the same values, every status reads as done, say what happens next, a Done primary button back to the start. Same layout, app bar and button as the other steps." });
+      if (!hasError) jobs.push({ frameName: String(from.name).slice(0, 50) + " / Error", prompt: "Create the FAILURE state of \"" + from.name + "\" in this journey (it shows: " + fromTexts + "): a result_icon block (tone danger) above the title, what went wrong in plain words and how to fix it, keep the values the person entered, a Retry primary button and a secondary way home. Same layout, app bar and button as the other steps; no placeholder text." });
       if (!jobs.length) {
         const wired = await wireScreens(frames.map(function (f) { return f.id; }), stage);
         stage("done", "Flow already has its states");
@@ -3419,7 +3518,7 @@
       const free = await findFreeCanvasSpot(startX, Number(from.y), jobs.length * width + (jobs.length - 1) * gapX, Number(from.height) || 852);
       for (let i = 0; i < jobs.length; i += 1) {
         jobs[i].prompt += "\n\nDesigner request: " + prompt;
-        await build(jobs[i], i, jobs.length, { x: free.x + i * (width + gapX), y: free.y }, kit);
+        await build(jobs[i], i, jobs.length, { x: free.x + i * (width + gapX), y: free.y }, kit, journeyKitParts(read[0]));
       }
       const ids = frames.map(function (f) { return f.id; }).concat(created.filter(Boolean));
       const wired = await wireScreens(ids, stage);

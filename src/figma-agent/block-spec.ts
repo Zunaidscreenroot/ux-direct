@@ -465,6 +465,7 @@ const TYPE_ALIASES: Record<string, string> = {
   divider: "divider", separator: "divider", line: "divider",
   checkbox: "checkbox", consent: "checkbox", toggle: "checkbox", switch: "checkbox", radio: "checkbox",
   bottom_nav: "bottom_nav", bottom_bar: "bottom_nav", tab_navigation: "bottom_nav",
+  result_icon: "result_icon", status_icon: "result_icon", state_icon: "result_icon", error_icon: "result_icon", success_icon: "result_icon",
   skeleton: "skeleton", shimmer: "skeleton", skeleton_lines: "skeleton", loading_placeholder: "skeleton",
   image: "image", illustration: "image", placeholder: "image", media: "image", hero_image: "image",
   otp: "otp", pin: "otp", code_input: "otp",
@@ -566,10 +567,14 @@ function percent(value: unknown): number {
 // Expansion
 // ---------------------------------------------------------------------------
 
+type ButtonComponent = { id: string; height: number; instanceProperties?: Record<string, string> };
 type BadgeComponent = { id: string; prop: string; options: string[]; textProp: string | null; height: number };
 type Ctx = { b: Builder; t: BlockTheme; bg: string; componentIds: Set<string>; skeleton?: boolean; badge?: BadgeComponent | null;
+  /** Create mode: the file's primary button component, so full-width primary actions are instances of it. */
+  button?: ButtonComponent | null;
   /** Improve only: the source's own texts, so the renderer never adds copy the source did not have. */
-  sourceTexts?: Set<string> | null };
+  sourceTexts?: Set<string> | null;
+  screenTitle?: string | null };
 
 const TONE_OPTIONS: Record<string, RegExp> = {
   success: /^(success|positive|current|active|paid|completed?|approved|on ?track|green)$/i,
@@ -595,6 +600,41 @@ function findBadgeComponent(components: unknown): BadgeComponent | null {
   return null;
 }
 
+/**
+ * The file's primary button: the journey kit's own button (the exact variant the first screen used)
+ * wins; otherwise a catalogue component named like a button whose variant can be set to primary,
+ * or a component named "Primary button". Secondary and text buttons stay drawn (variants differ too
+ * much between files to pick them safely).
+ */
+export function findButtonComponent(components: unknown, kitButtonId?: string | null): ButtonComponent | null {
+  const list = arr(components).map(asRec).filter((c): c is Rec => !!c && typeof c.id === "string");
+  const okHeight = (c: Rec) => typeof c.height !== "number" || c.height >= 32 && c.height <= 64;
+  if (kitButtonId) {
+    const kit = list.find((c) => c.id === kitButtonId);
+    if (kit && okHeight(kit)) return { id: kitButtonId, height: typeof kit.height === "number" ? Math.round(kit.height) : 48 };
+  }
+  for (const c of list) {
+    const name = String(c.name ?? "");
+    if (!/\b(button|btn|cta)s?\b/i.test(name) || /\b(icon|fab|radio|toggle|group|bar|nav|tab|chip|link|text|close|back)\b/i.test(name) || !okHeight(c)) continue;
+    const props = asRec(c.properties) ?? {};
+    const variants = Object.entries(props).filter(([, def]) => asRec(def)?.type === "VARIANT");
+    const pick: Record<string, string> = {};
+    let primary = /\bprimary\b/i.test(name) && !/\b(secondary|outline|ghost|tertiary)\b/i.test(name);
+    for (const [key, def] of variants) {
+      const options = arr(asRec(def)?.options).map(String);
+      const p = options.find((o) => /^(primary|filled|solid|contained)$/i.test(o.trim()));
+      if (p) { pick[key] = p; primary = true; continue; }
+      const state = options.find((o) => /^(default|enabled|rest|normal)$/i.test(o.trim()));
+      if (state && /state|status/i.test(key)) pick[key] = state;
+      const size = options.find((o) => /^(large|lg|l|medium|md|m)$/i.test(o.trim()));
+      if (size && /size/i.test(key)) pick[key] = size;
+    }
+    if (!primary) continue;
+    return { id: c.id as string, height: typeof c.height === "number" ? Math.round(c.height) : 48, ...(Object.keys(pick).length ? { instanceProperties: pick } : {}) };
+  }
+  return null;
+}
+
 function toneColor(t: BlockTheme, kind: ReturnType<typeof tone>): string {
   return kind === "neutral" ? t.muted : t[kind];
 }
@@ -616,6 +656,27 @@ function skeletonNode(ctx: Ctx, block: Rec, W: number): NativeNode {
   const lineHeight = height || 12;
   const bars = Array.from({ length: lines }, (_, i) => b.rect("Skeleton line", Math.round(W * (i === 0 ? 0.6 : i === lines - 1 ? 0.45 : 0.85)), lineHeight, shade, { cornerRadius: Math.min(6, lineHeight / 2) }));
   return b.vstack("Skeleton", W, bars, { gap: 8 });
+}
+
+/**
+ * The icon at the top of a success / failure / pending screen: a tinted halo, a solid tone disc and a
+ * bold glyph (✓, !, …), centred. Native shapes, so it stays editable and on theme.
+ */
+function resultIconNode(ctx: Ctx, block: Rec, W: number): NativeNode {
+  const { b, t } = ctx;
+  const raw = clean(block.tone ?? block.kind ?? block.state ?? block.variant ?? block.type, 30).toLowerCase();
+  const kind = /error|fail|danger|declin|reject/.test(raw) ? "danger" : /warn|pending|process|wait/.test(raw) ? "warning" : /info/.test(raw) ? "info" : "success";
+  const color = t[kind];
+  const glyph = kind === "danger" ? "!" : kind === "warning" ? "…" : kind === "info" ? "i" : "✓";
+  const halo = mix(t.background, color, t.dark ? 0.24 : 0.14);
+  const mark = b.text(kind === "danger" ? "Error mark" : "Status mark", glyph, 56, { size: 28, weight: "Bold", color: "#FFFFFF", bg: color, align: "CENTER", hug: true });
+  const disc = b.hstack(kind === "danger" ? "Error icon" : kind === "success" ? "Success icon" : "Status icon", 56, [mark], { fill: color, radius: 100, justify: "CENTER", align: "CENTER", fixedHeight: 56 });
+  disc.layoutSizingHorizontal = "FIXED";
+  disc.width = 56;
+  const ring = b.hstack("Icon halo", 88, [disc], { fill: halo, radius: 100, justify: "CENTER", align: "CENTER", fixedHeight: 88 });
+  ring.layoutSizingHorizontal = "FIXED";
+  ring.width = 88;
+  return b.hstack("Result icon", W, [ring], { justify: "CENTER", align: "CENTER", pad: [8, 0, 8, 0] });
 }
 
 function badgeNode(ctx: Ctx, textValue: string, kind: ReturnType<typeof tone>): NativeNode {
@@ -657,7 +718,7 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
           ...(header.instanceProperties ? { instanceProperties: { ...header.instanceProperties } } : {}),
           ...(header.textOverrides ? { textOverrides: { ...header.textOverrides } } : {}) };
         // A new screen reuses the file's app bar component: its title becomes this screen's title.
-        const newTitle = clean(block.title ?? block.text, 120);
+        const newTitle = clean(ctx.screenTitle || block.title || block.text, 120);
         if (header.fromCatalogue && newTitle) node.textOverrides = { ...(node.textOverrides ?? {}), __title: newTitle };
         b.headerNode = node;
         return node;
@@ -851,6 +912,13 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
           pad: [8, 12, 8, 12], fill, radius: Math.min(t.radius, 8), stroke: isSecondary ? t.primary : undefined, justify: "CENTER", align: "CENTER", hugWidth: true, fixedHeight: isText ? undefined : 36,
         });
       }
+      if (ctx.button && !isText && !isSecondary) {
+        // The file's own button component: the label becomes its text, it spans the column.
+        b.count += 1;
+        return { type: "INSTANCE", name: label(text, "Primary button"), componentId: ctx.button.id, x: 0, y: 0, width: W, height: ctx.button.height,
+          layoutSizingHorizontal: "FILL", ...(ctx.button.instanceProperties ? { instanceProperties: { ...ctx.button.instanceProperties } } : {}),
+          textOverrides: { __title: text } };
+      }
       const textNode = b.text("Button label", text, W - 32, { size: 15, weight: "Semi Bold", color: fg, bg: fill ?? bg, align: "CENTER", hug: true });
       const btn = b.hstack(label(text, isText ? "Text button" : isSecondary ? "Secondary button" : "Primary button"), W, [textNode], {
         pad: [12, 16, 12, 16], fill, radius: t.radius, stroke: isSecondary ? t.primary : undefined, justify: "CENTER", align: "CENTER", fixedHeight: isText ? undefined : 48,
@@ -954,6 +1022,8 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
     }
     case "skeleton":
       return skeletonNode(ctx, block, W);
+    case "result_icon":
+      return resultIconNode(ctx, block, W);
     case "image": {
       // A loading state draws text-free skeleton shapes, never "Illustration"/"Loading" boxes.
       if (ctx.skeleton) return skeletonNode(ctx, { ...block, lines: 1 }, W);
@@ -1552,14 +1622,19 @@ export function isBlockSpec(value: unknown): boolean {
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
 }
 
-export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean; skeleton?: boolean; create?: boolean } = {}): BlockExpansion {
+export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean; skeleton?: boolean; create?: boolean; kitButtonId?: string | null;
+  /** Journey screens: the screen's own title (its app bar shows it, whatever the model wrote), and the first screen's side gutter. */
+  screenTitle?: string | null; gutter?: number | null; background?: string | null } = {}): BlockExpansion {
   const spec = asRec(value) ?? {};
   const sourceNodes = arr(canvas.nodes);
   const source = asRec(sourceNodes[0]) ?? {};
   const sourceFill = Array.isArray(source.fillColors) ? hex(source.fillColors[0]) : null;
   const rawFrame = asRec(spec.frame) ?? {};
   const ctaFill = options.monochrome ? null : sourceCtaFill(options.sourceCanvas ?? canvas);
-  const theme = snapThemeToStyles(resolveTheme(spec.theme ?? rawFrame.theme, hex(rawFrame.backgroundColor) ?? sourceFill, ctaFill), asRec(canvas.styles));
+  // A journey screen keeps the first screen's background, whatever the model's theme says.
+  const kitBackground = options.background ? hex(options.background) : null;
+  const themeInput = kitBackground ? { ...(asRec(spec.theme ?? rawFrame.theme) ?? {}), background: kitBackground } : spec.theme ?? rawFrame.theme;
+  const theme = snapThemeToStyles(resolveTheme(themeInput, kitBackground ?? hex(rawFrame.backgroundColor) ?? sourceFill, ctaFill), asRec(canvas.styles));
   const componentIds = new Set(arr(canvas.components).map((c) => asRec(c)?.id).filter((id): id is string => typeof id === "string"));
   const b = new Builder(theme, collectSourceTokens(canvas, componentIds));
   const improveSource = asRec(arr((options.sourceCanvas ?? canvas).nodes)[0]);
@@ -1569,12 +1644,14 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     walkTexts(improveSource, 0);
     return set.size ? set : null;
   })() : null;
-  const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds, skeleton: options.skeleton === true, badge: options.monochrome ? null : findBadgeComponent(canvas.components), sourceTexts };
+  const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds, skeleton: options.skeleton === true, badge: options.monochrome ? null : findBadgeComponent(canvas.components), sourceTexts,
+    button: options.create && !options.monochrome ? findButtonComponent(canvas.components, options.kitButtonId) : null,
+    screenTitle: options.create ? clean(options.screenTitle, 120) || null : null };
 
   const sourceWidth = typeof source.width === "number" ? source.width : 0;
   const sourceHeight = typeof source.height === "number" ? source.height : 0;
   const frameWidth = Math.round(Math.max(280, Math.min(1440, typeof rawFrame.width === "number" ? rawFrame.width : sourceWidth || 360)));
-  const pad = options.componentSelection ? 12 : 16;
+  const pad = options.componentSelection ? 12 : typeof options.gutter === "number" && options.gutter >= 8 && options.gutter <= 40 ? grid4(options.gutter) : 16;
   const gap = options.componentSelection ? 12 : 16;
   const content = frameWidth - pad * 2;
 
@@ -1582,6 +1659,11 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   const elements: NativeNode[] = [];
   let blockCount = 0;
   const sections = mergeExtraSections(arr(spec.sections).map(asRec).filter((x): x is Rec => !!x));
+  // A journey screen always opens with the file's app bar showing its own title, even when the model left it out.
+  if (ctx.screenTitle && b.source?.header?.fromCatalogue && sections.length &&
+      !sections.some((sec) => sectionBlocks(sec).some((bl) => blockType(bl) === "app_bar"))) {
+    sections.unshift({ name: "Header", surface: "plain", blocks: [{ type: "app_bar", title: ctx.screenTitle, back: true }] });
+  }
   if (!sections.length) errors.push("sections must be a non-empty array of {name, blocks:[...]}.");
   for (const [index, section] of sections.slice(0, 8).entries()) {
     const blocks = sectionBlocks(section);
@@ -1678,8 +1760,9 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     if (measure() > budget * 1.1) b.warnings.push("The improved screen is " + Math.round(measure()) + "px tall against the source's " + budget + "px: the spec adds content the source did not have.");
   }
   const gapUsed = grid4(rootGap);
-  const contentHeight = measure();
   const requestedHeight = typeof rawFrame.height === "number" ? rawFrame.height : sourceHeight || 800;
+  if (options.create) pinActionsToBottom(elements, requestedHeight - measure());
+  const contentHeight = measure();
   const fits = contentHeight <= requestedHeight;
   const frame: Rec = {
     // A wireframe is named like the plugin's states pack ("15 / Wireframe"), whatever the model called it.
@@ -1703,6 +1786,24 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     nodeCount,
     blockCount,
   };
+}
+
+/**
+ * Create mode: a screen shorter than its frame keeps its primary actions at the bottom, where the
+ * thumb is, instead of floating under the content with an empty lower third. The last section grows
+ * by the spare height and aligns its content to the bottom (only when it holds the screen's buttons).
+ */
+export function pinActionsToBottom(elements: NativeNode[], spare: number): boolean {
+  const last = elements[elements.length - 1];
+  if (!last || spare < 48 || last.type !== "FRAME" || last.layoutMode !== "VERTICAL" || last.noFill !== true) return false;
+  const hasButton = (n: NativeNode): boolean => /\b(primary button|button|actions|cta)\b/i.test(n.name) && !/\b(nav|tab)\b/i.test(n.name) || (n.children ?? []).some(hasButton);
+  if (!hasButton(last) || /\b(nav|tab ?bar|bottom navigation)\b/i.test(last.name)) return false;
+  const extra = Math.floor(spare / 4) * 4;
+  last.height += extra;
+  last.layoutSizingVertical = "FIXED";
+  last.primaryAxisSizingMode = "FIXED";
+  last.primaryAxisAlignItems = "MAX";
+  return true;
 }
 
 /**
@@ -1755,6 +1856,7 @@ export const BLOCK_SPEC_CONTRACT = [
   "- tabs {items:[...], active: index}   - chips {items:[...], active?}   - bottom_nav {items:[...], active}",
   "- banner {title?, body?, tone: info|success|warning|danger, action?}   - steps {items:[...], current: index}",
   "- image {label, height?}  — placeholder only, never invent assets",
+  "- result_icon {tone: success|danger|warning}  — the centred icon at the top of a success, failure or pending screen",
   "- skeleton {lines?: 1–6, height?, shape?: \"circle\"}  — text-free loading placeholder (lines, or one block when height ≥ 40); shape circle = simple empty-state art",
   "- divider {}",
   "- card {title?, subtitle?, badge?: {text, tone}, blocks:[...]}  — a card inside a plain section (cards do not nest)",

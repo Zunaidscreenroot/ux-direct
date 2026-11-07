@@ -5724,10 +5724,16 @@ async function localPrototypeWire(payload) {
   function keepsOwnLink(node, screen) {
     if (!node.reactions || !node.reactions.length) return false;
     if (replaceOn.indexOf(screen.id) >= 0) return false;
-    var dests = [];
+    var dests = [], navigates = false;
     node.reactions.forEach(function (r) {
-      (Array.isArray(r.actions) ? r.actions : r.action ? [r.action] : []).forEach(function (a) { if (a && a.type === "NODE" && a.destinationId) dests.push(a.destinationId); });
+      (Array.isArray(r.actions) ? r.actions : r.action ? [r.action] : []).forEach(function (a) {
+        if (!a) return;
+        // Hover/press variant swaps (CHANGE_TO) on a file's button component are not a link.
+        if (a.type === "BACK" || a.type === "CLOSE" || a.type === "URL") navigates = true;
+        if (a.type === "NODE" && a.destinationId && a.navigation !== "CHANGE_TO") { navigates = true; dests.push(a.destinationId); }
+      });
     });
+    if (!navigates) return false;
     return !dests.length || dests.some(function (d) { return screenIds.indexOf(d) >= 0; });
   }
   function byWords(words, screen) {
@@ -5778,6 +5784,10 @@ async function localPrototypeWire(payload) {
           return;
         }
         var best = byWords(uxdWords(label), screen);
+        // A step's main or forward button never goes back: "Confirm payment" on step 3 shares a word with
+        // "Payment method" (step 2) but moves on to step 4.
+        var primaryLike = UXD_NEXT_LABEL.test(label) || /primary|cta|main/i.test(String(button.name || "")) && !/secondary|tertiary|ghost|text|link/i.test(String(button.name || ""));
+        if (best && primaryLike && !isEnd[index] && !isError[index] && screens.indexOf(best) < index && !isEnd[screens.indexOf(best)]) best = nextStep(index);
         // A failure screen is reached only by its own name, never from the end of the journey.
         if (best && isError[screens.indexOf(best)] && isEnd[index]) best = null;
         if (!best && UXD_NEXT_LABEL.test(label) && !isEnd[index] && !isError[index]) best = nextStep(index);

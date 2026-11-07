@@ -537,6 +537,14 @@ export async function POST(request: Request) {
     mode: z.enum(["create"]).optional(),
     /** Target frame size for create mode; defaults by platform (360×800 mobile, 1440×1024 web). */
     frame: z.object({ width: z.number().int().min(200).max(2400), height: z.number().int().min(200).max(4000) }).strict().optional(),
+    /** Journey screens: the first screen's app bar and primary button, reused by exact component id. */
+    kit: z.object({
+      header: z.object({ id: z.string().trim().min(1).max(100), name: z.string().max(120), width: z.number().min(1).max(4000), height: z.number().min(1).max(400) }).strict().optional(),
+      button: z.object({ id: z.string().trim().min(1).max(100), name: z.string().max(120), width: z.number().min(1).max(4000), height: z.number().min(1).max(400) }).strict().optional(),
+      title: z.string().trim().max(120).optional(),
+      gutter: z.number().min(0).max(64).optional(),
+      background: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+    }).strict().optional(),
     /** The file's own design rules (spacing/radius/type scales, colours, tone), stored in the Figma file. */
     designRules: z.string().max(4000).optional(),
   }).strict();
@@ -555,7 +563,7 @@ export async function POST(request: Request) {
   if (createMode && parsedInput.data.state) return NextResponse.json({ error: "A screen state needs a selected screen; create mode builds a new one." }, { status: 400, headers });
   const createSize = createMode ? createFrameSize(parsedInput.data.prompt, parsedInput.data.frame) : null;
   // Create mode: an empty virtual frame of the target size plus the file's real component catalogue.
-  const requestCanvas: unknown = createSize ? createModeCanvas(parsedInput.data.canvas, createSize, parsedInput.data.prompt) : parsedInput.data.canvas;
+  const requestCanvas: unknown = createSize ? createModeCanvas(parsedInput.data.canvas, createSize, parsedInput.data.prompt, parsedInput.data.kit) : parsedInput.data.canvas;
   const canvas = compactCanvas(requestCanvas);
   // Uncompacted read-back: carries image fills, corner radii and deep icon layers for source fidelity.
   const rawSourceCanvas = requestCanvas && typeof requestCanvas === "object" && !Array.isArray(requestCanvas)
@@ -769,7 +777,8 @@ export async function POST(request: Request) {
     let planInput: unknown = candidateInput;
     let blockSpec: BlockSpecInfo | null = null;
     if (isBlockSpec(candidateInput)) {
-      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone, monochrome: wireframeRequest, contentDropped: stateDropsContent(screenState), skeleton: screenState === "loading", create: createMode });
+      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone, monochrome: wireframeRequest, contentDropped: stateDropsContent(screenState), skeleton: screenState === "loading", create: createMode, kitButtonId: parsedInput.data.kit?.button?.id ?? null,
+        screenTitle: parsedInput.data.kit?.title ?? null, gutter: parsedInput.data.kit?.gutter ?? null, background: parsedInput.data.kit?.background ?? null });
       blockSpec = { blocks: expansion.blockCount, nodes: expansion.nodeCount, warnings: expansion.warnings };
       if (!expansion.plan) {
         const issues = expansion.errors.slice(0, 4).join("; ");

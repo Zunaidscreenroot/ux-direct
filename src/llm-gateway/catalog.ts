@@ -85,7 +85,9 @@ export const PROVIDERS: ProviderDef[] = [
     id: "workers-ai", label: "Workers AI", baseUrl: "workers-ai://binding", keyEnv: [],
     // FreeLLMAPI served nemotron-3-120b, gpt-oss-20b, qwq-32b and deepseek-r1-distill from the same account.
     models: ["@cf/openai/gpt-oss-120b", "@cf/nvidia/nemotron-3-120b-a12b", "@cf/openai/gpt-oss-20b", "@cf/meta/llama-4-scout-17b-16e-instruct", "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/qwen/qwq-32b", "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"],
-    rpm: 30, maxInputTokens: 20_000, maxOutputTokens: 4_096,
+    // gpt-oss-120b / nemotron take 128k context: a full improve prompt (~18k tokens) must reach them,
+    // or only codestral is left once Gemini's daily quota is gone.
+    rpm: 30, maxInputTokens: 64_000, maxOutputTokens: 4_096,
   },
 ];
 
