@@ -117,6 +117,31 @@ test("make text white routes to the native action path", () => {
   assert.equal(sandbox.f("make a dark mode version of this screen"), false);
 });
 
+test("native-action prompts from the plugin test route to the native action path", () => {
+  const match = /function isDirectCanvasActionPrompt\(prompt\) \{[\s\S]*?\n    \}\n/.exec(ui);
+  assert.ok(match);
+  const sandbox: Record<string, any> = {};
+  runInNewContext(match[0] + "\nthis.f = isDirectCanvasActionPrompt;", sandbox);
+  // Each of these used to fall through to the full variation pipeline or plain chat.
+  for (const prompt of [
+    "add a primary button",
+    "insert a small outline icon",
+    "add a soft shadow to the card",
+    "add a subtle gradient background",
+    "give the card a border",
+    "make this button disabled",
+    "set the tab to active",
+    "wrap these rows in auto layout",
+  ]) assert.equal(sandbox.f(prompt), true, prompt);
+  // Screen-level work stays on the variation / quick-task paths.
+  for (const prompt of [
+    "add empty, loading and error states",
+    "add a new onboarding screen",
+    "improve this screen",
+    "create 3 variations of this card",
+  ]) assert.equal(sandbox.f(prompt), false, prompt);
+});
+
 test("text edits accept refs, bare arrays, maps and single answers", () => {
   const items = [{ id: "123:4567;89:10", type: "TEXT", name: "Title", text: "Hi" }, { id: "2:2", type: "TEXT", name: "Body", text: "Old" }];
   assert.deepEqual(normalizeTextEdits("rewrite", { updates: [{ ref: "t1", text: "Hello" }] }, items).map((e) => e.id), ["123:4567;89:10"]);

@@ -1016,9 +1016,21 @@
       const directTarget = /\b(text|label|title|copy|value|fill|color|stroke|font|size|position|spacing|padding|layout|alignment|background|corner radius|shadow|constraint|variable|icon|button|image|photo|logo|layer|node|component|variant|page|frame|selection|canvas|style|token|auto.?layout|hug|fill|text range|line height|letter spacing)\b/i.test(text);
       const refinementOfSpecificTarget = /\b(refine|improve|polish|fine[- ]?tune|tidy|correct)\b/i.test(text) &&
         /\b(the|this|selected|existing)\s+(?:text|label|title|copy|value|fill|color|stroke|font|size|position|spacing|padding|layout|alignment|background|corner radius|shadow|constraint|variable|icon|button|image|layer|node|component|style|token)\b/i.test(text);
-      const addNativeObject = /\b(add|insert|place|attach|create)\s+(?:a|an|the|another|new)?\s*(?:image|photo|logo|icon|button|label|text|row|tab|card|divider|component|variant|variable|shape|frame|layer|instance)\b/i.test(text);
+      // Allow a few describing words: "add a primary button", "insert a small outline icon".
+      const addNativeObject = /\b(add|insert|place|attach|create)\s+(?:a|an|the|another|new)?\s*(?:[\w-]+\s+){0,3}(?:image|photo|logo|icon|button|label|text|row|tab|card|divider|component|variant|variable|shape|frame|layer|instance|badge|chip|input|field|toggle|checkbox)s?\b/i.test(text) &&
+        !/\b(screens?|flows?|pages?|variations?|versions?|wireframes?)\b/i.test(text);
+      // Native visual properties on the selection: "add a soft shadow to the card", "add a gradient background".
+      const addNativeProperty = /\b(add|apply|give|put|remove|set)\b/i.test(text) &&
+        /\b(shadows?|drop shadow|inner shadow|blur|gradients?|borders?|outlines?|strokes?|layout grids?|column grid|prototype|interactions?|transition|hyperlink|link)\b/i.test(text) &&
+        !/\b(screens|flows?|variations?|versions?|wireframes?)\b/i.test(text);
+      // Component state switches on an instance: "make this button disabled", "set the tab to active".
+      const instanceStateChange = /\b(make|set|switch|turn|change)\b/i.test(text) &&
+        /\b(disabled|enabled|active|inactive|selected|unselected|hover|pressed|focused|checked|unchecked|loading|error|default|variant|state|size)\b/i.test(text) &&
+        /\b(this|the|selected)\s+(?:[\w-]+\s+){0,2}(?:button|tab|chip|toggle|checkbox|input|field|instance|component|badge|card|item|row)\b/i.test(text) &&
+        !/\b(screens|flows?|variations?|versions?|states pack|empty states?|loading states?|error states?)\b/i.test(text);
       const componentOrSystemOperation = /\b(create component|make component|create variant|combine as variants|create variables?|bind variable|apply style|swap component|detach instance|create page|rename page|switch to page|go to page|flatten|boolean union|boolean subtract|export (?:as|to)|export node|export svg)\b/i.test(text);
-      return (explicitNativeOperation && directTarget) || refinementOfSpecificTarget || addNativeObject || componentOrSystemOperation;
+      return (explicitNativeOperation && directTarget) || refinementOfSpecificTarget || addNativeObject || addNativeProperty ||
+        instanceStateChange || componentOrSystemOperation;
     }
 
     async function compressAttachedImage(file) {
