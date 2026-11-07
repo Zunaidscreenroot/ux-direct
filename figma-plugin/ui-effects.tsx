@@ -6,7 +6,7 @@ import type { CSSProperties } from "react";
 type ProcessState =
   | "idle" | "scanning" | "capturing" | "brain" | "memory" | "planning"
   | "waiting" | "creating" | "rendering" | "reviewing" | "refining"
-  | "verifying" | "done" | "error";
+  | "verifying" | "done" | "error" | "asking";
 
 type OrbState = "working" | "searching" | "solving" | "listening" | "connecting" | "weaving" | "composing" | "breathing" | "shaping";
 type EffectApi = {
@@ -35,13 +35,14 @@ const PROCESS_TO_ORB: Record<ProcessState, OrbState> = {
   verifying: "solving",
   done: "breathing",
   error: "solving",
+  asking: "listening",
 };
 
 const ORB_LABEL: Record<OrbState, string> = {
   working: "Creating the design",
   searching: "Searching selected layers and memories",
   solving: "Reasoning about the design",
-  listening: "Ready for a design request",
+  listening: "Waiting for your choice",
   connecting: "Connecting to UX Direct services",
   weaving: "Refining the design",
   composing: "Creating editable Figma layers",
