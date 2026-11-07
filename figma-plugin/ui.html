@@ -1069,8 +1069,17 @@
         /\b(this|the|selected)\s+(?:[\w-]+\s+){0,2}(?:button|tab|chip|toggle|checkbox|input|field|instance|component|badge|card|item|row)\b/i.test(text) &&
         !/\b(screens|flows?|variations?|versions?|states pack|empty states?|loading states?|error states?)\b/i.test(text);
       const componentOrSystemOperation = /\b(create component|make component|create variant|combine as variants|create variables?|bind variable|apply style|swap component|detach instance|create page|rename page|switch to page|go to page|flatten|boolean union|boolean subtract|export (?:as|to)|export node|export svg)\b/i.test(text);
+      // Layer property toggles: "hide the Others tab", "lock the header", "Others tab ko hide karo",
+      // "set the card opacity to 50%", "rename the second tab to Loans", "resize the button to 48".
+      const notScreenLevel = !/\b(screens?|flows?|variations?|versions?|wireframes?)\b/i.test(text) && !/^\s*(?:can|could|how|what|why|where|should|does|do|is)\b/i.test(text);
+      const layerToggle = (/\b(hide|unhide|lock|unlock|hidden|invisible)\b(?!\s+(?:icon|screen|state))/i.test(text) &&
+          !/\b(create|add|insert|build|design|generate|draw)\b/i.test(text)) ||
+        (/\bshow\b/i.test(text) && /\bshow\s+(?:the|this|that|selected|all|these|those|it|again)\b/i.test(text) && !/\bshow\s+me\b/i.test(text));
+      const layerProperty = /\b(opacity|transparency|visibility)\b/i.test(text) ||
+        (/\b(rename|resize|move|nudge|shift)\b/i.test(text) && /\b(the|this|that|selected|these|those|ko)\s+(?:[\w-]+\s+){0,3}?(?:tab|card|row|item|chip|badge|divider|section|header|footer|banner|avatar|input|field|toggle|list|nav(?:bar)?|bar|group|container|layer|frame|button|icon|image|text|label|title)s?\b/i.test(text));
+      const layerPropertyEdit = notScreenLevel && (layerToggle || layerProperty);
       return (explicitNativeOperation && directTarget) || refinementOfSpecificTarget || addNativeObject || addNativeProperty ||
-        instanceStateChange || componentOrSystemOperation;
+        instanceStateChange || componentOrSystemOperation || layerPropertyEdit;
     }
 
     async function compressAttachedImage(file) {
