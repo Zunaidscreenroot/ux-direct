@@ -418,3 +418,21 @@ test("state switch, wrap and component insert run without a model", async () => 
   assert.match(JSON.stringify(result), /from your components/);
   await assert.rejects(r.apply("add a toggle", [r.card]), /No toggle component/);
 });
+
+test("direct edits return a property snapshot so Revert restores them after later changes", async () => {
+  const r = runtime();
+  r.card.cornerRadius = 4;
+  const result = await r.apply("radius 12, add shadow", [r.card]);
+  assert.equal(result.layoutChanged, false);
+  const props = JSON.parse(JSON.stringify(result.snapshot.map((item: any) => item.prop).sort()));
+  assert.deepEqual(props, ["cornerRadius", "effects"]);
+  r.title.characters = "edited later";
+  const posted: any[] = [];
+  r.figma.ui.postMessage = (m: any) => posted.push(m);
+  await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "r2", op: "restore-props", payload: { items: result.snapshot } });
+  const restore = posted.find((m) => m.type === "uxd-local-result").result;
+  assert.equal(restore.restored, 2);
+  assert.equal(r.card.cornerRadius, 4);
+  assert.equal((r.card.effects || []).length, 0);
+  assert.equal(r.title.characters, "edited later", "unrelated later edits are kept");
+});

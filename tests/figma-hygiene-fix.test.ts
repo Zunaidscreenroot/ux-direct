@@ -111,7 +111,7 @@ function runtime() {
     if (message.error) throw new Error(message.error);
     return message.result;
   }
-  return { fix, screen, title, faint, button, instance, instanceLabel, stack, rowA, rgb, figma, posted };
+  return { fix, make, screen, title, faint, button, instance, instanceLabel, stack, rowA, rgb, figma, posted };
 }
 
 test("spacing fix snaps to the 4px grid and evens near-symmetric padding", async () => {
@@ -183,4 +183,17 @@ test("hygiene revert restores the snapshot, keeping later manual edits", async (
   assert.equal(r.faint.fontSize, 10, "small text restored");
   assert.equal(r.title.textStyleId, "", "text style detached again");
   assert.equal(r.button.fills[0].boundVariables, undefined, "variable binding removed");
+});
+
+test("spacing fix aligns repeated items that drifted apart to the group's most common values", async () => {
+  const r = runtime();
+  const list = r.make({ type: "FRAME", name: "List", width: 343, height: 300, layoutMode: "VERTICAL" }, r.screen);
+  const card = (pad: number, gap: number, radius: number) => r.make({ type: "FRAME", name: "Card", layoutMode: "HORIZONTAL",
+    paddingLeft: pad, paddingRight: pad, paddingTop: 12, paddingBottom: 12, itemSpacing: gap, cornerRadius: radius }, list);
+  const a = card(16, 8, 8), b = card(16, 8, 8), c = card(12, 12, 12);
+  const result = await r.fix(["spacing"]);
+  assert.deepEqual([c.paddingLeft, c.paddingRight, c.itemSpacing, c.cornerRadius], [16, 16, 8, 8]);
+  assert.deepEqual([a.paddingLeft, b.itemSpacing], [16, 8], "the majority is unchanged");
+  assert.equal(result.counts.repeated, 1);
+  assert.ok(result.snapshot.some((item: any) => item.id === c.id && item.prop === "cornerRadius" && item.before === 12));
 });
