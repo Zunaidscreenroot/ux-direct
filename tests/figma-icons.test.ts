@@ -40,6 +40,13 @@ test("labels map to icons deterministically and SVGs are sanitized", () => {
   assert.equal(pickIconForLabel("Apply for loan"), "hand-coins");
   assert.equal(pickIconForLabel("Total outstanding"), null);
   assert.equal(pickIconForLabel("Due"), "calendar");
+  // Not only banking: travel, health, learning, food, commerce, work.
+  assert.equal(pickIconForLabel("Book flight"), "plane");
+  assert.equal(pickIconForLabel("Consult a doctor"), "stethoscope");
+  assert.equal(pickIconForLabel("My courses"), "graduation-cap");
+  assert.equal(pickIconForLabel("Track order"), "package");
+  assert.equal(pickIconForLabel("Reports"), "chart-column");
+  assert.equal(pickIconForLabel("One-time password"), "lock");
   assert.equal(iconNameFromQuery("Credit Card icon"), "credit-card");
   assert.equal(sanitizeIconSvg(LUCIDE), LUCIDE);
   assert.equal(sanitizeIconSvg('<svg><script>alert(1)</script></svg>'), null);
@@ -253,6 +260,9 @@ test("rows with label and value in one text use the label part for the icon", as
   assert.equal(part("Next due  05 Dec"), "Next due");
   assert.equal(part("Status  On track"), "Status");
   assert.equal(part("Balance ₹12,400"), "Balance");
+  assert.equal(part("Fare ₩12,000"), "Fare");
+  assert.equal(part("Total R$ 90"), "Total");
+  assert.equal(part("Balance Rs 500"), "Balance");
   assert.equal(part("₹9,450"), "");
   assert.equal(part("Pay now"), "");
 });
