@@ -68,8 +68,8 @@ test("revert and undo requests never reach a generation path", () => {
 });
 
 test("ui.html wires quick tasks before the native and design paths", () => {
-  const quickIndex = ui.indexOf("const quickTask = metaQuestion || followUp ? null : classifyQuickTask(");
-  assert.ok(quickIndex > 0 && quickIndex < ui.indexOf("!metaQuestion && isDirectCanvasActionPrompt(prompt))"));
+  const quickIndex = ui.indexOf("const quickTask = classifyQuickTask(");
+  assert.ok(quickIndex > 0 && quickIndex < ui.indexOf("if (isDirectCanvasActionPrompt(prompt))"));
   for (const path of ["/api/assistant/figma-agent/image", "/api/assistant/figma-agent/text", "/api/assistant/figma-agent/audit"]) {
     assert.ok(ui.includes(path), path + " is called from the plugin");
   }
@@ -392,21 +392,4 @@ test("journey kit never lists content cards for reuse, and keeps a plain entry b
   assert.ok(ui.includes("keepFrameFill: !!(parts && parts.plainFill)"), "journey screens pass the entry's fill mode");
   assert.ok(code.includes("if (payload.keepRootFill === true)"), "hygiene keeps the root fill unstyled when asked");
   assert.ok(code.includes("if (type === \"INSTANCE\" && spec.hidePlaceholderTexts === true) hidePlaceholderTexts(node);"));
-});
-
-test("meta questions go to chat and feedback on the last change re-runs it", () => {
-  const match = /\/\/ uxd-quick-task-classifier:start([\s\S]*?)\/\/ uxd-quick-task-classifier:end/.exec(ui);
-  assert.ok(match);
-  const sandbox: Record<string, any> = {};
-  runInNewContext(match[1] + "\nthis.isMetaQuestion = isMetaQuestion; this.isFollowUpCorrection = isFollowUpCorrection; this.classifyQuickTask = classifyQuickTask;", sandbox);
-  const frame = { selectionTypes: ["FRAME"] };
-  assert.equal(sandbox.isMetaQuestion("is your learning mode on"), true);
-  assert.equal(sandbox.isMetaQuestion("so if i tell you what is wrong here and what can be fixed, will you save in knowledge base for future"), true);
-  assert.equal(sandbox.isMetaQuestion("can you make this screen simpler?"), false);
-  // A conditional "if I tell you what is wrong" is not an audit request.
-  assert.equal(sandbox.classifyQuickTask("so if i tell you what is wrong here and what can be fixed, will you save in knowledge base for future", frame), null);
-  assert.equal(sandbox.classifyQuickTask("what is wrong with this screen", frame).kind, "ux-audit");
-  for (const p of ["this is not simplified", "use knowledge base", "still cluttered", "try again", "abhi bhi same hai"]) assert.equal(sandbox.isFollowUpCorrection(p), true, p);
-  for (const p of ["for me its not cluttered", "is your learning mode on", "is this good?"]) assert.equal(sandbox.isFollowUpCorrection(p), false, p);
-  assert.ok(ui.includes("if (!metaQuestion && lastCanvasTask && isFollowUpCorrection(prompt)"), "follow-ups re-run the last canvas task");
 });

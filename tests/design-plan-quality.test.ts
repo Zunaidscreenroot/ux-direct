@@ -244,16 +244,3 @@ test("repairs overflowing loan-card Auto Layout geometry without removing source
   assert.ok(childWidths(rowChildren) <= Number(firstRow.width) - Number(firstRow.paddingLeft || 0) - Number(firstRow.paddingRight || 0) - Number(firstRow.itemSpacing || 0) * (rowChildren.length - 1) + 2);
   assert.equal(hasText(summaryChildren, "₹1,07,649"), true);
 });
-
-test("a simplify request may drop secondary copy but never key values", () => {
-  const plan = goodPlan();
-  const card = plan.elements[0];
-  // "Personal Loan", "Current" and "Pay now" removed: secondary copy, allowed when simplifying.
-  card.children = card.children.filter((child) => !["Personal Loan", "Current", "Pay now"].includes(String(child.text)));
-  const simplified = auditDesignPlanQuality(plan, sourceCanvas, "make this screen simplified");
-  assert.equal(simplified.findings.some((finding) => finding.code === "missing-source-content"), false, JSON.stringify(simplified.findings));
-  assert.equal(auditDesignPlanQuality(plan, sourceCanvas, "Refine the selected Manage Loans screen").findings.some((finding) => finding.code === "missing-source-content"), true);
-  // An amount is still required.
-  card.children = card.children.filter((child) => child.text !== "₹1,07,649");
-  assert.equal(auditDesignPlanQuality(plan, sourceCanvas, "make this screen simplified").findings.some((finding) => finding.code === "missing-source-content"), true);
-});

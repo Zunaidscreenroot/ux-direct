@@ -414,8 +414,8 @@ test("Libraries.dev Border Beam is wired to the composer focus and task lifecycl
 
 test("broad refinement routes through screenshot-aware design generation; precise layer commands use native edits", () => {
   assert.ok(pluginUi.includes("function isBroadDesignRequest") || pluginUi.includes("broadDesignIntent"), "The dispatcher must explicitly distinguish broad redesign requests.");
-  assert.ok(pluginUi.includes("!metaQuestion && isDirectCanvasActionPrompt(prompt))"), "Precise native commands remain supported.");
-  assert.ok(pluginUi.includes("!metaQuestion && isDesignActionPrompt(prompt))"), "Broad design requests keep the full generation flow.");
+  assert.ok(pluginUi.includes("if (isDirectCanvasActionPrompt(prompt))"), "Precise native commands remain supported.");
+  assert.ok(pluginUi.includes("if (isDesignActionPrompt(prompt))"), "Broad design requests keep the full generation flow.");
   assert.ok(pluginUi.includes("attachedImageData, visualCaptureWarning: visualCaptureWarning"), "Generation receives a separate user-attached visual reference.");
   assert.ok(pluginUi.includes("repairIteration: 1"), "A second repair is allowed only after the first repair still fails the QA gate.");
   assert.ok(pluginUi.includes("downloadNativeExport"), "Native export operations return a downloadable artifact.");

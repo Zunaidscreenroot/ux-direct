@@ -270,9 +270,6 @@
     let attachedImageData = null;
     let attachedImageName = "";
     let lastTargetIds = [];
-    // The last canvas change the designer asked for (prompt, path and the layers it worked on), so a
-    // follow-up like "this is not simplified" re-runs that change harder instead of answering in chat.
-    let lastCanvasTask = null;
     let isSending = false;
     // uxd-stop-task:start
     // Stop: every backend fetch of the running task shares one AbortController, and every canvas
@@ -1752,6 +1749,65 @@
         (captured.warning ? "\nVisual preview note: " + String(captured.warning).slice(0, 180) : "");
     }
 
+    // uxd-claude-polish-ui:start
+    // "improve / polish / refine this screen" (not a redesign, restyle, theme, state or variation).
+    function uxdWantsPolish(prompt, designOptions) {
+      if (designOptions && (designOptions.variation || designOptions.state || designOptions.sourceId)) return false;
+      const text = String(prompt || "");
+      if (!/\b(improve|improved|polish|refine|better|clean\s?up|cleaner|tidy|enhance|fix (the )?(design|screen|ui)|sudhar\w*|behtar|acha|achha|accha)\b/i.test(text)) return false;
+      return !/\b(redesign|re-?design|rebuild|from scratch|new layout|re-?layout|restructure|variations?|variants?|versions?|wireframe|dark|light|theme|colou?rs?|modern|premium|minimal|playful|bold|restyle|style|look like|inspired|similar|states?|empty|error|loading|copy|text|content|rewrite|icons?|images?|data)\b/i.test(text);
+    }
+    async function runClaudePolish(prompt, sourceNode, stage) {
+      const width = Number(sourceNode.width) || 360, height = Number(sourceNode.height) || 800;
+      stage("planning", "Assessing the screen like a senior designer: components, layout, styles…");
+      const assessed = await localTask("claude-polish", { sourceId: sourceNode.id, assessOnly: true }, 60000);
+      if (!assessed || !assessed.eligible) {
+        const why = assessed && assessed.assessment && assessed.assessment.reasons ? assessed.assessment.reasons.join("; ") : "";
+        return { fallback: why ? "Assessment: " + why + ", so the screen was rebuilt." : "" };
+      }
+      const spot = await findFreeCanvasSpot((Number(sourceNode.x) || 0) + width + 100, Number(sourceNode.y) || 0, width, height);
+      stage("creating", "Built from components, so keeping its structure and copy; polishing a copy…");
+      const made = await localTask("claude-polish", { sourceId: sourceNode.id, x: spot.x, y: spot.y }, 60000);
+      if (!made || !made.id) return { fallback: "" };
+      const copyId = made.id;
+      let hygiene = null;
+      try {
+        stage("creating", "Applying the file's text and colour styles, the spacing grid and role names…");
+        hygiene = await localTask("apply-hygiene-fixes", { groups: ["layout", "spacing", "tokens", "names"] }, 120000);
+      } catch (_) { /* the copy is still the source's own layout */ }
+      stage("verifying", "Self-check: content, fit, reuse, overlap, styles, names…");
+      const check = await localTask("claude-self-check", { sourceId: sourceNode.id, outputId: copyId }, 60000);
+      if (!check || !check.passed) {
+        await localTask("delete-created", { nodeIds: [copyId] }).catch(function () {});
+        const failed = check && Array.isArray(check.checks) ? check.checks.filter(function (c) { return !c.pass; }).map(function (c) { return c.name + " (" + c.detail + ")"; }).join(", ") : "self-check unavailable";
+        return { fallback: "Polished copy failed the self-check: " + failed + ". Rebuilt instead." };
+      }
+      recordChange("Improved screen \"" + made.name + "\"", function () {
+        return localTask("delete-created", { nodeIds: [copyId] }).then(function (result) {
+          return result && result.missing && result.missing.length ? "it was already deleted" : "improved copy deleted, source untouched";
+        });
+      });
+      await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [copyId] }, 90000).catch(function () {});
+      await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "zoom-to-nodes", nodeIds: [copyId] }, 90000).catch(function () {});
+      await localTask("learn-baseline", { nodeIds: [copyId] }).catch(function () {});
+      stage("done", "Improved · structure kept, self-check passed");
+      const a = made.assessment || {};
+      const c = hygiene && hygiene.counts || {};
+      const fixes = [];
+      if (c.textStyles) fixes.push("text styles on " + c.textStyles + " layer(s)");
+      if (c.colorStyles || c.colorVariables) fixes.push("colour styles on " + ((c.colorStyles || 0) + (c.colorVariables || 0)) + " layer(s)");
+      if (c.spacing || c.symmetry || c.repeated) fixes.push("spacing grid on " + ((c.spacing || 0) + (c.symmetry || 0) + (c.repeated || 0)) + " frame(s)");
+      if (made.negativeGaps) fixes.push(made.negativeGaps + " overlap(s) removed");
+      if (c.autoLayout) fixes.push("auto layout on " + c.autoLayout + " frame(s)");
+      if (made.renamed || c.names) fixes.push((made.renamed || 0) + (c.names || 0) + " layer(s) named by role");
+      const checks = check.checks.map(function (x) { return (x.pass ? "✓ " : "⚠ ") + x.name; }).join(" · ");
+      return { answer: "Improved **" + made.name + "** next to the original. It is already built from your components" +
+        (a.repeated && a.repeated.length ? " (" + a.repeated.join(", ") + ")" : "") +
+        ", so I kept its structure, copy and height and fixed the details" + (fixes.length ? ": " + fixes.join(", ") + "." : ".") +
+        "\nSelf-check: " + checks +
+        "\nWant a full rebuild instead? Say **redesign this screen**." };
+    }
+    // uxd-claude-polish-ui:end
     async function createFigmaDesign(prompt, reportProgress, designOptions) {
       const placement = designOptions && designOptions.placement &&
         Number.isFinite(designOptions.placement.x) && Number.isFinite(designOptions.placement.y) ? designOptions.placement : null;
@@ -1823,6 +1879,19 @@
           !Array.isArray(sourceNode.children) &&
           !["COMPONENT", "COMPONENT_SET", "INSTANCE", "SECTION", "GROUP"].includes(sourceNode.type)) {
         throw new Error("The selection is " + (sourceNode.type || "a layer") + ", not a frame/container. Select the full screen.");
+      }
+
+      // Claude-style design thinking: assess the screen before choosing how to improve it. A screen
+      // already built from components with auto layout is improved in place on a copy (same
+      // instances, copy and height; styles, grid, overlaps and names fixed), then self-checked.
+      // Anything else, or a failed self-check, goes on to the full rebuild below.
+      let polishNote = "";
+      if (!createMode && sourceNode && sourceNode.id && uxdWantsPolish(prompt, designOptions)) {
+        const polished = await runClaudePolish(prompt, sourceNode, stage).catch(function (error) {
+          return { fallback: "Claude-style polish stopped (" + String(error && error.message || error).slice(0, 140) + "), so the screen was rebuilt instead." };
+        });
+        if (polished && polished.answer) return polished.answer;
+        polishNote = polished && polished.fallback ? "\n" + polished.fallback : "";
       }
 
       stage("capturing", "Rendering the selected screen…");
@@ -2048,7 +2117,7 @@
         (lint.passed ? '' : '\n**Not ready yet:** ' + uxdLintHeadline(lint) + ' Say **retry** to fix it.') +
         '\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory +
         visualNote +
-        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') + timingLine;
+        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') + polishNote + timingLine;
       } catch (error) {
         if (taskRunId) {
           await finalizeTaskOutcome("failed", String(error && error.message || error || "Native Figma task failed"),
@@ -2568,28 +2637,6 @@
     }
     // uxd-direct-edit-parser:end
     // uxd-quick-task-classifier:start
-    // A question about UX Direct itself ("is your learning mode on", "if I tell you what is wrong,
-    // will you save it?") is answered in chat: it never starts an audit, an edit or a new screen.
-    function isMetaQuestion(prompt) {
-      const text = String(prompt || "").trim();
-      if (!text) return false;
-      const aboutTool = /\b(learning( mode)?|knowledge ?base|memory|brain|remember|save (it|this|that)|learn|seekh\w*|yaad|you (can|do|will|are)|your (mode|memory|knowledge)|plugin|ux direct)\b/i.test(text);
-      const asks = /\?\s*$/.test(text) || /^(so\s+|and\s+|ok\s+|okay\s+)?(is|are|do|does|did|can|could|will|would|should|have|has|kya|what|how|why)\b/i.test(text) ||
-        /\bif i (tell|show|explain|teach|share|give)\b/i.test(text) || /\b(will|would|can) you (save|remember|learn|store|keep)\b/i.test(text);
-      return aboutTool && asks;
-    }
-    // Feedback on the change UX Direct just made ("this is not simplified", "still cluttered", "use
-    // knowledge base", "try again"): the same change is made again, further, on the same screen.
-    function isFollowUpCorrection(prompt) {
-      const text = String(prompt || "").trim();
-      if (!text || text.length > 160 || isMetaQuestion(text)) return false;
-      return /\b(not|isn'?t|is not|nahi|nahin|na)\s+(?:\w+\s+)?(simplified|simple|simpler|clean|cleaner|better|enough|improved|changed|working|good|right|done|hua|hui|bana)\b/i.test(text) ||
-        /\b(still|abhi bhi|ab bhi)\s+(?:\w+\s+)?(cluttered|busy|same|complex|messy|crowded|heavy|confusing)\b/i.test(text) ||
-        /\b(nothing|no|koi)\s+(changed?|difference|farak|fark|change nahi)\b|\bsame as before\b|\b(looks|is) the same\b/i.test(text) ||
-        /^(please\s+)?(try again|do it again|again|redo|retry it|once more|go further|more|stronger|phir se|dobara|aur karo|aur kar)\b/i.test(text) ||
-        /\buse (the |your |my )?(knowledge ?base|kb|brain|best practices?)\b/i.test(text);
-    }
-
     function classifyQuickTask(prompt, context) {
       const text = String(prompt || "").trim();
       const ctx = context || {};
@@ -2688,8 +2735,7 @@
       if (hygieneWords || (/\bconsisten(t|cy)\b/i.test(text) && !/\b(make|fix|apply|set|change)\b/i.test(text))) {
         return { kind: "hygiene" };
       }
-      if (!isMetaQuestion(text) && !/\bif i (tell|show|explain|teach|share|give)\b/i.test(text) &&
-          /\b(ux (audit|review|critique)|usability (review|audit|check)|heuristic|audit|critique|review (this|these|the|my)\b|give (me )?feedback|what('s| is) wrong with|kahan (pe |par )?galat)/i.test(text)) {
+      if (/\b(ux (audit|review|critique)|usability (review|audit|check)|heuristic|audit|critique|review (this|these|the|my)\b|give (me )?feedback|what('s| is) wrong|kahan (pe |par )?galat)/i.test(text)) {
         return { kind: "ux-audit" };
       }
       // Journeys (flows of screens): "create a journey to pay overdue EMI" with nothing selected plans the
@@ -4006,28 +4052,11 @@
           await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: lastTargetIds }, 30000).catch(function () { return null; });
           await refreshSelection();
         }
-        // Route by intent: a question about UX Direct goes to chat; feedback on the change just made
-        // re-runs that change (same path, same screen, pushed further); everything else as before.
-        const metaQuestion = isMetaQuestion(prompt);
-        let followUp = null;
-        let taskPrompt = prompt;
-        if (!metaQuestion && lastCanvasTask && isFollowUpCorrection(prompt) && Date.now() - lastCanvasTask.at < 45 * 60000) {
-          followUp = lastCanvasTask;
-          if (followUp.sourceIds.length) {
-            await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: followUp.sourceIds }, 30000).catch(function () { return null; });
-            await refreshSelection();
-          }
-          const wantsKb = /\b(knowledge ?base|kb|brain|best practices?)\b/i.test(prompt);
-          taskPrompt = followUp.prompt + "\n\nThe designer's feedback on the previous attempt: \"" + prompt.slice(0, 160) + "\". That attempt did not go far enough: make the requested change clearly and visibly this time" +
-            (wantsKb ? ", following the knowledge base's guidance for it" : "") + ". Keep every key fact (amounts, statuses, dates, names) exact.";
-        }
-        const startIds = (currentSelection.selection || []).map(function (node) { return node.id; }).filter(Boolean).slice(0, 20);
-        const remember = function (path) { lastCanvasTask = { path: path, prompt: followUp ? followUp.prompt : prompt, sourceIds: startIds, at: Date.now() }; };
-        const quickTask = metaQuestion || followUp ? null : classifyQuickTask(prompt, {
+        const quickTask = classifyQuickTask(prompt, {
           selectionTypes: (currentSelection.selection || []).map(function (node) { return node.type; }),
           hasAttachment: Boolean(attachedImageData)
         });
-        const directEdit = metaQuestion || followUp ? null : parseDirectEdit(prompt, {
+        const directEdit = parseDirectEdit(prompt, {
           selectionTypes: (currentSelection.selection || []).map(function (node) { return node.type; })
         });
         if (directEdit && (!quickTask || quickTask.kind === "rewrite-text" || quickTask.kind === "generate-image")) {
@@ -4065,11 +4094,10 @@
           });
           return;
         }
-        if (followUp ? followUp.path === "native" : !metaQuestion && isDirectCanvasActionPrompt(prompt)) {
+        if (isDirectCanvasActionPrompt(prompt)) {
           typingRow.remove();
-          assistantMessage = appendMessage("assistant", followUp ? "Making that change again, further…" : "Inspecting selected layers and planning native edits…");
-          remember("native");
-          const answer = await executeNativeActionPlan(taskPrompt, function (status) {
+          assistantMessage = appendMessage("assistant", "Inspecting selected layers and planning native edits…");
+          const answer = await executeNativeActionPlan(prompt, function (status) {
             if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
           });
           assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
@@ -4079,11 +4107,10 @@
           });
           return;
         }
-        if (followUp ? followUp.path === "design" : !metaQuestion && isDesignActionPrompt(prompt)) {
+        if (isDesignActionPrompt(prompt)) {
           typingRow.remove();
-          assistantMessage = appendMessage("assistant", followUp ? "Making that change again, further…" : "Scanning selected screen and native layers…");
-          remember("design");
-          const answer = await createFigmaDesign(taskPrompt, function (status) {
+          assistantMessage = appendMessage("assistant", "Scanning selected screen and native layers…");
+          const answer = await createFigmaDesign(prompt, function (status) {
             if (assistantMessage) {
               assistantMessage.bubble.textContent = status;
               $("conversation").scrollTop = $("conversation").scrollHeight;
@@ -4127,10 +4154,6 @@
           chatHistory.push({ role: "assistant", content: assistantMessage.bubble.textContent });
           await sendTelemetry("Cockpit chat returned empty response", "error", "The model stream contained no assistant text.", { durationMs: Date.now() - startedAt });
         } else {
-          // A correction the designer taught ("remember this", "aage se…") was saved to memory: say so.
-          if (response.headers.get("X-UXD-Learning-Status") === "learned") {
-            assistantMessage.bubble.innerHTML = renderReplyHtml(answer + "\n\nSaved to memory: UX Direct will apply this on future tasks.");
-          }
           chatHistory.push({ role: "assistant", content: answer });
           setProcessState("done", "Response ready · UX Direct Brain replied");
           await sendTelemetry("Cockpit chat response completed", "success", "UX Direct returned a conversational response from its internal model route.", { durationMs: Date.now() - startedAt, answerChars: answer.length });
