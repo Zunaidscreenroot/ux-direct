@@ -323,3 +323,13 @@ test("a wireframe that merged two loan cards into one section still gets both Pa
   assert.equal(order.filter((t) => t === "Pay now").length, 3, order.join(" | "));
   assert.deepEqual(order, ["Loan ID SLC001", "Pay now", "Loan ID SLC002", "Pay now", "Loan ID SLC003", "Pay now"], "restored copy sits after loan 2's own rows");
 });
+
+test("buttons keep the source CTA colour on a dark screen instead of the pale default", () => {
+  const dark = { nodes: [{ ...canvas.nodes[0], fillColors: ["#101820"] }], components: [] };
+  const s = { summary: "x", sections: [{ name: "Loan", surface: "card", blocks: [{ type: "text", text: "Loan ID SLC001" }, { type: "button", label: "Pay now", variant: "primary" }] }], learningCandidate: null };
+  const exp = expandBlockSpec(s, dark, { sourceCanvas: dark });
+  assert.ok(exp.plan, exp.errors.join("; "));
+  const fills: string[] = [];
+  walk(exp.plan!.elements as N[], (n) => { if (n.type === "FRAME" && n.children?.some((c) => c.text === "Pay now")) fills.push(String(n.color)); });
+  assert.ok(fills.length && fills.every((f) => f.toUpperCase().startsWith("#0") ), "source blue (#0B5FFF-ish), got " + fills.join(","));
+});

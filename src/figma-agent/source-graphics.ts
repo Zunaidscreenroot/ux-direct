@@ -151,6 +151,22 @@ export type SourceFidelityResult = { clones: number; replacedRings: number; rest
  * Mutates `elements` in place. `canvas` is the raw source read-back (first node = source
  * frame). Returns what was restored so the route can report it.
  */
+/** The source screen's filled CTA colour ("Pay now" blue), most common across its buttons. */
+export function sourceCtaFill(canvas: Rec): string | null {
+  const rootRaw = asRec(Array.isArray(canvas.nodes) ? canvas.nodes[0] : null);
+  const root = rootRaw ? buildSourceTree(rootRaw, null, 0, 0, true) : null;
+  if (!root) return null;
+  const counts = new Map<string, number>();
+  for (const button of sourceButtons(root)) {
+    if (!button.strong) continue;
+    const fill = String((button.node.raw.fillColors as unknown[])[0]).slice(0, 7).toUpperCase();
+    counts.set(fill, (counts.get(fill) ?? 0) + 1);
+  }
+  let best: string | null = null, max = 0;
+  for (const [fill, count] of counts) if (count > max) { best = fill; max = count; }
+  return best;
+}
+
 export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme: BlockTheme, options: { budget?: number; headerComponentId?: string | null } = {}): SourceFidelityResult {
   const result: SourceFidelityResult = { clones: 0, replacedRings: 0, restoredButtons: 0, unplaced: [] };
   const rootRaw = asRec(Array.isArray(canvas.nodes) ? canvas.nodes[0] : null);

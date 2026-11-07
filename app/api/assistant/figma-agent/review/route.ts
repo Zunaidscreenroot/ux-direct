@@ -105,7 +105,7 @@ export async function POST(request: Request) {
     durationMs: z.number().int().min(0).max(86_400_000).optional(),
     retrieval: z.object({
       status: z.enum(["complete", "empty", "degraded", "disabled"]),
-      memoryIds: z.array(z.string().uuid()).max(12), chunkIds: z.array(z.string().max(200)).max(8), chars: z.number().int().min(0).max(5200),
+      memoryIds: z.array(z.string().uuid()).max(12), chunkIds: z.array(z.string().max(200)).max(8), chars: z.number().int().min(0).max(20000),
     }).strict().optional(),
   }).strict();
   const parsed = schema.safeParse(body);
