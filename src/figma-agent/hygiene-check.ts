@@ -195,6 +195,10 @@ export function runHygieneCheck(canvas: unknown, options: { paintStyles?: number
   // 3. Repeated items (same name and type under one parent) that drifted apart.
   const drift: string[] = [];
   const driftIds: string[] = [];
+  // Instances that differ usually differ by variant or content: that is fixed in the component,
+  // not by overriding padding per instance, so they get their own low-severity, manual finding.
+  const instanceDrift: string[] = [];
+  const instanceDriftIds: string[] = [];
   for (const { node } of owned) {
     const kids = children(node);
     const byName = new Map<string, Node[]>();
@@ -209,8 +213,9 @@ export function runHygieneCheck(canvas: unknown, options: { paintStyles?: number
         .map((key) => num(item[key]) ?? "-").join("/");
       const distinct = new Set(siblings.map(signature));
       if (distinct.size > 1) {
-        drift.push(label(siblings[0]) + " ×" + siblings.length);
-        driftIds.push(...siblings.map((item) => str(item.id)));
+        const instances = siblings[0].type === "INSTANCE";
+        (instances ? instanceDrift : drift).push(label(siblings[0]) + " ×" + siblings.length);
+        (instances ? instanceDriftIds : driftIds).push(...siblings.map((item) => str(item.id)));
       }
     }
   }
@@ -218,8 +223,15 @@ export function runHygieneCheck(canvas: unknown, options: { paintStyles?: number
     rule: "repeated-item-drift", severity: "medium",
     issue: "Repeated items with the same name have different padding, gap, radius or height.",
     evidence: drift.slice(0, 4).join(", "),
-    fix: "Make repeated rows/cards instances of one component, or align their padding, gap, radius and height.",
+    fix: "Say **fix hygiene** to give them the group's most common padding, gap and radius, or make them instances of one component.",
     nodeIds: driftIds,
+  });
+  if (instanceDrift.length) add({
+    rule: "repeated-instance-variants", severity: "low",
+    issue: "Instances of the same component differ in padding, layout or height (different variants or content). Not auto-fixed: per-instance overrides would hide the difference.",
+    evidence: instanceDrift.slice(0, 4).join(", "),
+    fix: "Check it is intended; otherwise pick one variant or fix the spacing in the main component.",
+    nodeIds: instanceDriftIds,
   });
 
   // 4. Layer naming, hidden and empty layers.
