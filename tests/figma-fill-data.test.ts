@@ -78,3 +78,13 @@ test("revert restores from a snapshot, only where the text is still what UX Dire
   assert.equal(nodes["2"].characters, "edited by designer", "a later manual edit is kept");
   assert.deepEqual([result.restored, result.changedSince, result.missing], [1, 1, 1]);
 });
+
+test("amounts in any currency keep their symbol and grouping style", () => {
+  const { fake, seeded } = block();
+  const rand = seeded(7);
+  assert.match(fake("$1,250.00", rand), /^\$\d{1,3}(,\d{3})*\.\d{2}$/);
+  assert.match(fake("€89", rand), /^€\d+$/);
+  assert.match(fake("USD 2,000,000", rand), /^USD \d{1,3}(,\d{3})+$/);
+  assert.match(fake("₹1,20,000", rand), /^₹\d{1,2}(,\d{2})*,\d{3}$/);
+  assert.match(fake("AED 4,999/mo", rand), /^AED \d{1,3}(,\d{3})*\/mo$/);
+});
