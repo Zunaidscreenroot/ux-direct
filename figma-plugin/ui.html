@@ -1609,6 +1609,9 @@
         throw new Error("Select one frame or container at a time so UX Direct can analyse and preserve the correct screen.");
       }
       const sourceNode = selectedNodes.length === 1 ? selectedNodes[0] : null;
+      // 0-to-1: nothing selected, so the prompt describes a new screen. The backend designs it
+      // from the file's own components and styles (canvas catalogue), with no source to preserve.
+      const createMode = selectedNodes.length === 0 && !(designOptions && designOptions.sourceId);
       if (sourceNode && /\b(frame|screen|variation|variant|duplicate|redesign)\b/i.test(prompt) &&
           !Array.isArray(sourceNode.children) &&
           !["COMPONENT", "COMPONENT_SET", "INSTANCE", "SECTION", "GROUP"].includes(sourceNode.type)) {
@@ -1618,17 +1621,19 @@
       stage("capturing", "Rendering the selected screen…");
       const renderedCapture = earlyCapture && sourceNode && sourceNode.id === preIds[0]
         ? await earlyCapture
+        : createMode ? { dataUrl: null, scale: 0, warning: "" }
         : sourceNode && sourceNode.id
         ? await captureRenderedNodePreview(sourceNode.id)
         : { dataUrl: null, scale: 0, warning: "No selected node ID was available for image export." };
       const renderedScreen = renderedCapture.dataUrl;
       const visualCaptureWarning = renderedCapture.warning || "";
-      if (!renderedScreen) {
+      if (createMode) stage("planning", "Nothing selected · designing a new screen from your prompt with this file's components…");
+      else if (!renderedScreen) {
         stage("error", "Source screenshot unavailable · design generation blocked");
         throw new Error("UX Direct will not create a variation without a rendered source screenshot. " +
           String(visualCaptureWarning || "Figma preview export failed").slice(0, 300));
       }
-      stage("capturing", "Rendered screenshot captured at " + Math.round(renderedCapture.scale * 100) + "% scale");
+      else stage("capturing", "Rendered screenshot captured at " + Math.round(renderedCapture.scale * 100) + "% scale");
 
       stage("brain", "Connecting to UX Direct Brain and resolving project context…");
       stage("memory", "Searching shared memories and Knowledge Base patterns…");
@@ -1641,7 +1646,8 @@
         cache: "no-store",
         body: JSON.stringify({ prompt: prompt, canvas: canvas, renderedScreen: renderedScreen, referenceImage: attachedImageData, visualCaptureWarning: visualCaptureWarning, capabilities: PLUGIN_CAPABILITIES,
           ...(designOptions && designOptions.variation ? { variation: designOptions.variation } : {}),
-          ...(designOptions && designOptions.state ? { state: designOptions.state } : {}) })
+          ...(designOptions && designOptions.state ? { state: designOptions.state } : {}),
+          ...(createMode ? { mode: "create" } : {}) })
       });
       const payload = await response.json().catch(function () { return {}; });
       const serverMs = Date.now() - serverStartedAt;
@@ -1675,17 +1681,20 @@
         : Math.max(-100000, Math.min(100000, Number(viewport.y) + 80 || 80));
       // Every create path (improve, wireframe, each variation, flow) takes a free slot: a fixed
       // placement is only the starting point, so variations never land on existing frames (finding 45).
-      {
+      // A batch (states, variations) reserves one free row up front and passes exact slots, so its
+      // frames stay side by side instead of each jumping to a different free spot.
+      if (!(placement && designOptions.exactPlacement)) {
         const free = await findFreeCanvasSpot(rootX, rootY, Number(plan.frame.width) || 393, Number(plan.frame.height) || 800);
         rootX = free.x; rootY = free.y;
       }
+      const frameName = String(designOptions && designOptions.frameName || plan.frame.name || "UX Direct Variation").slice(0, 80);
       stage("creating", "Creating a separate editable variation; the original stays untouched…");
       const buildStartedAt = Date.now();
       try {
       const rootResult = await runNativeCanvasCommand("write-canvas", {
         confirm: true, operation: "create-elements", target: "current-page",
         elements: [{
-          type: "FRAME", name: String(plan.frame.name || "UX Direct Variation").slice(0, 80),
+          type: "FRAME", name: frameName,
           x: rootX, y: rootY, width: plan.frame.width, height: plan.frame.height,
           color: plan.frame.backgroundColor, clipsContent: true,
           layoutMode: plan.frame.layoutMode || "VERTICAL",
@@ -1705,7 +1714,7 @@
         throw new Error("Figma did not return the new frame ID. Inspect the current page before retrying.");
       }
       createdFrameId = root.id;
-      const createdName = String(plan.frame.name || "UX Direct Variation").slice(0, 80);
+      const createdName = frameName;
       const createdId = root.id;
       recordChange("New screen \"" + createdName + "\"", function () {
         return localTask("delete-created", { nodeIds: [createdId] }).then(function (result) {
@@ -1810,7 +1819,13 @@
       if (lint.passed) stage("done", "Variation created · native structure read-back passed");
       else stage("error", "Variation created · structural lint found issues to fix");
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
-      return 'Created "' + plan.frame.name + '" as a separate editable Figma variation with ' +
+      if (createMode) {
+        return 'Created a new screen "' + frameName + '" with ' + completedElementCount + ' native layers from your prompt, using this file\'s components where they fit. ' +
+          String(plan.summary || "") + '\n\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory + visualNote + timingLine +
+          '\nIt is selected on the canvas. Next: **add icons**, **fill with realistic data**, **fix hygiene**, or **add empty, loading and error states**.' +
+          (lint.passed ? '' : '\nThis screen is NOT accepted yet: fix the issues above or ask UX Direct to retry.');
+      }
+      return 'Created "' + frameName + '" as a separate editable Figma variation with ' +
         completedElementCount + ' native layers. ' + String(plan.summary || "The variation is ready for review.") +
         '\n\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory +
         visualNote +
@@ -2843,11 +2858,19 @@
         error: "ERROR state: keep the whole screen and its content; add a clear inline error banner near the top (red/danger tint, icon, one-sentence cause, a Retry action), and mark any failed field or card.",
         success: "SUCCESS state: keep the screen; add a success confirmation (green tint banner or confirmation block with a check icon, one-sentence result, and the next primary action)."
       };
+      // One free row to the right of the source for the whole batch (reserved once, then exact slots).
+      async function batchRow(frame, count) {
+        const width = Number(frame.width) || 393;
+        const row = await findFreeCanvasSpot(Number(frame.x) + width + 120, Number(frame.y), count * width + (count - 1) * 120, Number(frame.height) || 800);
+        return function (index) { return { x: row.x + index * (width + 120), y: row.y }; };
+      }
       if (task.kind === "states-pack") {
         const frame = frames[0];
+        const slot = await batchRow(frame, task.states.length);
         task.states.forEach(function (state, index) {
-          jobs.push({ frame: frame, state: state,
-            placement: { x: Number(frame.x) + (index + 1) * (Number(frame.width) + 120), y: Number(frame.y) },
+          jobs.push({ frame: frame, state: state, exact: true,
+            frameName: String(frame.name).slice(0, 60) + " / " + state.charAt(0).toUpperCase() + state.slice(1),
+            placement: slot(index),
             prompt: "Create the " + state + " state of this screen as a new frame named \"" + String(frame.name).slice(0, 60) + " / " + state.charAt(0).toUpperCase() + state.slice(1) + "\". " +
               stateBriefs[state] + " Use the same components, colours, typography and spacing as the source screen.\n\nDesigner request: " + prompt });
         });
@@ -2861,8 +2884,9 @@
         });
       } else {
         const frame = frames[0];
+        const slot = await batchRow(frame, task.count);
         for (let index = 0; index < task.count; index += 1) {
-          jobs.push({ frame: frame, placement: { x: Number(frame.x) + (index + 1) * (Number(frame.width) + 120), y: Number(frame.y) },
+          jobs.push({ frame: frame, exact: true, placement: slot(index),
             variation: { index: index, count: task.count },
             prompt: prompt + "\n\nThis is variation " + (index + 1) + " of " + task.count + ": explore " + directions[index % directions.length] +
               " so it is clearly distinct from the other variations, while keeping all source content." });
@@ -2882,7 +2906,7 @@
           try {
             const answer = String(await createFigmaDesign(job.prompt, function (status) {
               stage("creating", jobLabel + " " + (index + 1) + "/" + jobs.length + " · " + status);
-            }, { placement: job.placement, variation: job.variation, sourceId: job.frame.id, state: job.state }));
+            }, { placement: job.placement, exactPlacement: Boolean(job.exact), frameName: job.frameName, variation: job.variation, sourceId: job.frame.id, state: job.state }));
             const timing = answer.split("\n").find(function (line) { return line.indexOf("Timing: ") === 0; });
             const lintLine = answer.split("\n").find(function (line) { return /structural lint/i.test(line) && line.indexOf("Timing: ") !== 0; });
             outcomes[index] = { ok: true, text: "**" + (index + 1) + ". " + (job.state ? job.state.charAt(0).toUpperCase() + job.state.slice(1) + " · " : "") + job.frame.name + "**: " + answer.split("\n")[0] +
