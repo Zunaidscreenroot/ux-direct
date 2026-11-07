@@ -361,3 +361,11 @@ test("copy rewrite: plain-header title, no topic repetition, standard abbreviati
   const cartOut = normalizeTextEdits("rewrite", { updates: [{ ref: "t2", text: "Quantity: 1" }, { ref: "t3", text: "Keep shopping" }] }, cart, "", "make it clearer");
   assert.deepEqual(cartOut.map((e) => [e.id, e.value]), [["s", "Keep shopping"]]);
 });
+
+test("property-only native edits verify by read-back and scoped repairs never touch other nodes", () => {
+  assert.ok(ui.includes("const PROPERTY_ONLY_KEYS = [\"visible\", \"locked\", \"name\", \"opacity\""), "property-only edit list");
+  assert.ok(/if \(propertyOnly\) \{[\s\S]*?read-back passed[\s\S]*?\n      \}/.test(ui), "property-only edits return before screenshot QA");
+  assert.ok(ui.indexOf("if (propertyOnly) {") < ui.indexOf("const qa = await runVisualQualityLoop({\n          prompt: prompt, sourceCanvas: canvas"), "read-back path runs before visual QA");
+  assert.ok(ui.includes("if (!inScope(item.nodeId)) continue;"), "repairs stay inside the edit's target set");
+  assert.ok(ui.includes("targetScope: targetScope"), "native edits pass their target scope to the repair loop");
+});
