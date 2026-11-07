@@ -2917,7 +2917,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -3984,6 +3984,111 @@ async function localApplyHygieneFixes(payload) {
   return { ok: true, groups: groups, counts: counts, total: total, checked: nodes.length, skipped: skipped };
 }
 // uxd-hygiene-fix:end
+// uxd-fill-data:start
+// Realistic Indian BFSI sample data, no model: every value text in the selection (amounts, dates, masked
+// accounts, reference IDs, PAN, phone, rates, person names) gets a varied value in the SAME format, so
+// repeated rows stop looking copy-pasted. Labels, headings, buttons and statuses are never touched.
+// Values are seeded by layer id, so the same selection always gets the same data.
+var UXD_FIRST_NAMES = ["Aarav", "Priya", "Rohan", "Ananya", "Vikram", "Sneha", "Arjun", "Kavya", "Rahul", "Meera", "Karan", "Isha", "Aditya", "Pooja", "Siddharth", "Neha", "Amit", "Divya", "Nikhil", "Riya", "Suresh", "Lakshmi", "Imran", "Fatima", "Harpreet", "Joseph", "Ayesha", "Manoj", "Deepa", "Varun"];
+var UXD_LAST_NAMES = ["Sharma", "Iyer", "Patel", "Reddy", "Khan", "Singh", "Nair", "Gupta", "Mehta", "Das", "Joshi", "Menon", "Kulkarni", "Bose", "Verma", "Pillai", "Chopra", "Rao", "Shaikh", "Fernandes"];
+var UXD_KNOWN_FIRST = /^(aarav|priya|rohan|ananya|vikram|sneha|arjun|kavya|rahul|meera|karan|isha|aditya|pooja|siddharth|neha|amit|divya|nikhil|riya|suresh|lakshmi|imran|fatima|harpreet|joseph|ayesha|manoj|deepa|varun|john|jane|alex|sam|david|sarah|michael|emma|james|olivia|ravi|anil|sunil|ramesh|raj|vijay|sanjay|arun|anita|sunita|kiran|asha|geeta|sita|mohan|ajay|vivek|gaurav|abhishek|ankit|shreya|nisha|swati|tanvi|zara|user|customer)$/i;
+var UXD_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function uxdSeeded(seed) {
+  var h = 2166136261;
+  for (var i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return function () { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 100000) / 100000; };
+}
+function uxdIndianGroup(intText) {
+  var s = String(intText);
+  if (s.length <= 3) return s;
+  var last3 = s.slice(-3), rest = s.slice(0, -3);
+  return rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + last3;
+}
+function uxdDigits(rand, count) { var out = ""; for (var i = 0; i < count; i++) out += String(Math.floor(rand() * 10)); return out; }
+function uxdFakeValue(text, rand) {
+  var t = String(text || "").trim();
+  if (!t || t.length > 40) return null;
+  var m;
+  // Amount: ₹12,500 · Rs. 4,999.00 · INR 1,20,000 · ₹ 85k is left alone.
+  if ((m = /^([-+]?\s?(?:₹|Rs\.?|INR)\s?)([\d,]+)(\.\d{1,2})?(\s?(?:\/-|\/mo|\/month| per month| p\.m\.))?$/i.exec(t))) {
+    var n = Number(m[2].replace(/,/g, ""));
+    if (!isFinite(n) || n <= 0) return null;
+    var step = n >= 100000 ? 1000 : n >= 10000 ? 500 : n >= 1000 ? 50 : n >= 100 ? 5 : 1;
+    var v = Math.max(step, Math.round((n * (0.45 + rand() * 1.1)) / step) * step);
+    var cents = m[3] ? (m[3].length === 3 ? "." + uxdDigits(rand, 2) : m[3]) : "";
+    return m[1] + uxdIndianGroup(v) + cents + (m[4] || "");
+  }
+  // Date: 5 Dec 2026 · 05 Dec · Dec 5, 2026 · 05/12/2026
+  if ((m = /^(\d{1,2})(\s)(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(,?\s\d{2,4})?$/i.exec(t))) {
+    var day = 1 + Math.floor(rand() * 28);
+    return (m[1].length === 2 && day < 10 ? "0" : "") + day + m[2] + UXD_MONTHS[Math.floor(rand() * 12)] + (m[4] || "");
+  }
+  if ((m = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s(\d{1,2})(,\s?\d{4})?$/i.exec(t))) {
+    return UXD_MONTHS[Math.floor(rand() * 12)] + " " + (1 + Math.floor(rand() * 28)) + (m[3] || "");
+  }
+  if ((m = /^(\d{2})([\/.-])(\d{2})\2(\d{2,4})$/.exec(t))) {
+    var dd = 1 + Math.floor(rand() * 28), mm = 1 + Math.floor(rand() * 12);
+    return (dd < 10 ? "0" : "") + dd + m[2] + (mm < 10 ? "0" : "") + mm + m[2] + m[4];
+  }
+  // Masked account / card: XXXX 1234 · •••• 1234 · A/c ****5678 · xx1234
+  if ((m = /^(.*?(?:[Xx*•●]{2,}[\s-]?))(\d{4})$/.exec(t))) return m[1] + uxdDigits(rand, 4);
+  // PAN
+  if (/^[A-Z]{5}\d{4}[A-Z]$/.test(t)) {
+    var L = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    var pick = function () { return L[Math.floor(rand() * L.length)]; };
+    return pick() + pick() + pick() + "P" + pick() + uxdDigits(rand, 4) + pick();
+  }
+  // Phone: +91 98765 43210 · 9876543210
+  if ((m = /^(\+91[\s-]?)?([6-9])(\d{4})(\s?)(\d{5})$/.exec(t))) return (m[1] || "") + String(6 + Math.floor(rand() * 4)) + uxdDigits(rand, 4) + m[4] + uxdDigits(rand, 5);
+  // Reference / loan / txn ID: LN-20481 · TXN982341 · #48213 (prefix kept, same digit count)
+  if ((m = /^(#|[A-Z]{2,6}[-\/ ]?)(\d{4,12})$/.exec(t))) return m[1] + uxdDigits(rand, m[2].length).replace(/^0/, String(1 + Math.floor(rand() * 9)));
+  // Rate: 10.5% · 12% p.a.
+  if ((m = /^(\d{1,2})(\.\d{1,2})?(\s?%)(\s?p\.a\.)?$/i.exec(t))) {
+    var rate = Number(m[1] + (m[2] || "")) * (0.75 + rand() * 0.5);
+    return (m[2] ? rate.toFixed(m[2].length - 1) : String(Math.max(1, Math.round(rate)))) + m[3] + (m[4] || "");
+  }
+  // Person name: only when the first word is a known first name, so "Loan Summary" is never a name.
+  if ((m = /^([A-Z][a-z]+)(\s[A-Z][a-z]+){1,2}$/.exec(t)) && UXD_KNOWN_FIRST.test(m[1])) {
+    return UXD_FIRST_NAMES[Math.floor(rand() * UXD_FIRST_NAMES.length)] + " " + UXD_LAST_NAMES[Math.floor(rand() * UXD_LAST_NAMES.length)];
+  }
+  return null;
+}
+async function localFillRealisticData(payload) {
+  var roots = figma.currentPage.selection.slice();
+  if (!roots.length) throw new Error("Select the screen, list or rows to fill first.");
+  var texts = [];
+  roots.forEach(function (root) {
+    if (root.type === "TEXT") texts.push(root);
+    else uxdDescendants(root, function (c) { return c.type === "TEXT"; }).forEach(function (t) { texts.push(t); });
+  });
+  texts = texts.filter(function (t) { return t.visible !== false && t.locked !== true; }).slice(0, 600);
+  var plan = [];
+  var seen = new Map();
+  texts.forEach(function (text) {
+    var value = uxdFakeValue(text.characters, uxdSeeded(String(text.id) + "|" + String(payload.seed || "")));
+    if (value === null || value === text.characters) return;
+    plan.push({ node: text, value: value });
+    var key = String(text.characters).trim();
+    seen.set(key, (seen.get(key) || 0) + 1);
+  });
+  for (var f = 0; f < plan.length; f++) { try { await uxdLoadTextFonts(plan[f].node); } catch (_) {} }
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  var changed = 0, samples = [], skipped = 0;
+  for (var i = 0; i < plan.length; i++) {
+    try {
+      var before = plan[i].node.characters;
+      plan[i].node.characters = plan[i].value;
+      changed++;
+      if (samples.length < 6) samples.push({ before: before, after: plan[i].value });
+    } catch (_) { skipped++; }
+  }
+  if (typeof figma.commitUndo === "function") figma.commitUndo();
+  var repeated = 0;
+  seen.forEach(function (count) { if (count > 1) repeated += count; });
+  var lorem = texts.filter(function (t) { return /lorem ipsum|dolor sit amet/i.test(t.characters); }).length;
+  return { ok: true, checked: texts.length, changed: changed, repeated: repeated, skipped: skipped, samples: samples, lorem: lorem };
+}
+// uxd-fill-data:end
 async function runLocalTask(message) {
   var result = null;
   var errorText = null;
@@ -3998,6 +4103,7 @@ async function runLocalTask(message) {
     else if (message.op === "delete-created") result = await localDeleteCreated(payload);
     else if (message.op === "apply-direct-edits") result = await localApplyDirectEdits(payload);
     else if (message.op === "apply-hygiene-fixes") result = await localApplyHygieneFixes(payload);
+    else if (message.op === "fill-realistic-data") result = await localFillRealisticData(payload);
     else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
     else if (message.op === "trigger-undo") {
       if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");

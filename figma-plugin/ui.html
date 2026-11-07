@@ -2312,6 +2312,12 @@
         return { kind: "generate-image", description: imageDescriptionFrom(text) };
       }
       if (/\brename\b[^.]{0,25}\blayers?\b|\b(layer names?|name (the |all |these )?layers)\b/i.test(text)) return { kind: "rename-layers" };
+      // Realistic sample data (no model): "fill with realistic data", "dummy data bhar do", "use sample Indian names".
+      if (count > 0 && !/lorem/i.test(text) && (
+        /\b(fill|populate|add|put|use|replace|generate)\b[^.]{0,40}\b(realistic|real|dummy|sample|mock|fake|demo|test|indian)\b[^.]{0,20}\b(data|content|values|details|numbers|names|amounts)\b/i.test(text) ||
+        /\b(dummy|sample|mock|fake|realistic|demo)\s+data\b/i.test(text) || /\bdata\s+(bhar|bharo|daal|dal)/i.test(text))) {
+        return { kind: "fill-data", reshuffle: /\b(different|again|another|shuffle|new|naya|dusra|alag)\b/i.test(text) };
+      }
       // One-click hygiene fix: "fix hygiene", "fix spacing", "tokenize colours", "fix contrast", "sab theek kar do".
       const fixVerb = /\b(fix(es)?|auto-?fix|clean ?up|tidy( up)?|resolve|correct)\b|theek kar|thik kar|sudhar|sahi kar/i.test(text);
       const fixTarget = /\b(hygiene|lint|issues?|problems?|findings?|spacing|grid|padding|gaps?|tokens?|styles?|colou?r tokens?|variables?|contrast|touch ?targets?|tap targets?|a11y|accessibility|wcag|small text|auto ?layout)\b/i.test(text);
@@ -2632,6 +2638,27 @@
       return String(result.text || "Review complete.");
     }
 
+    async function runFillDataTask(task, stage) {
+      if (!selectedIds().length) throw new Error("Select the screen, list or rows to fill.");
+      stage("creating", "Filling realistic sample data (no model)…");
+      const result = await localTask("fill-realistic-data", { seed: task.reshuffle ? String(Date.now()) : "" }, 60000);
+      if (result.changed > 0) {
+        recordChange("Sample data fill", function () {
+          return localTask("commit-undo", {}).catch(function () {})
+            .then(function () { return localTask("trigger-undo", {}); })
+            .then(function () { return "undone with Figma undo"; });
+        }, { mustBeLatest: true });
+      }
+      stage("done", "Sample data filled · " + result.changed + " value(s)");
+      const lines = (result.samples || []).map(function (item) { return "- " + item.before + " → **" + item.after + "**"; });
+      return (result.changed
+        ? "Filled " + result.changed + " value(s) in " + result.checked + " text layers with realistic data in the same format (₹ amounts in lakh format, dates, masked accounts, IDs, PAN, phone, rates, names)." +
+          (result.repeated ? " " + result.repeated + " of them were copy-pasted repeats and now differ." : "")
+        : "No values to fill. Amounts, dates, masked accounts, IDs, PAN, phone numbers, rates and person names are filled; labels, headings, buttons and statuses are left alone.") +
+        (lines.length ? "\n\n" + lines.join("\n") + (result.changed > lines.length ? "\n- …and " + (result.changed - lines.length) + " more" : "") : "") +
+        (result.lorem ? "\n\n" + result.lorem + " layer(s) still have lorem ipsum. Say **replace the lorem ipsum with realistic content** for that." : "") +
+        (result.changed ? "\nSay **fill different data** for a new set. One Revert (or Cmd/Ctrl+Z) undoes it." : "");
+    }
     async function hygieneSnapshot(prompt) {
       try {
         const tree = await localTask("read-tree", { maxDepth: 12, maxNodes: 800 });
@@ -2856,6 +2883,7 @@
       if (task.kind === "rewrite-text") return runTextTask("rewrite", prompt, stage);
       if (task.kind === "rename-layers") return runTextTask("rename", prompt, stage);
       if (task.kind === "hygiene-fix") return runHygieneFixTask(task, prompt, stage);
+      if (task.kind === "fill-data") return runFillDataTask(task, stage);
       if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);
       if (task.kind === "flow-variations" || task.kind === "screen-variations" || task.kind === "states-pack") return runVariationsTask(task, prompt, stage);
       throw new Error("Unknown quick task.");
