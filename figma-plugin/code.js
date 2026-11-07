@@ -1172,7 +1172,8 @@ async function readCanvasCommand(payload) {
   payload = payload || {};
   var scope = payload.scope === "current-page" ? "current-page" : "selection";
   var maxDepth = Math.max(0, Math.min(12, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
-  var maxNodes = Math.max(1, Math.min(500, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
+  // Up to 1500: a list screen's last cards must not be cut off when a journey reads its facts.
+  var maxNodes = Math.max(1, Math.min(1500, Number.isInteger(payload.maxNodes) ? payload.maxNodes : 60));
   var isSearch = (typeof payload.queryName === "string" && payload.queryName.trim()) ||
     (typeof payload.queryType === "string" && payload.queryType.trim());
   var source;

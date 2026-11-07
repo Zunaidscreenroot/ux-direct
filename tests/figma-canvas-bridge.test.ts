@@ -86,7 +86,7 @@ test("native plugin checks the approved file before canvas access and caps reads
   assert.ok(plugin.includes('assertUxDirectFileScope("read canvas")'));
   assert.ok(plugin.includes('assertUxDirectFileScope("write canvas")'));
   assert.ok(plugin.includes('Math.min(12, Number.isInteger(payload.maxDepth)'));
-  assert.ok(plugin.includes('Math.min(500, Number.isInteger(payload.maxNodes)'));
+  assert.ok(plugin.includes('Math.min(1500, Number.isInteger(payload.maxNodes)'));
   assert.ok(plugin.includes('type === "run-canvas-command"'));
   assert.ok(plugin.includes('function findPageNode(id)'));
   assert.ok(plugin.includes('figma.currentPage.findOne(function (item) { return item.id === id; })'));

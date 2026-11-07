@@ -574,7 +574,8 @@ type Ctx = { b: Builder; t: BlockTheme; bg: string; componentIds: Set<string>; s
   button?: ButtonComponent | null;
   /** Improve only: the source's own texts, so the renderer never adds copy the source did not have. */
   sourceTexts?: Set<string> | null;
-  screenTitle?: string | null };
+  screenTitle?: string | null;
+  componentSizes?: Map<string, { width: number; height: number }> };
 
 const TONE_OPTIONS: Record<string, RegExp> = {
   success: /^(success|positive|current|active|paid|completed?|approved|on ?track|green)$/i,
@@ -711,7 +712,9 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
     case "app_bar": {
       // The source screen's own header component wins over a hand-drawn app bar.
       const header = b.source?.header;
-      if (header && !b.headerNode && depth <= 1) {
+      // One app bar per screen: a second one (the source's own bar repeated) is dropped.
+      if (b.headerNode) { b.warnings.push("Dropped a second app bar."); return null; }
+      if (header && depth <= 1) {
         b.count += 1;
         const node: NativeNode = { type: "INSTANCE", name: header.name, componentId: header.componentId, x: 0, y: 0, width: W, height: header.height,
           layoutSizingHorizontal: "FILL",
@@ -1071,9 +1074,13 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
         b.warnings.push("Dropped component block with unknown componentId " + (componentId || "(missing)") + ".");
         return null;
       }
+      // The screen's header component placed again as a block is its app bar, never a second one.
+      if (b.source?.header && componentId === b.source.header.componentId) return b.headerNode || depth > 1 ? null : expandLeaf(ctx, { type: "app_bar", title: block.title ?? block.name }, "app_bar", W, depth);
       b.count += 1;
       const props = asRec(block.instanceProperties ?? block.properties ?? block.props);
-      const height = typeof block.height === "number" && Number.isFinite(block.height) ? Math.max(1, Math.min(800, block.height)) : 48;
+      // The component's own size from the catalogue: a card instance squeezed to 48px is clipped.
+      const listed = ctx.componentSizes?.get(componentId);
+      const height = typeof block.height === "number" && Number.isFinite(block.height) && (!listed || block.height >= listed.height * 0.9) ? Math.max(1, Math.min(800, block.height)) : listed ? Math.min(800, listed.height) : 48;
       const width = typeof block.width === "number" && Number.isFinite(block.width) ? Math.max(1, Math.min(W, block.width)) : W;
       const node: NativeNode = { type: "INSTANCE", name: clean(block.name, 80) || "Component", componentId, x: 0, y: 0, width, height,
         layoutSizingHorizontal: width >= W ? "FILL" : "FIXED" };
@@ -1646,7 +1653,9 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   })() : null;
   const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds, skeleton: options.skeleton === true, badge: options.monochrome ? null : findBadgeComponent(canvas.components), sourceTexts,
     button: options.create && !options.monochrome ? findButtonComponent(canvas.components, options.kitButtonId) : null,
-    screenTitle: options.create ? clean(options.screenTitle, 120) || null : null };
+    screenTitle: options.create ? clean(options.screenTitle, 120) || null : null,
+    componentSizes: new Map(arr(canvas.components).map(asRec).filter((c): c is Rec => !!c && typeof c.id === "string" && typeof c.height === "number")
+      .map((c) => [c.id as string, { width: typeof c.width === "number" ? c.width : 0, height: c.height as number }])) };
 
   const sourceWidth = typeof source.width === "number" ? source.width : 0;
   const sourceHeight = typeof source.height === "number" ? source.height : 0;
@@ -1679,7 +1688,14 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     const sectionTitle = clean(section.title, 160);
     const kids: NativeNode[] = [];
     if (sectionTitle && sectionTitle !== clean(section.name, 160)) kids.push(b.text("Section title", sectionTitle, content, { size: 17, weight: "Semi Bold", color: theme.text, bg: theme.background }));
-    for (const block of blocks) kids.push(...expandBlock(ctx, block, content, 1));
+    for (let bi = 0; bi < blocks.length; bi += 1) {
+      // An alert keeps its one short CTA inline in a plain section too, not a full-width button below.
+      const next = blocks[bi + 1];
+      const pa = blockType(blocks[bi]) || inferBlockType(blocks[bi]);
+      const paired = next && (pa === "banner" || pa === "text" || pa === "progress_ring") ? pairCardBlocks(ctx, blocks[bi], next, content, 1) : null;
+      if (paired) { kids.push(...paired); bi += 1; continue; }
+      kids.push(...expandBlock(ctx, blocks[bi], content, 1));
+    }
     if (!kids.length) {
       b.warnings.push("Section \"" + name + "\" produced no layers and was skipped.");
       continue;

@@ -3260,7 +3260,7 @@
     // buttons, rows) by id, its size and background, and its facts (amounts, names, IDs) so every
     // later screen shows the same values instead of drifting (₹12,500 → ₹14,500).
     async function readScreen(frameId, depth) {
-      const canvas = await runNativeCanvasCommand("read-canvas", { scope: "selection", nodeIds: [frameId], maxDepth: depth || 8, maxNodes: 400, includeStyles: false, includeVariables: false, includeComponents: false }, 90000).catch(function () { return null; });
+      const canvas = await runNativeCanvasCommand("read-canvas", { scope: "selection", nodeIds: [frameId], maxDepth: depth || 8, maxNodes: 1200, includeStyles: false, includeVariables: false, includeComponents: false }, 90000).catch(function () { return null; });
       return canvas && Array.isArray(canvas.nodes) ? canvas.nodes[0] : null;
     }
     function screenFacts(root) {
@@ -3314,8 +3314,10 @@
       if (!root) return "";
       const focus = focusItem(root, prompt);
       const seen = {}, kit = [];
+      // The app bar is passed as the screen's header (by id), never as a block to place again.
+      const topBar = Array.isArray(root.children) && root.children[0] && root.children[0].type === "INSTANCE" && Number(root.children[0].y || 0) <= 8 ? root.children[0].mainComponentId : "";
       flattenTree(root.children, function (node, _parent, insideInstance) {
-        if (insideInstance || node.type !== "INSTANCE" || !node.mainComponentId || seen[node.mainComponentId] || kit.length >= 8) return;
+        if (insideInstance || node.type !== "INSTANCE" || !node.mainComponentId || seen[node.mainComponentId] || node.mainComponentId === topBar || kit.length >= 8) return;
         seen[node.mainComponentId] = true;
         kit.push("\"" + String(node.name || "Component").slice(0, 40) + "\" (componentId " + node.mainComponentId + ")");
       });
@@ -3348,9 +3350,19 @@
       });
       if (best) kit.button = desc(best);
       // The screen's side gutter (its padding, else where its content starts) and its background.
-      const inner = kids.filter(function (n) { return Number(n.width) < W * 0.97 && Number(n.x) > 0; }).map(function (n) { return Number(n.x); });
-      const padded = kids.filter(function (n) { return Number(n.width) >= W * 0.97 && Number(n.paddingLeft) > 0 && n.type !== "INSTANCE"; }).map(function (n) { return Number(n.paddingLeft); });
-      const gutter = Number(root.paddingLeft) > 0 ? Number(root.paddingLeft) : inner.length ? Math.min.apply(null, inner) : padded.length ? padded.sort(function (a, b) { return a - b; })[Math.floor(padded.length / 2)] : 0;
+      // Where the content column starts: wide blocks (cards, sections) only, one level into
+      // full-width wrappers; icons and small labels near an edge do not count.
+      const starts = [];
+      kids.forEach(function (n) {
+        const w = Number(n.width) || 0;
+        if (n.type === "INSTANCE" && w >= W * 0.97) return;
+        if (w >= W * 0.5 && w < W * 0.97) starts.push(Number(n.x) || 0);
+        else if (w >= W * 0.97) {
+          if (Number(n.paddingLeft) > 0) starts.push(Number(n.paddingLeft));
+          else (Array.isArray(n.children) ? n.children : []).forEach(function (c) { if (Number(c.width) >= W * 0.5 && Number(c.width) < W * 0.97) starts.push(Number(c.x) || 0); });
+        }
+      });
+      const gutter = Number(root.paddingLeft) > 0 ? Number(root.paddingLeft) : starts.filter(function (x) { return x > 0; }).sort(function (a, b) { return a - b; })[0] || 0;
       if (gutter >= 8 && gutter <= 40) kit.gutter = Math.round(gutter);
       const bg = Array.isArray(root.fillColors) ? String(root.fillColors[0] || "") : "";
       if (/^#[0-9a-f]{6}$/i.test(bg)) kit.background = bg.toUpperCase();
