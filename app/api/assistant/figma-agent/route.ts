@@ -953,6 +953,10 @@ export async function POST(request: Request) {
             recoveryAttempt -= 1;
             continue;
           }
+          // A 5xx after a long wait means the upstream chain already failed through its models;
+          // the compact retry then also timed out (60 s) in every observed run, so go straight
+          // to the source fallback instead (finding 61, round 5).
+          if ([500, 502, 503, 504].includes(response.status) && attemptMs > 45000) break modelLoop;
           // The compact retry runs without JSON mode, which covers free models that reject response_format.
           if (!isRecovery && ([408, 429, 500, 502, 503, 504].includes(response.status) ||
             shouldRetryWithoutJsonMode(activeProvider, response.status))) continue;

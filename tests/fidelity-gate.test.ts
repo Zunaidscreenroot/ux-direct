@@ -130,3 +130,17 @@ test("a row whose rigid parts are too wide wraps instead of failing preflight (f
   const report = auditDesignPlanQuality(plan, canvas, "improve this screen");
   assert.ok(!report.findings.some((f) => f.code === "fixed-layout-overflow"), JSON.stringify(report.findings));
 });
+
+test("a row pushed wide by a child that grew during repair still wraps (finding 65, round 5)", async () => {
+  const { auditDesignPlanQuality } = await import("../src/figma-agent/design-plan-quality");
+  const canvas = { nodes: [{ id: "r", name: "Screen", type: "FRAME", x: 0, y: 0, width: 360, height: 700, children: [
+    { id: "t", type: "TEXT", name: "t", text: "Personal Loan", x: 0, y: 0, width: 100, height: 20 }] }], components: [] };
+  const plan = normalizePlan({ frame: { name: "W", width: 360 }, elements: [{ type: "FRAME", name: "Card", width: 328, height: 120, layoutMode: "VERTICAL", children: [
+    { type: "FRAME", name: "Card header", width: 296, height: 40, layoutMode: "HORIZONTAL", itemSpacing: 12, primaryAxisSizingMode: "FIXED", layoutSizingHorizontal: "FILL", children: [
+      { type: "TEXT", name: "Title", text: "Personal Loan", width: 150, height: 20, fontSize: 16, layoutSizingHorizontal: "FILL" },
+      { type: "FRAME", name: "Status badge", width: 74, height: 24, layoutMode: "HORIZONTAL", itemSpacing: 4, paddingLeft: 10, paddingRight: 10, layoutSizingHorizontal: "HUG", primaryAxisSizingMode: "AUTO", children: [
+        { type: "CLONE", name: "Icon", sourceNodeId: "9:1", width: 60, height: 16 },
+        { type: "TEXT", name: "Badge label", text: "Overdue", width: 54, height: 16, fontSize: 12 }] }] }] }] }, canvas) as { elements: N[] };
+  const report = auditDesignPlanQuality(plan, canvas, "improve this screen");
+  assert.ok(!report.findings.some((f) => f.code === "fixed-layout-overflow"), JSON.stringify(report.findings));
+});
