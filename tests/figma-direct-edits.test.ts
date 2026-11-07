@@ -511,3 +511,11 @@ test("bulk find/replace inside instances is snapshotted and Revert restores the 
   assert.equal(r.label.characters, "Pay now");
   assert.equal(label2.characters, "Pay now");
 });
+
+test("light/dark mode requests are an in-place theme task; a 'version' still makes a new screen", () => {
+  assert.deepEqual(plain(classify("make this screen light mode", FRAME)), { kind: "theme", target: "light" });
+  assert.deepEqual(plain(classify("switch to dark theme", FRAME)), { kind: "theme", target: "dark" });
+  assert.deepEqual(plain(classify("dark mode kar do", FRAME)), { kind: "theme", target: "dark" });
+  assert.equal(classify("make a dark mode version of this screen", FRAME)?.kind === "theme", false);
+  assert.equal(classify("make this screen light mode", { selectionTypes: [] })?.kind === "theme", false, "needs a selection");
+});

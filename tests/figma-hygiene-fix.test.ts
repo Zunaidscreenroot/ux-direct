@@ -209,3 +209,31 @@ test("text styles bind on texts inside instances and on close line heights", asy
   assert.equal(tooLoose.textStyleId, "", "a clearly different line height is not forced onto a style");
   assert.equal(result.counts.textStyles, 2);
 });
+
+test("light/dark mode switches in place: neutrals flip, brand hue kept, contrast checked, Revert exact", async () => {
+  const r = runtime();
+  const run = async (op: string, payload: any) => {
+    r.posted.length = 0;
+    await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "t", op, payload });
+    const message = r.posted.find((m: any) => m.type === "uxd-local-result");
+    if (message.error) throw new Error(message.error);
+    return message.result;
+  };
+  r.figma.currentPage.selection = [r.screen];
+  const already = await run("apply-theme", { target: "light" });
+  assert.equal(already.already, 1, "a light screen is already light");
+  const beforeScreen = JSON.stringify(r.screen.fills);
+  const beforeTitle = JSON.stringify(r.title.fills);
+  const result = await run("apply-theme", { target: "dark" });
+  assert.ok(result.changed >= 2);
+  const lum = (c: any) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  assert.ok(lum(r.screen.fills[0].color) < 0.15, "background went dark");
+  assert.ok(lum(r.title.fills[0].color) > 0.7, "text went light");
+  const blue = r.button.fills[0].color;
+  assert.ok(blue.b > blue.r && blue.b > blue.g, "brand blue keeps its hue");
+  assert.equal(r.screen.children.length, 5, "no layers added or removed");
+  const restore = await run("restore-props", { items: result.snapshot });
+  assert.ok(restore.restored >= 2);
+  assert.equal(JSON.stringify(r.screen.fills), beforeScreen);
+  assert.equal(JSON.stringify(r.title.fills), beforeTitle);
+});
