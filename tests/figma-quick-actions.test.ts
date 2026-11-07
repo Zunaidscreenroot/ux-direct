@@ -12,14 +12,15 @@ function boot(fileKey: string) {
   const handlers: Record<string, (event: any) => any> = {};
   let input: ((event: any) => void) | null = null;
   const posted: any[] = [];
+  const shown: number[] = [];
   const figma: any = {
     fileKey, currentPage: { id: "0:1", type: "PAGE", name: "Page", children: [], selection: [], findOne: () => null }, root: { children: [] }, mixed: Symbol("m"),
-    ui: { postMessage: (m: any) => posted.push(m), onmessage: null }, showUI() {}, closePlugin() {}, commitUndo() {},
+    ui: { postMessage: (m: any) => posted.push(m), onmessage: null }, showUI() { shown.push(1); }, closePlugin() {}, commitUndo() {},
     on(name: string, fn: (event: any) => any) { handlers[name] = fn; },
     parameters: { on(name: string, fn: (event: any) => void) { if (name === "input") input = fn; } },
   };
   runInNewContext(code, { figma, __html__: "", console, atob, btoa, Promise, Map, Set, Symbol, Uint8Array, setTimeout, clearTimeout });
-  return { figma, handlers, posted, input: () => input };
+  return { figma, handlers, posted, shown, input: () => input };
 }
 
 test("manifest exposes a freeform Cmd+/ task parameter and still opens normally", () => {
@@ -29,12 +30,14 @@ test("manifest exposes a freeform Cmd+/ task parameter and still opens normally"
 
 test("quick action: suggestions filter, the typed task reaches the panel once it is ready", async () => {
   const key = /UXD_ALLOWED_FILE_KEY = "([^"]+)"/.exec(code)![1];
-  const { figma, handlers, posted, input } = boot(key);
+  const { figma, handlers, posted, shown, input } = boot(key);
+  assert.equal(shown.length, 0, "no showUI at load: Figma may be in query mode (Cmd+/ parameter box)");
   let suggestions: string[] = [];
   input()!({ key: "prompt", query: "hyg", result: { setSuggestions: (list: string[]) => { suggestions = list; } } });
   assert.deepEqual(JSON.parse(JSON.stringify(suggestions)), ["hyg", "fix hygiene", "check hygiene"]);
 
   handlers.run({ command: "", parameters: { prompt: "  fix hygiene  " } });
+  assert.equal(shown.length, 1, "the panel opens once the task is entered");
   assert.equal(posted.filter((m) => m.type === "uxd-quick-action").length, 0, "waits for the panel to load");
   await figma.ui.onmessage({ type: "get-selection" });
   assert.deepEqual(JSON.parse(JSON.stringify(posted.filter((m) => m.type === "uxd-quick-action").map((m) => m.prompt))), ["fix hygiene"]);
