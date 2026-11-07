@@ -161,9 +161,11 @@ test("find-icon-targets on a screen picks buttons only, not label/value data row
   const found = await run("find-icon-targets", {});
   assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((t: any) => t.id))), ["p1"]);
 
-  figma.currentPage.selection = [row];
+  figma.currentPage.selection = [plain];
   const direct = await run("find-icon-targets", {});
-  assert.deepEqual(JSON.parse(JSON.stringify(direct.targets.map((t: any) => t.id))), ["row1"], "a directly selected row still gets an icon");
+  assert.deepEqual(JSON.parse(JSON.stringify(direct.targets.map((t: any) => t.id))), ["row2"], "a directly selected label row still gets an icon");
+  figma.currentPage.selection = [row];
+  assert.equal((await run("find-icon-targets", {})).targets.length, 0, "a label/value data row never gets an icon (#167)");
 
   const list: any = { id: "l1", type: "FRAME", name: "List", width: 360, height: 200, children: [plain] };
   nodes.l1 = list;
