@@ -7,6 +7,8 @@ const CORRECTION_SIGNAL = [
   /\blearn from this\b/i,
   /\btrain (ux direct|the product|yourself|this|the system)\b/i,
   /\b(save|store) this (as a rule|for future|as learning)\b/i,
+  /\b(save|store|add|note|put) (this|that|it|these|this rule|this feedback) (in|to|into) (the |your )?(knowledge ?base|kb|memory|brain)\b/i,
+  /\b(knowledge ?base|kb|memory|brain) (mein|me|main) (save|daal|dal|add|rakh)\w*\b/i,
   /\b(don't|do not) repeat (this|that|this mistake)\b/i,
   /\byou (got|did|made|missed|ignored) .{0,80}\b(wrong|incorrect|mistake|missed)\b/i,
   /\b(you should have|should have done|not what i asked|that\'s not right|this is wrong|this was wrong|that was wrong|that should have been|no,? i meant|i asked .{0,100} but|i said .{0,100} but|instead you|you missed|not like this|that is not how|incorrect output|missed the point)\b/i,
@@ -135,11 +137,18 @@ export function assessBrainRelevance(title: string, content: string, scopeKey: s
 
 export function detectCoachingSignal(text: string): boolean {
   const value = text.trim();
-  return value.length >= 5 && CORRECTION_SIGNAL.some(pattern => pattern.test(value));
+  return value.length >= 5 && !isQuestionAboutLearning(value) && CORRECTION_SIGNAL.some(pattern => pattern.test(value));
+}
+
+/** "Will you remember this?", "if I tell you what is wrong, will you save it?": a question, not a lesson. */
+export function isQuestionAboutLearning(text: string): boolean {
+  const value = text.trim();
+  return /\bif i (tell|show|explain|teach|share|give)\b/i.test(value) ||
+    /^(so\s+|and\s+|ok\s+)?(will|would|can|could|do|does|is|are|kya)\b[^.!]*\b(save|remember|learn|store|knowledge ?base|memory|brain|learning)\b[^.!]*\??\s*$/i.test(value) && /\?\s*$|^(so\s+|and\s+|ok\s+)?(will|would|can|could|do|does|is|are|kya)\b/i.test(value);
 }
 
 export function detectExplicitTrainingIntent(text: string): boolean {
-  return EXPLICIT_REUSE_INTENT.some(pattern => pattern.test(text));
+  return !isQuestionAboutLearning(text) && EXPLICIT_REUSE_INTENT.some(pattern => pattern.test(text));
 }
 
 export function resolveLearningScope(candidateScope: unknown, project: TaskProject, originalFeedback: string): string {

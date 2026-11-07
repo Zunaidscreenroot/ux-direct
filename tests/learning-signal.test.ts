@@ -120,3 +120,11 @@ test("task model cannot promote lessons into global memory without explicit inte
   assert.equal(resolveLearningScope("UX_SHARED_BRAIN", "general", "A banking task needs a clear CTA"), "project:general-ux");
   assert.equal(resolveLearningScope("UX_SHARED_BRAIN", "general", "Make this a global rule across all products"), "UX_SHARED_BRAIN");
 });
+
+test("a question about learning is not itself a lesson; an explicit save is", () => {
+  for (const q of ["so if i tell you what is wrong here and what can be fixed, will you save in knowledge base for future", "will you remember this?", "is your learning mode on"]) {
+    assert.equal(detectCoachingSignal(q) || detectExplicitTrainingIntent(q), false, q);
+  }
+  assert.equal(detectCoachingSignal("the loan amount should be the biggest text, save this in knowledge base"), true);
+  assert.equal(detectCoachingSignal("cards should have 16px spacing, remember this"), true);
+});

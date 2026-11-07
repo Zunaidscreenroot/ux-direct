@@ -69,6 +69,14 @@ function collectText(nodes: RecordLike[], output: string[] = [], depth = 0, sour
   return output;
 }
 
+/**
+ * "Simplify this screen", "declutter", "make it minimal": the request itself asks for less content,
+ * so secondary copy may go. Key values (amounts, identifiers) are still required.
+ */
+export function wantsSimplify(prompt: string): boolean {
+  return /\b(simplif\w*|simpler|declutter\w*|de-clutter\w*|less (busy|cluttered|crowded|noisy|text)|minimal(ist|istic)?|reduce (the )?(clutter|noise|content)|strip(ped)? (it |this )?down|fewer (elements|things|items)|saaf|kam (karo|kar do))\b/i.test(prompt);
+}
+
 function hasExplicitRemoval(text: string, prompt: string): boolean {
   const normalizedText = fold(text);
   if (!normalizedText) return false;
@@ -160,7 +168,8 @@ export function auditDesignPlanQuality(
   const sourceUnique = [...new Set(sourceTexts)];
   // Retain all source copy/data by default. A removal/rewrite is allowed only
   // when the request names the exact source text it intends to change.
-  const missing = sourceUnique.filter((text) => {
+  const simplify = wantsSimplify(prompt);
+  const missing = simplify ? [] : sourceUnique.filter((text) => {
     const normalized = fold(text);
     if (!normalized || normalized.length < 2 || hasExplicitRemoval(text, prompt)) return false;
     return !outputCorpus.includes(normalized);
@@ -345,7 +354,10 @@ export function missingSourceTexts(planValue: unknown, sourceCanvasValue: unknow
   const sourceCanvas = isRecord(sourceCanvasValue) ? sourceCanvasValue : {};
   const prompt = typeof promptValue === "string" ? promptValue : "";
   const outputCorpus = fold(collectText(nodesOf(plan.elements), [], 0, indexById(nodesOf(sourceCanvas.nodes))).join(" "));
+  // A simplify request drops secondary copy on purpose: only key values are put back.
+  const simplify = wantsSimplify(prompt);
   return [...new Set(collectText(nodesOf(sourceCanvas.nodes)))].filter((text) => {
+    if (simplify && !/(?:₹|INR|\$|€|£)\s*[\d,]+|\b[A-Z]{2,}[A-Z0-9-]{6,}\b/.test(text)) return false;
     const normalized = fold(text);
     return normalized.length >= 2 && !hasExplicitRemoval(text, prompt) && !outputCorpus.includes(normalized);
   });

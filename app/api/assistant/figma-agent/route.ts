@@ -17,7 +17,7 @@ import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openr
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
 import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, FREELLMAPI_RECOVERY_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
-import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
+import { auditDesignPlanQuality, missingSourceTexts, wantsSimplify } from "@/src/figma-agent/design-plan-quality";
 import { designRulesBlock } from "@/src/figma-agent/design-rules";
 import { canvasTexts, contentLocaleInstruction, inferContentLocale } from "@/src/figma-agent/content-locale";
 import { CREATE_DENSITY_RULE, CREATE_DESIGN_SCOPE, CREATE_OPERATING_CONTRACT, createFrameSize, createModeCanvas, createScopeInstructions } from "@/src/figma-agent/create-mode";
@@ -457,6 +457,8 @@ function compactComponentCatalogue(value: unknown): Array<Record<string, unknown
   });
 }
 
+const SIMPLIFY_DIRECTIVE = "SIMPLIFY REQUEST: the designer asked for a simpler screen, so make it visibly simpler, not just tidier. Remove decorative and promotional content (banners, illustrations, marketing lines, repeated branding or headings), drop secondary and repeated information (labels that repeat a section title, metadata shown twice, secondary stats), merge related facts into fewer rows, keep at most one action per item and one primary action per screen, and use fewer sections and type sizes. Keep the screen's purpose and every key fact a person needs for the task: each item's name, amount, status and due date, and its main action, copied exactly from the SOURCE TEXT INVENTORY. Aim for about a third fewer text layers than the source.";
+
 const SYSTEM = [
   UX_DIRECT_DESIGN_ROLE + " Users can give a short request. Infer the design procedure and execute the full playbook automatically without asking them to repeat it.",
   "Determine the scope from the selected node. If the selected node is a card, component, widget, row, or other sub-screen component, create a variation of that component only and keep its content inside that component's dimensions. Do not invent screen navigation, unrelated sections, or full-screen chrome for a component selection. If the selected node is a complete screen, create a screen variation.",
@@ -625,6 +627,8 @@ export async function POST(request: Request) {
   // planner instructions and never changes designScope, block-spec rendering or the gates.
   const taskRole = detectTaskRole(parsedInput.data.prompt);
   const sourceTexts = collectSourceTextInventory(Array.isArray(canvas.nodes) ? canvas.nodes : []).map((item) => item.text);
+  // "Simplify this screen": less content is the goal, so the keep-every-text rules give way to it.
+  const simplifyRequest = !createMode && wantsSimplify(parsedInput.data.prompt);
   const keywordDomain = detectDomain(parsedInput.data.prompt, sourceTexts);
   const fallbackBrief: AgentBrief = { domain: keywordDomain.domain, domainSource: keywordDomain.score ? "keywords" : "default",
     instructions: roleInstructions(taskRole, keywordDomain.domain), runs: [] };
@@ -703,7 +707,7 @@ export async function POST(request: Request) {
     : "";
   const designRulesInstructions = designRulesBlock(parsedInput.data.designRules);
   const stateInstructions = parsedInput.data.state ? "\n" + STATE_BRIEFS[parsedInput.data.state] : "";
-  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + stateInstructions + designRulesInstructions + "\n" + agentBrief.instructions + "\n" + designerPersona(taskRole, parsedInput.data.prompt) + exampleInstructions, brain);
+  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + (simplifyRequest ? "\n" + SIMPLIFY_DIRECTIVE + " This overrides the keep-every-source-text rules above for secondary copy." : "") + "\n" + scopeInstructions + stateInstructions + designRulesInstructions + "\n" + agentBrief.instructions + "\n" + designerPersona(taskRole, parsedInput.data.prompt) + exampleInstructions, brain);
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its configured free-model chain.
   // Both are bounded by compact retry and the shared generation deadline.
@@ -727,7 +731,7 @@ export async function POST(request: Request) {
     roleInstructions(taskRole, agentBrief.domain),
     designRulesInstructions.trim(),
     "Preserve the screen/component scope, all meaningful source text and financial values, status, date, labels, rows, actions and relationships. Do not redesign it as a generic dashboard or generic stack of cards.",
-    "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Preserve every listed text string exactly, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
+    simplifyRequest ? SIMPLIFY_DIRECTIVE : "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Preserve every listed text string exactly, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
     "Use the attached screenshot and source layers when available. Use semantic nested FRAMEs, Auto Layout for suitable cards and rows, clear hierarchy, strong contrast, consistent spacing and editable native shapes/text. Do not invent contractual financial details.",
     "CONTENT DENSITY AND PAINT CONTRACT: at least 30% of all native nodes must be TEXT, with at least 6 meaningful task-specific text layers (or every meaningful source text item if the selection has fewer). Put actual labels, values, dates, statuses and action copy in TEXT nodes. Every FRAME must declare color for a visible surface or noFill:true when transparent. Make Auto Layout widths and paddings compatible; use FILL only when parent content width should determine the effective width.",
     "Return one complete JSON object only with root keys summary (string), frame ({name,width,height,backgroundColor}), elements (an array of 3–6 meaningful populated FRAME section containers), and learningCandidate:null. Every element must use supported native Figma fields. This is a schema contract, not text to copy. No markdown, explanation or reasoning.",
@@ -741,7 +745,7 @@ export async function POST(request: Request) {
     scopeInstructions,
     roleInstructions(taskRole, agentBrief.domain),
     designRulesInstructions.trim(),
-    "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Copy every listed text string exactly into block fields, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
+    simplifyRequest ? SIMPLIFY_DIRECTIVE : "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Copy every listed text string exactly into block fields, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
     "Do not redesign it as a generic dashboard. Do not invent contractual financial details.",
     BLOCK_SPEC_CONTRACT,
     "OUTPUT BUDGET: 3–6 sections and 10–22 blocks. Prefer list over many single rows. Finish every string, array, object and the final closing brace. learningCandidate:null. No markdown, explanation or reasoning.",
@@ -945,7 +949,7 @@ export async function POST(request: Request) {
     const directorKeeps = (spec: Record<string, unknown>, model?: string): boolean => {
       // Only content counts as lost: dropping a stray logo or chevron text is a fix, not a loss.
       const contentKeys = new Set(fullSource.map((text) => text.toLowerCase().replace(/\s+/g, " ").trim()));
-      const lost = lostTexts(current.spec as Record<string, unknown>, spec).filter((text) => !fullSource.length || contentKeys.has(text.toLowerCase().replace(/\s+/g, " ").trim()) || isValueText(text));
+      const lost = lostTexts(current.spec as Record<string, unknown>, spec).filter((text) => simplifyRequest ? isValueText(text) : !fullSource.length || contentKeys.has(text.toLowerCase().replace(/\s+/g, " ").trim()) || isValueText(text));
       if (lost.length) { refusal = "lost"; refusalTexts = lost.slice(0, 8); log("iteration dropped " + lost.length + " texts (" + lost.slice(0, 4).join(", ") + "); previous version kept"); return false; }
       const known = [...(fullSource.length ? fullSource : sourceTexts), ...sourceRead.decorative];
       const inventedBefore = inventedTexts(current.spec as Record<string, unknown>, known, parsedInput.data.prompt).length;
