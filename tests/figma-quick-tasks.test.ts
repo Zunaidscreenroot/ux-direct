@@ -292,3 +292,16 @@ test("copy rewrite drops whitespace-only edits and leaves IDs, amounts and dates
   assert.equal(isValueText("Pay ₹4,500"), false);
   assert.equal(isValueText("Apply now"), false);
 });
+
+test("copy rewrite drops punctuation-only edits unless the request is about punctuation", () => {
+  const items = [
+    { id: "a", type: "TEXT", name: "Alert", text: "Late EMIs incur penalties and lower your score." },
+    { id: "b", type: "TEXT", name: "Banner", text: "Pay your due charges now to close this loan off" },
+  ];
+  const updates = { updates: [
+    { ref: "t1", text: "Late EMIs incur penalties and lower your score" },
+    { ref: "t2", text: "Pay due charges now to close this loan" },
+  ] };
+  assert.deepEqual(normalizeTextEdits("rewrite", updates, items, "", "rewrite the text on this screen to be clearer").map((e) => e.id), ["b"]);
+  assert.deepEqual(normalizeTextEdits("rewrite", updates, items, "", "remove the full stops").map((e) => e.id), ["a", "b"]);
+});

@@ -80,6 +80,8 @@ export function isValueText(text: string): boolean {
 
 const VALUE_EDIT_REQUEST = /\b(numbers?|amounts?|values?|ids?|dates?|prices?|figures?|data|currency|format|translate|hindi|placeholder|sample|dummy)\b/i;
 
+const PUNCTUATION_REQUEST = /\b(punctuat\w*|full ?stops?|periods?|commas?|apostroph\w*|quotes?|hyphen\w*)\b/i;
+
 export function normalizeTextEdits(mode: TextTaskMode, data: unknown, items: TextTaskItem[], raw = "", prompt = ""): TextEdit[] {
   const allowValueEdits = VALUE_EDIT_REQUEST.test(prompt);
   const byRef = new Map(items.map((item, index) => [refFor(index), item]));
@@ -116,6 +118,9 @@ export function normalizeTextEdits(mode: TextTaskMode, data: unknown, items: Tex
       // Whitespace-only "changes" are no-ops (tester: "Personal Loan " → "Personal Loan" ×3).
       const squash = (text: string) => text.replace(/\s+/g, " ").trim();
       if (squash(value) === squash(source.text || "")) return;
+      // Punctuation-only "changes" are no-ops too (tester: a dropped full stop counted as a rewrite).
+      const words = (text: string) => squash(text.replace(/\p{P}+/gu, ""));
+      if (!PUNCTUATION_REQUEST.test(prompt) && words(value) === words(source.text || "")) return;
       // A copy rewrite never touches IDs, amounts or dates unless the request is about them.
       if (!allowValueEdits && isValueText(source.text || "")) return;
       edits.push({ id: source.id, value, before: source.text || "" });
