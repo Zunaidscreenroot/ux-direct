@@ -119,22 +119,49 @@ export function specTexts(spec: Rec): string[] {
   return specRawTexts(spec).map(norm);
 }
 
-/** Source texts the screen no longer shows (exact text, ignoring case and spacing). */
+/**
+ * Source texts the screen no longer shows, counted: a text the source shows three times (one per
+ * loan card) must still show three times, so merging repeated cards counts as losing content.
+ * Matching ignores case and spacing; a text inside a longer one ("₹10,000" in "Pay ₹10,000") counts.
+ */
 export function missingFromSpec(spec: Rec, sourceTexts: string[]): string[] {
   const shown = specTexts(spec);
-  const joined = shown.join("\n");
-  const out: string[] = [];
+  const need = new Map<string, { raw: string; count: number }>();
   for (const raw of sourceTexts) {
     const text = norm(raw);
-    if (!text || out.includes(raw)) continue;
-    if (!shown.includes(text) && !joined.includes(text)) out.push(raw);
+    if (!text) continue;
+    const entry = need.get(text);
+    if (entry) entry.count += 1; else need.set(text, { raw, count: 1 });
+  }
+  const out: string[] = [];
+  for (const [text, { raw, count }] of need) {
+    const exact = shown.filter((item) => item === text).length;
+    const inside = exact >= count ? 0 : shown.filter((item) => item !== text && item.includes(text)).length;
+    for (let missing = count - exact - inside; missing > 0; missing--) out.push(raw);
   }
   return out;
 }
 
-/** Texts the previous version showed that the new one dropped (as the previous version wrote them). */
+/** Texts the previous version showed that the new one dropped, counted (as the previous version wrote them). */
 export function lostTexts(previous: Rec, next: Rec): string[] {
-  return missingFromSpec(next, [...new Set(specRawTexts(previous))]);
+  return missingFromSpec(next, specRawTexts(previous));
+}
+
+/** Texts the screen shows that are in neither the source nor the user's request (invented content). */
+export function inventedTexts(spec: Rec, sourceTexts: string[], prompt = ""): string[] {
+  const source = sourceTexts.map(norm);
+  const joined = source.join("\n");
+  const ask = norm(prompt);
+  const out: string[] = [];
+  for (const raw of new Set(specRawTexts(spec))) {
+    const text = norm(raw);
+    if (text.length < 4 || source.includes(text) || joined.includes(text) || ask.includes(text)) continue;
+    // A combination of source texts ("Pay ₹10,000" from "Pay" + "₹10,000") is not invented.
+    const words = text.split(" ").filter((word) => word.length > 2);
+    if (words.length && words.every((word) => joined.includes(word))) continue;
+    out.push(raw);
+  }
+  return out;
 }
 
 /** Amounts, counts, dates and percentages: never allowed to disappear in an iteration. */
@@ -143,9 +170,12 @@ export const isValueText = (text: string) => /[\d₹$€£%]/.test(text);
 /** What the Lead can see for sure without a model: missing source content, competing primaries, duplicated content. */
 export function deterministicLeadNotes(spec: Rec, sourceTexts: string[] = []): LeadNote[] {
   const notes: LeadNote[] = [];
-  const missing = sourceTexts.length ? missingFromSpec(spec, sourceTexts) : [];
+  const missing = sourceTexts.length ? [...new Set(missingFromSpec(spec, sourceTexts))] : [];
   if (missing.length) notes.push({ severity: "high", issue: "Source content missing from the screen (" + missing.length + "): " + missing.slice(0, 8).join(", "),
     fix: "Put every one of these exact texts back, in the block that matches its meaning (amounts as values, never dropped)." });
+  const invented = sourceTexts.length ? inventedTexts(spec, sourceTexts) : [];
+  if (invented.length) notes.push({ severity: "medium", issue: "Text not in the source (invented): " + invented.slice(0, 6).join(", "),
+    fix: "Remove invented headings, banners, buttons and captions; use only the source's own texts." });
   const sections = Array.isArray(spec.sections) ? spec.sections as Rec[] : [];
   const blocks = sections.flatMap((section) => Array.isArray(section.blocks) ? section.blocks as Rec[] : []);
   const buttons = blocks.flatMap((block) => block.type === "button" ? [block] : block.type === "buttons" && Array.isArray(block.items) ? block.items as Rec[] : []);
