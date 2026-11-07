@@ -1482,6 +1482,21 @@ function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: st
   for (const style of arr(styles.paint).map(asRec)) {
     if (style && typeof style.id === "string" && typeof style.color === "string" && !paintByColor.has(style.color.toUpperCase())) paintByColor.set(style.color.toUpperCase(), style.id);
   }
+  // Exact colour first; else the closest file style that is near in colour and in lightness, so
+  // derived tints and borders also use the file's tokens without moving contrast (any screen).
+  const palette = [...paintByColor].map(([color, id]) => ({ color, id })).filter((p) => !!hex(p.color));
+  const nearestPaint = (value: string): { color: string; id: string } | null => {
+    const key = value.toUpperCase();
+    const exact = paintByColor.get(key);
+    if (exact) return { color: key, id: exact };
+    if (!hex(value)) return null;
+    let best: { color: string; id: string } | null = null, bestDist = 0.05;
+    for (const p of palette) {
+      const d = colorDistance(value, p.color);
+      if (d < bestDist && Math.abs(luminance(p.color) - luminance(value)) <= 0.03) { bestDist = d; best = p; }
+    }
+    return best;
+  };
   let texts = 0, paints = 0;
   const visit = (nodes: NativeNode[]) => {
     for (const node of nodes) {
@@ -1500,8 +1515,12 @@ function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: st
         }
       }
       if (node.type !== "CLONE" && node.type !== "INSTANCE" && typeof node.color === "string" && typeof node.paintStyleId !== "string") {
-        const id = paintByColor.get(node.color.toUpperCase());
-        if (id) { node.paintStyleId = id; paints += 1; }
+        const hit = nearestPaint(node.color);
+        if (hit) { node.color = hit.color; node.paintStyleId = hit.id; paints += 1; }
+      }
+      if (node.type !== "CLONE" && node.type !== "INSTANCE" && typeof node.strokeColor === "string" && typeof node.strokeStyleId !== "string") {
+        const hit = nearestPaint(node.strokeColor);
+        if (hit) { node.strokeColor = hit.color; node.strokeStyleId = hit.id; paints += 1; }
       }
       if (node.children) visit(node.children);
     }
@@ -1640,7 +1659,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     compactToBudget(elements);
     if (measure() > budget * 1.1) b.warnings.push("The improved screen is " + Math.round(measure()) + "px tall against the source's " + budget + "px: the spec adds content the source did not have.");
   }
-  const gapUsed = rootGap;
+  const gapUsed = grid4(rootGap);
   const contentHeight = measure();
   const requestedHeight = typeof rawFrame.height === "number" ? rawFrame.height : sourceHeight || 800;
   const fits = contentHeight <= requestedHeight;
@@ -1656,6 +1675,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     primaryAxisAlignItems: "MIN", counterAxisAlignItems: "MIN",
     primaryAxisSizingMode: fits ? "FIXED" : "AUTO", counterAxisSizingMode: "FIXED",
   };
+  snapSpacingToGrid(elements);
   assignPositions(frame, elements);
   const summary = clean(spec.summary, 700) || "A UX Direct native design variation built from " + blockCount + " design blocks.";
   return {
@@ -1665,6 +1685,35 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     nodeCount,
     blockCount,
   };
+}
+
+/**
+ * Every gap and padding the renderer writes sits on the 4px grid, including the ones later passes
+ * set (source-fidelity buttons, section padding, budget compaction): 10 → 12, 6 → 8, 2 → 4.
+ * A hugging frame's height follows the change so positions stay right.
+ */
+function snapSpacingToGrid(nodes: NativeNode[]): void {
+  for (const node of nodes) {
+    if (node.children?.length) snapSpacingToGrid(node.children);
+    if (node.type !== "FRAME" || !node.layoutMode) continue;
+    let delta = 0;
+    const vertical = node.layoutMode === "VERTICAL";
+    for (const key of ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"] as const) {
+      const value = node[key];
+      if (typeof value !== "number" || value <= 0 || value % 4 === 0) continue;
+      const snapped = grid4(value);
+      if (key === "paddingTop" || key === "paddingBottom") delta += snapped - value;
+      node[key] = snapped;
+    }
+    const gap = node.itemSpacing;
+    if (typeof gap === "number" && gap > 0 && gap % 4 !== 0) {
+      const snapped = grid4(gap);
+      const flow = (node.children ?? []).filter((child) => child.layoutPositioning !== "ABSOLUTE").length;
+      if (vertical) delta += (snapped - gap) * Math.max(0, flow - 1);
+      node.itemSpacing = snapped;
+    }
+    if (delta && node.layoutSizingVertical === "HUG") node.height = Math.max(1, node.height + delta);
+  }
 }
 
 /** Prompt contract for block mode. Kept short on purpose: weaker models follow short contracts. */

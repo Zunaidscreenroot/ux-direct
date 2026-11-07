@@ -1996,6 +1996,9 @@ async function writeCanvasCommand(payload, options) {
       if (type !== "CLONE" && typeof spec.paintStyleId === "string" && typeof node.setFillStyleIdAsync === "function") {
         try { await node.setFillStyleIdAsync(spec.paintStyleId); } catch (_) { /* keep the literal colour */ }
       }
+      if (type !== "CLONE" && typeof spec.strokeStyleId === "string" && typeof node.setStrokeStyleIdAsync === "function") {
+        try { await node.setStrokeStyleIdAsync(spec.strokeStyleId); } catch (_) { /* keep the literal colour */ }
+      }
       parent.appendChild(node);
       if (type === "CLONE" && "layoutPositioning" in node && spec.layoutPositioning !== "ABSOLUTE") {
         try { node.layoutPositioning = "AUTO"; } catch (_) {}
@@ -4246,7 +4249,63 @@ async function uxdSyncInstance(copy, instance) {
 // A row whose real parts (a chip instance with an icon, a copied logo) came out wider than the plan's
 // estimate overflows and clips its last item ("slice" logo cut to "slic"; T12): the widest text
 // column in that row fills the remaining space instead of keeping its estimated fixed width.
+// Room a child has inside its parent: the parent's inner width, minus its siblings in a row.
+function uxdAvailableWidth(node) {
+  var parent = node.parent;
+  if (!parent || typeof parent.width !== "number") return Infinity;
+  var inner = parent.width - (parent.paddingLeft || 0) - (parent.paddingRight || 0);
+  if (parent.layoutMode === "HORIZONTAL" && parent.layoutWrap !== "WRAP" && node.layoutPositioning !== "ABSOLUTE") {
+    var flow = parent.children.filter(function (c) { return c.visible !== false && c.layoutPositioning !== "ABSOLUTE"; });
+    var gap = parent.primaryAxisAlignItems === "SPACE_BETWEEN" ? 0 : (parent.itemSpacing || 0);
+    var others = flow.filter(function (c) { return c !== node; });
+    // A label beside it (growing, or multi-word text that can wrap) gives its room up first,
+    // keeping at least 60px; icons, badges and other tokens keep their width.
+    var wraps = function (c) {
+      if (c.layoutSizingHorizontal === "FILL" || c.layoutGrow === 1) return true;
+      var words = function (t) { return /\s/.test(String(t.characters || "").trim()); };
+      if (c.type === "TEXT") return words(c);
+      return c.type === "FRAME" && typeof c.findAll === "function" && c.findAll(function (k) { return k.type === "TEXT" && words(k); }).length > 0;
+    };
+    return inner - Math.max(0, flow.length - 1) * gap - others.reduce(function (sum, c) {
+      return sum + (wraps(c) ? Math.min(c.width, 60) : c.width);
+    }, 0);
+  }
+  if (parent.layoutMode === "VERTICAL" || parent.layoutMode === "HORIZONTAL") return inner;
+  return parent.width - Math.max(0, node.x || 0);
+}
+// One unbreakable token (an amount like ₹2,00,000, an ID like DMI1234567890) must never wrap
+// mid-token or be clipped at its card edge, on any screen. Measured in Figma, not estimated:
+// such a text hugs its width; when even that is wider than its room, the type steps down to 11px.
+async function uxdFixTokenWrap(root) {
+  var fixed = 0;
+  var texts = root.findAll(function (n) {
+    if (n.type !== "TEXT" || n.visible === false || uxdInsideInstance(n)) return false;
+    var value = String(n.characters || "").trim();
+    return value.length >= 3 && !/\s/.test(value) && typeof n.fontSize === "number";
+  });
+  for (var i = 0; i < texts.length; i++) {
+    var text = texts[i];
+    try {
+      var before = { mode: text.textAutoResize, width: text.width, sizing: text.layoutSizingHorizontal };
+      var room = uxdAvailableWidth(text);
+      await uxdLoadTextFonts(text);
+      text.textAutoResize = "WIDTH_AND_HEIGHT";
+      var natural = text.width;
+      if (natural <= before.width + 0.5 && natural <= room + 0.5) {
+        // It already fits on one line: leave it exactly as it was.
+        if (before.mode !== "WIDTH_AND_HEIGHT") { text.textAutoResize = before.mode; if (before.mode !== "NONE") text.resize(before.width, text.height); if (before.sizing === "FILL") text.layoutSizingHorizontal = "FILL"; }
+        continue;
+      }
+      var size = text.fontSize;
+      while (text.width > room + 0.5 && size > 11) { size -= 1; text.fontSize = size; }
+      if (text.parent && (text.parent.layoutMode === "HORIZONTAL" || text.parent.layoutMode === "VERTICAL")) text.layoutSizingHorizontal = "HUG";
+      fixed++;
+    } catch (_) {}
+  }
+  return fixed;
+}
 async function uxdFixRowOverflow(root) {
+  try { await uxdFixTokenWrap(root); } catch (_) {}
   var fixed = 0, picks = [];
   var rows = root.findAll(function (n) { return n.type === "FRAME" && n.layoutMode === "HORIZONTAL" && n.layoutWrap !== "WRAP" && !uxdInsideInstance(n); });
   rows.forEach(function (row) {
@@ -4259,7 +4318,12 @@ async function uxdFixRowOverflow(root) {
       if (c.layoutSizingHorizontal === "FILL") return false;
       if (c.type === "TEXT") return true;
       return c.type === "FRAME" && typeof c.findAll === "function" && c.findAll(function (k) { return k.type === "TEXT"; }).length > 0;
-    }).sort(function (a, b) { return b.width - a.width; });
+    }).sort(function (a, b) {
+      // The label side shrinks, never a one-token value (an amount or an ID stays whole).
+      var ta = a.type === "TEXT" && !/\s/.test(String(a.characters || "").trim()) ? 1 : 0;
+      var tb = b.type === "TEXT" && !/\s/.test(String(b.characters || "").trim()) ? 1 : 0;
+      return ta - tb || b.width - a.width;
+    }).filter(function (c) { return !(c.type === "TEXT" && !/\s/.test(String(c.characters || "").trim())); });
     if (candidates[0]) picks.push(candidates[0]);
   });
   for (var i = 0; i < picks.length; i++) {

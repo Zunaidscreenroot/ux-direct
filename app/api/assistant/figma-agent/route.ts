@@ -77,6 +77,7 @@ const ElementFieldsSchema = z.object({
   fontStyle: z.string().trim().min(1).max(100).optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   paintStyleId: z.string().trim().min(1).max(300).optional(),
+  strokeStyleId: z.string().trim().min(1).max(300).optional(),
   textStyleId: z.string().trim().min(1).max(300).optional(),
   textOverrides: z.record(z.string().max(120), z.string().max(500)).optional(),
   effectStyleId: z.string().trim().min(1).max(300).optional(),
@@ -812,7 +813,7 @@ export async function POST(request: Request) {
       for (const entry of nodes) {
         if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
         const node = entry as Record<string, unknown>;
-        for (const [key, group] of [["paintStyleId", "paint"], ["textStyleId", "text"], ["effectStyleId", "effect"], ["gridStyleId", "grid"]] as const) {
+        for (const [key, group] of [["paintStyleId", "paint"], ["strokeStyleId", "paint"], ["textStyleId", "text"], ["effectStyleId", "effect"], ["gridStyleId", "grid"]] as const) {
           if (typeof node[key] === "string") styleReferences.push({ key, group, node });
         }
         if (Array.isArray(node.children)) collectStyleReferences(node.children);
@@ -1057,6 +1058,11 @@ export async function POST(request: Request) {
       }
     }
   }
+  // Only a few free models read images (Gemini, one OpenRouter VL). When those are out of quota or
+  // time out, every later attempt goes text-only on the native layer tree, so the gateway can reach
+  // Groq, Mistral and Workers AI instead of the deterministic source fallback (2026-11-07: an
+  // improve tried five Gemini models in a row, all 429/timeout, then fell back).
+  let visionDropped = false;
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
     const attemptsForModel = 2;
@@ -1092,12 +1098,12 @@ export async function POST(request: Request) {
           : "";
         const modelUserText = isRecovery
           ? "RECOVERY RETRY: The prior response was absent, incomplete, or invalid. Return a smaller complete JSON object following the exact compact output budget in the system message. Do not continue the old text or explain the failure.\nSOURCE CONTEXT:\n" + recoveryContext + validationBlock
-          : (renderedScreen
+          : (renderedScreen && !visionDropped
             ? "Design a high-fidelity, source-faithful improvement. Combine the rendered screen image with its native layer tree. Avoid generic redesigns. Context:\n" + userContext + validationBlock
             : "Design a source-faithful improvement using native layer evidence only. No rendered image was available, so do not claim visual inspection. Context:\n" + userContext + validationBlock);
         const modelImages: Array<Record<string, unknown>> = [];
-        if (renderedScreen) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
-        if (referenceImage) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
+        if (renderedScreen && !visionDropped) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
+        if (referenceImage && !visionDropped) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
         const systemText = isRecovery ? (blockMode ? blockRecoverySystem : recoverySystem) : system;
         const textChars = systemText.length + modelUserText.length;
         promptSize = { textChars, approxTokens: Math.round(textChars / 3.6),
@@ -1167,6 +1173,7 @@ export async function POST(request: Request) {
           attemptLog.push({ model: model + (isRecovery ? " compact retry" : ""), result: "HTTP " + response.status });
           const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
           errors.push(model + (isRecovery ? " compact retry" : "") + ": " + detail);
+          if (modelImages.length && [408, 429, 502, 503, 504].includes(response.status)) visionDropped = true;
           // Same-mode retry only for a FAST failure (a tunnel blip). A 5xx after a long wait means
           // the upstream chain already tried its models; repeating it burned ~67 s (finding 61).
           const attemptMs = inFlight ? Date.now() - inFlight.startedAt : 0;
@@ -1180,7 +1187,8 @@ export async function POST(request: Request) {
           // A 5xx after a long wait means the upstream chain already failed through its models;
           // the compact retry then also timed out (60 s) in every observed run, so go straight
           // to the source fallback instead (finding 61, round 5).
-          if ([500, 502, 503, 504].includes(response.status) && attemptMs > 45000) break modelLoop;
+          // Unless that attempt carried an image: the text-only retry reaches other providers.
+          if ([500, 502, 503, 504].includes(response.status) && attemptMs > 45000 && !(visionDropped && modelImages.length)) break modelLoop;
           // The compact retry runs without JSON mode, which covers free models that reject response_format.
           if (!isRecovery && ([408, 429, 500, 502, 503, 504].includes(response.status) ||
             shouldRetryWithoutJsonMode(activeProvider, response.status))) continue;
@@ -1311,6 +1319,7 @@ export async function POST(request: Request) {
       } catch (error) {
         errors.push(model + (isRecovery ? " compact retry" : "") + ": " +
           (controller.signal.aborted ? "timed out after " + attemptTimeoutMs + "ms before the provider finished the response" : error instanceof Error ? error.message.slice(0, 200) : "request failed"));
+        if (controller.signal.aborted && (renderedScreen || referenceImage)) visionDropped = true;
         if (!isRecovery) continue;
         break;
       } finally {

@@ -404,7 +404,7 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
       ["textAlignHorizontal", "textAlignHorizontal"], ["textAlignVertical", "textAlignVertical"], ["textAutoResize", "textAutoResize"],
       ["lineHeight", "lineHeight"], ["letterSpacing", "letterSpacing"],
       ["textCase", "textCase"], ["textDecoration", "textDecoration"],
-      ["paintStyleId", "paintStyleId"], ["textStyleId", "textStyleId"], ["effectStyleId", "effectStyleId"], ["gridStyleId", "gridStyleId"],
+      ["paintStyleId", "paintStyleId"], ["strokeStyleId", "strokeStyleId"], ["textStyleId", "textStyleId"], ["effectStyleId", "effectStyleId"], ["gridStyleId", "gridStyleId"],
       ["shadowColor", "shadowColor"],
       ["shadowBlur", "shadowBlur"], ["shadowX", "shadowX"], ["shadowY", "shadowY"], ["shadowSpread", "shadowSpread"],
     ];
@@ -451,7 +451,7 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
       // Instances render their component's own paints; literal colors would override the design system.
       for (const key of ["color", "noFill", "strokeColor", "strokeWeight", "cornerRadius", "layoutMode", "itemSpacing",
         "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "primaryAxisAlignItems", "counterAxisAlignItems",
-        "primaryAxisSizingMode", "counterAxisSizingMode", "layoutWrap", "clipsContent", "paintStyleId", "textStyleId"]) delete normalized[key];
+        "primaryAxisSizingMode", "counterAxisSizingMode", "layoutWrap", "clipsContent", "paintStyleId", "strokeStyleId", "textStyleId"]) delete normalized[key];
       return normalized;
     }
     if (Array.isArray(item.children) && depth < 4) {
