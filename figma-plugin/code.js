@@ -4693,7 +4693,7 @@ figma.ui.onmessage = async function (message) {
     resolveProbe();
     return;
   }
-  if (message.type === "get-selection") { assertUxDirectFileScope("refresh selection"); sendSelection(); }
+  if (message.type === "get-selection") { assertUxDirectFileScope("refresh selection"); sendSelection(); UXD_UI_READY = true; uxdDeliverQuickPrompt(); }
   if (message.type === "run-native-health-check") { assertUxDirectFileScope("start health-check command"); await runNativeApiHealthCheck(message.commandId); }
   if (message.type === "run-canvas-command") { assertUxDirectFileScope("start canvas command"); await runCanvasCommand(message.command); }
   if (message.type === "uxd-local-task") { await runLocalTask(message); }
@@ -4702,6 +4702,37 @@ figma.ui.onmessage = async function (message) {
 sendSelection();
 
 }
+// uxd-quick-actions:start
+// Cmd+/ → "UX Direct" → type a task: Figma passes it as the "prompt" parameter. The plugin still
+// opens its panel (network runs there) and the panel runs the task once the file is verified.
+var UXD_QUICK_ACTION_SUGGESTIONS = ["fix hygiene", "add icons to these buttons", "fill with realistic data", "check hygiene",
+  "ux audit", "add empty, loading and error states", "make 3 variations", "make this card cleaner", "show design rules", "revert"];
+var UXD_PENDING_QUICK_PROMPT = "";
+function uxdQuickActionSuggestions(query) {
+  var q = String(query || "").trim().toLowerCase();
+  var list = UXD_QUICK_ACTION_SUGGESTIONS.filter(function (item) { return !q || item.indexOf(q) >= 0; });
+  return (q && list.indexOf(q) < 0 ? [String(query).trim()] : []).concat(list).slice(0, 10);
+}
+if (figma.parameters && typeof figma.parameters.on === "function") {
+  figma.parameters.on("input", function (event) {
+    // Suggestions only: no document access before the file allowlist check.
+    if (event.key === "prompt") event.result.setSuggestions(uxdQuickActionSuggestions(event.query));
+  });
+}
+function uxdDeliverQuickPrompt() {
+  if (!UXD_PENDING_QUICK_PROMPT) return;
+  var prompt = UXD_PENDING_QUICK_PROMPT;
+  UXD_PENDING_QUICK_PROMPT = "";
+  figma.ui.postMessage({ type: "uxd-quick-action", prompt: prompt });
+}
+figma.on("run", function (event) {
+  var prompt = event && event.parameters && typeof event.parameters.prompt === "string" ? event.parameters.prompt.trim().slice(0, 500) : "";
+  if (!prompt || !getUxDirectScopeDecision().allowed) return;
+  UXD_PENDING_QUICK_PROMPT = prompt;
+  if (UXD_UI_READY) uxdDeliverQuickPrompt();
+});
+// uxd-quick-actions:end
+var UXD_UI_READY = false;
 var uxdScopeDecision = getUxDirectScopeDecision();
 if (uxdScopeDecision.allowed) {
   startScopedPlugin();

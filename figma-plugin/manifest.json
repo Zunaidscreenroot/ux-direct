@@ -14,5 +14,14 @@
     "reasoning": "UX Direct sends task prompts, bounded selected-layer metadata, and scaled PNG previews of selected/generated screens to the UX Direct backend for visual analysis and quality review. The configured model provider may process these previews. Canvas changes use allowlisted native Figma commands; arbitrary code execution is not exposed."
   },
   "enablePrivatePluginApi": true,
-  "documentAccess": "dynamic-page"
+  "documentAccess": "dynamic-page",
+  "parameters": [
+    {
+      "name": "Task",
+      "key": "prompt",
+      "description": "e.g. fix hygiene, add icons, fill with realistic data",
+      "allowFreeform": true
+    }
+  ],
+  "parameterOnly": false
 }

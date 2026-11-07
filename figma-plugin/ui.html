@@ -3462,6 +3462,13 @@
       } catch (_) {}
     });
 
+    let pendingQuickPrompt = "";
+    function runPendingQuickPrompt() {
+      if (!pendingQuickPrompt || !verifiedFileKey || isSending) return;
+      const prompt = pendingQuickPrompt;
+      pendingQuickPrompt = "";
+      void submitPrompt(prompt);
+    }
     window.onmessage = function (event) {
       const message = event.data && event.data.pluginMessage;
       if (!message) return;
@@ -3474,6 +3481,7 @@
         }
         verifiedFileKey = message.fileKey;
         currentSelection.fileKey = message.fileKey;
+        window.setTimeout(runPendingQuickPrompt, 0);
         $("send").disabled = !$("prompt").value.trim();
         if (!pluginSessionStarted) {
           pluginSessionStarted = true;
@@ -3483,6 +3491,12 @@
           heartbeatTimer = window.setInterval(function () { void syncPluginBridge(); }, 15000);
           statusRefreshTimer = window.setInterval(function () { void refreshConnections(); }, 45000);
         }
+        return;
+      }
+      if (message.type === "uxd-quick-action") {
+        // Cmd+/ quick action: run the typed task as if it was sent from the prompt box.
+        pendingQuickPrompt = String(message.prompt || "").trim();
+        runPendingQuickPrompt();
         return;
       }
       if (message.type === "selection") {
