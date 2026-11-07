@@ -80,9 +80,16 @@ export function isValueText(text: string): boolean {
 
 const VALUE_EDIT_REQUEST = /\b(numbers?|amounts?|values?|ids?|dates?|prices?|figures?|data|currency|format|translate|hindi|placeholder|sample|dummy)\b/i;
 
+const TITLE_REQUEST = /\b(titles?|headings?|headers?|screen names?|page names?|rename the screen)\b/i;
+const LONGER_REQUEST = /\b(expand|longer|lengthen|elaborate|more detail|add (?:more|context|words))\b/i;
+// The screen title: text inside the app bar / top navigation, or a layer named as the page title.
+// A card's own "Title" layer is ordinary copy and may be rewritten.
+const SCREEN_TITLE_PARENT = /\b(app ?bar|nav(?:igation)? ?bar|navigation|toolbar|top ?bar|header)\b/i;
+const SCREEN_TITLE_NAME = /\b(screen|page) ?(title|heading|name)\b/i;
+const SHORT_LABEL_LAYER = /\b(tabs?|segment\w*|chips?|pills?|badges?|buttons?|btn|cta)\b/i;
 const PUNCTUATION_REQUEST = /\b(punctuat\w*|full ?stops?|periods?|commas?|apostroph\w*|quotes?|hyphen\w*)\b/i;
 
-export function normalizeTextEdits(mode: TextTaskMode, data: unknown, items: TextTaskItem[], raw = "", prompt = ""): TextEdit[] {
+export function normalizeTextEdits(mode: TextTaskMode, data: unknown, items: TextTaskItem[], raw = "", prompt = "", screenName = ""): TextEdit[] {
   const allowValueEdits = VALUE_EDIT_REQUEST.test(prompt);
   const byRef = new Map(items.map((item, index) => [refFor(index), item]));
   const byId = new Map(items.map((item) => [item.id, item]));
@@ -121,6 +128,14 @@ export function normalizeTextEdits(mode: TextTaskMode, data: unknown, items: Tex
       // Punctuation-only "changes" are no-ops too (tester: a dropped full stop counted as a rewrite).
       const words = (text: string) => squash(text.replace(/\p{P}+/gu, ""));
       if (!PUNCTUATION_REQUEST.test(prompt) && words(value) === words(source.text || "")) return;
+      // The screen title stays unless the request is about titles (tester: "Manage Loans" → "Loan Management" twice).
+      const where = source.name + " " + (source.parent || "") + " " + (source.hint || "");
+      const isScreenTitle = SCREEN_TITLE_PARENT.test(source.parent || "") || SCREEN_TITLE_NAME.test(source.name) ||
+        (!!screenName.trim() && squash(source.text || "").toLowerCase() === squash(screenName).toLowerCase());
+      if (!TITLE_REQUEST.test(prompt) && isScreenTitle) return;
+      // Tabs, chips and buttons keep their width: at most ~1.2× the source length ("Others" → "Other Loans" overflows a 3-tab bar).
+      const before = squash(source.text || "");
+      if (!LONGER_REQUEST.test(prompt) && SHORT_LABEL_LAYER.test(where) && squash(value).length > Math.max(before.length * 1.2, before.length + 2)) return;
       // A copy rewrite never touches IDs, amounts or dates unless the request is about them.
       if (!allowValueEdits && isValueText(source.text || "")) return;
       edits.push({ id: source.id, value, before: source.text || "" });
