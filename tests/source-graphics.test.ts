@@ -333,3 +333,36 @@ test("buttons keep the source CTA colour on a dark screen instead of the pale de
   walk(exp.plan!.elements as N[], (n) => { if (n.type === "FRAME" && n.children?.some((c) => c.text === "Pay now")) fills.push(String(n.color)); });
   assert.ok(fills.length && fills.every((f) => f.toUpperCase().startsWith("#0") ), "source blue (#0B5FFF-ish), got " + fills.join(","));
 });
+
+test("a merged '60% Paid' label beside the restored donut is dropped (round 8)", () => {
+  const src = { nodes: [{ id: "7:1", name: "Loans", type: "FRAME", x: 0, y: 0, width: 360, height: 400, fillColors: ["#F6F7F9"], children: [
+    { id: "7:2", name: "Title", type: "TEXT", x: 16, y: 16, width: 200, height: 28, text: "My Loans" },
+    { id: "7:3", name: "Card", type: "FRAME", x: 16, y: 60, width: 328, height: 160, fillColors: ["#FFFFFF"], cornerRadius: 12, children: [
+      { id: "7:4", name: "Outstanding", type: "TEXT", x: 16, y: 16, width: 180, height: 20, text: "Outstanding ₹12,000" },
+      { id: "7:5", name: "Donut", type: "GROUP", x: 240, y: 16, width: 72, height: 72, children: [
+        { id: "7:6", name: "Track", type: "ELLIPSE", x: 0, y: 0, width: 72, height: 72 },
+        { id: "7:9", name: "Arc", type: "ELLIPSE", x: 0, y: 0, width: 72, height: 72 },
+        { id: "7:7", name: "Pct", type: "TEXT", x: 20, y: 22, width: 32, height: 14, text: "60%" },
+        { id: "7:8", name: "Lbl", type: "TEXT", x: 20, y: 38, width: 32, height: 12, text: "Paid" },
+      ] },
+    ] },
+  ] }], components: [] };
+  const s = { summary: "Loan card with progress.", sections: [
+    { name: "Header", blocks: [{ type: "heading", title: "My Loans" }] },
+    { name: "Loan", surface: "card", blocks: [
+      { type: "progress_ring", percent: 60, label: "60% Paid" },
+      { type: "text", text: "Outstanding ₹12,000" },
+    ] },
+  ] };
+  const expansion = expandBlockSpec(s, src, { sourceCanvas: src });
+  assert.ok(expansion.plan, expansion.errors.join("; "));
+  const texts: string[] = [];
+  let donut = 0;
+  walk(expansion.plan!.elements as N[], (node) => {
+    if (node.type === "TEXT") texts.push(String(node.text));
+    if (node.type === "CLONE" && node.sourceNodeId === "7:5") donut += 1;
+  });
+  assert.equal(donut, 1, "source donut restored");
+  assert.ok(!texts.includes("60% Paid"), "merged label dropped: " + texts.join(" | "));
+  assert.ok(texts.includes("Outstanding ₹12,000"));
+});

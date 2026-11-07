@@ -407,9 +407,19 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
 function dropDuplicateTexts(card: NativeNode, ownTexts: string[], clone: NativeNode) {
   if (!ownTexts.length) return;
   const wanted = new Set(ownTexts);
+  // The model often merges the chart's separate labels ("60%" and "Paid") into one "60% Paid"
+  // text beside the chart (tester round 8): a text made only of the chart's own words, with a
+  // number among them, is the same label.
+  const ownWords = new Set(ownTexts.flatMap((text) => text.split(" ")).filter(Boolean));
+  const isCopy = (text: string) => {
+    const key = norm(text);
+    if (wanted.has(key)) return true;
+    const words = key.split(" ").filter(Boolean);
+    return words.length >= 2 && words.length <= 4 && /\d/.test(key) && words.every((word) => ownWords.has(word));
+  };
   const prune = (node: NativeNode) => {
     if (!node.children) return;
-    node.children = node.children.filter((child) => child === clone || !(child.type === "TEXT" && typeof child.text === "string" && wanted.has(norm(child.text))));
+    node.children = node.children.filter((child) => child === clone || !(child.type === "TEXT" && typeof child.text === "string" && isCopy(child.text)));
     for (const child of node.children) prune(child);
     node.children = node.children.filter((child) => child.type !== "FRAME" || child === clone || (child.children?.length ?? 0) > 0 || typeof child.color === "string");
   };
