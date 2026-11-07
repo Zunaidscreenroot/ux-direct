@@ -12,7 +12,7 @@ function load(): { classify: (p: string, ctx?: any) => any; answering: (t: any, 
   const match = /\/\/ uxd-turn-intent:start([\s\S]*?)\/\/ uxd-turn-intent:end/.exec(ui);
   assert.ok(match);
   const sandbox: Record<string, any> = {};
-  runInNewContext(match[1] + "\nthis.classify = classifyTurn; this.answering = isAnsweringQuickTask;", sandbox);
+  runInNewContext(match[1] + "\nthis.classify = classifyTurn; this.answering = isAnsweringQuickTask; this.digest = selectionTextDigest;", sandbox);
   return { classify: (p, ctx) => { const out = sandbox.classify(p, ctx); return out === null ? null : JSON.parse(JSON.stringify(out)); }, answering: sandbox.answering };
 }
 
@@ -74,4 +74,19 @@ test("explanations are lessons; a critique with a reason still redoes the screen
   assert.equal(classify("status chip title ke saath hona chahiye", {}).kind, "explain");
   assert.equal(classify("this is not simplified because the cards still use three colours", { lastDesign: true }).kind, "redo");
   assert.equal(classify("make the cards flatter because they look heavy", {}), null, "an instruction with a reason is a normal request");
+});
+
+test("chat questions about the screen get its visible text", () => {
+  const match = /\/\/ uxd-turn-intent:start([\s\S]*?)\/\/ uxd-turn-intent:end/.exec(ui);
+  const sandbox: Record<string, any> = {};
+  runInNewContext(match![1] + "\nthis.digest = selectionTextDigest;", sandbox);
+  const tree = { nodes: [{ name: "Manage Loans", type: "FRAME", children: [
+    { name: "Delinquent card", type: "FRAME", children: [{ type: "TEXT", text: "Overdue" }, { type: "TEXT", text: "₹12,450" }] },
+    { name: "Hidden", type: "FRAME", visible: false, children: [{ type: "TEXT", text: "secret" }] }
+  ] }] };
+  const out = sandbox.digest(tree);
+  assert.match(out, /Delinquent card: Overdue/);
+  assert.match(out, /Delinquent card: ₹12,450/);
+  assert.doesNotMatch(out, /secret/);
+  assert.match(ui, /appendSelectionContext\(copy\.content, screenText\)/);
 });

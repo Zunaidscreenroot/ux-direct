@@ -977,7 +977,7 @@
       return row;
     }
 
-    function appendSelectionContext(message) {
+    function appendSelectionContext(message, screenText) {
       const selection = currentSelection.selection || [];
       if (!selection.length) return message;
       const nodes = selection.slice(0, 8).map(function (node) {
@@ -986,7 +986,8 @@
       return message + "\n\n[Current Figma context — metadata only] Page: " + (currentSelection.pageName || "unknown") +
         ". Selected nodes: " + JSON.stringify(nodes).slice(0, 4500) +
         ". Work only within the user's selected context unless asked otherwise." +
-        " You are UX Direct inside Figma: canvas changes run when the designer asks for them, so never say you cannot edit the canvas, and answer a question directly and briefly instead of auditing the screen.";
+        " You are UX Direct inside Figma: canvas changes run when the designer asks for them, so never say you cannot edit the canvas, and answer a question directly and briefly instead of auditing the screen." +
+        (screenText ? "\n\n[Visible text in the selection, in reading order — answer questions about the screen from this]\n" + screenText : "");
     }
 
     async function streamAssistantResponse(response, onDelta) {
@@ -4154,6 +4155,24 @@
       if (task.kind === "learn") return task.preview === true;
       return false;
     }
+    // The chat answers questions about what is on screen ("what is the overdue amount?"), so it
+    // gets the selection's visible text in reading order, grouped under each parent frame name.
+    function selectionTextDigest(tree, limit) {
+      const max = limit || 3500;
+      const lines = [];
+      let used = 0;
+      function walk(node, parentName) {
+        if (!node || used >= max || node.visible === false) return;
+        if (typeof node.text === "string" && node.text.trim()) {
+          const line = (parentName ? parentName + ": " : "") + node.text.replace(/\s+/g, " ").trim();
+          if (lines[lines.length - 1] !== line) { lines.push(line); used += line.length + 1; }
+        }
+        (node.children || []).forEach(function (child) { walk(child, node.type === "TEXT" ? parentName : node.name); });
+      }
+      ((tree && tree.nodes) || []).forEach(function (node) { walk(node, ""); });
+      const text = lines.join("\n");
+      return text.length > max ? text.slice(0, max) + "…" : text;
+    }
     // uxd-turn-intent:end
     async function submitPrompt(rawPrompt) {
       const prompt = String(rawPrompt || "").trim();
@@ -4286,9 +4305,13 @@
           return;
         }
 
+        let screenText = "";
+        if ((currentSelection.selection || []).length) {
+          try { screenText = selectionTextDigest(await localTask("read-tree", { maxDepth: 12, maxNodes: 600 })); } catch (_) { screenText = ""; }
+        }
         const messages = chatHistory.map(function (message, index) {
           const copy = { role: message.role, content: message.content };
-          if (index === chatHistory.length - 1 && message.role === "user") copy.content = appendSelectionContext(copy.content);
+          if (index === chatHistory.length - 1 && message.role === "user") copy.content = appendSelectionContext(copy.content, screenText);
           return copy;
         });
         const response = await fetch(API + "/api/assistant/chat", {
