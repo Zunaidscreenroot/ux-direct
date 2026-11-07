@@ -46,7 +46,8 @@ test("the deterministic empty fallback keeps the header and renders", () => {
   walk(exp.plan!.elements as Array<Record<string, unknown>>);
   assert.ok(texts.includes("Manage Loans"), texts.join(" | "));
   assert.ok(!texts.includes("Loan ID SLC001"), "content dropped");
-  assert.ok(texts.some((x) => /Nothing here yet/.test(x)));
+  assert.ok(texts.includes("No loans yet"), texts.join(" | "));
+  assert.ok(texts.includes("Apply for a loan"), "empty state has a start CTA");
   assert.match(String((spec.frame as Record<string, unknown>).name), / \/ Empty$/);
 });
 
@@ -63,4 +64,38 @@ test("an empty state never brings back the cards' Pay now buttons", () => {
   const walk = (nodes: Array<Record<string, unknown>>) => { for (const n of nodes) { if (n.type === "TEXT") texts.push(String(n.text)); walk((n.children as Array<Record<string, unknown>>) ?? []); } };
   walk(exp.plan!.elements as Array<Record<string, unknown>>);
   assert.ok(!texts.includes("Pay now"), texts.join(" | "));
+});
+
+test("loading fallback keeps tabs, uses text-free skeletons in the dark source theme (round 8)", async () => {
+  const { auditDesignPlanQuality } = await import("../src/figma-agent/design-plan-quality");
+  const { normalizePlan } = await import("../src/figma-agent/normalize-plan");
+  const tab = (id: string, label: string, x: number, opacity = 1) => ({ id, name: "Tab", type: "FRAME", x, y: 0, width: 100, height: 44, opacity,
+    children: [{ ...t(id + "t", label, 12, 20), width: 60 }] });
+  const dark = { nodes: [{ ...canvas.nodes[0], fillColors: ["#121212"], children: [
+    canvas.nodes[0].children[0],
+    { id: "1:20", name: "Tabs", type: "FRAME", x: 16, y: 72, width: 328, height: 44, layoutMode: "HORIZONTAL", children: [tab("1:21", "Active", 0), tab("1:22", "Closed", 110)] },
+    { ...canvas.nodes[0].children[1], y: 140, fillColors: ["#2A2A2A"] },
+    canvas.nodes[0].children[2],
+  ] }], components: [] };
+  const spec = stateFallbackSpec(sourceFallbackSpec(dark)!, "loading", dark);
+  const exp = expandBlockSpec(spec, dark, { sourceCanvas: dark, contentDropped: true, skeleton: true });
+  assert.ok(exp.plan, exp.errors.join("; "));
+  const texts: string[] = [];
+  const rects: Array<Record<string, unknown>> = [];
+  const walk = (nodes: Array<Record<string, unknown>>) => { for (const n of nodes) {
+    if (n.type === "TEXT") texts.push(String(n.text));
+    if (String(n.name).startsWith("Skeleton")) rects.push(n);
+    walk((n.children as Array<Record<string, unknown>>) ?? []);
+  } };
+  walk(exp.plan!.elements as Array<Record<string, unknown>>);
+  assert.ok(texts.includes("Active") && texts.includes("Closed"), "tabs kept: " + texts.join(" | "));
+  assert.ok(!texts.some((x) => /Illustration|Loading/.test(x)), "no labels in skeletons: " + texts.join(" | "));
+  assert.ok(rects.length >= 2, "skeleton shapes drawn");
+  const shade = String(rects.find((r) => typeof r.color === "string")?.color);
+  const lum = parseInt(shade.slice(1, 3), 16);
+  assert.ok(lum < 0x80, "skeleton shade follows the dark theme, got " + shade);
+  const plan = normalizePlan(exp.plan, dark, { trustedSections: true });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const quality = auditDesignPlanQuality(plan as any, dark, stateGatePrompt("loading state", "loading", dark));
+  assert.ok(quality.passed, JSON.stringify(quality.findings));
 });
