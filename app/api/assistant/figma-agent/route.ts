@@ -5,7 +5,7 @@ import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
 import { detectDomain, detectTaskRole, roleInstructions } from "@/src/figma-agent/agent-roles";
 import { runSubAgents, subAgentsEnabled, type AgentBrief } from "@/src/figma-agent/sub-agents";
-import { designerPersona, gatewaySeat, inventedTexts, isValueText, leadApproves, sourceContentTexts, leadMaxRounds, leadReview, lostTexts, missingFromSpec, reviseFromNotes, seatKnowledge, studioReviewEnabled, taskOwner } from "@/src/figma-agent/studio";
+import { designerPersona, gatewaySeat, inventedTexts, isValueText, leadApproves, sourceContentTexts, leadMaxRounds, leadReview, lostTexts, missingFromSpec, sourceControls, reviseFromNotes, seatKnowledge, studioReviewEnabled, taskOwner } from "@/src/figma-agent/studio";
 import { agencyEnabled, agencyHandlesRole, runAgency, truncatedContentNames, type AgencyResult } from "@/src/figma-agent/agency";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
@@ -907,7 +907,8 @@ export async function POST(request: Request) {
     // Logo and chevron glyph texts are decoration: not required, and flagged when shown as content.
     const sourceRead = sourceContentTexts(Array.isArray((rawSourceCanvas ?? canvas).nodes) ? (rawSourceCanvas ?? canvas).nodes as unknown[] : []);
     const fullSource = screenState ? [] : sourceRead.content;
-    const shared = { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts: fullSource.length ? fullSource : sourceTexts, decorativeTexts: screenState ? [] : sourceRead.decorative, origin };
+    const shared = { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts: fullSource.length ? fullSource : sourceTexts, decorativeTexts: screenState ? [] : sourceRead.decorative,
+      controls: sourceControls(Array.isArray((rawSourceCanvas ?? canvas).nodes) ? (rawSourceCanvas ?? canvas).nodes as unknown[] : []), origin };
     const owner = taskOwner(taskRole, parsedInput.data.prompt);
     // Each seat gets the knowledge for its role (Lead: review checklist, critique format; designer: its craft).
     const knowledgeQuery = parsedInput.data.prompt + " " + taskRole.label + " " + agentBrief.domain.id;
@@ -920,7 +921,7 @@ export async function POST(request: Request) {
     // One compact timing row for the whole pass (the plugin shows 6 rows); details go to the log.
     const ledger: string[] = [];
     const log = (detail: string) => attemptLog.push({ model: "review", result: detail.slice(0, 400) });
-    const missingNow = (spec: unknown) => fullSource.length ? missingFromSpec(spec as Record<string, unknown>, fullSource).length : 0;
+    const missingNow = (spec: unknown) => fullSource.length ? missingFromSpec(spec as Record<string, unknown>, fullSource, parsedInput.data.prompt).length : 0;
     /**
      * Director's call on an iteration: it must keep everything the previous version showed (counted,
      * so merged cards fail), must not add invented text, must pass every gate on its own (no
@@ -995,7 +996,7 @@ export async function POST(request: Request) {
       models.length = best.models;
       log("final: kept the version the Lead scored " + best.score);
     }
-    const bar = !approved && reviewed.length ? " (below bar)" : approved ? " ✓" : "";
+    const bar = approved ? " ✓" : reviewed.length ? " (below bar)" : " (unreviewed)";
     attemptTimes.push({ attempt: "review " + ledger.join(" ") + bar, ms: Date.now() - studioStarted, outcome: "ok" });
     return models.length ? { ...current, servedModel: [success.servedModel, ...models].filter(Boolean).join(", ") } : current;
   };
