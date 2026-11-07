@@ -1111,8 +1111,24 @@
         if (expanded && Array.isArray(expanded.nodes)) lint = await requestStructuralLint(lintBody(expanded)) || lint;
       }
       if (!lint) return { passed: false, issues: [], text: "Structural lint was unavailable, so overlap, clipping and source content were not verified." };
+      // A few source texts lost by the model: copy the exact source layers back, then lint again.
+      let restoredNote = "";
+      const missing = lint.content && lint.content.partial !== true && Array.isArray(lint.content.missingText) ? lint.content.missingText : [];
+      if (!lint.passed && missing.length >= 1 && missing.length <= 5 && options.sourceRootId && options.outputRootId) {
+        const restore = await localTask("restore-missing-texts", {
+          sourceRootId: options.sourceRootId, outputRootId: options.outputRootId, texts: missing
+        }).catch(function () { return null; });
+        if (restore && Array.isArray(restore.restored) && restore.restored.length) {
+          const reread = await runNativeCanvasCommand("read-canvas", {
+            scope: "selection", nodeIds: [options.outputRootId], maxDepth: 12, maxNodes: 500, includeStyles: true, includeVariables: true
+          }, 90000).catch(function () { return null; });
+          if (reread && Array.isArray(reread.nodes)) lint = await requestStructuralLint(lintBody(reread)) || lint;
+          restoredNote = "\nRestored " + restore.restored.length + " missing source text(s) from the original screen: " +
+            restore.restored.map(function (item) { return '"' + String(item.text).slice(0, 40) + '"'; }).join(", ") + ".";
+        }
+      }
       return { passed: lint.passed === true, issues: lint.issues,
-        text: String(lint.summary || (lint.passed ? "Structural lint passed" : "Structural lint failed")) +
+        text: String(lint.summary || (lint.passed ? "Structural lint passed" : "Structural lint failed")) + restoredNote +
           (lint.passed ? "" : "\n" + formatLintIssues(lint.issues)) };
     }
 
@@ -2936,6 +2952,8 @@
       } else {
         stage("scanning", "Finding buttons and rows without icons…");
         targets = (await localTask("find-icon-targets", {})).targets || [];
+        // Amounts and dates ("₹1,00,000", "12/05") never name an icon; don't send them.
+        targets = targets.filter(function (t) { return !t.label || /\p{L}/u.test(String(t.label)); });
         if (!targets.length) throw new Error("No buttons or rows without an icon were found in the selection. Select a button and say, for example, **add a wallet icon**.");
         stage("creating", "Picking icons for " + targets.length + " label(s)…");
         try {

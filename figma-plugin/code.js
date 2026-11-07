@@ -2937,7 +2937,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -4796,6 +4796,72 @@ async function localInsertIcons(payload) {
   return { ok: true, inserted: inserted, skipped: skipped, createdIds: created, restore: hidden };
 }
 // uxd-icons:end
+// uxd-restore-missing:start
+// Structural lint found 1-5 source texts missing from a generated screen. Instead of failing the
+// run, clone the exact source TEXT layers into the matching parent of the UX Direct-created output
+// (same parent name, else the output root at the same offset). Restored layers are tagged
+// uxdCreated, so Revert removes them with the screen. No model is involved.
+function uxdNormText(value) {
+  return String(value || "").toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
+    .replace(/\s+/g, " ").trim().replace(/[.,:;!?…]+$/, "");
+}
+function uxdInsideInstance(node, stop) {
+  for (var p = node; p && p !== stop; p = p.parent) if (p.type === "INSTANCE") return true;
+  return false;
+}
+async function localRestoreMissingTexts(payload) {
+  var source = await figma.getNodeByIdAsync(String(payload.sourceRootId || ""));
+  var output = await figma.getNodeByIdAsync(String(payload.outputRootId || ""));
+  if (!source || !output || source.removed || output.removed) throw new Error("The source or generated frame was not found.");
+  if (typeof output.getPluginData !== "function" || output.getPluginData("uxdCreated") !== "1") {
+    throw new Error("\"" + output.name + "\" was not created by UX Direct, so missing texts are not added to it.");
+  }
+  if (typeof source.findAll !== "function" || typeof output.findAll !== "function") throw new Error("These layers cannot hold text.");
+  var wanted = (Array.isArray(payload.texts) ? payload.texts : []).slice(0, 5);
+  var sourceTexts = source.findAll(function (n) { return n.type === "TEXT" && n.visible !== false; });
+  var used = [];
+  var restored = [];
+  var skipped = [];
+  for (var i = 0; i < wanted.length; i++) {
+    var raw = String(wanted[i] || "");
+    var base = uxdNormText(raw.replace(/\s*\(copy \d+ of \d+\)$/, ""));
+    if (!base) continue;
+    var candidate = null;
+    for (var j = 0; j < sourceTexts.length; j++) {
+      var n = sourceTexts[j];
+      if (used.indexOf(n) >= 0) continue;
+      var text = uxdNormText(n.characters);
+      if (text === base || (base.length >= 40 && text.indexOf(base) === 0)) { candidate = n; break; }
+    }
+    if (!candidate) { skipped.push(raw); continue; }
+    used.push(candidate);
+    var parentName = candidate.parent && candidate.parent !== source ? candidate.parent.name : "";
+    var target = null;
+    if (parentName) {
+      target = output.findAll(function (n) {
+        return n.name === parentName && typeof n.appendChild === "function" &&
+          (n.type === "FRAME" || n.type === "COMPONENT" || n.type === "GROUP") && !uxdInsideInstance(n, output);
+      })[0] || null;
+    }
+    var clone = candidate.clone();
+    if (target) {
+      target.appendChild(clone);
+      if (!target.layoutMode || target.layoutMode === "NONE") { clone.x = candidate.x; clone.y = candidate.y; }
+    } else {
+      output.appendChild(clone);
+      if (!output.layoutMode || output.layoutMode === "NONE") {
+        clone.x = candidate.absoluteTransform[0][2] - source.absoluteTransform[0][2];
+        clone.y = candidate.absoluteTransform[1][2] - source.absoluteTransform[1][2];
+      }
+    }
+    clone.name = candidate.name;
+    if (typeof clone.setPluginData === "function") clone.setPluginData("uxdCreated", "1");
+    restored.push({ id: clone.id, text: raw, parent: target ? target.name : output.name });
+  }
+  if (restored.length && typeof figma.commitUndo === "function") figma.commitUndo();
+  return { ok: true, restored: restored, skipped: skipped };
+}
+// uxd-restore-missing:end
 async function runLocalTask(message) {
   var result = null;
   var errorText = null;
@@ -4819,6 +4885,7 @@ async function runLocalTask(message) {
     else if (message.op === "get-design-rules") result = await localGetDesignRules(payload);
     else if (message.op === "set-design-rules") result = await localSetDesignRules(payload);
     else if (message.op === "consistency") result = await localConsistency(payload);
+    else if (message.op === "restore-missing-texts") result = await localRestoreMissingTexts(payload);
     else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
     else if (message.op === "trigger-undo") {
       if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");
