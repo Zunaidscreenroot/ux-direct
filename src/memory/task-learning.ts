@@ -275,10 +275,12 @@ export function buildStructuralLessonCandidate(planValue: unknown, designScope: 
   const blockTypes = [...types].sort().slice(0, 14);
   const cards = surfaces.filter((s) => s === "card").length;
   return {
-    title: ("Verified Figma layout for " + scope.replace(/_/g, " ") + ": " + blockTypes.join(", ")).slice(0, 180),
-    normalizedRule: "For a " + scope.replace(/_/g, " ") + " redesign, a layout of " + sections.length + " sections (" + cards +
-      " card, " + (sections.length - cards) + " plain) built from the blocks " + blockTypes.join(", ") +
-      " passed the content and structural lint: every source text and source graphic was kept.",
+    // One memory per design scope: the title is the dedupe key, so every verified run adds
+    // evidence to the same row instead of a near-duplicate per block list (brain monitor finding 4).
+    title: ("Verified Figma layout for " + scope.replace(/_/g, " ")).slice(0, 180),
+    normalizedRule: "For a " + scope.replace(/_/g, " ") + " redesign, verified outputs use about " + sections.length + " sections named after their content (" + cards +
+      " card, " + (sections.length - cards) + " plain in the first verified run), common blocks such as " + blockTypes.join(", ") +
+      ", and pass the content and structural lint: every source text and source graphic is kept.",
     rationale: "Recorded from a verified UX Direct plugin output. Structure only, no screen content.",
     scopeKey: "project:ux-direct", feedbackKind: "design_system", keywords: ["figma", "verified-layout", scope, ...blockTypes.slice(0, 10)],
     originalLanguage: "English",
