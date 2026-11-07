@@ -140,6 +140,10 @@ test("native-action prompts from the plugin test route to the native action path
     "set the card opacity to 50%",
     "rename the second tab to Loans",
     "resize the button to 48 high",
+    "change the first loan card status to Overdue",
+    "make the first card's status Overdue",
+    "set the badge type to warning",
+    "switch the button size to small",
   ]) assert.equal(sandbox.f(prompt), true, prompt);
   // Questions and new content with the same words are not layer edits.
   for (const prompt of ["show me what you can do", "how do I hide a layer?", "create a login screen with a lock icon"])

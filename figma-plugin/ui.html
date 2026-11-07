@@ -1068,6 +1068,13 @@
         /\b(disabled|enabled|active|inactive|selected|unselected|hover|pressed|focused|checked|unchecked|loading|error|default|variant|state|size)\b/i.test(text) &&
         /\b(this|the|selected)\s+(?:[\w-]+\s+){0,2}(?:button|tab|chip|toggle|checkbox|input|field|instance|component|badge|card|item|row)\b/i.test(text) &&
         !/\b(screens|flows?|variations?|versions?|states pack|empty states?|loading states?|error states?)\b/i.test(text);
+      // Variant/property value on an existing instance: "change the first loan card status to Overdue",
+      // "set the badge type to warning", "switch the button size to small". Edited in place on the instance
+      // (set-instance-properties / swap-component), never regenerated.
+      const instancePropertyValue = /\b(make|set|switch|turn|change|update)\b/i.test(text) &&
+        (/\b(status|state|variant|type|size|style|tone|kind|priority|level)\s+(?:to|as|into|=|:)\s+\S/i.test(text) ||
+          /'s\s+(status|state|variant|type|size|tone|priority|level)\s+(?!bar\b)[A-Za-z]/i.test(text)) &&
+        !/\b(screens?|flows?|pages?|variations?|versions?|wireframes?|dark mode|light mode|theme)\b/i.test(text);
       const componentOrSystemOperation = /\b(create component|make component|create variant|combine as variants|create variables?|bind variable|apply style|swap component|detach instance|create page|rename page|switch to page|go to page|flatten|boolean union|boolean subtract|export (?:as|to)|export node|export svg)\b/i.test(text);
       // Layer property toggles: "hide the Others tab", "lock the header", "Others tab ko hide karo",
       // "set the card opacity to 50%", "rename the second tab to Loans", "resize the button to 48".
@@ -1079,7 +1086,7 @@
         (/\b(rename|resize|move|nudge|shift)\b/i.test(text) && /\b(the|this|that|selected|these|those|ko)\s+(?:[\w-]+\s+){0,3}?(?:tab|card|row|item|chip|badge|divider|section|header|footer|banner|avatar|input|field|toggle|list|nav(?:bar)?|bar|group|container|layer|frame|button|icon|image|text|label|title)s?\b/i.test(text));
       const layerPropertyEdit = notScreenLevel && (layerToggle || layerProperty);
       return (explicitNativeOperation && directTarget) || refinementOfSpecificTarget || addNativeObject || addNativeProperty ||
-        instanceStateChange || componentOrSystemOperation || layerPropertyEdit;
+        instanceStateChange || instancePropertyValue || componentOrSystemOperation || layerPropertyEdit;
     }
 
     async function compressAttachedImage(file) {
