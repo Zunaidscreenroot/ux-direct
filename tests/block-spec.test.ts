@@ -594,3 +594,23 @@ test("improve tightens spacing to keep the source height budget before letting t
   walk(tight.plan!.elements as N[], (n) => { if (n.name === "Actions") actions.push(n); });
   assert.ok(actions.every((n) => n.layoutMode === "HORIZONTAL"), "two short stacked actions go side by side");
 });
+
+test("renders keep at most 5 font sizes, and improve never invents a ring value or back arrow", () => {
+  const out = expandBlockSpec(kycSpec, lightCanvas);
+  assert.ok(out.plan);
+  const sizes = new Set<number>();
+  walk(out.plan!.elements as N[], (n) => { if (n.type === "TEXT") sizes.add(Number(n.fontSize)); });
+  assert.ok(sizes.size <= 5, [...sizes].join(","));
+  const source = { nodes: [{ name: "Loans", type: "FRAME", width: 360, height: 800, fillColors: ["#FFFFFF"], children: [{ type: "TEXT", name: "T", text: "Manage loans", fontSize: 20 }, { type: "TEXT", name: "P", text: "60% Paid", fontSize: 12 }] }], components: [] };
+  const spec = { summary: "x", sections: [
+    { name: "Header", blocks: [{ type: "app_bar", title: "Manage loans" }] },
+    { name: "Loan", surface: "card", title: "Loan", blocks: [{ type: "progress_ring", percent: 100 }, { type: "stat_row", items: [{ label: "Paid", value: "60% Paid" }] }] },
+    { name: "C", blocks: [{ type: "text", text: "End" }] },
+  ], learningCandidate: null };
+  const improved = expandBlockSpec(spec, source, { sourceCanvas: source });
+  assert.ok(improved.plan, improved.errors.join("; "));
+  const texts: string[] = [];
+  walk(improved.plan!.elements as N[], (n) => { if (n.type === "TEXT") texts.push(String(n.text)); });
+  assert.ok(!texts.includes("100%"), "no invented ring value: " + texts.join(" | "));
+  assert.ok(!texts.includes("←"), "no invented back arrow");
+});

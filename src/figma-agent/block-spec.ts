@@ -567,7 +567,9 @@ function percent(value: unknown): number {
 // ---------------------------------------------------------------------------
 
 type BadgeComponent = { id: string; prop: string; options: string[]; textProp: string | null; height: number };
-type Ctx = { b: Builder; t: BlockTheme; bg: string; componentIds: Set<string>; skeleton?: boolean; badge?: BadgeComponent | null };
+type Ctx = { b: Builder; t: BlockTheme; bg: string; componentIds: Set<string>; skeleton?: boolean; badge?: BadgeComponent | null;
+  /** Improve only: the source's own texts, so the renderer never adds copy the source did not have. */
+  sourceTexts?: Set<string> | null };
 
 const TONE_OPTIONS: Record<string, RegExp> = {
   success: /^(success|positive|current|active|paid|completed?|approved|on ?track|green)$/i,
@@ -663,7 +665,7 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       const title = clean(block.title ?? block.text, 120);
       if (!title) return null;
       const left: NativeNode[] = [];
-      if (block.back !== false && (block.back === true || block.back === undefined && depth <= 1)) {
+      if (block.back !== false && (block.back === true || block.back === undefined && depth <= 1 && (!ctx.sourceTexts || ctx.sourceTexts.has("←")))) {
         left.push(b.text("Back", "←", 40, { size: 20, color: t.text, bg, hug: true }));
       }
       const actionText = clean(block.action, 30);
@@ -785,15 +787,19 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       const arc = { type: "ELLIPSE", name: "Progress " + Math.round(pct) + "%", x: 0, y: 0, width: size, height: size, color: toneColor(t, tone(block.tone)) === t.muted ? t.primary : toneColor(t, tone(block.tone)),
         arcData: { startingAngle: start, endingAngle: start + Math.max(0.02, (pct / 100) * Math.PI * 2), innerRadius: 0.78 } } as NativeNode;
       b.count += 2;
-      const centerText = clean(block.center ?? block.centerText, 12) || Math.round(pct) + "%";
-      const pctNode = b.text("Progress value", centerText, size, { size: 15, weight: "Semi Bold", color: t.text, bg, align: "CENTER" });
-      // The ring is an absolute canvas: a hugging token ("80%") would sit at x=0 over the stroke.
-      pctNode.width = size;
-      pctNode.x = 0;
-      pctNode.textAutoResize = "HEIGHT";
-      pctNode.layoutSizingHorizontal = "FIXED";
-      pctNode.y = Math.round((size - pctNode.height) / 2);
-      const ring = b.canvas("Progress ring", size, size, [track, arc, pctNode], [pctNode]);
+      const explicitCenter = clean(block.center ?? block.centerText, 12);
+      // Improve: a default "80%" the source never showed is invented copy, so the ring stays label-free.
+      const centerText = explicitCenter || (!ctx.sourceTexts || ctx.sourceTexts.has(textKey(Math.round(pct) + "%")) ? Math.round(pct) + "%" : "");
+      const pctNode = centerText ? b.text("Progress value", centerText, size, { size: 15, weight: "Semi Bold", color: t.text, bg, align: "CENTER" }) : null;
+      if (pctNode) {
+        // The value spans the ring box and is centred by its Auto Layout, never over the stroke.
+        pctNode.width = size;
+        pctNode.x = 0;
+        pctNode.textAutoResize = "HEIGHT";
+        pctNode.layoutSizingHorizontal = "FIXED";
+        pctNode.y = Math.round((size - pctNode.height) / 2);
+      }
+      const ring = b.canvas("Progress ring", size, size, pctNode ? [track, arc, pctNode] : [track, arc], pctNode ? [pctNode] : []);
       const lbl = clean(block.label ?? block.title, 120);
       const caption = clean(block.caption ?? block.subtitle, 200);
       if (!lbl && !caption) return ring;
@@ -1236,6 +1242,34 @@ function polishRows(nodes: NativeNode[], warnings: string[]) {
   if (stacked) warnings.push("Stacked " + stacked + " row(s) whose label had no room to stay on one line.");
 }
 
+/**
+ * Keep the type scale to at most `max` sizes (benchmark: ≤ 5): repeatedly fold the rarer of the two
+ * closest sizes into the other. Texts whose size changes drop a text style that no longer fits.
+ */
+function capTypeScale(elements: NativeNode[], max: number, warnings: string[]) {
+  const texts: NativeNode[] = [];
+  const visit = (nodes: NativeNode[]) => { for (const n of nodes) { if (n.type === "TEXT" && typeof n.fontSize === "number") texts.push(n); if (n.children && n.type !== "INSTANCE") visit(n.children); } };
+  visit(elements);
+  let folded = 0;
+  for (;;) {
+    const counts = new Map<number, number>();
+    for (const t of texts) counts.set(t.fontSize as number, (counts.get(t.fontSize as number) ?? 0) + 1);
+    const sizes = [...counts.keys()].sort((a, b) => a - b);
+    if (sizes.length <= max) break;
+    let bi = 0;
+    for (let i = 1; i < sizes.length - 1; i++) if (sizes[i + 1] - sizes[i] < sizes[bi + 1] - sizes[bi]) bi = i;
+    const [a, c] = [sizes[bi], sizes[bi + 1]];
+    const [from, to] = (counts.get(a)! <= counts.get(c)!) ? [a, c] : [c, a];
+    for (const t of texts) if (t.fontSize === from) {
+      t.fontSize = to; delete t.textStyleId;
+      if (t.textAutoResize === "WIDTH_AND_HEIGHT") t.width = Math.ceil(textWidth(String(t.text ?? ""), to));
+      t.height = textHeight(String(t.text ?? ""), to, Number(t.width));
+      folded += 1;
+    }
+  }
+  if (folded) warnings.push("Folded " + folded + " text(s) into a " + max + "-step type scale.");
+}
+
 /** Recompute hug heights bottom-up after a layout change (flow children only). */
 function relayout(node: NativeNode): number {
   const kids = node.children ?? [];
@@ -1434,7 +1468,14 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   const theme = snapThemeToStyles(resolveTheme(spec.theme ?? rawFrame.theme, hex(rawFrame.backgroundColor) ?? sourceFill, ctaFill), asRec(canvas.styles));
   const componentIds = new Set(arr(canvas.components).map((c) => asRec(c)?.id).filter((id): id is string => typeof id === "string"));
   const b = new Builder(theme, collectSourceTokens(canvas, componentIds));
-  const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds, skeleton: options.skeleton === true, badge: options.monochrome ? null : findBadgeComponent(canvas.components) };
+  const improveSource = asRec(arr((options.sourceCanvas ?? canvas).nodes)[0]);
+  const sourceTexts = improveSource && arr(improveSource.children).length ? (() => {
+    const set = new Set<string>();
+    const walkTexts = (n: Rec, d: number) => { if (d > 14) return; if (n.type === "TEXT" && typeof n.text === "string") set.add(textKey(n.text)); for (const c of arr(n.children)) { const r = asRec(c); if (r) walkTexts(r, d + 1); } };
+    walkTexts(improveSource, 0);
+    return set.size ? set : null;
+  })() : null;
+  const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds, skeleton: options.skeleton === true, badge: options.monochrome ? null : findBadgeComponent(canvas.components), sourceTexts };
 
   const sourceWidth = typeof source.width === "number" ? source.width : 0;
   const sourceHeight = typeof source.height === "number" ? source.height : 0;
@@ -1526,7 +1567,9 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
     if (fidelity.unplaced.length && options.allowClones === false) b.warnings.push(fidelity.unplaced.length + " source graphic(s) were not copied: this plugin build cannot copy layers. Re-import the latest UX Direct plugin zip.");
     else if (fidelity.unplaced.length) b.warnings.push("Could not place " + fidelity.unplaced.length + " source graphic(s): " + fidelity.unplaced.slice(0, 5).join(", ") + ".");
   }
+  capTypeScale(elements, 5, b.warnings);
   polishRows(elements, b.warnings);
+  elements.forEach(relayout);
   bindFileStyles(elements, asRec(canvas.styles), b.warnings);
   const nodeCount = countNodes(elements);
 
