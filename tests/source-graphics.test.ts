@@ -493,3 +493,34 @@ test("a right-edge chevron anchored to a key-value row goes to the row's end, no
   });
   assert.ok(checked, "chevron restored");
 });
+
+test("a copied chevron settles at the end of the card row it sat level with in the source, not beside the title", () => {
+  const src = { nodes: [{ id: "6:1", name: "Loans", type: "FRAME", x: 0, y: 0, width: 360, height: 300, fillColors: ["#FFFFFF"], children: [
+    { id: "6:2", name: "Loan card", type: "FRAME", x: 16, y: 16, width: 328, height: 200, fillColors: ["#FFFFFF"], cornerRadius: 12, children: [
+      { id: "6:4", name: "Head", type: "FRAME", x: 16, y: 16, width: 296, height: 110, children: [
+        { id: "6:3", name: "Title", type: "TEXT", x: 0, y: 0, width: 160, height: 20, text: "Personal Loan" },
+        { id: "6:10", name: "Chevron", type: "VECTOR", x: 284, y: 96, width: 12, height: 12 },
+      ] },
+      { id: "6:5", name: "Lender logo", type: "VECTOR", x: 250, y: 16, width: 56, height: 14 },
+      { id: "6:6", name: "Loan Amount", type: "TEXT", x: 16, y: 100, width: 100, height: 15, text: "Loan Amount" },
+      { id: "6:7", name: "Amount", type: "TEXT", x: 16, y: 119, width: 100, height: 17, text: "₹12,000" },
+      { id: "6:8", name: "Outstanding", type: "TEXT", x: 170, y: 100, width: 100, height: 15, text: "Outstanding" },
+      { id: "6:9", name: "Value", type: "TEXT", x: 170, y: 119, width: 100, height: 17, text: "₹1,07,649" },
+    ] },
+  ] }], components: [] };
+  const s = { summary: "x", frame: { name: "Loans" }, sections: [
+    { name: "Loan", surface: "card", blocks: [
+      { type: "row", label: "Personal Loan", chevron: false },
+      { type: "stat_row", items: [{ label: "Loan Amount", value: "₹12,000" }, { label: "Outstanding", value: "₹1,07,649" }] },
+    ] },
+  ], learningCandidate: null };
+  const expansion = expandBlockSpec(s, src, { sourceCanvas: src });
+  assert.ok(expansion.plan, expansion.errors.join("; "));
+  let parent: N | null = null;
+  walk(expansion.plan!.elements as N[], (n, _d, p) => { if (n.type === "CLONE" && n.name === "Chevron") parent = p; });
+  assert.ok(parent, "chevron cloned");
+  const texts: string[] = [];
+  walk((parent as N).children ?? [], (n) => { if (n.type === "TEXT") texts.push(String(n.text)); });
+  assert.ok(texts.includes("Loan Amount"), "chevron is in the stats row: " + texts.join(","));
+  assert.equal((parent as N).children!.at(-1)!.name, "Chevron", "at the row's end");
+});

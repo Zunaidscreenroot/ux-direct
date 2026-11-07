@@ -653,3 +653,14 @@ test("after a build, a one-token amount wider than its card steps its type down 
   assert.ok(amount.width <= 80, "the amount fits its 80px cell");
   assert.ok(size < 17 && size >= 11);
 });
+
+test("after a build, a label 2px wider than its column fills the column and wraps instead of being clipped", async () => {
+  const r = runtime();
+  const screen = r.make({ type: "FRAME", name: "New screen", width: 360, height: 800, layoutMode: "VERTICAL" });
+  const col = r.make({ type: "FRAME", name: "Row text", width: 201, height: 40, layoutMode: "VERTICAL", clipsContent: true }, screen);
+  const title = r.make({ type: "TEXT", name: "Title", characters: "Personal Loan", width: 203, height: 20, layoutSizingHorizontal: "FIXED" }, col);
+  await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "c", op: "componentize-repeats", payload: { rootId: screen.id } });
+  assert.equal(title.layoutSizingHorizontal, "FILL");
+  assert.equal(title.textAutoResize, "HEIGHT");
+  assert.equal(col.clipsContent, false, "a text-only column never clips");
+});

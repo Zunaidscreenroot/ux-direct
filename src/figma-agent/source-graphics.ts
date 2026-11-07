@@ -438,8 +438,52 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
     usedSourceIds.add(graphic.id);
     if (ownTexts.length && card) dropDuplicateTexts(card, ownTexts, clone);
   }
+  settleChevrons(elements, graphics, allTexts, sourceCount, sourceOrdinal);
   recomputeHeights(elements);
   return result;
+}
+
+/**
+ * A copied chevron/arrow goes to the end of the card row it sat level with in the source (the body
+ * row with the stats), not wherever its text anchor happened to be (between a card's title and its
+ * logo; benchmark T12). Rows are located by the source positions of the texts they hold. Any card.
+ */
+function settleChevrons(elements: NativeNode[], graphics: SrcNode[], allTexts: SrcNode[], sourceCount: Map<string, number>, sourceOrdinal: Map<string, number>) {
+  const chevrons = new Map(graphics.filter((g) => Math.max(g.rect.w, g.rect.h) <= 24 && /arrow|chevron|caret/i.test(g.name)).map((g) => [g.id, g]));
+  if (!chevrons.size) return;
+  const refs = indexOutput(elements);
+  const outByText = new Map<string, NativeNode[]>();
+  for (const r of refs) if (r.node.type === "TEXT" && typeof r.node.text === "string") {
+    const k = norm(r.node.text); outByText.set(k, [...(outByText.get(k) || []), r.node]);
+  }
+  const rectOf = new Map<NativeNode, SrcNode["rect"]>();
+  for (const t of allTexts) {
+    const list = outByText.get(norm(t.text));
+    if (!list || list.length !== (sourceCount.get(norm(t.text)) || 0)) continue;
+    const node = list[sourceOrdinal.get(t.id) ?? -1];
+    if (node) rectOf.set(node, t.rect);
+  }
+  for (const ref of refs) {
+    const graphic = ref.node.type === "CLONE" && typeof ref.node.sourceNodeId === "string" ? chevrons.get(ref.node.sourceNodeId) : undefined;
+    if (!graphic || !ref.parent) continue;
+    const card = [...ref.ancestors].reverse().find(isCardLike);
+    if (!card) continue;
+    const cy = graphic.rect.y + graphic.rect.h / 2;
+    let best: { row: NativeNode; span: number } | null = null;
+    for (const r of indexOutput(card.children ?? [])) {
+      if (r.node.type !== "FRAME" || r.node.layoutMode !== "HORIZONTAL" || isPillLike(r.node) || r.ancestors.some(isPillLike)) continue;
+      if (ref.ancestors.indexOf(card) + 1 + r.depth + 1 > MAX_PLAN_DEPTH) continue;
+      const rects = indexOutput(r.node.children ?? []).map((x) => rectOf.get(x.node)).filter((x): x is SrcNode["rect"] => !!x);
+      if (!rects.length) continue;
+      const top = Math.min(...rects.map((x) => x.y)), bottom = Math.max(...rects.map((x) => x.y + x.h));
+      if (cy < top - 4 || cy > bottom + 4) continue;
+      if (!best || bottom - top < best.span) best = { row: r.node, span: bottom - top };
+    }
+    if (!best || best.row === ref.parent) continue;
+    const from = ref.parent.children ?? [];
+    from.splice(from.indexOf(ref.node), 1);
+    (best.row.children ??= []).push(ref.node);
+  }
 }
 
 /** A cloned chart already carries its labels ("40%", "Paid"); remove generated copies in the same card. */

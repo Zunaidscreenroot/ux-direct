@@ -86,9 +86,13 @@ export function createScopeInstructions(size: { width: number; height: number; p
   ].filter(Boolean).join("\n");
 }
 
+/** A new screen uses its whole height with real content, like a senior designer's first draft. */
+export const CREATE_DENSITY_RULE = "FILL THE SCREEN: use the frame's full height with real content, never an empty lower third. An overview or dashboard screen shows a summary of totals, the next action, and a list of at least 2-3 items of the same kind built with the same block structure (they become one reusable component). A form or detail screen shows every field or detail the task needs.";
+
 export const CREATE_OPERATING_CONTRACT = [
   "The user's prompt describes a NEW screen to design from scratch; there is no source frame to preserve.",
   "Apply the senior designer workflow: pick the screen's primary task, order sections by importance, keep one clear primary action, use realistic domain content.",
   "DESIGN SYSTEM FIRST: figmaCanvas.components lists the file's components ranked by use. Use them for controls through component blocks with exact componentIds and listed property names only.",
   "After creation the plugin runs one rendered screenshot + native layer review and may perform one bounded surgical repair.",
+  CREATE_DENSITY_RULE,
 ];

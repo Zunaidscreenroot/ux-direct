@@ -1475,7 +1475,7 @@ export function sourceFallbackSpec(canvas: Record<string, unknown>): Rec | null 
  * the same size (±1px) and weight class, and any exact colour match takes the paint style.
  * Hygiene checks otherwise report every generated layer as hard-coded.
  */
-function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: string[]) {
+function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: string[], loose = false) {
   if (!styles) return;
   const textStyles = arr(styles.text).map(asRec).filter((x): x is Rec => !!x && typeof x.id === "string" && typeof x.fontSize === "number");
   const paintByColor = new Map<string, string>();
@@ -1485,15 +1485,18 @@ function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: st
   // Exact colour first; else the closest file style that is near in colour and in lightness, so
   // derived tints and borders also use the file's tokens without moving contrast (any screen).
   const palette = [...paintByColor].map(([color, id]) => ({ color, id })).filter((p) => !!hex(p.color));
-  const nearestPaint = (value: string): { color: string; id: string } | null => {
+  // A new screen (create) has no source colours to stay faithful to: surfaces, dividers and button
+  // fills take the closest file style within a wider band, still only of near lightness.
+  const nearestPaint = (value: string, wide = false): { color: string; id: string } | null => {
     const key = value.toUpperCase();
     const exact = paintByColor.get(key);
     if (exact) return { color: key, id: exact };
     if (!hex(value)) return null;
-    let best: { color: string; id: string } | null = null, bestDist = 0.05;
+    let best: { color: string; id: string } | null = null, bestDist = wide ? 0.14 : 0.05;
+    const lumBand = wide ? 0.06 : 0.03;
     for (const p of palette) {
       const d = colorDistance(value, p.color);
-      if (d < bestDist && Math.abs(luminance(p.color) - luminance(value)) <= 0.03) { bestDist = d; best = p; }
+      if (d < bestDist && Math.abs(luminance(p.color) - luminance(value)) <= lumBand) { bestDist = d; best = p; }
     }
     return best;
   };
@@ -1515,11 +1518,11 @@ function bindFileStyles(elements: NativeNode[], styles: Rec | null, warnings: st
         }
       }
       if (node.type !== "CLONE" && node.type !== "INSTANCE" && typeof node.color === "string" && typeof node.paintStyleId !== "string") {
-        const hit = nearestPaint(node.color);
+        const hit = nearestPaint(node.color, loose && node.type !== "TEXT");
         if (hit) { node.color = hit.color; node.paintStyleId = hit.id; paints += 1; }
       }
       if (node.type !== "CLONE" && node.type !== "INSTANCE" && typeof node.strokeColor === "string" && typeof node.strokeStyleId !== "string") {
-        const hit = nearestPaint(node.strokeColor);
+        const hit = nearestPaint(node.strokeColor, loose);
         if (hit) { node.strokeColor = hit.color; node.strokeStyleId = hit.id; paints += 1; }
       }
       if (node.children) visit(node.children);
@@ -1534,7 +1537,7 @@ export function isBlockSpec(value: unknown): boolean {
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
 }
 
-export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean; skeleton?: boolean } = {}): BlockExpansion {
+export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean; skeleton?: boolean; create?: boolean } = {}): BlockExpansion {
   const spec = asRec(value) ?? {};
   const sourceNodes = arr(canvas.nodes);
   const source = asRec(sourceNodes[0]) ?? {};
@@ -1646,7 +1649,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   capTypeScale(elements, 5, b.warnings);
   polishRows(elements, b.warnings);
   elements.forEach(relayout);
-  bindFileStyles(elements, asRec(canvas.styles), b.warnings);
+  bindFileStyles(elements, asRec(canvas.styles), b.warnings, options.create === true);
   const nodeCount = countNodes(elements);
 
   let rootGap = gap;
