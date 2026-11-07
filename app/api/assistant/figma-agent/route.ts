@@ -16,6 +16,7 @@ import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-prov
 import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
+import { CREATE_DESIGN_SCOPE, CREATE_OPERATING_CONTRACT, createFrameSize, createModeCanvas, createScopeInstructions } from "@/src/figma-agent/create-mode";
 import { SCREEN_STATES, STATE_BRIEFS, stateDropsContent, stateFallbackSpec, stateGatePrompt } from "@/src/figma-agent/screen-states";
 import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, promptRequestsWireframe, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
 import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
@@ -527,6 +528,10 @@ export async function POST(request: Request) {
     variation: z.object({ index: z.number().int().min(0).max(3), count: z.number().int().min(1).max(4) }).optional(),
     /** States pack: render the empty / loading / error / success version of the selected screen. */
     state: z.enum(SCREEN_STATES).optional(),
+    /** "create": nothing selected, build a new screen from the prompt (0-to-1). */
+    mode: z.enum(["create"]).optional(),
+    /** Target frame size for create mode; defaults by platform (360×800 mobile, 1440×1024 web). */
+    frame: z.object({ width: z.number().int().min(200).max(2400), height: z.number().int().min(200).max(4000) }).strict().optional(),
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
   if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
@@ -539,10 +544,15 @@ export async function POST(request: Request) {
   const referenceImage = typeof parsedInput.data.referenceImage === "string" &&
     new RegExp("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$").test(parsedInput.data.referenceImage)
     ? parsedInput.data.referenceImage : null;
-  const canvas = compactCanvas(parsedInput.data.canvas);
+  const createMode = parsedInput.data.mode === "create";
+  if (createMode && parsedInput.data.state) return NextResponse.json({ error: "A screen state needs a selected screen; create mode builds a new one." }, { status: 400, headers });
+  const createSize = createMode ? createFrameSize(parsedInput.data.prompt, parsedInput.data.frame) : null;
+  // Create mode: an empty virtual frame of the target size plus the file's real component catalogue.
+  const requestCanvas: unknown = createSize ? createModeCanvas(parsedInput.data.canvas, createSize, parsedInput.data.prompt) : parsedInput.data.canvas;
+  const canvas = compactCanvas(requestCanvas);
   // Uncompacted read-back: carries image fills, corner radii and deep icon layers for source fidelity.
-  const rawSourceCanvas = parsedInput.data.canvas && typeof parsedInput.data.canvas === "object" && !Array.isArray(parsedInput.data.canvas)
-    ? parsedInput.data.canvas as Record<string, unknown> : null;
+  const rawSourceCanvas = requestCanvas && typeof requestCanvas === "object" && !Array.isArray(requestCanvas)
+    ? requestCanvas as Record<string, unknown> : null;
   const pluginCanClone = (parsedInput.data.capabilities ?? []).includes("clone");
   const selectedRoot = Array.isArray(canvas.nodes) && canvas.nodes[0] && typeof canvas.nodes[0] === "object"
     ? canvas.nodes[0] as Record<string, unknown> : {};
@@ -550,11 +560,11 @@ export async function POST(request: Request) {
   const selectedType = typeof selectedRoot.type === "string" ? selectedRoot.type.toUpperCase() : "";
   const selectedWidth = typeof selectedRoot.width === "number" ? selectedRoot.width : 0;
   const selectedHeight = typeof selectedRoot.height === "number" ? selectedRoot.height : 0;
-  const componentSelection = ["COMPONENT", "COMPONENT_SET", "INSTANCE", "GROUP"].includes(selectedType) ||
+  const componentSelection = !createMode && ["COMPONENT", "COMPONENT_SET", "INSTANCE", "GROUP"].includes(selectedType) ||
     (selectedWidth > 0 && selectedWidth <= 520 && selectedHeight > 0 && selectedHeight <= 560 &&
       /\b(card|component|widget|tile|row|button|panel|item|summary|breakdown|loan)\b/i.test(selectedName) &&
       !/\b(screen|page|dashboard|flow)\b/i.test(selectedName));
-  const designScope = componentSelection ? "selected_component_or_card" : "selected_screen_or_frame";
+  const designScope = createMode ? CREATE_DESIGN_SCOPE : componentSelection ? "selected_component_or_card" : "selected_screen_or_frame";
   // State runs (empty/loading/...) keep their own verified examples, so they never steer a normal
   // improve toward an empty screen, and a state gets examples of the same state.
   const exampleScope = parsedInput.data.state ? designScope + ":state-" + parsedInput.data.state : designScope;
@@ -570,7 +580,7 @@ export async function POST(request: Request) {
     prompt: parsedInput.data.prompt,
     designScope,
     selectedNode: { name: selectedName, type: selectedType, width: selectedWidth, height: selectedHeight },
-    operatingContract: blockMode ? blockOperatingContract : [
+    operatingContract: createMode ? CREATE_OPERATING_CONTRACT : blockMode ? blockOperatingContract : [
       "Treat the user's short prompt as the requested design change, not as the full procedure. Apply the built-in senior designer and expert Figma workflow automatically.",
       "Inventory and preserve all meaningful source text, labels, values, amounts, dates, statuses, indicators, icons, repeated rows, and relationships unless the user explicitly asks to change them.",
       "Use both the rendered screenshot (when available) and native layer tree to infer visual style, layout, information hierarchy, reusable patterns, and content density before planning. If the user also attached a separate reference image, use it as visual inspiration or as content only when requested; never confuse it with the source screenshot or invent a successful asset insertion.",
@@ -581,7 +591,7 @@ export async function POST(request: Request) {
       "DESIGN SYSTEM FIRST: canvas.components lists the file's components ranked by use. When a planned element is a button, input, tab, chip, badge, list row, icon, avatar, nav bar or other control that a listed component provides, emit {type:'INSTANCE', componentId:'<exact id>', name, x, y, width, height, instanceProperties:{...}} instead of drawing it from FRAME/RECTANGLE/TEXT. Choose variants and override labels through instanceProperties using only the property names and options listed for that component. If the source already uses an instance of a component, keep using that component.",
       "After native-layer creation, the plugin runs one rendered screenshot + native layer review, may perform one bounded schema-validated surgical repair, then reads and reviews the result once more. Preserve the source frame."
     ],
-    visualCapture: renderedScreen ? "Rendered selected-node image is attached." :
+    visualCapture: createMode ? "Create mode: there is no source screen to capture." : renderedScreen ? "Rendered selected-node image is attached." :
       parsedInput.data.visualCaptureWarning || "No rendered image available; use native layer evidence and do not claim visual inspection.",
     referenceImage: referenceImage ? "A user-attached reference image is included separately from the source screenshot." : null,
     figmaCanvas: canvas,
@@ -653,7 +663,7 @@ export async function POST(request: Request) {
   // Persist the run before model work starts so a fast completion cannot race a late INSERT.
   const taskRunStarted = startTaskRun({ id: taskRunId, projectKey: taskScope, title: "Figma task", requestSummary: parsedInput.data.prompt, retrieval: taskRetrieval });
 
-  const scopeInstructions = componentSelection
+  const scopeInstructions = createSize ? createScopeInstructions(createSize) : componentSelection
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   // A verified spec from this project (structure only) steers whichever model `auto` picks
@@ -689,7 +699,7 @@ export async function POST(request: Request) {
   });
   const recoverySystem = [
     UX_DIRECT_DESIGN_ROLE,
-    "Create an improved native Figma variation of the selected source. The user prompt is the design change, not the procedure.",
+    createMode ? "Create a NEW native Figma screen from the user prompt; there is no source screen." : "Create an improved native Figma variation of the selected source. The user prompt is the design change, not the procedure.",
     scopeInstructions,
     roleInstructions(taskRole, agentBrief.domain),
     "Preserve the screen/component scope, all meaningful source text and financial values, status, date, labels, rows, actions and relationships. Do not redesign it as a generic dashboard or generic stack of cards.",
@@ -703,7 +713,7 @@ export async function POST(request: Request) {
   ].join("\n");
   const blockRecoverySystem = [
     UX_DIRECT_DESIGN_ROLE,
-    "Create an improved native Figma variation of the selected source as a BLOCK SPEC. The user prompt is the design change, not the procedure.",
+    createMode ? "Create a NEW native Figma screen from the user prompt as a BLOCK SPEC; there is no source screen, so ignore source-text rules below." : "Create an improved native Figma variation of the selected source as a BLOCK SPEC. The user prompt is the design change, not the procedure.",
     scopeInstructions,
     roleInstructions(taskRole, agentBrief.domain),
     "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Copy every listed text string exactly into block fields, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
@@ -1120,7 +1130,8 @@ export async function POST(request: Request) {
   // Every attempt missed the gate, but one only dropped source text that was restored.
   if (fallback) return respond(fallback);
   // No model answer was usable: rebuild the screen from its own layers rather than failing.
-  if (blockMode) {
+  // Create mode has no layers to rebuild from, so it reports the failure instead.
+  if (blockMode && !createMode) {
     // The full read: the model-facing canvas is cut at depth 6, which dropped every card title,
     // ID, label and amount (they sit 7–8 levels deep) from the fallback (findings 27, 42).
     const baseSpec = sourceFallbackSpec(rawSourceCanvas ?? canvas);
