@@ -2937,7 +2937,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -4796,6 +4796,110 @@ async function localInsertIcons(payload) {
   return { ok: true, inserted: inserted, skipped: skipped, createdIds: created, restore: hidden };
 }
 // uxd-icons:end
+// uxd-detached:start
+// Detached-instance rescue, no model: frames that were detached from a component (Figma keeps
+// detachedInfo on them) are found and, on "relink", replaced by a fresh instance of that component
+// with the copy's texts carried over as overrides. Copies with texts the component has no slot for
+// are reported, not touched. The copy is hidden, not deleted, so Revert is exact.
+async function uxdDetachedComponent(node) {
+  var info = node.detachedInfo;
+  if (!info) return null;
+  try {
+    if (info.type === "local") {
+      var c = await figma.getNodeByIdAsync(String(info.componentId || ""));
+      return c && !c.removed && c.type === "COMPONENT" ? c : null;
+    }
+    if (info.type === "library" && typeof figma.importComponentByKeyAsync === "function") return await figma.importComponentByKeyAsync(String(info.componentKey || ""));
+  } catch (_) {}
+  return null;
+}
+function uxdTextSlots(root) {
+  var slots = [], seen = {};
+  uxdDescendants(root, function (n) { return n.type === "TEXT"; }).forEach(function (t) {
+    var path = [];
+    for (var p = t; p && p !== root; p = p.parent) path.unshift(String(p.name || ""));
+    var key = path.join("/");
+    seen[key] = (seen[key] || 0) + 1;
+    slots.push({ key: key + "#" + seen[key], node: t });
+  });
+  return slots;
+}
+function uxdMapTexts(copy, instance) {
+  var from = uxdTextSlots(copy).filter(function (s) { return s.node.visible !== false && String(s.node.characters || "").trim(); });
+  var to = uxdTextSlots(instance);
+  var byKey = {};
+  to.forEach(function (s) { byKey[s.key] = s.node; });
+  var pairs = [], missing = [];
+  from.forEach(function (s, i) {
+    var target = byKey[s.key] || (from.length === to.length ? to[i].node : null);
+    if (target) pairs.push({ from: s.node, to: target }); else missing.push(String(s.node.characters).slice(0, 30));
+  });
+  return { pairs: pairs, missing: missing };
+}
+async function localDetachedRescue(payload) {
+  var sel = figma.currentPage.selection;
+  if (!sel.length) throw new Error("Select a screen or layers to check for detached components.");
+  var fix = payload && payload.fix === true;
+  var copies = [];
+  sel.forEach(function (root) {
+    [root].concat(uxdDescendants(root, function (n) { return n.type === "FRAME"; })).forEach(function (n) {
+      if (n.type !== "FRAME" || !n.detachedInfo || n.visible === false || n.locked === true || uxdInsideInstance(n)) return;
+      for (var p = n.parent; p; p = p.parent) if (copies.indexOf(p) >= 0) return;
+      if (copies.length < 60) copies.push(n);
+    });
+  });
+  var results = [], createdIds = [], restore = [];
+  if (fix && copies.length && typeof figma.commitUndo === "function") figma.commitUndo();
+  for (var i = 0; i < copies.length; i++) {
+    var copy = copies[i];
+    var entry = { id: copy.id, name: copy.name, component: "", status: "ready", reason: "" };
+    results.push(entry);
+    var component = await uxdDetachedComponent(copy);
+    if (!component) { entry.status = "skipped"; entry.reason = copy.detachedInfo.type === "library" ? "its library component is not available in this file" : "its component was deleted"; continue; }
+    entry.component = component.parent && component.parent.type === "COMPONENT_SET" ? component.parent.name + " / " + component.name : component.name;
+    var instance = component.createInstance();
+    var map = uxdMapTexts(copy, instance);
+    if (map.missing.length) {
+      instance.remove();
+      entry.status = "skipped"; entry.reason = "the copy has text the component has no slot for: " + map.missing.slice(0, 3).join(", ");
+      continue;
+    }
+    if (!fix) { instance.remove(); continue; }
+    try {
+      var parent = copy.parent;
+      parent.insertChild(parent.children.indexOf(copy), instance);
+      if (!parent.layoutMode || parent.layoutMode === "NONE" || copy.layoutPositioning === "ABSOLUTE") {
+        if (copy.layoutPositioning === "ABSOLUTE") instance.layoutPositioning = "ABSOLUTE";
+        instance.x = copy.x; instance.y = copy.y;
+      } else {
+        ["layoutAlign", "layoutGrow", "layoutSizingHorizontal", "layoutSizingVertical"].forEach(function (prop) {
+          try { if (prop in copy) instance[prop] = copy[prop]; } catch (_) {}
+        });
+      }
+      if ((Math.abs(instance.width - copy.width) > 1 || Math.abs(instance.height - copy.height) > 1) && typeof instance.resize === "function") {
+        try { instance.resize(copy.width, copy.height); } catch (_) {}
+      }
+      for (var j = 0; j < map.pairs.length; j++) {
+        var pair = map.pairs[j];
+        if (pair.to.characters === pair.from.characters) continue;
+        await uxdLoadTextFonts(pair.to);
+        pair.to.characters = pair.from.characters;
+      }
+      instance.name = copy.name;
+      if (typeof instance.setPluginData === "function") instance.setPluginData("uxdCreated", "1");
+      copy.visible = false;
+      createdIds.push(instance.id);
+      restore.push({ id: copy.id, prop: "visible", before: true, after: false });
+      entry.status = "relinked";
+    } catch (error) {
+      try { instance.remove(); } catch (_) {}
+      entry.status = "skipped"; entry.reason = String(error && error.message || "could not place the instance").slice(0, 120);
+    }
+  }
+  if (createdIds.length && typeof figma.commitUndo === "function") figma.commitUndo();
+  return { ok: true, results: results, createdIds: createdIds, restore: restore };
+}
+// uxd-detached:end
 // uxd-restore-missing:start
 // Structural lint found 1-5 source texts missing from a generated screen. Instead of failing the
 // run, clone the exact source TEXT layers into the matching parent of the UX Direct-created output
@@ -4882,6 +4986,7 @@ async function runLocalTask(message) {
     else if (message.op === "set-design-rules") result = await localSetDesignRules(payload);
     else if (message.op === "consistency") result = await localConsistency(payload);
     else if (message.op === "restore-missing-texts") result = await localRestoreMissingTexts(payload);
+    else if (message.op === "detached-rescue") result = await localDetachedRescue(payload);
     else if (message.op === "commit-undo") { if (typeof figma.commitUndo === "function") figma.commitUndo(); result = { ok: true }; }
     else if (message.op === "trigger-undo") {
       if (typeof figma.triggerUndo !== "function") throw new Error("This Figma version cannot undo from a plugin. Use Cmd/Ctrl+Z.");
@@ -4915,7 +5020,8 @@ sendSelection();
 // Cmd+/ → "UX Direct" → type a task: Figma passes it as the "prompt" parameter. The plugin still
 // opens its panel (network runs there) and the panel runs the task once the file is verified.
 var UXD_QUICK_ACTION_SUGGESTIONS = ["fix hygiene", "add icons to these buttons", "fill with realistic data", "check hygiene",
-  "ux audit", "add empty, loading and error states", "make 3 variations", "make this card cleaner", "show design rules", "revert"];
+  "ux audit", "add empty, loading and error states", "make 3 variations", "make this card cleaner", "show design rules", "revert",
+  "check consistency", "find detached components"];
 var UXD_PENDING_QUICK_PROMPT = "";
 function uxdQuickActionSuggestions(query) {
   var q = String(query || "").trim().toLowerCase();
