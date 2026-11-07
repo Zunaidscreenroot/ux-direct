@@ -77,6 +77,7 @@ function runtime() {
   const faint = make({ type: "TEXT", name: "Hint", characters: "Due 5 Dec", fontSize: 10, fills: solid("#D1D5DB") }, screen);
   const button = make({ type: "FRAME", name: "Button", width: 120, height: 36, layoutMode: "HORIZONTAL", paddingLeft: 16, paddingRight: 16, paddingTop: 8, paddingBottom: 8, fills: solid("#2563EB") }, screen);
   const instance = make({ type: "INSTANCE", name: "Chip", width: 60, height: 24, layoutMode: "HORIZONTAL", paddingLeft: 5, fills: solid("#2563EB") }, screen);
+  const instanceLabel = make({ type: "TEXT", name: "Chip label", characters: "New", fontSize: 9, fills: solid("#FFFFFF") }, instance);
   const stack = make({ type: "FRAME", name: "Rows", width: 343, height: 100 }, screen);
   const rowA = make({ type: "FRAME", name: "Row A", y: 0, height: 40 }, stack);
   make({ type: "FRAME", name: "Row B", y: 52, height: 40 }, stack);
@@ -110,7 +111,7 @@ function runtime() {
     if (message.error) throw new Error(message.error);
     return message.result;
   }
-  return { fix, screen, title, faint, button, instance, stack, rowA, rgb };
+  return { fix, screen, title, faint, button, instance, instanceLabel, stack, rowA, rgb };
 }
 
 test("spacing fix snaps to the 4px grid and evens near-symmetric padding", async () => {
@@ -155,4 +156,12 @@ test("layout fix adds auto layout to cleanly stacked frames only", async () => {
   assert.equal(r.stack.layoutMode, "VERTICAL");
   assert.equal(r.stack.itemSpacing, 12);
   assert.equal(result.counts.autoLayout, 1);
+});
+
+test("accessibility fix reaches text inside instances as overrides, but structure inside instances is untouched", async () => {
+  const r = runtime();
+  const inner = (r as any).instanceLabel;
+  await r.fix(["a11y", "spacing"]);
+  assert.equal(inner.fontSize, 12, "small label inside an instance raised to 12px");
+  assert.equal(r.instance.paddingLeft, 5, "instance padding is not changed");
 });

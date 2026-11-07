@@ -3720,16 +3720,18 @@ async function localApplyDirectEdits(payload) {
 // "layout" (auto layout on cleanly stacked frames). Instances, locked and hidden layers are never touched.
 var UXD_HYGIENE_GROUPS = ["spacing", "tokens", "a11y", "layout"];
 var UXD_HYGIENE_INTERACTIVE = /\b(button|btn|cta|icon[ -]?button|tab|chip|toggle|switch|checkbox|radio|link|close|back|menu|fab)\b/i;
-function uxdHygieneNodes(roots) {
+// includeInstanceChildren: text inside instances (button labels, card values) is where most contrast and
+// small-text findings live; those get instance overrides. Structure and tokens stay with the main component.
+function uxdHygieneNodes(roots, includeInstanceChildren) {
   var out = [];
-  (function walk(list) {
+  (function walk(list, inside) {
     for (var i = 0; i < list.length; i++) {
       var node = list[i];
       if (!node || node.removed || node.visible === false || node.locked === true) continue;
-      out.push(node);
-      if (node.type !== "INSTANCE" && Array.isArray(node.children)) walk(node.children);
+      if (!inside || includeInstanceChildren) out.push(node);
+      if (Array.isArray(node.children) && (node.type !== "INSTANCE" || includeInstanceChildren)) walk(node.children, inside || node.type === "INSTANCE");
     }
-  })(roots);
+  })(roots, false);
   return out;
 }
 function uxdSnapToGrid(value) {
@@ -3876,7 +3878,9 @@ async function localApplyHygieneFixes(payload) {
   var has = function (g) { return groups.indexOf(g) >= 0; };
   // Fonts first, so the whole fix is one undo step.
   var texts = nodes.filter(function (n) { return n.type === "TEXT"; });
-  for (var t = 0; t < texts.length; t++) { try { await uxdLoadTextFonts(texts[t]); } catch (_) {} }
+  var a11yTexts = has("a11y") ? uxdHygieneNodes(roots, true).filter(function (n) { return n.type === "TEXT"; }) : [];
+  var fontTexts = a11yTexts.length ? a11yTexts : texts;
+  for (var t = 0; t < fontTexts.length; t++) { try { await uxdLoadTextFonts(fontTexts[t]); } catch (_) {} }
   if (typeof figma.commitUndo === "function") figma.commitUndo();
 
   if (has("layout")) {
@@ -3910,8 +3914,8 @@ async function localApplyHygieneFixes(payload) {
     });
   }
   if (has("a11y")) {
-    for (var a = 0; a < texts.length; a++) {
-      var text = texts[a];
+    for (var a = 0; a < a11yTexts.length; a++) {
+      var text = a11yTexts[a];
       if (typeof text.fontSize === "number" && text.fontSize < 12 && !uxdBound(text, "fontSize") && !(typeof text.textStyleId === "string" && text.textStyleId)) {
         try { text.fontSize = 12; counts.smallText++; } catch (_) {}
       }
@@ -3929,7 +3933,7 @@ async function localApplyHygieneFixes(payload) {
       var darken = uxdLuminance(bg) > 0.18;
       var color = { r: fg.color.r, g: fg.color.g, b: fg.color.b };
       for (var step = 0; step < 40 && uxdContrast(color, bg) < required + 0.05; step++) color = uxdShiftColor(color, darken ? -0.06 : 0.06);
-      if (uxdContrast(color, bg) < required) { skip("\"" + String(text.name).slice(0, 30) + "\" cannot reach contrast on its background"); continue; }
+      if (uxdContrast(color, bg) < required) { skip("\"" + String(text.name).slice(0, 30) + "\" is already " + (darken ? "black" : "white") + "; darken its background to pass contrast"); continue; }
       text.fills = [{ type: "SOLID", color: color, opacity: fg.opacity === undefined ? 1 : fg.opacity, visible: true }];
       counts.contrast++;
     }
