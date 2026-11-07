@@ -451,6 +451,7 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "text/event-stream",
+            ...(activeProvider.id === "freellmapi" ? { "X-UXD-Agent-Role": "chat" } : {}),
             ...(activeProvider.id === "openrouter" ? {
               "HTTP-Referer": origin,
               "X-OpenRouter-Title": "UX Direct",

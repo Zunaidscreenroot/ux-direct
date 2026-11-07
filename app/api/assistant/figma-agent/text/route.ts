@@ -71,6 +71,7 @@ async function handleTextTask(request: Request): Promise<Response> {
     title: mode === "rewrite" ? "UX Direct Text Rewrite" : "UX Direct Layer Rename",
     origin: new URL(request.url).origin,
     hasVisionInput: false,
+    role: "writer",
     maxTokens: mode === "rewrite" ? 3000 : 2500,
     temperature: mode === "rewrite" ? 0.5 : 0.2,
     system,

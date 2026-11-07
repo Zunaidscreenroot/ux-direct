@@ -388,7 +388,7 @@ export async function POST(request: Request) {
       const response = await providerFetch(activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions", {
         method: "POST",
         headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json", Accept: "application/json",
-            ...figmaRoutingHeaders(activeProvider),
+            ...figmaRoutingHeaders(activeProvider, { role: "planner" }),
           ...(activeProvider.id === "openrouter" ? { "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Native Figma Actions" } : {}) },
         body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content }],
           ...(activeProvider.id === "openrouter" && model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),

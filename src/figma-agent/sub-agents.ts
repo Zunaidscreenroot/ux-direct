@@ -119,6 +119,7 @@ async function runAgent(
       maxTokens: 900,
       temperature: 0.1,
       title: "UX Direct sub-agent: " + agent,
+      role: "classifier",
       origin: input.origin,
       timeoutMs: subAgentTimeoutMs(),
       signal: options.signal,

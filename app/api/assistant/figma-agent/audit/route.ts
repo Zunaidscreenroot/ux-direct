@@ -69,6 +69,7 @@ async function handleAuditTask(request: Request): Promise<Response> {
     title: "UX Direct UX Audit",
     origin: new URL(request.url).origin,
     hasVisionInput: images.length > 0,
+    role: "critic",
     maxTokens: 2200,
     temperature: 0.2,
     system: [
