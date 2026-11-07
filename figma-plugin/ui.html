@@ -3495,6 +3495,13 @@
       }
       if (message.type === "uxd-quick-action") {
         // Cmd+/ quick action: run the typed task as if it was sent from the prompt box.
+        if (message.autoRun === false) {
+          // Same task as the last quick action (Figma replaying it): prefill only, never rerun unasked.
+          $("prompt").value = String(message.prompt || "").trim();
+          $("send").disabled = isSending || !$("prompt").value.trim() || !verifiedFileKey;
+          appendMessage("assistant", "Your last quick action is filled in below. Press Send to run it again.");
+          return;
+        }
         pendingQuickPrompt = String(message.prompt || "").trim();
         runPendingQuickPrompt();
         return;
