@@ -245,6 +245,11 @@ export function rankCandidates(input: {
   return ordered.slice(0, input.maxAttempts ?? policy.maxAttempts);
 }
 
+/** A 429 that empties the whole account for the day (every model of that provider), not one model. */
+export function isAccountWideQuota(message: string): boolean {
+  return /free-models-per-day|per[\s_-]?day.*(account|key)|\b4006\b|daily free allocation/i.test(message);
+}
+
 // ---------- provider calls ----------
 
 const OPENAI_FIELDS = new Set(["model", "messages", "temperature", "top_p", "max_tokens", "stream", "stop", "response_format", "seed", "presence_penalty", "frequency_penalty"]);
@@ -431,12 +436,15 @@ export async function gatewayChatCompletion(rawBody: string, headers: Headers, s
   ]);
   const maxAttempts = Math.max(1, Math.min(10, Number(env.UXD_GW_MAX_ATTEMPTS) || policy.maxAttempts));
   const turn = nextTurn(role);
+  // The whole ranked list is kept: models skipped because their provider ran out mid-request do not
+  // use up the attempt budget, so the chain still reaches the providers that have quota left.
+  const rankAll = 40;
   let candidates = rankCandidates({
     providers: withModels, role, promptTokens: estimatePromptTokens(body), vision: hasImages(body),
-    usage, cooldowns, localHits, pinned, maxAttempts, turn,
+    usage, cooldowns, localHits, pinned, maxAttempts: rankAll, turn,
   });
   if (!candidates.length && pinned && !headers.get("x-uxd-gateway-strict")) {
-    candidates = rankCandidates({ providers: withModels, role, promptTokens: estimatePromptTokens(body), vision: hasImages(body), usage, cooldowns, localHits, maxAttempts, turn });
+    candidates = rankCandidates({ providers: withModels, role, promptTokens: estimatePromptTokens(body), vision: hasImages(body), usage, cooldowns, localHits, maxAttempts: rankAll, turn });
   }
   if (!candidates.length) {
     const response = failure(503, providers.length
@@ -451,10 +459,14 @@ export async function gatewayChatCompletion(rawBody: string, headers: Headers, s
   let lastStatus = 502;
   let jsonRetryUsed = false;
   const plainRetryAt = new Set<number>();
-  for (let index = 0; index < candidates.length; index++) {
+  let tries = 0;
+  for (let index = 0; index < candidates.length && tries < maxAttempts; index++) {
     if (signal?.aborted) { errors.push("stopped by caller"); break; }
     const { provider, model } = candidates[index];
     const key = slot(provider.id, model);
+    // The provider's account ran out earlier in this request: skip its other models without a call.
+    if ((cooldowns.get(provider.id + "/*") ?? 0) > Date.now()) continue;
+    tries += 1;
     // Never send a paid OpenRouter id, whatever the ranking or a pinned request says.
     if (!isAllowedModel(provider, model)) { errors.push(key + ": refused (not a :free model)"); continue; }
     const keys = providerKeys(provider, env);
@@ -495,7 +507,7 @@ export async function gatewayChatCompletion(rawBody: string, headers: Headers, s
     const until = cooldownFor(outcome.status, outcome.message, outcome.retryAfter);
     if (until) cooldowns.set(key, until);
     // Account-wide daily cap hit: the whole provider is out until it resets.
-    if (until && outcome.status === 429 && /free-models-per-day|per[\s_-]?day.*(account|key)/i.test(outcome.message)) cooldowns.set(provider.id + "/*", until);
+    if (until && outcome.status === 429 && isAccountWideQuota(outcome.message)) cooldowns.set(provider.id + "/*", until);
     records.push({ ...base, ok: false, httpStatus: outcome.status, latencyMs, error: outcome.message, ...(until ? { cooldownUntil: new Date(until).toISOString() } : {}) });
     errors.push(key + ": " + (outcome.status ? "HTTP " + outcome.status + " " : "") + outcome.message.slice(0, 140));
     // Some free models reject JSON mode with a 400/422: retry the same model once without it.
