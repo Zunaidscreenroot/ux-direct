@@ -4260,8 +4260,9 @@ async function localApplyHygieneFixes(payload) {
   });
   UXD_HYGIENE_SNAPSHOT = null;
   var usedRules = Boolean(UXD_ACTIVE_RULES);
+  var usedSpacingScale = Boolean(UXD_ACTIVE_RULES && Array.isArray(UXD_ACTIVE_RULES.spacing) && UXD_ACTIVE_RULES.spacing.length);
   UXD_ACTIVE_RULES = null;
-  return { ok: true, usedRules: usedRules, groups: groups, counts: counts, total: total, checked: nodes.length, skipped: skipped,
+  return { ok: true, usedRules: usedRules, usedSpacingScale: usedSpacingScale, groups: groups, counts: counts, total: total, checked: nodes.length, skipped: skipped,
     snapshot: snapshot, layoutChanged: counts.autoLayout > 0 };
 }
 // uxd-hygiene-fix:end
@@ -4491,6 +4492,10 @@ function uxdInsideInstance(node) {
   for (var p = node.parent; p && p.type !== "PAGE"; p = p.parent) if (p.type === "INSTANCE") return true;
   return false;
 }
+function uxdIsDataValueText(text) {
+  var value = String(text.characters || "").trim();
+  return /[0-9₹$€£¥%]/.test(value) && !/^(step|page)\s*\d/i.test(value);
+}
 function uxdIconTargetInfo(node) {
   if (["FRAME", "COMPONENT"].indexOf(node.type) < 0 || node.visible === false || node.locked === true) return null;
   if ((node.height || 0) > 88 || (node.width || 0) < 40 || uxdInsideInstance(node)) return null;
@@ -4499,6 +4504,8 @@ function uxdIconTargetInfo(node) {
   if (!texts.length || texts.length > 2 || kids.some(uxdIsIconLike)) return null;
   var label = String(texts[0].characters || "").trim();
   if (!label || label.length > 40) return null;
+  // Data rows ("Balance  ₹12,400", "Due date  12 Nov") show a value, not an action: no icon.
+  if (texts.some(uxdIsDataValueText)) return null;
   var size = typeof texts[0].fontSize === "number" ? texts[0].fontSize : 14;
   return { id: node.id, name: node.name, label: label, fontSize: size };
 }
