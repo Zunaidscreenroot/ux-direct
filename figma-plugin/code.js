@@ -3868,6 +3868,24 @@ async function uxdExistingMatches(root, kind, qualifiers) {
   }
   return found;
 }
+// A fixed-height screen clips what an insert pushes past its bottom ("add another loan card" ended at
+// 907px inside an 800px frame; tester T9): the screen grows to fit, and Revert restores its height.
+function uxdGrowScreenToFit(node) {
+  var screen = node;
+  while (screen && screen.parent && screen.parent.type !== "PAGE") screen = screen.parent;
+  if (!screen || screen === node || typeof screen.resize !== "function" || !node.absoluteBoundingBox || !screen.absoluteBoundingBox) return 0;
+  if (screen.layoutMode && screen.layoutMode !== "NONE" && screen.layoutMode !== "GRID") {
+    var vertical = screen.layoutMode === "VERTICAL";
+    if ((vertical ? screen.primaryAxisSizingMode : screen.counterAxisSizingMode) === "AUTO") return 0;
+  }
+  var box = node.absoluteBoundingBox;
+  var pad = typeof screen.paddingBottom === "number" && screen.paddingBottom > 0 ? screen.paddingBottom : 16;
+  var need = Math.ceil(box.y + box.height + pad - screen.absoluteBoundingBox.y);
+  if (need <= screen.height + 0.5) return 0;
+  uxdSnapProp(screen, "height");
+  screen.resize(screen.width, need);
+  return need;
+}
 async function uxdInsertComponent(roots, op) {
   var kind = String(op.component || "button");
   var qualifiers = (Array.isArray(op.qualifiers) ? op.qualifiers : []).map(String).filter(function (q) { return q.length > 1; });
@@ -3885,7 +3903,8 @@ async function uxdInsertComponent(roots, op) {
     host.insertChild(host.children.indexOf(last) + 1, copy);
     if (!("layoutMode" in host) || host.layoutMode === "NONE") { copy.x = last.x; copy.y = last.y + last.height + 12; }
     figma.currentPage.selection = [copy];
-    return "added another \"" + last.name + "\" after the last one";
+    var grownTo = uxdGrowScreenToFit(copy);
+    return "added another \"" + last.name + "\" after the last one" + (grownTo ? " and grew the screen to " + grownTo + "px so it is not cut off" : "");
   }
   var parent = root.type === "INSTANCE" || !("appendChild" in root) ? root.parent : root;
   var component = await uxdFindComponent(roots, kind, qualifiers);
@@ -3930,7 +3949,9 @@ async function uxdInsertComponent(roots, op) {
     }
   }
   figma.currentPage.selection = [instance];
-  return "placed \"" + (component.parent && component.parent.type === "COMPONENT_SET" ? component.parent.name + " / " + component.name : component.name) + "\" from your components";
+  var grown = uxdGrowScreenToFit(instance);
+  return "placed \"" + (component.parent && component.parent.type === "COMPONENT_SET" ? component.parent.name + " / " + component.name : component.name) + "\" from your components" +
+    (grown ? " and grew the screen to " + grown + "px so it is not cut off" : "");
 }
 async function localApplyDirectEdits(payload) {
   var ops = Array.isArray(payload.ops) ? payload.ops.slice(0, 30) : [];
@@ -4076,6 +4097,35 @@ async function uxdHygienePalette() {
       }
     }
   } catch (_) {}
+  // Colour variables the file's own screens already use (often library variables, which are not
+  // local): keyed by the colour they render on this page, so a new card in #383838 binds to the
+  // same variable as the source card (benchmark: the source binds fills to variables, not styles).
+  try {
+    if (figma.variables && typeof figma.variables.getVariableByIdAsync === "function") {
+      var seenIds = {};
+      var stack = figma.currentPage.children.slice(), visited = 0;
+      while (stack.length && visited < 20000) {
+        var n = stack.pop();
+        visited++;
+        if (!n || n.removed) continue;
+        if (n.getPluginData && n.getPluginData("uxdCreated") === "1") continue;
+        if ("fills" in n && n.type !== "TEXT") {
+          var bp = uxdSingleSolid(n.fills);
+          var alias = bp && bp.boundVariables && bp.boundVariables.color;
+          var vkey = bp ? uxdColorKey(bp.color, bp.opacity) : "";
+          if (alias && alias.id && !seenIds[alias.id + "|" + vkey]) {
+            seenIds[alias.id + "|" + vkey] = true;
+            var used = await figma.variables.getVariableByIdAsync(alias.id).catch(function () { return null; });
+            if (used && used.resolvedType === "COLOR") {
+              var list = palette.variables.get(vkey) || [];
+              if (!list.some(function (v) { return v.id === used.id; })) palette.variables.set(vkey, list.concat([used]));
+            }
+          }
+        }
+        if ("children" in n && n.type !== "INSTANCE") for (var c = 0; c < n.children.length; c++) stack.push(n.children[c]);
+      }
+    }
+  } catch (_) {}
   return palette;
 }
 function uxdPickToken(candidates, role) {
@@ -4149,15 +4199,52 @@ function uxdShapeKey(node, depth) {
 }
 function uxdPairedNodes(a, b, out) {
   out.push([a, b]);
-  if ("children" in a && "children" in b && a.type !== "INSTANCE" && a.children.length === b.children.length) {
+  if ("children" in a && "children" in b && a.children.length === b.children.length) {
     for (var i = 0; i < a.children.length; i++) uxdPairedNodes(a.children[i], b.children[i], out);
   }
   return out;
 }
+function uxdVisibleTexts(node) {
+  if (!node || !("findAll" in node)) return [];
+  return node.findAll(function (n) {
+    if (n.type !== "TEXT") return false;
+    for (var p = n; p && p !== node; p = p.parent) if (p.visible === false) return false;
+    return true;
+  }).map(function (n) { return String(n.characters || "").trim(); });
+}
+// Copies one repeated item's own content onto its new instance: visibility, fills, text, and the
+// variant of nested instances (a "Delinquent" badge must not stay "Matured"). Returns false when the
+// two trees do not line up, so the caller keeps the original layers instead.
+async function uxdSyncInstance(copy, instance) {
+  var pairs = uxdPairedNodes(copy, instance, []);
+  for (var k = 0; k < pairs.length; k++) {
+    var src = pairs[k][0], dst = pairs[k][1];
+    if (k > 0 && src.type !== dst.type) return false;
+    try {
+      if (src.type === "INSTANCE" && dst.type === "INSTANCE") {
+        var srcMain = await src.getMainComponentAsync(), dstMain = await dst.getMainComponentAsync();
+        if (srcMain && dstMain && srcMain.id !== dstMain.id) {
+          dst.swapComponent(srcMain);
+          // The swapped instance has new children: pair them again from here.
+          var rest = await uxdSyncInstance(src, dst);
+          if (!rest) return false;
+          continue;
+        }
+      }
+      if (src.visible !== dst.visible) dst.visible = src.visible;
+      if ("fills" in src && src.fills !== figma.mixed && JSON.stringify(src.fills) !== JSON.stringify(dst.fills)) dst.fills = src.fills;
+      if (src.type === "TEXT" && dst.type === "TEXT" && src.characters !== dst.characters) {
+        await uxdLoadTextFonts(dst);
+        dst.characters = src.characters;
+      }
+    } catch (_) {}
+  }
+  return true;
+}
 async function localComponentizeRepeats(payload) {
   var root = payload && payload.rootId ? await figma.getNodeByIdAsync(String(payload.rootId)) : figma.currentPage.selection[0];
   if (!root || !("findAll" in root) || typeof figma.createComponentFromNode !== "function") return { ok: true, components: 0, instances: 0 };
-  var components = 0, instances = 0;
+  var components = 0, instances = 0, kept = 0;
   var parents = [root].concat(root.findAll(function (n) { return n.type === "FRAME" && n.children && n.children.length >= 2; }));
   for (var p = 0; p < parents.length && components < 6; p++) {
     var parent = parents[p];
@@ -4174,7 +4261,6 @@ async function localComponentizeRepeats(payload) {
       var group = groups[key];
       if (group.length < 2) continue;
       var first = group[0];
-      var index = parent.children.indexOf(first);
       var component = figma.createComponentFromNode(first);
       if (!component || component.type !== "COMPONENT") continue;
       component.name = String(component.name || "Item").replace(/\s*\d+$/, "").slice(0, 60) || "Item";
@@ -4187,26 +4273,21 @@ async function localComponentizeRepeats(payload) {
         ["layoutSizingHorizontal", "layoutSizingVertical", "layoutGrow", "layoutAlign"].forEach(function (prop) {
           try { if (prop in copy) instance[prop] = copy[prop]; } catch (_) {}
         });
-        var pairs = uxdPairedNodes(copy, instance, []);
-        for (var k = 0; k < pairs.length; k++) {
-          var src = pairs[k][0], dst = pairs[k][1];
-          try {
-            if (src.visible !== dst.visible) dst.visible = src.visible;
-            if ("fills" in src && JSON.stringify(src.fills) !== JSON.stringify(dst.fills) && src.fills !== figma.mixed) dst.fills = src.fills;
-            if (src.type === "TEXT" && dst.type === "TEXT" && src.characters !== dst.characters) {
-              await uxdLoadTextFonts(dst);
-              dst.characters = src.characters;
-            }
-          } catch (_) {}
+        var synced = await uxdSyncInstance(copy, instance);
+        // Every text must read exactly as in the original item, in the same order; otherwise the
+        // instance is dropped and the original layers stay (no content may move between cards).
+        if (!synced || uxdVisibleTexts(copy).join("\u0001") !== uxdVisibleTexts(instance).join("\u0001")) {
+          instance.remove();
+          kept++;
+          continue;
         }
         instance.name = copy.name;
         copy.remove();
         instances++;
       }
-      void index;
     }
   }
-  return { ok: true, components: components, instances: instances };
+  return { ok: true, components: components, instances: instances, kept: kept };
 }
 // uxd-componentize:end
 async function localRestoreProps(payload) {
@@ -5688,6 +5769,36 @@ function uxdNormText(value) {
   return String(value || "").toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
     .replace(/\s+/g, " ").trim().replace(/[.,:;!?…]+$/, "");
 }
+function uxdRestoreNeighbour(candidate, source, output) {
+  // Source texts in reading order; walk outwards from the missing one until a text that occurs
+  // exactly once in both trees is found (repeated texts like "Personal Loan" are ambiguous).
+  var visibleText = function (n) { return n.type === "TEXT" && n.visible !== false; };
+  var srcTexts = source.findAll(visibleText);
+  var outTexts = output.findAll(function (n) { return visibleText(n) && !uxdInsideInstance(n); });
+  var count = function (list, text) { var c = 0; for (var i = 0; i < list.length; i++) if (uxdNormText(list[i].characters) === text) c++; return c; };
+  var at = srcTexts.indexOf(candidate);
+  if (at < 0) return null;
+  // Only neighbours inside the same source container (card) count.
+  var box = candidate.parent;
+  for (var hop = 0; hop < 3 && box && box !== source; hop++) {
+    for (var d = 1; d < srcTexts.length; d++) {
+      for (var side = 0; side < 2; side++) {
+        var idx = side === 0 ? at - d : at + d;
+        var n = srcTexts[idx];
+        if (!n || n === candidate) continue;
+        var inside = false;
+        for (var p = n.parent; p; p = p.parent) if (p === box) { inside = true; break; }
+        if (!inside) continue;
+        var key = uxdNormText(n.characters);
+        if (!key || count(srcTexts, key) !== 1 || count(outTexts, key) !== 1) continue;
+        var match = outTexts.filter(function (o) { return uxdNormText(o.characters) === key; })[0];
+        if (match && match.parent && typeof match.parent.insertChild === "function") return { node: match, after: side === 0 };
+      }
+    }
+    box = box.parent;
+  }
+  return null;
+}
 async function localRestoreMissingTexts(payload) {
   var source = await figma.getNodeByIdAsync(String(payload.sourceRootId || ""));
   var output = await figma.getNodeByIdAsync(String(payload.outputRootId || ""));
@@ -5722,10 +5833,20 @@ async function localRestoreMissingTexts(payload) {
           (n.type === "FRAME" || n.type === "COMPONENT" || n.type === "GROUP") && !uxdInsideInstance(n);
       })[0] || null;
     }
+    // No same-named container: put the text beside its nearest source neighbour that the output still
+    // shows, inside that neighbour's own container. A text never lands loose at the bottom of the
+    // screen, outside the card it came from (benchmark escapedTexts).
+    var screenLevel = candidate.parent === source;
+    var neighbour = target || screenLevel ? null : uxdRestoreNeighbour(candidate, source, output);
+    if (!target && !screenLevel && !neighbour) { skipped.push(raw); continue; }
     var clone = candidate.clone();
     if (target) {
       target.appendChild(clone);
       if (!target.layoutMode || target.layoutMode === "NONE") { clone.x = candidate.x; clone.y = candidate.y; }
+    } else if (neighbour) {
+      var host = neighbour.node.parent;
+      host.insertChild(host.children.indexOf(neighbour.node) + (neighbour.after ? 1 : 0), clone);
+      if (!host.layoutMode || host.layoutMode === "NONE") { clone.x = neighbour.node.x; clone.y = neighbour.node.y + (neighbour.after ? neighbour.node.height + 4 : -clone.height - 4); }
     } else {
       output.appendChild(clone);
       if (!output.layoutMode || output.layoutMode === "NONE") {
@@ -5735,7 +5856,7 @@ async function localRestoreMissingTexts(payload) {
     }
     clone.name = candidate.name;
     if (typeof clone.setPluginData === "function") clone.setPluginData("uxdCreated", "1");
-    restored.push({ id: clone.id, text: raw, parent: target ? target.name : output.name });
+    restored.push({ id: clone.id, text: raw, parent: target ? target.name : neighbour ? neighbour.node.parent.name : output.name });
   }
   if (restored.length && typeof figma.commitUndo === "function") figma.commitUndo();
   return { ok: true, restored: restored, skipped: skipped };

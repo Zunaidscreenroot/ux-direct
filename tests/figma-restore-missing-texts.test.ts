@@ -77,3 +77,19 @@ test("lint gate restores 1-5 missing texts and lints again; icon task drops valu
   assert.match(gate, /partial !== true/);
   assert.match(ui, /targets = targets\.filter\(function \(t\) \{ return !t\.label \|\| \/\\p\{L\}\/u\.test/);
 });
+
+test("restore-missing-texts puts a card text beside its card neighbour, never loose at the screen root", async () => {
+  const src: any = { id: "src", type: "FRAME", name: "Home", layoutMode: "NONE", absoluteTransform: [[1, 0, 0], [0, 1, 0]], children: [
+    { id: "c3", type: "FRAME", name: "Frame 12", layoutMode: "VERTICAL", children: [text("t1", "Overdue"), text("t2", "Delinquent")] },
+  ] };
+  const box: any = { id: "obox", type: "FRAME", name: "Stats", layoutMode: "VERTICAL", children: [text("o1", "Overdue")] };
+  const out: any = { id: "out", type: "FRAME", name: "Home v2", layoutMode: "VERTICAL", pluginData: { uxdCreated: "1" }, children: [box] };
+  const nodes: Record<string, any> = { src, out, obox: box };
+  Object.values(nodes).forEach((n: any) => { n.insertChild = function (this: any, i: number, c: any) { this.children.splice(i, 0, c); c.parent = this; }; });
+  box.insertChild = function (i: number, c: any) { box.children.splice(i, 0, c); c.parent = box; };
+  const run = runtime(nodes);
+  const result = await run("restore-missing-texts", { sourceRootId: "src", outputRootId: "out", texts: ["delinquent"] });
+  assert.deepEqual(result.restored.map((r: any) => r.parent), ["Stats"]);
+  assert.deepEqual(box.children.map((c: any) => c.characters), ["Overdue", "Delinquent"]);
+  assert.equal(out.children.length, 1, "nothing added at the root");
+});
