@@ -6,16 +6,15 @@ process.env.FREELLMAPI_BASE_URL = "https://freellmapi.test/v1";
 process.env.FREELLMAPI_API_KEY = "test-key";
 process.env.UXD_LEAD_REVIEW = "on";
 
-import { deterministicLeadNotes, designerPersona, directorPlan, gatewaySeat, seatKnowledge, STUDIO, taskOwner } from "../src/figma-agent/studio";
+import { deterministicLeadNotes, designerPersona, gatewaySeat, leadApproves, lostTexts, missingFromSpec, seatKnowledge, STUDIO, taskOwner } from "../src/figma-agent/studio";
 import { agencyEnabled } from "../src/figma-agent/agency";
 import { detectTaskRole } from "../src/figma-agent/agent-roles";
 
 const PROVIDER = "https://freellmapi.test/v1/chat/completions";
 const realFetch = globalThis.fetch;
 const calls: string[] = [];
-let revisionMode: "good" | "drops" = "good";
-let leadCalls = 0;
-let leadAlwaysNotes = false;
+let scores: number[] = [];
+let iterationMode: "good" | "drops" = "good";
 const ok = (content: unknown, model = "model-a") => new Response(JSON.stringify({
   model, choices: [{ finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(content) } }],
 }), { status: 200, headers: { "content-type": "application/json" } });
@@ -31,23 +30,18 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
   if (url !== PROVIDER) throw new Error("offline in test: " + url);
   const body = typeof init?.body === "string" ? init.body : "";
+  const seat = new Headers(init?.headers).get("x-uxd-agent-role") || "";
   if (body.includes("You are one sub-agent in a team")) return new Response("{}", { status: 502 });
   if (body.includes("You are the UX Lead at UX Direct")) {
-    const focus = /THIS REVIEW: the (UX step|UI step|final review)/.exec(body)?.[1] ?? "?";
-    calls.push("lead:" + focus.split(" ")[0]);
-    leadCalls += 1;
-    // The first review asks for a fix; later reviews approve.
-    return ok(leadCalls === 1 || leadAlwaysNotes ? { approve: false, notes: [{ severity: "medium", issue: "EMI should lead", fix: "Make Upcoming EMI the stat" }] } : { approve: true, notes: [] }, "lead-model");
+    const score = scores.shift() ?? 80;
+    calls.push("lead:" + score);
+    return ok({ score, notes: score >= 70 ? [] : [{ severity: "medium", issue: "EMI should lead", fix: "Make Upcoming EMI the stat" }] }, "lead-model");
   }
-  if (body.includes("UX Direct ui step") || body.includes("approved the previous step's screen")) {
-    calls.push("ui-step:" + (body.includes("YOUR SEAT: UI Designer") ? "ui-seat" : "?"));
-    return ok(revisedScreen, "ui-model");
+  if (body.includes("Your UX Lead reviewed your whole screen")) {
+    calls.push("iteration:" + seat);
+    return ok(iterationMode === "good" ? revisedScreen : { sections: [header, actions] }, "designer-model");
   }
-  if (body.includes("Your UX Lead reviewed your screen")) {
-    calls.push("revision");
-    return ok(revisionMode === "good" ? revisedScreen : { sections: [header] }, "designer-model");
-  }
-  calls.push(body.includes("YOUR SEAT: UX Designer") ? "planner-ux-seat" : "planner");
+  calls.push(body.includes("YOUR SEAT: Product Designer") ? "planner:product" : "planner");
   return ok(firstScreen);
 }) as typeof fetch;
 
@@ -66,81 +60,90 @@ const canvas = {
   components: [], styles: { paint: [], text: [], effect: [], grid: [] },
 };
 
-async function run() {
+async function run(leadScores: number[]) {
   calls.length = 0;
-  leadCalls = 0;
+  scores = [...leadScores];
   const { POST } = await import("../app/api/assistant/figma-agent/route");
   const response = await POST(new Request("https://ux-direct.test/api/assistant/figma-agent", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ prompt: "improve this screen", canvas }),
   }));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return { status: response.status, body: await response.json() as Record<string, any> };
+  const body = await response.json() as Record<string, any>;
+  const row = (body.generation?.attemptTimes ?? []).find((entry: { attempt: string }) => entry.attempt.startsWith("review "));
+  return { status: response.status, body, row: row?.attempt as string | undefined };
 }
 
-test("studio: work is split by task, one designer owns a screen", () => {
-  assert.deepEqual(STUDIO.map((member) => member.seat), ["director", "ux-lead", "ux-designer", "ui-designer"]);
-  assert.deepEqual(taskOwner(detectTaskRole("improve this screen")), { owner: "ux-designer", next: "ui-designer" });
-  assert.deepEqual(directorPlan(detectTaskRole("improve this screen")).map((step) => step.id), ["ux", "ui"]);
-  assert.deepEqual(directorPlan(detectTaskRole("change the theme to dark mode")).map((step) => step.owner), ["ui-designer"]);
-  assert.deepEqual(directorPlan(detectTaskRole("make a wireframe of this")).map((step) => step.owner), ["ux-designer"]);
-  assert.match(designerPersona(detectTaskRole("improve this screen")), /YOUR SEAT: UX Designer.*UX step.*UI Designer works on your result next/);
-  // The old per-card split is off unless switched on.
+test("studio: the Director gives one screen to exactly one designer", () => {
+  assert.deepEqual(STUDIO.map((entry) => entry.seat), ["director", "ux-lead", "product-designer", "ux-designer", "ui-designer"]);
+  assert.equal(taskOwner(detectTaskRole("improve this screen"), "improve this screen"), "product-designer");
+  assert.equal(taskOwner(detectTaskRole("create a variation of this screen"), "create a variation of this screen"), "product-designer");
+  assert.equal(taskOwner(detectTaskRole("make a wireframe of this"), "make a wireframe of this"), "ux-designer");
+  assert.equal(taskOwner(detectTaskRole("change the theme to dark mode"), "change the theme to dark mode"), "ui-designer");
+  assert.equal(taskOwner(detectTaskRole("change the buttons to outline"), "change the buttons to outline"), "ui-designer");
+  assert.equal(taskOwner(detectTaskRole("fix the hierarchy and the buttons"), "fix the hierarchy and the buttons"), "product-designer");
+  assert.match(designerPersona(detectTaskRole("improve this screen"), "improve this screen"), /YOUR SEAT: Product Designer.*whole screen, top to bottom/);
+  assert.equal(gatewaySeat("ux-lead"), "lead");
+  assert.equal(gatewaySeat("product-designer"), "product-designer");
   delete process.env.UXD_AGENCY;
   assert.equal(agencyEnabled(), false);
 });
 
-test("studio: Lead's deterministic notes catch competing primaries and repeated text", () => {
+test("studio: Lead's deterministic notes and verdict", () => {
   const notes = deterministicLeadNotes({ sections: [{ blocks: [
     { type: "buttons", items: [{ label: "Pay", variant: "primary" }, { label: "Later", variant: "primary" }] },
     { type: "text", text: "Due soon" }, { type: "text", text: "Due soon" },
   ] }, { blocks: [{ type: "button", label: "Pay" }] }] });
-  assert.ok(notes.some((note) => note.severity === "high" && /primary/.test(note.issue)));
-  assert.ok(notes.some((note) => /Same text twice/.test(note.issue)));
-  // The same primary repeated per card is fine.
+  assert.ok(notes.some((entry) => entry.severity === "high" && /primary/.test(entry.issue)));
+  assert.ok(notes.some((entry) => /Same text twice/.test(entry.issue)));
   assert.equal(deterministicLeadNotes({ sections: [{ blocks: [{ type: "button", label: "Pay" }] }, { blocks: [{ type: "button", label: "Pay" }] }] }).length, 0);
+  assert.equal(leadApproves({ notes: [], score: 72, ms: 0 }), true);
+  assert.equal(leadApproves({ notes: [], score: 60, ms: 0 }), false);
+  assert.equal(leadApproves({ notes: [{ severity: "high", issue: "x", fix: "y" }], score: 90, ms: 0 }), false);
 });
 
-test("studio route: UX step → Lead review → iteration → UI step → Lead review; clean last review skips the final one", async () => {
-  revisionMode = "good";
-  const { status, body } = await run();
+test("studio: coverage helpers find dropped source texts and texts lost between versions", () => {
+  const spec = { sections: [{ title: "Loan", blocks: [{ type: "list", items: [{ label: "EMI", value: "₹8,450" }] }] }] };
+  assert.deepEqual(missingFromSpec(spec, ["Loan", "emi", "₹8,450", "₹2,290"]), ["₹2,290"]);
+  assert.deepEqual(lostTexts(spec, { sections: [{ title: "Loan", blocks: [{ type: "text", text: "EMI" }] }] }), ["₹8,450"]);
+  const notes = deterministicLeadNotes(spec, ["₹2,290", "Overdue"]);
+  assert.ok(notes.some((entry) => entry.severity === "high" && /missing.*₹2,290, Overdue/i.test(entry.issue)));
+});
+
+test("studio route: Product Designer builds, Lead scores 55 → iteration → 78 approves", async () => {
+  iterationMode = "good";
+  const { status, body, row } = await run([55, 78]);
   assert.equal(status, 200, JSON.stringify(body).slice(0, 600));
-  assert.deepEqual(calls, ["planner-ux-seat", "lead:UX", "revision", "ui-step:ui-seat", "lead:UI"]);
+  assert.deepEqual(calls, ["planner:product", "lead:55", "iteration:product-designer", "lead:78"]);
+  assert.equal(row, "review 55% → 78% ✓");
   assert.match(body.model, /designer-model/);
-  assert.ok(JSON.stringify(body.plan).includes("Upcoming EMI"));
-  const shown = JSON.stringify([body.plan?.summary, body.model, body.generation.attemptTimes, body.plan?.frame?.name]);
-  assert.doesNotMatch(shown, /agency|specialist|lead|director/i);
-  assert.ok(body.generation.attemptTimes.some((entry: { attempt: string }) => entry.attempt.startsWith("ux review: 1")));
+  assert.doesNotMatch(JSON.stringify([body.plan?.summary, body.generation.attemptTimes]), /agency|specialist|lead|director|designer/i);
 });
 
-test("studio route: a revision that fails the gates is dropped and the first screen stands", async () => {
-  revisionMode = "drops";
-  const { status, body } = await run();
+test("studio route: the loop stops at the round cap and ends on a review", async () => {
+  iterationMode = "good";
+  const { status, row } = await run([40, 50, 55, 60]);
   assert.equal(status, 200);
-  // The dropped iteration is not kept; the UI step still runs on the reviewed screen.
-  assert.deepEqual(calls, ["planner-ux-seat", "lead:UX", "revision", "ui-step:ui-seat", "lead:UI"]);
+  assert.deepEqual(calls.filter((call) => call.startsWith("iteration")).length, 3);
+  assert.equal(calls[calls.length - 1], "lead:60");
+  assert.equal(row, "review 40% → 50% → 55% → 60%");
+});
+
+test("studio route: an iteration that drops the amounts is refused by the Director", async () => {
+  iterationMode = "drops";
+  const { status, body, row } = await run([50, 50]);
+  assert.equal(status, 200);
+  for (const text of ["Credit limit", "₹50,000", "Upcoming EMI", "₹10,000"]) assert.ok(JSON.stringify(body.plan).includes(text), "missing " + text);
+  assert.match(row ?? "", /^review 50% ×/);
   assert.doesNotMatch(body.model, /designer-model/);
-  for (const text of ["Credit limit", "₹50,000", "Pay ₹10,000"]) assert.ok(JSON.stringify(body.plan).includes(text), "missing " + text);
-  assert.ok(body.generation.attemptTimes.some((entry: { outcome: string }) => /kept previous version/.test(entry.outcome)));
 });
 
-test("studio route: when the UI review still has notes, the Lead reviews the whole screen once more", async () => {
-  revisionMode = "good";
-  leadAlwaysNotes = true;
-  const { status } = await run();
-  leadAlwaysNotes = false;
-  assert.equal(status, 200);
-  assert.deepEqual(calls, ["planner-ux-seat", "lead:UX", "revision", "ui-step:ui-seat", "lead:UI", "revision", "lead:final", "revision"]);
-});
-
-test("studio: each seat runs on its gateway seat and gets its role's knowledge", async () => {
-  assert.equal(gatewaySeat("ux-lead"), "lead");
-  assert.equal(gatewaySeat("ui-designer"), "ui-designer");
+test("studio: each seat gets its role's knowledge", async () => {
   const lead = await seatKnowledge("ux-lead", "improve this screen review hierarchy consistency critique", "fintech");
-  const ui = await seatKnowledge("ui-designer", "improve this screen visual emphasis", "fintech");
-  assert.ok(lead.length > 200 && ui.length > 200);
-  assert.notEqual(lead, ui);
-  assert.doesNotMatch(lead + ui, /You are UX Direct/i);
+  const product = await seatKnowledge("product-designer", "improve this screen", "fintech");
+  assert.ok(lead.length > 200 && product.length > 200);
+  assert.notEqual(lead, product);
+  assert.doesNotMatch(lead + product, /You are UX Direct/i);
 });
 
 test.after(() => { globalThis.fetch = realFetch; });
