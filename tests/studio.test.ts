@@ -6,7 +6,7 @@ process.env.FREELLMAPI_BASE_URL = "https://freellmapi.test/v1";
 process.env.FREELLMAPI_API_KEY = "test-key";
 process.env.UXD_LEAD_REVIEW = "on";
 
-import { deterministicLeadNotes, designerPersona, STUDIO, taskOwner } from "../src/figma-agent/studio";
+import { deterministicLeadNotes, designerPersona, directorPlan, STUDIO, taskOwner } from "../src/figma-agent/studio";
 import { agencyEnabled } from "../src/figma-agent/agency";
 import { detectTaskRole } from "../src/figma-agent/agent-roles";
 
@@ -14,6 +14,8 @@ const PROVIDER = "https://freellmapi.test/v1/chat/completions";
 const realFetch = globalThis.fetch;
 const calls: string[] = [];
 let revisionMode: "good" | "drops" = "good";
+let leadCalls = 0;
+let leadAlwaysNotes = false;
 const ok = (content: unknown, model = "model-a") => new Response(JSON.stringify({
   model, choices: [{ finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(content) } }],
 }), { status: 200, headers: { "content-type": "application/json" } });
@@ -31,8 +33,15 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const body = typeof init?.body === "string" ? init.body : "";
   if (body.includes("You are one sub-agent in a team")) return new Response("{}", { status: 502 });
   if (body.includes("You are the UX Lead at UX Direct")) {
-    calls.push("lead");
-    return ok({ approve: false, notes: [{ severity: "medium", issue: "EMI should lead", fix: "Make Upcoming EMI the stat" }] }, "lead-model");
+    const focus = /THIS REVIEW: the (UX step|UI step|final review)/.exec(body)?.[1] ?? "?";
+    calls.push("lead:" + focus.split(" ")[0]);
+    leadCalls += 1;
+    // The first review asks for a fix; later reviews approve.
+    return ok(leadCalls === 1 || leadAlwaysNotes ? { approve: false, notes: [{ severity: "medium", issue: "EMI should lead", fix: "Make Upcoming EMI the stat" }] } : { approve: true, notes: [] }, "lead-model");
+  }
+  if (body.includes("UX Direct ui step") || body.includes("approved the previous step's screen")) {
+    calls.push("ui-step:" + (body.includes("YOUR SEAT: UI Designer") ? "ui-seat" : "?"));
+    return ok(revisedScreen, "ui-model");
   }
   if (body.includes("Your UX Lead reviewed your screen")) {
     calls.push("revision");
@@ -59,6 +68,7 @@ const canvas = {
 
 async function run() {
   calls.length = 0;
+  leadCalls = 0;
   const { POST } = await import("../app/api/assistant/figma-agent/route");
   const response = await POST(new Request("https://ux-direct.test/api/assistant/figma-agent", {
     method: "POST", headers: { "content-type": "application/json" },
@@ -70,9 +80,11 @@ async function run() {
 
 test("studio: work is split by task, one designer owns a screen", () => {
   assert.deepEqual(STUDIO.map((member) => member.seat), ["director", "ux-lead", "ux-designer", "ui-designer"]);
-  assert.deepEqual(taskOwner(detectTaskRole("improve this screen")), { owner: "ux-designer", collaborator: "ui-designer" });
-  assert.equal(taskOwner(detectTaskRole("change the theme to dark mode")).owner, "ui-designer");
-  assert.match(designerPersona(detectTaskRole("improve this screen")), /YOUR SEAT: UX Designer.*UI Designer/);
+  assert.deepEqual(taskOwner(detectTaskRole("improve this screen")), { owner: "ux-designer", next: "ui-designer" });
+  assert.deepEqual(directorPlan(detectTaskRole("improve this screen")).map((step) => step.id), ["ux", "ui"]);
+  assert.deepEqual(directorPlan(detectTaskRole("change the theme to dark mode")).map((step) => step.owner), ["ui-designer"]);
+  assert.deepEqual(directorPlan(detectTaskRole("make a wireframe of this")).map((step) => step.owner), ["ux-designer"]);
+  assert.match(designerPersona(detectTaskRole("improve this screen")), /YOUR SEAT: UX Designer.*UX step.*UI Designer works on your result next/);
   // The old per-card split is off unless switched on.
   delete process.env.UXD_AGENCY;
   assert.equal(agencyEnabled(), false);
@@ -89,26 +101,36 @@ test("studio: Lead's deterministic notes catch competing primaries and repeated 
   assert.equal(deterministicLeadNotes({ sections: [{ blocks: [{ type: "button", label: "Pay" }] }, { blocks: [{ type: "button", label: "Pay" }] }] }).length, 0);
 });
 
-test("studio route: Lead reviews, designer revises once, the better screen is kept", async () => {
+test("studio route: UX step → Lead review → iteration → UI step → Lead review; clean last review skips the final one", async () => {
   revisionMode = "good";
   const { status, body } = await run();
   assert.equal(status, 200, JSON.stringify(body).slice(0, 600));
-  assert.deepEqual(calls, ["planner-ux-seat", "lead", "revision"]);
+  assert.deepEqual(calls, ["planner-ux-seat", "lead:UX", "revision", "ui-step:ui-seat", "lead:UI"]);
   assert.match(body.model, /designer-model/);
   assert.ok(JSON.stringify(body.plan).includes("Upcoming EMI"));
   const shown = JSON.stringify([body.plan?.summary, body.model, body.generation.attemptTimes, body.plan?.frame?.name]);
   assert.doesNotMatch(shown, /agency|specialist|lead|director/i);
-  assert.ok(body.generation.attemptTimes.some((entry: { attempt: string }) => entry.attempt.startsWith("review: 1")));
+  assert.ok(body.generation.attemptTimes.some((entry: { attempt: string }) => entry.attempt.startsWith("ux review: 1")));
 });
 
 test("studio route: a revision that fails the gates is dropped and the first screen stands", async () => {
   revisionMode = "drops";
   const { status, body } = await run();
   assert.equal(status, 200);
-  assert.deepEqual(calls, ["planner-ux-seat", "lead", "revision"]);
+  // The dropped iteration is not kept; the UI step still runs on the reviewed screen.
+  assert.deepEqual(calls, ["planner-ux-seat", "lead:UX", "revision", "ui-step:ui-seat", "lead:UI"]);
   assert.doesNotMatch(body.model, /designer-model/);
   for (const text of ["Credit limit", "₹50,000", "Pay ₹10,000"]) assert.ok(JSON.stringify(body.plan).includes(text), "missing " + text);
-  assert.ok(body.generation.attemptTimes.some((entry: { outcome: string }) => /kept first version/.test(entry.outcome)));
+  assert.ok(body.generation.attemptTimes.some((entry: { outcome: string }) => /kept previous version/.test(entry.outcome)));
+});
+
+test("studio route: when the UI review still has notes, the Lead reviews the whole screen once more", async () => {
+  revisionMode = "good";
+  leadAlwaysNotes = true;
+  const { status } = await run();
+  leadAlwaysNotes = false;
+  assert.equal(status, 200);
+  assert.deepEqual(calls, ["planner-ux-seat", "lead:UX", "revision", "ui-step:ui-seat", "lead:UI", "revision", "lead:final", "revision"]);
 });
 
 test.after(() => { globalThis.fetch = realFetch; });

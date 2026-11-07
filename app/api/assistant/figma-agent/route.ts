@@ -5,7 +5,7 @@ import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
 import { detectDomain, detectTaskRole, roleInstructions } from "@/src/figma-agent/agent-roles";
 import { runSubAgents, subAgentsEnabled, type AgentBrief } from "@/src/figma-agent/sub-agents";
-import { designerPersona, leadReview, reviseFromNotes, studioReviewEnabled } from "@/src/figma-agent/studio";
+import { designerPersona, designStep, directorPlan, leadReview, reviseFromNotes, studioReviewEnabled, type PlanStep, type StepId } from "@/src/figma-agent/studio";
 import { agencyEnabled, agencyHandlesRole, runAgency, truncatedContentNames, type AgencyResult } from "@/src/figma-agent/agency";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
@@ -882,43 +882,73 @@ export async function POST(request: Request) {
         prompt: promptSize },
     }, { headers });
   };
-  // Studio review: the UX Lead reviews the designer's whole screen once, the same designer revises
-  // once, and the Director keeps the revision only if every gate passes and quality does not drop.
+  // Studio: the Director's plan runs step by step (UX step, then UI step). The planner answer above
+  // is the first step. After EVERY step the UX Lead reviews and the step's designer iterates once;
+  // after the last step the Lead reviews the whole screen again, and the Director makes the final
+  // call: a new version is kept only if every gate passes and quality does not drop.
   const studioPass = async (success: SuccessCandidate): Promise<SuccessCandidate> => {
     if (!studioReviewEnabled() || !blockMode || success.sourceFallback || !isBlockSpec(success.spec) || !success.candidate.quality) return success;
     // Close the designer's timing row first so the review time is not counted as model time.
     if (inFlight) { attemptTimes.push({ attempt: inFlight.attempt, ms: Date.now() - inFlight.startedAt, outcome: "ok" }); inFlight = null; }
     const timeLeft = () => generationDeadlineMs - (Date.now() - generationStartedAt);
-    if (timeLeft() < 45000) { attemptTimes.push({ attempt: "review skipped (time)", ms: 0, outcome: "skipped" }); return success; }
-    const spec = success.spec as Record<string, unknown>;
     const origin = new URL(request.url).origin;
-    const review = await leadReview(spec, { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts, origin,
-      brain: brain.contextText, timeoutMs: Math.min(25000, Math.floor(timeLeft() / 4)) }).catch(() => null);
-    if (!review) return success;
-    const actionable = review.notes.filter((note) => note.severity !== "low");
-    attemptTimes.push({ attempt: "review: " + actionable.length + " fix(es)", ms: review.ms, outcome: "ok" });
-    if (!actionable.length || timeLeft() < 30000) return success;
-    const revision = await reviseFromNotes(spec, review.notes, { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts, origin,
-      designRules: designRulesInstructions.trim(), timeoutMs: Math.min(60000, timeLeft() - 15000) });
-    if (!revision.spec) { attemptTimes.push({ attempt: "revision", ms: revision.ms, outcome: "kept first version" }); return success; }
-    // The revision keeps the reviewed screen's theme (already locked and varied), so no re-lock here.
-    let revisedSpec: unknown = revision.spec;
-    let candidate = renderCandidate(revisedSpec);
-    let restored = 0;
-    if (candidate.stage === "quality" && candidate.plan && candidate.quality?.findings.every((finding) => finding.code === "missing-source-content")) {
-      const missing = missingSourceTexts(candidate.plan, canvas, gatePrompt);
-      if (missing.length && missing.length <= 3) {
-        const repairedSpec = appendMissingSourceText(revisedSpec, missing);
-        const repaired = renderCandidate(repairedSpec);
-        if (repaired.stage === "ok") { candidate = repaired; revisedSpec = repairedSpec; restored = missing.length; }
+    const shared = { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts, origin };
+    const plan = directorPlan(taskRole);
+    let current = success;
+    const models: string[] = [];
+    /** Director's gate on a new version: render, restore up to 3 dropped texts, keep only if not worse. */
+    const directorKeeps = (spec: Record<string, unknown>, label: string, ms: number, model?: string): boolean => {
+      let nextSpec: unknown = spec;
+      let candidate = renderCandidate(nextSpec);
+      let restored = 0;
+      if (candidate.stage === "quality" && candidate.plan && candidate.quality?.findings.every((finding) => finding.code === "missing-source-content")) {
+        const missing = missingSourceTexts(candidate.plan, canvas, gatePrompt);
+        if (missing.length && missing.length <= 3) {
+          const repairedSpec = appendMissingSourceText(nextSpec, missing);
+          const repaired = renderCandidate(repairedSpec);
+          if (repaired.stage === "ok") { candidate = repaired; nextSpec = repairedSpec; restored = missing.length; }
+        }
       }
+      const kept = candidate.stage === "ok" && !!candidate.plan && !!candidate.quality && candidate.quality.score >= (current.candidate.quality?.score ?? 0);
+      attemptTimes.push({ attempt: label, ms, outcome: kept ? "ok" : "kept previous version (" + (candidate.stage !== "ok" ? candidate.stage : "lower score") + ")" });
+      if (!kept) return false;
+      if (model) models.push(model);
+      attemptLog.push({ model: (model || "auto") + " " + label, result: "passed" });
+      current = { ...current, candidate, spec: nextSpec, repairedTexts: current.repairedTexts + restored };
+      return true;
+    };
+    /** Lead review then one iteration by the step's designer. Returns whether the Lead had notes. */
+    const reviewAndIterate = async (step: PlanStep, focus: StepId | "final", label: string): Promise<number | null> => {
+      if (timeLeft() < 30000) { attemptTimes.push({ attempt: label + " review skipped (time)", ms: 0, outcome: "skipped" }); return null; }
+      const review = await leadReview(current.spec as Record<string, unknown>, { ...shared, brain: brain.contextText, step: focus,
+        timeoutMs: Math.min(25000, Math.floor(timeLeft() / 4)) }).catch(() => null);
+      if (!review) return null;
+      const actionable = review.notes.filter((note) => note.severity !== "low");
+      attemptTimes.push({ attempt: label + " review: " + actionable.length + " fix(es)", ms: review.ms, outcome: "ok" });
+      if (!actionable.length) return 0;
+      if (timeLeft() < 30000) return actionable.length;
+      const revision = await reviseFromNotes(current.spec as Record<string, unknown>, review.notes, { ...shared, step,
+        designRules: designRulesInstructions.trim(), timeoutMs: Math.min(60000, timeLeft() - 15000) });
+      if (!revision.spec) attemptTimes.push({ attempt: label + " iteration", ms: revision.ms, outcome: "kept previous version" });
+      else directorKeeps(revision.spec, label + " iteration", revision.ms, revision.model);
+      return actionable.length;
+    };
+    let lastClean = false;
+    for (let index = 0; index < plan.length; index++) {
+      const step = plan[index];
+      if (index > 0) {
+        if (timeLeft() < 45000) { attemptTimes.push({ attempt: step.id + " step skipped (time)", ms: 0, outcome: "skipped" }); break; }
+        const designed = await designStep(current.spec as Record<string, unknown>, step, { ...shared, designRules: designRulesInstructions.trim(),
+          brain: brain.contextText, timeoutMs: Math.min(60000, timeLeft() - 20000) });
+        if (!designed.spec) { attemptTimes.push({ attempt: step.id + " step", ms: designed.ms, outcome: "kept previous version" }); break; }
+        if (!directorKeeps(designed.spec, step.id + " step", designed.ms, designed.model)) break;
+      }
+      const notes = await reviewAndIterate(step, step.id, step.id);
+      lastClean = notes === 0;
     }
-    const kept = candidate.stage === "ok" && !!candidate.plan && !!candidate.quality && candidate.quality.score >= success.candidate.quality.score;
-    attemptTimes.push({ attempt: "revision", ms: revision.ms, outcome: kept ? "ok" : "kept first version (" + (candidate.stage !== "ok" ? candidate.stage : "lower score") + ")" });
-    if (!kept) return success;
-    attemptLog.push({ model: (revision.model || "auto") + " revision", result: "passed" });
-    return { ...success, candidate, spec: revisedSpec, repairedTexts: success.repairedTexts + restored,
-      servedModel: [success.servedModel, revision.model].filter(Boolean).join(", ") };
+    // Final full review, unless the last step's review already found nothing to fix on this exact version.
+    if (!lastClean) await reviewAndIterate(plan[plan.length - 1], "final", "final");
+    return models.length ? { ...current, servedModel: [success.servedModel, ...models].filter(Boolean).join(", ") } : current;
   };
   // UX Director agency: the source screen's sections go to specialist designers in parallel
   // (small calls), the Director merges them and the same gates check the result. A failed gate
