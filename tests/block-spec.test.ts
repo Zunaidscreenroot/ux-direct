@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-  BLOCK_NODE_BUDGET, BLOCK_SPEC_EXAMPLE, contrast, ensureContrast, expandBlockSpec, isBlockSpec, resolveTheme, sourceFallbackSpec,
+  BLOCK_NODE_BUDGET, BLOCK_SPEC_EXAMPLE, contrast, ensureContrast, expandBlockSpec, isBlockSpec, resolveTheme, snapThemeToStyles, sourceFallbackSpec,
 } from "../src/figma-agent/block-spec";
 import { normalizePlan } from "../src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality } from "../src/figma-agent/design-plan-quality";
@@ -510,4 +510,70 @@ test("a source text keeps its accent colour and style when the spec reuses the s
   assert.equal(found["Personal Loan"].textStyleId, "S:brand");
   assert.notEqual(String(found["Pay now"].color).toUpperCase(), "#FF0000", "ambiguous copy keeps the renderer colour");
   assert.notEqual(String(found["Pay now"].color).toUpperCase(), "#00FF00");
+});
+
+test("rows keep a real gap between value and badge, crushed labels stack, and the ring is an auto-layout box", () => {
+  const spec = { summary: "Rows.", sections: [
+    { name: "A", blocks: [{ type: "heading", title: "Loans" }] },
+    { name: "Loan", surface: "card", title: "Personal loan", badge: { text: "Paid", tone: "success" }, blocks: [
+      { type: "row", label: "EMI", value: "₹8,450", status: "Paid", statusTone: "success" },
+      { type: "progress_ring", percent: 80 },
+    ] },
+    { name: "C", blocks: [{ type: "custom", node: { type: "FRAME", name: "Squeeze", width: 120, height: 40, layoutMode: "HORIZONTAL", itemSpacing: 8, children: [
+      { type: "TEXT", name: "Label", text: "Outstanding amount", fontSize: 14, width: 10, height: 20, layoutGrow: 1, layoutSizingHorizontal: "FILL" },
+      { type: "TEXT", name: "Value", text: "₹1,20,00,000", fontSize: 14, width: 96, height: 20 },
+    ] } }] },
+  ], learningCandidate: null };
+  const out = expandBlockSpec(spec, lightCanvas);
+  assert.ok(out.plan, out.errors.join("; "));
+  const all: N[] = [];
+  walk(out.plan!.elements as N[], (n) => all.push(n));
+  for (const n of all) {
+    if (n.layoutMode === "HORIZONTAL" && n.primaryAxisAlignItems === "SPACE_BETWEEN") {
+      assert.ok(!n.children!.some((c) => c.layoutGrow === 1), "SPACE_BETWEEN with a growing child flushes items: " + n.name);
+    }
+  }
+  const ring = all.find((n) => n.name === "Progress ring")!;
+  assert.equal(ring.layoutMode, "HORIZONTAL");
+  assert.equal(ring.children!.filter((c) => c.layoutPositioning === "ABSOLUTE").length, 2, "track and arc are absolute decoration");
+  assert.equal(ring.children!.find((c) => c.type === "TEXT")!.layoutPositioning, "AUTO");
+  const squeeze = all.find((n) => n.name === "Squeeze")!;
+  assert.equal(squeeze.layoutMode, "VERTICAL", "a crushed label row becomes label over value");
+});
+
+test("theme tokens move onto the file's paint styles: near colours and role-named styles of the same lightness", () => {
+  const theme = resolveTheme({}, "#0E0F12");
+  const styles = { paint: [
+    { id: "S:bg", name: "Colors/Background", color: "#0F1013" },
+    { id: "S:surface", name: "Colors/Surface", color: theme.surface === "#1A1C22" ? "#1B1D23" : "#1C1E24" },
+    { id: "S:border", name: "Colors/Border", color: "#FFFFFF" },
+    { id: "S:ok", name: "Status/Success", color: "#22C55E" },
+  ] };
+  const snapped = snapThemeToStyles(theme, styles);
+  assert.equal(snapped.background, "#0F1013", "imperceptibly different background takes the style colour");
+  assert.equal(snapped.surface, styles.paint[1].color, "role-named surface of the same lightness");
+  assert.notEqual(snapped.border, "#FFFFFF", "a role style with a very different lightness is not forced");
+  const out = expandBlockSpec({ summary: "x", sections: [{ name: "A", blocks: [{ type: "heading", title: "Hi" }] }, { name: "B", surface: "card", title: "Card", blocks: [{ type: "text", text: "Body" }] }, { name: "C", blocks: [{ type: "text", text: "End" }] }], learningCandidate: null },
+    { ...darkCanvas, styles });
+  assert.ok(out.plan, out.errors.join("; "));
+  const bound: string[] = [];
+  walk(out.plan!.elements as N[], (n) => { if (typeof n.paintStyleId === "string") bound.push(n.paintStyleId); });
+  assert.ok(bound.includes("S:surface"), "the card fill binds to the Surface style: " + bound.join(","));
+});
+
+test("badges become instances of the file's status chip set, by exact option or by tone", () => {
+  const canvas = { ...darkCanvas, components: [{ id: "C:chip", name: "Labels", type: "COMPONENT_SET", width: 72, height: 24, properties: { Type: { type: "VARIANT", options: ["Current", "Delinquent", "Matured"] } } }] };
+  const spec = { summary: "x", sections: [
+    { name: "A", blocks: [{ type: "heading", title: "Loans" }] },
+    { name: "B", surface: "card", title: "Loan 1", badge: { text: "Current", tone: "success" }, blocks: [{ type: "row", label: "EMI", value: "₹1", status: "Overdue", statusTone: "danger" }] },
+    { name: "C", blocks: [{ type: "badge", text: "Processing", tone: "info" }] },
+  ], learningCandidate: null };
+  const out = expandBlockSpec(spec, canvas);
+  assert.ok(out.plan, out.errors.join("; "));
+  const inst: N[] = [];
+  walk(out.plan!.elements as N[], (n) => { if (n.type === "INSTANCE" && n.componentId === "C:chip") inst.push(n); });
+  assert.equal(inst.length, 2, "Current and Overdue map; an unmatched tone stays a drawn pill");
+  assert.deepEqual(inst[0].instanceProperties, { Type: "Current" });
+  assert.deepEqual(inst[1].instanceProperties, { Type: "Delinquent" });
+  assert.deepEqual(inst[1].textOverrides, { __title: "Overdue" });
 });
