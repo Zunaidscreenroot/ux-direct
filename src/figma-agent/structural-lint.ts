@@ -259,16 +259,18 @@ function isMeaningful(text: string): boolean {
   return /[\p{L}\p{N}]/u.test(text);
 }
 
-export function checkContentPreservation(source: CanvasTree, output: CanvasTree, prompt: string): { content: ContentCheck; issues: StructuralLintIssue[] } {
+export function checkContentPreservation(source: CanvasTree, output: CanvasTree, prompt: string, ignoreTexts: string[] = []): { content: ContentCheck; issues: StructuralLintIssue[] } {
   const { mode, reason } = resolveContentMode(prompt);
-  const sourceTexts = [...new Set(source.texts.map(normalizeText).filter(isMeaningful))];
+  // A screen state (empty/loading) drops its content area on purpose; only the rest is checked.
+  const ignored = new Set(ignoreTexts.map(normalizeText));
+  const sourceTexts = [...new Set(source.texts.map(normalizeText).filter(isMeaningful))].filter((text) => !ignored.has(text));
   // Short labels repeated across cards ("Pay now" on two loans) count once per copy (finding 53).
   const occurrences = (texts: string[]) => {
     const counts = new Map<string, number>();
     for (const text of texts.map(normalizeText)) if (isMeaningful(text) && text.length <= 24 && words(text).length <= 3) counts.set(text, (counts.get(text) ?? 0) + 1);
     return counts;
   };
-  const sourceCounts = occurrences(source.texts);
+  const sourceCounts = occurrences(source.texts.filter((text) => !ignored.has(normalizeText(text))));
   const outputCounts = occurrences(output.texts);
   const repeatedSlots = [...sourceCounts.values()].reduce((sum, n) => sum + Math.max(0, n - 1), 0);
   const content: ContentCheck = {
@@ -294,7 +296,7 @@ export function checkContentPreservation(source: CanvasTree, output: CanvasTree,
       for (let i = kept; i < count; i += 1) content.missingText.push((text.slice(0, 60) + " (copy " + (i + 1) + " of " + count + ")"));
     }
   }
-  const sourceNumbers = [...new Set(source.texts.flatMap(extractNumbers))];
+  const sourceNumbers = [...new Set(source.texts.filter((text) => !ignored.has(normalizeText(text))).flatMap(extractNumbers))];
   for (const value of sourceNumbers) {
     if (!joinedCompact.includes(value.toLowerCase())) content.missingNumbers.push(value);
   }
@@ -439,12 +441,14 @@ export function runStructuralLint(input: {
   outputCanvas: unknown;
   sourceRootId?: string;
   outputRootId?: string;
+  /** Source texts allowed to be absent (screen states). */
+  ignoreTexts?: string[];
 }): StructuralLintResult {
   const output = flattenCanvas(input.outputCanvas, input.outputRootId);
   const layout = lintLayout(output);
   const source = input.sourceCanvas ? flattenCanvas(input.sourceCanvas, input.sourceRootId) : null;
   const preservation = source && source.nodes.length
-    ? checkContentPreservation(source, output, input.prompt)
+    ? checkContentPreservation(source, output, input.prompt, input.ignoreTexts)
     : {
       content: { mode: "skipped" as const, reason: "No source layer tree was provided.", sourceTextCount: 0, missingText: [], missingNumbers: [], partial: output.truncated },
       issues: [],
