@@ -5,7 +5,7 @@ import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
 import { detectDomain, detectTaskRole, roleInstructions } from "@/src/figma-agent/agent-roles";
 import { runSubAgents, subAgentsEnabled, type AgentBrief } from "@/src/figma-agent/sub-agents";
-import { designerPersona, designStep, directorPlan, leadReview, reviseFromNotes, studioReviewEnabled, type PlanStep, type StepId } from "@/src/figma-agent/studio";
+import { designerPersona, designStep, directorPlan, leadReview, reviseFromNotes, seatKnowledge, studioReviewEnabled, type PlanStep, type StepId } from "@/src/figma-agent/studio";
 import { agencyEnabled, agencyHandlesRole, runAgency, truncatedContentNames, type AgencyResult } from "@/src/figma-agent/agency";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
@@ -894,6 +894,13 @@ export async function POST(request: Request) {
     const origin = new URL(request.url).origin;
     const shared = { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts, origin };
     const plan = directorPlan(taskRole);
+    // Each seat gets the knowledge for its role (Lead: review checklist, critique format; designers: their craft).
+    const knowledgeQuery = parsedInput.data.prompt + " " + taskRole.label + " " + agentBrief.domain.id;
+    const [leadKnowledge, ...stepKnowledge] = await withTimeout(Promise.all([
+      seatKnowledge("ux-lead", knowledgeQuery + " review hierarchy consistency critique", agentBrief.domain.id),
+      ...plan.map((step) => seatKnowledge(step.owner, knowledgeQuery + " " + step.brief.slice(0, 120), agentBrief.domain.id)),
+    ]), 4000).catch(() => [""] as string[]);
+    const knowledgeFor = (step: PlanStep) => stepKnowledge[plan.indexOf(step)] || "";
     let current = success;
     const models: string[] = [];
     /** Director's gate on a new version: render, restore up to 3 dropped texts, keep only if not worse. */
@@ -920,14 +927,14 @@ export async function POST(request: Request) {
     /** Lead review then one iteration by the step's designer. Returns whether the Lead had notes. */
     const reviewAndIterate = async (step: PlanStep, focus: StepId | "final", label: string): Promise<number | null> => {
       if (timeLeft() < 30000) { attemptTimes.push({ attempt: label + " review skipped (time)", ms: 0, outcome: "skipped" }); return null; }
-      const review = await leadReview(current.spec as Record<string, unknown>, { ...shared, brain: brain.contextText, step: focus,
+      const review = await leadReview(current.spec as Record<string, unknown>, { ...shared, brain: brain.contextText, knowledge: leadKnowledge, step: focus,
         timeoutMs: Math.min(25000, Math.floor(timeLeft() / 4)) }).catch(() => null);
       if (!review) return null;
       const actionable = review.notes.filter((note) => note.severity !== "low");
       attemptTimes.push({ attempt: label + " review: " + actionable.length + " fix(es)", ms: review.ms, outcome: "ok" });
       if (!actionable.length) return 0;
       if (timeLeft() < 30000) return actionable.length;
-      const revision = await reviseFromNotes(current.spec as Record<string, unknown>, review.notes, { ...shared, step,
+      const revision = await reviseFromNotes(current.spec as Record<string, unknown>, review.notes, { ...shared, step, knowledge: knowledgeFor(step),
         designRules: designRulesInstructions.trim(), timeoutMs: Math.min(60000, timeLeft() - 15000) });
       if (!revision.spec) attemptTimes.push({ attempt: label + " iteration", ms: revision.ms, outcome: "kept previous version" });
       else directorKeeps(revision.spec, label + " iteration", revision.ms, revision.model);
@@ -938,7 +945,7 @@ export async function POST(request: Request) {
       const step = plan[index];
       if (index > 0) {
         if (timeLeft() < 45000) { attemptTimes.push({ attempt: step.id + " step skipped (time)", ms: 0, outcome: "skipped" }); break; }
-        const designed = await designStep(current.spec as Record<string, unknown>, step, { ...shared, designRules: designRulesInstructions.trim(),
+        const designed = await designStep(current.spec as Record<string, unknown>, step, { ...shared, designRules: designRulesInstructions.trim(), knowledge: knowledgeFor(step),
           brain: brain.contextText, timeoutMs: Math.min(60000, timeLeft() - 20000) });
         if (!designed.spec) { attemptTimes.push({ attempt: step.id + " step", ms: designed.ms, outcome: "kept previous version" }); break; }
         if (!directorKeeps(designed.spec, step.id + " step", designed.ms, designed.model)) break;

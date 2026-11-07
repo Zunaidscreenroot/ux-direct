@@ -19,6 +19,8 @@
 import { callFigmaJsonModel } from "@/src/figma-agent/json-model-call";
 import { BLOCK_SPEC_CONTRACT } from "@/src/figma-agent/block-spec";
 import type { TaskRole } from "@/src/figma-agent/agent-roles";
+import { retrieveKnowledge } from "@/src/knowledge/store";
+import type { AgentRole } from "@/src/providers/active-chat-provider";
 
 type Rec = Record<string, unknown>;
 
@@ -39,6 +41,21 @@ export const STUDIO: StudioMember[] = [
 
 export function studioReviewEnabled(): boolean {
   return (process.env.UXD_LEAD_REVIEW || "on").trim().toLowerCase() !== "off";
+}
+
+/** Gateway seat (X-UXD-Agent-Role) for each studio seat. */
+export function gatewaySeat(seat: StudioSeat): AgentRole {
+  return seat === "ux-lead" ? "lead" : seat;
+}
+
+/** Role-specific knowledge for one seat (UX Director, UX Lead, UX/UI Designer); empty on any failure. */
+export async function seatKnowledge(seat: StudioSeat, query: string, domain: string | null, maxChars = 2500): Promise<string> {
+  try {
+    const pack = await retrieveKnowledge({ query, role: member(seat).title, domain, maxChars, skipIds: ["identity-ux-direct", "identity-voice"] });
+    return pack.text;
+  } catch {
+    return "";
+  }
 }
 
 export type StepId = "ux" | "ui";
@@ -125,17 +142,19 @@ const REVIEW_FOCUS: Record<StepId | "final", string> = {
   final: "THIS REVIEW: the final review of the whole screen before the UX Director's call. Check everything; raise only what still needs fixing.",
 };
 
-export async function leadReview(spec: Rec, context: { prompt: string; role: TaskRole; sourceTexts: string[]; origin: string; brain: string; step?: StepId | "final"; signal?: AbortSignal; timeoutMs: number }): Promise<{ notes: LeadNote[]; model?: string; ms: number }> {
+export async function leadReview(spec: Rec, context: { prompt: string; role: TaskRole; sourceTexts: string[]; origin: string; brain: string; knowledge?: string; step?: StepId | "final"; signal?: AbortSignal; timeoutMs: number }): Promise<{ notes: LeadNote[]; model?: string; ms: number }> {
   const started = Date.now();
   const notes = deterministicLeadNotes(spec);
   const result = await callFigmaJsonModel({
-    system: LEAD_SYSTEM + "\n" + REVIEW_FOCUS[context.step ?? "final"] + (context.brain ? "\nTEAM KNOWLEDGE (the quality standard):\n" + context.brain.slice(0, 4000) : ""),
+    system: LEAD_SYSTEM + "\n" + REVIEW_FOCUS[context.step ?? "final"] +
+      (context.knowledge ? "\nUX LEAD KNOWLEDGE (review checklist and critique format):\n" + context.knowledge.slice(0, 3000) : "") +
+      (context.brain ? "\nTEAM KNOWLEDGE (the quality standard):\n" + context.brain.slice(0, context.knowledge ? 2500 : 4000) : ""),
     user: JSON.stringify({ userRequest: context.prompt, taskRole: context.role.label, sourceTexts: context.sourceTexts.slice(0, 120), designedScreen: { sections: spec.sections } }),
     hasVisionInput: false,
     maxTokens: 1200,
     temperature: 0.1,
     title: "UX Direct lead review",
-    role: "planner",
+    role: "lead",
     origin: context.origin,
     timeoutMs: context.timeoutMs,
     signal: context.signal,
@@ -156,10 +175,12 @@ export async function leadReview(spec: Rec, context: { prompt: string; role: Tas
 }
 
 /** The step's designer revises the whole screen from the Lead's notes (same designer, same mindset). */
-export async function reviseFromNotes(spec: Rec, notes: LeadNote[], context: { prompt: string; role: TaskRole; step?: PlanStep; sourceTexts: string[]; origin: string; designRules: string; signal?: AbortSignal; timeoutMs: number }): Promise<{ spec: Rec | null; model?: string; ms: number; error?: string }> {
+export async function reviseFromNotes(spec: Rec, notes: LeadNote[], context: { prompt: string; role: TaskRole; step?: PlanStep; sourceTexts: string[]; origin: string; designRules: string; knowledge?: string; signal?: AbortSignal; timeoutMs: number }): Promise<{ spec: Rec | null; model?: string; ms: number; error?: string }> {
   const started = Date.now();
+  const owner = context.step?.owner ?? directorPlan(context.role)[0].owner;
   const result = await callFigmaJsonModel({
     system: [context.step ? stepPersona(context.step) : designerPersona(context.role), context.role.persona, ...context.role.rules.map((rule) => "- " + rule), context.designRules,
+      context.knowledge ? "YOUR ROLE KNOWLEDGE:\n" + context.knowledge.slice(0, 2500) : "",
       "Your UX Lead reviewed your screen. Revise it: fix every high and medium note, keep everything that was fine, keep every source text exactly, never add content the source does not have.",
       BLOCK_SPEC_CONTRACT].filter(Boolean).join("\n"),
     user: JSON.stringify({ userRequest: context.prompt, sourceTexts: context.sourceTexts.slice(0, 120), yourScreen: { summary: spec.summary, sections: spec.sections },
@@ -168,7 +189,7 @@ export async function reviseFromNotes(spec: Rec, notes: LeadNote[], context: { p
     maxTokens: 6000,
     temperature: 0.15,
     title: "UX Direct designer revision",
-    role: "section-designer",
+    role: gatewaySeat(owner),
     origin: context.origin,
     timeoutMs: context.timeoutMs,
     signal: context.signal,
@@ -181,10 +202,11 @@ export async function reviseFromNotes(spec: Rec, notes: LeadNote[], context: { p
 }
 
 /** A later plan step (the UI step after the UX step): the step's designer works on the approved screen. */
-export async function designStep(spec: Rec, step: PlanStep, context: { prompt: string; role: TaskRole; sourceTexts: string[]; origin: string; designRules: string; brain: string; signal?: AbortSignal; timeoutMs: number }): Promise<{ spec: Rec | null; model?: string; ms: number; error?: string }> {
+export async function designStep(spec: Rec, step: PlanStep, context: { prompt: string; role: TaskRole; sourceTexts: string[]; origin: string; designRules: string; brain: string; knowledge?: string; signal?: AbortSignal; timeoutMs: number }): Promise<{ spec: Rec | null; model?: string; ms: number; error?: string }> {
   const started = Date.now();
   const result = await callFigmaJsonModel({
     system: [stepPersona(step), context.role.persona, context.designRules,
+      context.knowledge ? "YOUR ROLE KNOWLEDGE:\n" + context.knowledge.slice(0, 2500) : "",
       "The UX Lead approved the previous step's screen below. Do your step on it and return the whole screen: keep every source text exactly, keep the section order, never add content the source does not have.",
       context.brain ? "TEAM KNOWLEDGE (the quality standard):\n" + context.brain.slice(0, 3000) : "",
       BLOCK_SPEC_CONTRACT].filter(Boolean).join("\n"),
@@ -193,7 +215,7 @@ export async function designStep(spec: Rec, step: PlanStep, context: { prompt: s
     maxTokens: 6000,
     temperature: 0.2,
     title: "UX Direct " + step.id + " step",
-    role: "section-designer",
+    role: gatewaySeat(step.owner),
     origin: context.origin,
     timeoutMs: context.timeoutMs,
     signal: context.signal,

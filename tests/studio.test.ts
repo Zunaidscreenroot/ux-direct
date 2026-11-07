@@ -6,7 +6,7 @@ process.env.FREELLMAPI_BASE_URL = "https://freellmapi.test/v1";
 process.env.FREELLMAPI_API_KEY = "test-key";
 process.env.UXD_LEAD_REVIEW = "on";
 
-import { deterministicLeadNotes, designerPersona, directorPlan, STUDIO, taskOwner } from "../src/figma-agent/studio";
+import { deterministicLeadNotes, designerPersona, directorPlan, gatewaySeat, seatKnowledge, STUDIO, taskOwner } from "../src/figma-agent/studio";
 import { agencyEnabled } from "../src/figma-agent/agency";
 import { detectTaskRole } from "../src/figma-agent/agent-roles";
 
@@ -131,6 +131,16 @@ test("studio route: when the UI review still has notes, the Lead reviews the who
   leadAlwaysNotes = false;
   assert.equal(status, 200);
   assert.deepEqual(calls, ["planner-ux-seat", "lead:UX", "revision", "ui-step:ui-seat", "lead:UI", "revision", "lead:final", "revision"]);
+});
+
+test("studio: each seat runs on its gateway seat and gets its role's knowledge", async () => {
+  assert.equal(gatewaySeat("ux-lead"), "lead");
+  assert.equal(gatewaySeat("ui-designer"), "ui-designer");
+  const lead = await seatKnowledge("ux-lead", "improve this screen review hierarchy consistency critique", "fintech");
+  const ui = await seatKnowledge("ui-designer", "improve this screen visual emphasis", "fintech");
+  assert.ok(lead.length > 200 && ui.length > 200);
+  assert.notEqual(lead, ui);
+  assert.doesNotMatch(lead + ui, /You are UX Direct/i);
 });
 
 test.after(() => { globalThis.fetch = realFetch; });
