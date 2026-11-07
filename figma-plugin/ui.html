@@ -1612,12 +1612,12 @@
       stage("planning", "Plan validated · " + memory + (renderedScreen ? " · rendered screenshot analysed" : " · layer-only analysis"));
 
       const viewport = canvas && canvas.viewport && canvas.viewport.bounds ? canvas.viewport.bounds : {};
-      let rootX = placement ? Math.max(-10000, Math.min(9000, placement.x)) : sourceNode && Number.isFinite(sourceNode.x)
-        ? Math.max(-10000, Math.min(9000, sourceNode.x + (Number(sourceNode.width) || Number(plan.frame.width) || 393) + 100))
-        : Math.max(40, Math.min(9000, Number(viewport.x) + 80 || 80));
-      let rootY = placement ? Math.max(-10000, Math.min(9000, placement.y)) : sourceNode && Number.isFinite(sourceNode.y)
-        ? Math.max(-10000, Math.min(9000, sourceNode.y))
-        : Math.max(40, Math.min(9000, Number(viewport.y) + 80 || 80));
+      let rootX = placement ? Math.max(-100000, Math.min(100000, placement.x)) : sourceNode && Number.isFinite(sourceNode.x)
+        ? Math.max(-100000, Math.min(100000, sourceNode.x + (Number(sourceNode.width) || Number(plan.frame.width) || 393) + 100))
+        : Math.max(-100000, Math.min(100000, Number(viewport.x) + 80 || 80));
+      let rootY = placement ? Math.max(-100000, Math.min(100000, placement.y)) : sourceNode && Number.isFinite(sourceNode.y)
+        ? Math.max(-100000, Math.min(100000, sourceNode.y))
+        : Math.max(-100000, Math.min(100000, Number(viewport.y) + 80 || 80));
       // Every create path (improve, wireframe, each variation, flow) takes a free slot: a fixed
       // placement is only the starting point, so variations never land on existing frames (finding 45).
       {
@@ -1804,11 +1804,15 @@
 
     // Slots handed to builds that have not created their frame yet (parallel variation jobs).
     const reservedCanvasSpots = [];
+    // Hug/auto-layout frames grow after build (planned 800 can end at 1225), so the slot check and
+    // the reservation use a padded height; otherwise a new frame grows into the one below (finding 67).
+    function paddedCanvasHeight(height) { return Math.round((Number(height) || 800) * 1.5) + 200; }
     async function findFreeCanvasSpot(x, y, width, height) {
-      const spot = await findFreeCanvasSpotRaw(x, y, width, height);
+      const padded = paddedCanvasHeight(height);
+      const spot = await findFreeCanvasSpotRaw(x, y, width, padded);
       const now = Date.now();
       while (reservedCanvasSpots.length && (now - reservedCanvasSpots[0].at > 300000 || reservedCanvasSpots.length > 20)) reservedCanvasSpots.shift();
-      reservedCanvasSpots.push({ x: spot.x, y: spot.y, width: width, height: height, at: now });
+      reservedCanvasSpots.push({ x: spot.x, y: spot.y, width: width, height: padded, at: now });
       return spot;
     }
     async function findFreeCanvasSpotRaw(x, y, width, height) {
@@ -1819,22 +1823,35 @@
       const boxes = (page && Array.isArray(page.nodes) ? page.nodes : []).filter(function (node) {
         return node && node.visible !== false && [node.x, node.y, node.width, node.height].every(Number.isFinite);
       }).concat(reservedCanvasSpots);
+      return pickFreeCanvasSpot(boxes, x, y, width, height);
+    }
+    // uxd-free-spot:start
+    // Pure slot search: scan right along a row, then drop to the next row below everything that
+    // occupies the row band. No coordinate clamp, so frames never pile up at a fixed y (finding 67).
+    function pickFreeCanvasSpot(boxes, x, y, width, height) {
       const gap = 100;
       const hits = function (cx, cy) {
         return boxes.find(function (b) {
           return cx < b.x + b.width + gap && cx + width + gap > b.x && cy < b.y + b.height + gap && cy + height + gap > b.y;
         });
       };
-      let cx = x;
-      for (let i = 0; i < 60; i++) {
-        const hit = hits(cx, y);
-        if (!hit) return { x: Math.round(cx), y: Math.round(y) };
-        cx = hit.x + hit.width + gap;
-        if (cx > 9000) break;
+      const rowLimit = x + 6000;
+      let cy = y;
+      for (let row = 0; row < 12; row++) {
+        let cx = x;
+        for (let i = 0; i < 60; i++) {
+          const hit = hits(cx, cy);
+          if (!hit) return { x: Math.round(cx), y: Math.round(cy) };
+          cx = hit.x + hit.width + gap;
+          if (cx > rowLimit) break;
+        }
+        const band = boxes.filter(function (b) { return b.y < cy + height + gap && b.y + b.height + gap > cy; });
+        cy = band.reduce(function (max, b) { return Math.max(max, b.y + b.height + gap); }, cy + gap);
       }
       const bottom = boxes.reduce(function (max, b) { return Math.max(max, b.y + b.height); }, y);
-      return { x: Math.round(x), y: Math.round(Math.min(9500, bottom + gap)) };
+      return { x: Math.round(x), y: Math.round(bottom + gap) };
     }
+    // uxd-free-spot:end
 
     async function captureRenderedNodePreview(nodeId) {
       const attempts = [];
