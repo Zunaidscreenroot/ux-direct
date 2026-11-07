@@ -464,30 +464,60 @@ function restoreRepeatedButtons(elements: NativeNode[], root: SrcNode, theme: Bl
     const have = refs.filter((r) => r.node.type === "TEXT" && typeof r.node.text === "string" && norm(r.node.text) === label).length;
     let deficit = buttons.length - have;
     if (deficit <= 0) continue;
-    for (const button of buttons) {
+    const contexts = buttons.map(buttonContext);
+    // Texts that only this button's card has (its loan ID, amount): they find the card even when
+    // the output merged several source cards into one section or list (wireframe, finding 53).
+    const uniques = contexts.map((context, index) => new Set([...context].filter((t) =>
+      contexts.every((other, j) => j === index || !other.has(t)))));
+    for (let index = 0; index < buttons.length; index++) {
       if (deficit <= 0) break;
-      const context = buttonContext(button);
+      const button = buttons[index];
+      const context = contexts[index];
       if (context.size < 2) continue;
+      const unique = uniques[index];
+      const keys = unique.size ? unique : context;
+      const minScore = unique.size ? 1 : 2;
       let best: { ref: OutRef; score: number; size: number } | null = null;
       for (const ref of refs) {
         if (ref.node.type !== "FRAME" || ref.node.layoutMode !== "VERTICAL" || ref.depth + 2 > MAX_PLAN_DEPTH) continue;
         const texts = outputTexts(ref.node);
-        if (texts.includes(label)) continue;
-        const score = texts.filter((t) => context.has(t)).length;
+        const score = texts.filter((t) => keys.has(t)).length;
+        if (score < minScore) continue;
+        // Enough copies already for the source cards this frame holds: this card kept its button.
+        const cardsHere = uniques.filter((u) => u.size && texts.some((t) => u.has(t))).length || 1;
+        const copiesHere = texts.filter((t) => t === label).length;
+        if (copiesHere >= cardsHere) continue;
         // Smallest frame that holds the most of the card's texts: the card, not the screen.
-        if (score >= 2 && (!best || score > best.score || (score === best.score && texts.length < best.size))) best = { ref, score, size: texts.length };
+        if (!best || score > best.score || (score === best.score && texts.length < best.size)) best = { ref, score, size: texts.length };
       }
       if (!best) continue;
       const fontSize = 15;
       const labelWidth = Math.ceil(button.text.length * fontSize * 0.6 + 4);
-      best.ref.node.children = [...(best.ref.node.children ?? []), {
+      // Right after this card's own content, not at the end of a merged section.
+      const kids = best.ref.node.children ?? [];
+      let at = kids.length;
+      if (best.size > keys.size + 2) {
+        // A merged section: this card's span runs from its first own text to the next card's text.
+        const kidTexts = kids.map((kid) => outputTexts(kid));
+        const own = kidTexts.map((texts) => texts.some((t) => keys.has(t)));
+        const first = own.indexOf(true), last = own.lastIndexOf(true);
+        if (first >= 0) {
+          let end = kidTexts.length;
+          for (let k = last + 1; k < kidTexts.length; k++) {
+            if (uniques.some((u, j) => j !== index && kidTexts[k].some((t) => u.has(t)))) { end = k; break; }
+          }
+          if (kidTexts.slice(first, end).some((texts) => texts.includes(label))) continue; // kept its own button
+          at = last + 1;
+        }
+      }
+      best.ref.node.children = [...kids.slice(0, at), {
         type: "FRAME", name: button.text.slice(0, 60) + " button", x: 0, y: 0, width: labelWidth + 32, height: 44,
         layoutMode: "HORIZONTAL", itemSpacing: 8, paddingTop: 10, paddingRight: 16, paddingBottom: 10, paddingLeft: 16,
         primaryAxisSizingMode: "FIXED", counterAxisSizingMode: "FIXED", primaryAxisAlignItems: "CENTER", counterAxisAlignItems: "CENTER",
         layoutSizingHorizontal: "FILL", layoutSizingVertical: "FIXED", color: theme.primaryFill, cornerRadius: theme.radius,
         children: [{ type: "TEXT", name: "Label", text: button.text, x: 0, y: 0, width: labelWidth, height: 20, fontSize, fontFamily: "Inter",
           fontStyle: "Semi Bold", color: theme.onPrimary, textAlignHorizontal: "CENTER", textAutoResize: "WIDTH_AND_HEIGHT", layoutSizingHorizontal: "HUG" }],
-      } as NativeNode];
+      } as NativeNode, ...kids.slice(at)];
       deficit -= 1;
       result.restoredButtons += 1;
     }

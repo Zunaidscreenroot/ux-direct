@@ -304,3 +304,22 @@ test("a filled source CTA turned into a chip becomes a filled button again (find
   assert.ok(parents.length >= 3);
   for (const p of parents) { assert.match(String(p.name), /Pay now button/); assert.ok(Number(p.height) >= 44); }
 });
+
+test("a wireframe that merged two loan cards into one section still gets both Pay now buttons (finding 53)", () => {
+  const merged = { summary: "Wireframe.", frame: { name: "Manage Loans" }, sections: [
+    { name: "Header", blocks: [{ type: "app_bar", title: "Manage Loans" }] },
+    { name: "Loans", surface: "card", blocks: [
+      { type: "text", text: "Loan ID SLC001" }, { type: "text", text: "₹10,000 outstanding" }, { type: "text", text: "View details 1" },
+      { type: "button", label: "Pay now", variant: "primary" },
+      { type: "text", text: "Loan ID SLC002" }, { type: "text", text: "₹20,000 outstanding" }, { type: "text", text: "View details 2" },
+      { type: "text", text: "Loan ID SLC003" }, { type: "text", text: "₹30,000 outstanding" }, { type: "text", text: "View details 3" },
+      { type: "button", label: "Pay now", variant: "primary" },
+    ] },
+  ], learningCandidate: null };
+  const expansion = expandBlockSpec(merged, canvas, { sourceCanvas: canvas });
+  assert.ok(expansion.plan, expansion.errors.join("; "));
+  const order: string[] = [];
+  walk(expansion.plan!.elements as N[], (n) => { if (n.type === "TEXT" && /^(Pay now|Loan ID)/.test(String(n.text))) order.push(String(n.text)); });
+  assert.equal(order.filter((t) => t === "Pay now").length, 3, order.join(" | "));
+  assert.deepEqual(order, ["Loan ID SLC001", "Pay now", "Loan ID SLC002", "Pay now", "Loan ID SLC003", "Pay now"], "restored copy sits after loan 2's own rows");
+});
