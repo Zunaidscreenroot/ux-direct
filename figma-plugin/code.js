@@ -4062,7 +4062,7 @@ function uxdSingleSolid(paints) {
   return visible.length === 1 && visible[0].type === "SOLID" && paints.length === 1 ? visible[0] : null;
 }
 async function uxdHygienePalette() {
-  var palette = { styles: new Map(), variables: new Map() };
+  var palette = { styles: new Map(), variables: new Map(), usedVariables: new Map() };
   try {
     var styles = await figma.getLocalPaintStylesAsync();
     styles.forEach(function (style) {
@@ -4117,8 +4117,10 @@ async function uxdHygienePalette() {
             seenIds[alias.id + "|" + vkey] = true;
             var used = await figma.variables.getVariableByIdAsync(alias.id).catch(function () { return null; });
             if (used && used.resolvedType === "COLOR") {
-              var list = palette.variables.get(vkey) || [];
-              if (!list.some(function (v) { return v.id === used.id; })) palette.variables.set(vkey, list.concat([used]));
+              // Kept apart: the file's own local variables and styles win; a borrowed variable only
+              // binds a colour nothing local matches (a root on the file's background style stays).
+              var list = palette.usedVariables.get(vkey) || [];
+              if (!list.some(function (v) { return v.id === used.id; })) palette.usedVariables.set(vkey, list.concat([used]));
             }
           }
         }
@@ -4241,8 +4243,38 @@ async function uxdSyncInstance(copy, instance) {
   }
   return true;
 }
+// A row whose real parts (a chip instance with an icon, a copied logo) came out wider than the plan's
+// estimate overflows and clips its last item ("slice" logo cut to "slic"; T12): the widest text
+// column in that row fills the remaining space instead of keeping its estimated fixed width.
+async function uxdFixRowOverflow(root) {
+  var fixed = 0, picks = [];
+  var rows = root.findAll(function (n) { return n.type === "FRAME" && n.layoutMode === "HORIZONTAL" && n.layoutWrap !== "WRAP" && !uxdInsideInstance(n); });
+  rows.forEach(function (row) {
+    var flow = row.children.filter(function (c) { return c.visible !== false && c.layoutPositioning !== "ABSOLUTE"; });
+    if (flow.length < 2) return;
+    var total = (row.paddingLeft || 0) + (row.paddingRight || 0) + Math.max(0, flow.length - 1) * (row.primaryAxisAlignItems === "SPACE_BETWEEN" ? 0 : (row.itemSpacing || 0)) +
+      flow.reduce(function (sum, c) { return sum + c.width; }, 0);
+    if (total <= row.width + 0.5) return;
+    var candidates = flow.filter(function (c) {
+      if (c.layoutSizingHorizontal === "FILL") return false;
+      if (c.type === "TEXT") return true;
+      return c.type === "FRAME" && typeof c.findAll === "function" && c.findAll(function (k) { return k.type === "TEXT"; }).length > 0;
+    }).sort(function (a, b) { return b.width - a.width; });
+    if (candidates[0]) picks.push(candidates[0]);
+  });
+  for (var i = 0; i < picks.length; i++) {
+    var pick = picks[i];
+    try {
+      if (pick.type === "TEXT" && pick.textAutoResize !== "HEIGHT") { await uxdLoadTextFonts(pick); pick.textAutoResize = "HEIGHT"; }
+      pick.layoutSizingHorizontal = "FILL";
+      fixed++;
+    } catch (_) {}
+  }
+  return fixed;
+}
 async function localComponentizeRepeats(payload) {
   var root = payload && payload.rootId ? await figma.getNodeByIdAsync(String(payload.rootId)) : figma.currentPage.selection[0];
+  if (root && typeof root.findAll === "function") { try { await uxdFixRowOverflow(root); } catch (_) {} }
   if (!root || !("findAll" in root) || typeof figma.createComponentFromNode !== "function") return { ok: true, components: 0, instances: 0 };
   var components = 0, instances = 0, kept = 0;
   var parents = [root].concat(root.findAll(function (n) { return n.type === "FRAME" && n.children && n.children.length >= 2; }));
@@ -4341,7 +4373,17 @@ async function uxdBindPaintToken(node, prop, palette, role) {
     return "variable";
   }
   var style = uxdPickToken(palette.styles.get(key), role);
-  if (!style) return false;
+  if (!style) {
+    var exact = uxdColorKey(paint.color, paint.opacity);
+    // The source already paints with it, so its scopes are not second-guessed here.
+    var usedList = palette.usedVariables ? palette.usedVariables.get(exact) : null;
+    var borrowed = usedList && usedList.length ? uxdPickToken(usedList, role) || usedList[0] : null;
+    if (!borrowed || !figma.variables || typeof figma.variables.setBoundVariableForPaint !== "function") return false;
+    if (node.type === "TEXT") await uxdLoadTextFonts(node);
+    uxdSnapProp(node, prop);
+    node[prop] = [figma.variables.setBoundVariableForPaint(paint, "color", borrowed)];
+    return "variable";
+  }
   if (node.type === "TEXT") await uxdLoadTextFonts(node);
   var setter = prop === "fills" ? "setFillStyleIdAsync" : "setStrokeStyleIdAsync";
   uxdSnapProp(node, prop); uxdSnapProp(node, styleProp);
