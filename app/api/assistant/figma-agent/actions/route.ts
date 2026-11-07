@@ -5,6 +5,7 @@ import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openr
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
 import { figmaAttemptTimeoutMs, figmaModelChain, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { extractPlanJson } from "@/src/figma-agent/extract-plan-json";
+import { coerceActionPlan, parseLooseJson } from "@/src/figma-agent/coerce-action-plan";
 import { FIGMA_CANVAS_STEP_OPERATION_IDS } from "@/src/figma-agent/command-registry";
 import { BIND_VARIABLE_PROPERTIES, NATIVE_ACTION_EXTENDED_FIELDS, NATIVE_INSTANCE_ELEMENT_FIELDS, NATIVE_PATCH_EXTENDED_FIELDS, NATIVE_TEXT_RANGE_EXTENDED_FIELDS, extendedActionIssues, extendedActionNodeIds } from "@/src/figma-agent/native-action-schema";
 
@@ -375,6 +376,7 @@ export async function POST(request: Request) {
   // A model that rejects JSON mode with a 4xx is retried once without response_format.
   const attempts = models.map((model) => ({ model, jsonMode: true }));
   const errors: string[] = [];
+  const retriedShape = new Set<string>();
   for (let modelIndex = 0; modelIndex < attempts.length; modelIndex++) {
     const { model, jsonMode } = attempts[modelIndex];
     const controller = new AbortController();
@@ -408,8 +410,14 @@ export async function POST(request: Request) {
       const choices = Array.isArray(envelope.choices) ? envelope.choices : [];
       const choice = isRecord(choices[0]) ? choices[0] : {};
       const message = isRecord(choice.message) ? choice.message : {};
-      const decoded = extractPlanJson(message.content) ?? extractPlanJson(message.parsed) ?? extractPlanJson(message);
-      if (!isRecord(decoded) || !Array.isArray(decoded.actions)) { errors.push(model + ": response has no actions array"); continue; }
+      const decoded = coerceActionPlan(extractPlanJson(message.content) ?? extractPlanJson(message.parsed) ?? extractPlanJson(message)
+        ?? parseLooseJson(message.content));
+      if (!isRecord(decoded) || !Array.isArray(decoded.actions)) {
+        errors.push(model + ": response has no actions array");
+        // Free models often answer with prose or a lone action once; one repeat on the same model usually fixes it.
+        if (!retriedShape.has(model)) { retriedShape.add(model); attempts.splice(modelIndex + 1, 0, { model, jsonMode }); }
+        continue;
+      }
       const parsedActions = z.object({ summary: z.string().trim().min(4).max(500), actions: z.array(actionSchema).min(1).max(12) }).strict().safeParse(decoded);
       if (!parsedActions.success) { errors.push(model + ": invalid actions schema: " + parsedActions.error.issues.slice(0, 3).map(i => i.path.join(".") + " " + i.message).join("; ")); continue; }
       const actions = parsedActions.data.actions;
