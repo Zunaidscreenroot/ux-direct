@@ -1978,6 +1978,13 @@
       }
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [createdFrameId] }, 90000);
       await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "zoom-to-nodes", nodeIds: [createdFrameId] }, 90000);
+      // Claude-in-Figma habit: the new frame uses the file's own paint and text styles wherever one
+      // matches, and every gap/padding sits on the spacing grid. Deterministic, no model; the frame is
+      // new, so Revert (delete) also undoes this.
+      try {
+        stage("creating", "Applying the file's colour and text styles and the spacing grid…");
+        await localTask("apply-hygiene-fixes", { groups: ["tokens", "spacing", "names"] }, 120000);
+      } catch (_) { /* styling is a bonus pass; the build itself already succeeded */ }
 
       const buildMs = Date.now() - buildStartedAt;
       const checksStartedAt = Date.now();
@@ -3367,6 +3374,7 @@
       if (c.smallText) lines.push("- Raised " + c.smallText + " text layer(s) to 12px");
       if (c.touchTargets) lines.push("- Gave " + c.touchTargets + " tappable element(s) a 44px minimum size");
       if (c.autoLayout) lines.push("- Added auto layout to " + c.autoLayout + " stacked frame(s)");
+      if (c.names) lines.push("- Named " + c.names + " generic layer(s) by their role");
       (result.skipped || []).slice(0, 4).forEach(function (item) { lines.push("- Skipped: " + item); });
       const score = before && after ? "**Hygiene score: " + before.score + " → " + after.score + "/100**" : after ? "**Hygiene score now: " + after.score + "/100**" : "";
       const remaining = after && Array.isArray(after.issues) ? after.issues.slice(0, 3).map(function (issue) { return "- " + issue.severity.toUpperCase() + ": " + issue.issue; }) : [];

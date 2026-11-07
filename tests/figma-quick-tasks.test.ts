@@ -380,3 +380,9 @@ test("an empty selection after Revert falls back to the last target, and duplica
   const code = readFileSync(join(process.cwd(), "figma-plugin/code.js"), "utf8");
   assert.ok(code.includes("cloneParent.insertChild(sourceIndex + 1, cloned)"), "clone-node inserts right after its source");
 });
+
+test("generated frames get the file's styles and the spacing grid before verification", () => {
+  const at = ui.indexOf('await localTask("apply-hygiene-fixes", { groups: ["tokens", "spacing", "names"] }, 120000);');
+  assert.ok(at > 0, "post-build style pass exists");
+  assert.ok(at < ui.indexOf('stage("verifying", "Checking the final native layer tree and frame bounds…");'), "it runs before the final read-back");
+});

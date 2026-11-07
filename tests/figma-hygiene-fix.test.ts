@@ -237,3 +237,26 @@ test("light/dark mode switches in place: neutrals flip, brand hue kept, contrast
   assert.equal(JSON.stringify(r.screen.fills), beforeScreen);
   assert.equal(JSON.stringify(r.title.fills), beforeTitle);
 });
+
+test("token fix binds a visually identical near colour to the file's style, never a different one", async () => {
+  const r = runtime();
+  const near = r.make({ type: "FRAME", name: "Near white", fills: [{ type: "SOLID", color: r.rgb("#FDFDFD"), opacity: 1, visible: true }] }, r.screen);
+  const far = r.make({ type: "FRAME", name: "Grey", fills: [{ type: "SOLID", color: r.rgb("#E5E7EB"), opacity: 1, visible: true }] }, r.screen);
+  await r.fix(["tokens"]);
+  assert.equal(near.fillStyleId, "S:white", "#FDFDFD lands on Surface/White");
+  assert.equal(far.fillStyleId, "", "a clearly different grey is left alone");
+});
+
+test("names fix renames generic containers by role and leaves real names alone", async () => {
+  const r = runtime();
+  const btn = r.make({ type: "FRAME", name: "Frame 2095587013", height: 44, fills: [{ type: "SOLID", color: r.rgb("#2563EB"), opacity: 1, visible: true }] }, r.screen);
+  r.make({ type: "TEXT", name: "Label", characters: "Pay EMI" }, btn);
+  const row = r.make({ type: "FRAME", name: "Group 12", layoutMode: "HORIZONTAL" }, r.screen);
+  r.make({ type: "TEXT", name: "a", characters: "Next due" }, row);
+  r.make({ type: "TEXT", name: "b", characters: "05 Dec" }, row);
+  const result = await r.fix(["names"]);
+  assert.equal(btn.name, "Button / Pay EMI");
+  assert.equal(row.name, "Row / Next due");
+  assert.equal(r.stack.name, "Rows", "a real name is kept");
+  assert.equal(result.counts.names, 2);
+});
