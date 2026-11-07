@@ -47,5 +47,20 @@ test("the deterministic empty fallback keeps the header and renders", () => {
   assert.ok(texts.includes("Manage Loans"), texts.join(" | "));
   assert.ok(!texts.includes("Loan ID SLC001"), "content dropped");
   assert.ok(texts.some((x) => /Nothing here yet/.test(x)));
-  assert.match(String((spec.frame as Record<string, unknown>).name), /Empty state/);
+  assert.match(String((spec.frame as Record<string, unknown>).name), / \/ Empty$/);
+});
+
+test("an empty state never brings back the cards' Pay now buttons", () => {
+  const btn = (id: string, y: number) => ({ id, name: "Pay button", type: "FRAME", x: 16, y, width: 120, height: 36, fillColors: ["#0B5FFF"], cornerRadius: 8,
+    children: [t(id + "t", "Pay now", 8, 30)] });
+  const card = (i: number, y: number) => ({ id: "c" + i, name: "Loan card", type: "FRAME", x: 16, y, width: 328, height: 160, fillColors: ["#F2F4F7"], cornerRadius: 12,
+    children: [t("c" + i + "a", "Loan ID SLC00" + i, 16), t("c" + i + "b", "₹" + i + "0,000", 48), btn("c" + i + "p", 110)] });
+  const src = { nodes: [{ ...canvas.nodes[0], children: [canvas.nodes[0].children[0], card(1, 100), card(2, 300), canvas.nodes[0].children[2]] }], components: [] };
+  const spec = stateFallbackSpec(sourceFallbackSpec(src)!, "empty", src);
+  const exp = expandBlockSpec(spec, src, { sourceCanvas: src, contentDropped: true });
+  assert.ok(exp.plan, exp.errors.join("; "));
+  const texts: string[] = [];
+  const walk = (nodes: Array<Record<string, unknown>>) => { for (const n of nodes) { if (n.type === "TEXT") texts.push(String(n.text)); walk((n.children as Array<Record<string, unknown>>) ?? []); } };
+  walk(exp.plan!.elements as Array<Record<string, unknown>>);
+  assert.ok(!texts.includes("Pay now"), texts.join(" | "));
 });

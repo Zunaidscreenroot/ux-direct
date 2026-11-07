@@ -15,7 +15,7 @@ import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-prov
 import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
-import { SCREEN_STATES, STATE_BRIEFS, stateFallbackSpec, stateGatePrompt } from "@/src/figma-agent/screen-states";
+import { SCREEN_STATES, STATE_BRIEFS, stateDropsContent, stateFallbackSpec, stateGatePrompt } from "@/src/figma-agent/screen-states";
 import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, promptRequestsWireframe, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
 import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
@@ -744,7 +744,7 @@ export async function POST(request: Request) {
     let planInput: unknown = candidateInput;
     let blockSpec: BlockSpecInfo | null = null;
     if (isBlockSpec(candidateInput)) {
-      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone, monochrome: wireframeRequest });
+      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone, monochrome: wireframeRequest, contentDropped: stateDropsContent(screenState) });
       blockSpec = { blocks: expansion.blockCount, nodes: expansion.nodeCount, warnings: expansion.warnings };
       if (!expansion.plan) {
         const issues = expansion.errors.slice(0, 4).join("; ");

@@ -47,7 +47,29 @@ export async function startTaskRun(input: {
   } catch (error) {
     console.warn("[uxd-task-run] start failed:", error instanceof Error ? error.message.slice(0, 160) : "unknown");
   }
+  deferTaskWork(sweepAbandonedTaskRuns());
   return id;
+}
+
+/** A run is abandoned when the plugin never finalized it (Stop, plugin closed, Mac asleep). */
+export const ABANDONED_RUN_MS = 15 * 60 * 1000;
+
+/**
+ * Marks figma-agent runs still 'attempted' after 15 minutes as failed, so the brain monitor's
+ * success rate and the stats are not skewed by runs that will never report back.
+ */
+export async function sweepAbandonedTaskRuns(now = Date.now()): Promise<void> {
+  const cutoff = new Date(now - ABANDONED_RUN_MS).toISOString();
+  try {
+    await neonRequest("uxd_task_runs?outcome=eq.attempted&created_at=lt." + encodeURIComponent(cutoff), {
+      method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({
+        outcome: "failed", status: "failed",
+        error_summary: "Abandoned: the plugin never reported a final outcome within 15 minutes (stopped, closed or the device slept).",
+      }),
+    });
+  } catch (error) {
+    console.warn("[uxd-task-run] abandoned sweep failed:", error instanceof Error ? error.message.slice(0, 160) : "unknown");
+  }
 }
 
 export async function finishTaskRun(input: {

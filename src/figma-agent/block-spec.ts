@@ -1099,7 +1099,7 @@ export function isBlockSpec(value: unknown): boolean {
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
 }
 
-export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean } = {}): BlockExpansion {
+export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean } = {}): BlockExpansion {
   const spec = asRec(value) ?? {};
   const sourceNodes = arr(canvas.nodes);
   const source = asRec(sourceNodes[0]) ?? {};
@@ -1186,6 +1186,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
       // Older plugin builds cannot run CLONE elements: they still get the button restore.
       budget: options.allowClones === false ? 0 : Math.min(SOURCE_GRAPHIC_BUDGET, PLAN_NODE_LIMIT - renderedCount - 10),
       headerComponentId: b.source?.header?.componentId ?? null,
+      contentDropped: options.contentDropped,
     });
     // Wireframes: copied logos, icons and charts are recoloured to the wireframe ink and images
     // become grey boxes, so white source icons don't vanish on the light theme (findings 41, 43).
