@@ -4,6 +4,8 @@ import { runStructuralLint } from "../src/figma-agent/structural-lint";
 import { buildFigmaFailureLesson } from "../src/memory/task-learning";
 import { pickVerifiedExample } from "../src/figma-agent/spec-consistency";
 import { expandBlockSpec } from "../src/figma-agent/block-spec";
+import { normalizePlan } from "../src/figma-agent/normalize-plan";
+import { readFileSync } from "node:fs";
 
 type N = Record<string, unknown>;
 const text = (id: string, value: string, y: number): N => ({ id, name: value, type: "TEXT", x: 16, y, width: 200, height: 20, text: value });
@@ -86,4 +88,59 @@ test("wireframe renders mark copied graphics for monochrome recolouring", () => 
   walk(mono.plan!.elements as N[]);
   assert.ok(clones.length > 0);
   assert.ok(clones.every((c) => c.monochrome && typeof (c.monochrome as N).ink === "string"));
+});
+
+test("wireframes also mark reused source component instances (finding 52)", () => {
+  const canvas = { nodes: [{ id: "r", name: "Screen", type: "FRAME", x: 0, y: 0, width: 360, height: 700, fillColors: ["#FFFFFF"], children: [
+    text("a", "Loan A", 10)] }], components: [] };
+  const plan = normalizePlan({ frame: { name: "W" }, elements: [
+    { type: "INSTANCE", name: "App bar", componentId: "9:1", width: 360, height: 56, monochrome: { ink: "#18181B", placeholder: "#E4E4E7" } },
+  ] }, canvas) as { elements: N[] };
+  const found: N[] = [];
+  const walkAll = (nodes: N[]) => nodes.forEach((n) => { if (n.type === "INSTANCE") found.push(n); walkAll((n.children as N[]) || []); });
+  walkAll(plan.elements);
+  assert.deepEqual(found[0]?.monochrome, { ink: "#18181B", placeholder: "#E4E4E7" });
+  const code = readFileSync("figma-plugin/code.js", "utf8");
+  assert.ok(code.includes('if (type === "INSTANCE" && spec.monochrome && typeof spec.monochrome === "object") await monochromeClone(node, spec.monochrome);'));
+  assert.ok(code.includes("delete solid.boundVariables"), "variable-bound colours are unbound");
+});
+
+test("a squeezed row keeps amounts on one line (finding 59, model path)", () => {
+  const canvas = { nodes: [{ id: "r", name: "Screen", type: "FRAME", x: 0, y: 0, width: 360, height: 700, children: [] }], components: [] };
+  const plan = normalizePlan({ frame: { name: "W", width: 360 }, elements: [{ type: "FRAME", name: "Card", width: 328, height: 80, layoutMode: "VERTICAL", children: [
+    { type: "FRAME", name: "Row", width: 200, height: 40, layoutMode: "HORIZONTAL", itemSpacing: 8, children: [
+      { type: "CLONE", name: "Logo", sourceNodeId: "9:9", width: 60, height: 20 },
+      { type: "TEXT", name: "Label", text: "Outstanding amount", width: 140, height: 20, fontSize: 14 },
+      { type: "TEXT", name: "Value", text: "₹12,000", width: 90, height: 20, fontSize: 14 }] }] }] }, canvas) as { elements: N[] };
+  const found: N[] = [];
+  const walkAll = (nodes: N[]) => nodes.forEach((n) => { if (n.text === "₹12,000") found.push(n); walkAll((n.children as N[]) || []); });
+  walkAll(plan.elements);
+  assert.ok(Number(found[0]?.width) >= Math.ceil(7 * 14 * 0.56), "amount width " + found[0]?.width);
+});
+
+test("a row whose rigid parts are too wide wraps instead of failing preflight (finding 65)", async () => {
+  const { auditDesignPlanQuality } = await import("../src/figma-agent/design-plan-quality");
+  const canvas = { nodes: [{ id: "r", name: "Screen", type: "FRAME", x: 0, y: 0, width: 360, height: 700, children: [
+    { id: "t", type: "TEXT", name: "t", text: "DMI1234567890", x: 0, y: 0, width: 100, height: 20 }] }], components: [] };
+  const plan = normalizePlan({ frame: { name: "W", width: 360 }, elements: [{ type: "FRAME", name: "Card", width: 328, height: 120, layoutMode: "VERTICAL", children: [
+    { type: "FRAME", name: "Card header", width: 296, height: 40, layoutMode: "HORIZONTAL", itemSpacing: 12, primaryAxisSizingMode: "FIXED", children: [
+      { type: "CLONE", name: "Logo", sourceNodeId: "9:9", width: 120, height: 32 },
+      { type: "TEXT", name: "ID", text: "DMI1234567890", width: 150, height: 20, fontSize: 16 },
+      { type: "CLONE", name: "Badge", sourceNodeId: "9:8", width: 90, height: 24 }] }] }] }, canvas) as { elements: N[] };
+  const report = auditDesignPlanQuality(plan, canvas, "improve this screen");
+  assert.ok(!report.findings.some((f) => f.code === "fixed-layout-overflow"), JSON.stringify(report.findings));
+});
+
+test("a row pushed wide by a child that grew during repair still wraps (finding 65, round 5)", async () => {
+  const { auditDesignPlanQuality } = await import("../src/figma-agent/design-plan-quality");
+  const canvas = { nodes: [{ id: "r", name: "Screen", type: "FRAME", x: 0, y: 0, width: 360, height: 700, children: [
+    { id: "t", type: "TEXT", name: "t", text: "Personal Loan", x: 0, y: 0, width: 100, height: 20 }] }], components: [] };
+  const plan = normalizePlan({ frame: { name: "W", width: 360 }, elements: [{ type: "FRAME", name: "Card", width: 328, height: 120, layoutMode: "VERTICAL", children: [
+    { type: "FRAME", name: "Card header", width: 296, height: 40, layoutMode: "HORIZONTAL", itemSpacing: 12, primaryAxisSizingMode: "FIXED", layoutSizingHorizontal: "FILL", children: [
+      { type: "TEXT", name: "Title", text: "Personal Loan", width: 150, height: 20, fontSize: 16, layoutSizingHorizontal: "FILL" },
+      { type: "FRAME", name: "Status badge", width: 74, height: 24, layoutMode: "HORIZONTAL", itemSpacing: 4, paddingLeft: 10, paddingRight: 10, layoutSizingHorizontal: "HUG", primaryAxisSizingMode: "AUTO", children: [
+        { type: "CLONE", name: "Icon", sourceNodeId: "9:1", width: 60, height: 16 },
+        { type: "TEXT", name: "Badge label", text: "Overdue", width: 54, height: 16, fontSize: 12 }] }] }] }] }, canvas) as { elements: N[] };
+  const report = auditDesignPlanQuality(plan, canvas, "improve this screen");
+  assert.ok(!report.findings.some((f) => f.code === "fixed-layout-overflow"), JSON.stringify(report.findings));
 });

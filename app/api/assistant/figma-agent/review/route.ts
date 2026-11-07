@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
 import { resolveBrainScopes } from "@/src/memory/chat-context";
-import { captureVerifiedTaskLesson, resolveFigmaTaskProject } from "@/src/memory/task-learning";
+import { lintScoreFromSummary } from "@/src/memory/verified-specs";
+import { buildStructuralLessonCandidate, captureVerifiedTaskLesson, resolveFigmaTaskProject } from "@/src/memory/task-learning";
 import { finishTaskRun } from "@/src/memory/task-run-log";
 import { neonRequest } from "@/src/memory/neon-rest";
 import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
@@ -121,7 +122,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Task finalization requires taskRunId and taskOutcome." }, { status: 400, headers });
     }
     const lookupPath = "uxd_task_runs?id=eq." + encodeURIComponent(taskRunId) +
-      "&select=id,status,outcome,lesson,metadata&limit=1";
+      "&select=id,status,outcome,lesson,metadata,plan&limit=1";
     const existingResult = await neonRequest(lookupPath).catch(() => null);
     const existing = Array.isArray(existingResult) ? existingResult[0] as Record<string, unknown> | undefined : undefined;
     if (!existing?.id) {
@@ -136,11 +137,16 @@ export async function POST(request: Request) {
     const failureMessage = outcome === "failed"
       ? (parsed.data.executionFailure || "The native Figma task did not pass final quality verification.")
       : undefined;
-    const candidate = outcome === "verified" ? sanitizeInlineLearningCandidate(parsed.data.learningCandidate) : null;
     // A source-fallback output was built by the renderer, not a model: a failure there says
     // nothing about model behaviour, so it must not become a failure lesson.
     const existingMeta = existing.metadata && typeof existing.metadata === "object" ? existing.metadata as Record<string, unknown> : {};
     const rendererOnly = existingMeta.model === "source-fallback" || existingMeta.sourceFallback === true;
+    // The block contract asks models for no learning note, so a verified model-made layout
+    // becomes a structure-only lesson instead (finding 49). Repaired runs are not examples.
+    const candidate = outcome !== "verified" ? null
+      : sanitizeInlineLearningCandidate(parsed.data.learningCandidate)
+        ?? (!rendererOnly && !existingMeta.repairedTexts && existingMeta.planFormat === "blocks"
+          ? buildStructuralLessonCandidate(existing.plan, existingMeta.designScope) : null);
     const learned = rendererOnly && outcome === "failed" ? { status: "not-eligible" as const, lesson: undefined, memoryId: undefined } : await captureVerifiedTaskLesson({
       id: taskRunId,
       outcome,
@@ -161,6 +167,13 @@ export async function POST(request: Request) {
       errorSummary: failureMessage,
     });
 
+    // Record the final lint score so model stats and example ranking use the real result.
+    const lintScore = lintScoreFromSummary(outcome === "failed" ? failureMessage : parsed.data.outcomeSummary, outcome);
+    if (lintScore !== null && existingMeta.source === "figma-agent") {
+      await neonRequest("uxd_task_runs?id=eq." + encodeURIComponent(taskRunId), {
+        method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ metadata: { ...existingMeta, lintScore } }),
+      }).catch(() => null);
+    }
     const confirmedResult = await neonRequest(lookupPath).catch(() => null);
     const confirmed = Array.isArray(confirmedResult) ? confirmedResult[0] as Record<string, unknown> | undefined : undefined;
     if (!confirmed || confirmed.status !== finalStatus || confirmed.outcome !== outcome) {

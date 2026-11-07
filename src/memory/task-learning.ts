@@ -244,14 +244,59 @@ export function buildVerifiedTaskLesson(run: VerifiedTaskRun): VerifiedTaskLesso
   return { memoryType, title: candidate.title, content, tags: [...new Set(keywords)].sort().slice(0, 20), scope: safeScope };
 }
 
+/**
+ * A verified block-spec run whose model sent no learning note still teaches something: which
+ * layout passed the gates for this kind of selection. Built from structure only (scope, section
+ * surfaces, block types), never screen text, so one lesson per layout shape (finding 49).
+ */
+export function buildStructuralLessonCandidate(planValue: unknown, designScope: unknown): InlineLearningCandidate | null {
+  if (!planValue || typeof planValue !== "object" || Array.isArray(planValue)) return null;
+  const sections = (planValue as Record<string, unknown>).sections;
+  if (!Array.isArray(sections) || sections.length < 2) return null;
+  const types = new Set<string>();
+  const surfaces: string[] = [];
+  const visit = (blocks: unknown) => {
+    if (!Array.isArray(blocks)) return;
+    for (const block of blocks) {
+      if (!block || typeof block !== "object") continue;
+      const type = (block as Record<string, unknown>).type;
+      if (typeof type === "string" && /^[a-z_]{2,24}$/.test(type)) types.add(type);
+      visit((block as Record<string, unknown>).blocks);
+    }
+  };
+  for (const section of sections) {
+    if (!section || typeof section !== "object") continue;
+    const surface = (section as Record<string, unknown>).surface;
+    surfaces.push(surface === "card" ? "card" : "plain");
+    visit((section as Record<string, unknown>).blocks);
+  }
+  if (types.size < 2) return null;
+  const scope = typeof designScope === "string" && /^[a-z_]{3,40}$/.test(designScope) ? designScope : "selected_screen_or_frame";
+  const blockTypes = [...types].sort().slice(0, 14);
+  const cards = surfaces.filter((s) => s === "card").length;
+  return {
+    title: ("Verified Figma layout for " + scope.replace(/_/g, " ") + ": " + blockTypes.join(", ")).slice(0, 180),
+    normalizedRule: "For a " + scope.replace(/_/g, " ") + " redesign, a layout of " + sections.length + " sections (" + cards +
+      " card, " + (sections.length - cards) + " plain) built from the blocks " + blockTypes.join(", ") +
+      " passed the content and structural lint: every source text and source graphic was kept.",
+    rationale: "Recorded from a verified UX Direct plugin output. Structure only, no screen content.",
+    scopeKey: "project:ux-direct", feedbackKind: "design_system", keywords: ["figma", "verified-layout", scope, ...blockTypes.slice(0, 10)],
+    originalLanguage: "English",
+  };
+}
+
 /** Capture only lessons supported by a verified result or a categorized execution failure. */
 export async function captureVerifiedTaskLesson(run: VerifiedTaskRun): Promise<{
-  status: "stored" | "deduplicated" | "filtered" | "not-eligible" | "failed";
+  status: "stored" | "deduplicated" | "filtered" | "no-candidate" | "not-eligible" | "failed";
   memoryId?: string;
   lesson?: VerifiedTaskLesson;
 }> {
   const lesson = buildVerifiedTaskLesson(run);
-  if (!lesson) return { status: run.outcome === "verified" || run.outcome === "failed" ? "filtered" : "not-eligible" };
+  if (!lesson) {
+    // A verified run with nothing to learn from is not a filtered lesson (finding 49).
+    if (run.outcome === "verified" && !sanitizeInlineLearningCandidate(run.candidate)) return { status: "no-candidate" };
+    return { status: run.outcome === "verified" || run.outcome === "failed" ? "filtered" : "not-eligible" };
+  }
   const dedupeKey = taskLessonDedupeKey(lesson);
   try {
     const claimed = await neonRequest("rpc/uxd_task_claim_lesson", {

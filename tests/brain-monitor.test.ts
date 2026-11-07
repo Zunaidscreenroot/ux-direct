@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildBrainMonitorReport } from "../src/memory/brain-monitor";
+import { buildBrainMonitorReport, classifyFailureReason } from "../src/memory/brain-monitor";
 
 const now = Date.parse("2026-11-06T12:00:00Z");
 
@@ -31,4 +31,16 @@ test("accepts Date timestamps from the Postgres driver", () => {
   const report = buildBrainMonitorReport([{ outcome: "verified", created_at: at, updated_at: at }], now);
   assert.equal(report.last24h.runs, 1);
   assert.equal(report.lastRunAt, at.toISOString());
+});
+
+test("buckets failure reasons without returning raw text", () => {
+  const report = buildBrainMonitorReport([
+    { outcome: "failed", error_summary: "Structural lint blocked the variation: 6 source text item(s) are missing from the output (Pay SECRET)",
+      metadata: { source: "figma-agent", model: "m", attempts: [{ model: "m", result: "HTTP 502" }, { model: "m", result: "quality: quality preflight rejected plan (x)" }, { model: "source-fallback", result: "passed" }] } },
+  ], now);
+  assert.deepEqual(report.failureReasons.final, { "missing-source-text": 1 });
+  assert.deepEqual(report.failureReasons.attempts, { "http-502": 1, "quality-preflight": 1 });
+  assert.doesNotMatch(JSON.stringify(report), /SECRET/);
+  assert.equal(classifyFailureReason("Generation deadline reached before x could run."), "timeout");
+  assert.equal(classifyFailureReason("12 icons, logos or graphics from the source were dropped"), "dropped-graphics");
 });

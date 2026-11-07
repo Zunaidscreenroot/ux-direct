@@ -146,3 +146,15 @@ test("variation completion and visual review both enforce the deterministic stru
   assert.ok(review.includes("runStructuralLint({"), "Visual review merges deterministic findings.");
   assert.ok(review.includes("structuralHigh ? Math.min(validated.data.score, 70)"), "High-severity structural defects cap the score below the gate.");
 });
+
+test("a label repeated on two source cards is counted per copy (finding 53)", () => {
+  const source = canvas(frame("src", [
+    text("a", "Loan A", 16, 16), text("p1", "Pay now", 16, 50), text("b", "Loan B", 16, 100), text("p2", "Pay now", 16, 140),
+  ]));
+  const output = canvas(frame("out", [
+    text("a", "Loan A", 16, 16), text("p1", "Pay now", 16, 50), text("b", "Loan B", 16, 100),
+  ], { x: 500 }));
+  const result = runStructuralLint({ prompt: "Create a cleaner variation of this screen", sourceCanvas: source, outputCanvas: output });
+  assert.equal(result.passed, false);
+  assert.match(summarizeStructuralLint(result), /3\/4 source texts kept/);
+});

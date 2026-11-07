@@ -13,6 +13,7 @@
  */
 import { callFigmaJsonModel, type JsonModelContent } from "@/src/figma-agent/json-model-call";
 import { readR2Json, writeR2Json } from "@/src/storage/r2-json-store";
+import { deferTaskWork } from "@/src/memory/task-run-log";
 import { detectDomain, domainById, roleInstructions, type DomainProfile, type TaskRole } from "@/src/figma-agent/agent-roles";
 
 type Rec = Record<string, unknown>;
@@ -159,6 +160,7 @@ const SCOUT_SYSTEM = [
 const BRIEF_CACHE = new Map<string, { at: number; brief: AgentBrief }>();
 const BRIEF_TTL_MS = 15 * 60 * 1000;
 const BRIEF_CACHE_SIZE = 30;
+const IN_FLIGHT = new Map<string, { full: Promise<AgentBrief>; partial: () => AgentBrief }>();
 
 // The key is the source frame and the role, not the prompt: variation runs append their own
 // direction to the prompt, and a brief describes the screen, which those runs share.
@@ -207,23 +209,48 @@ async function storeBrief(input: SubAgentInput, brief: AgentBrief): Promise<void
 
 export function clearBriefCache(): void {
   BRIEF_CACHE.clear();
+  IN_FLIGHT.clear();
 }
 
 /**
- * Cached wrapper. On a miss the agents run to their own deadline even when the planner has
- * stopped waiting (the route keeps the promise alive with waitUntil), so the finished brief
- * still lands in the cache for the next run on this frame. Only a brief where at least one
- * agent succeeded is cached.
+ * Cached wrapper; only a brief where at least one agent succeeded is cached.
+ * `waitMs` returns early with the agents that have answered by then (finding: the planner
+ * waited the full 6 s and then used none of them because the vision analyst was slower).
+ * The remaining agents keep running to their own deadline and the full brief fills the cache,
+ * so the next variation or retry of the same frame gets every note instantly.
  */
-export async function runSubAgents(input: SubAgentInput): Promise<AgentBrief> {
+export async function runSubAgents(input: SubAgentInput, options: { waitMs?: number } = {}): Promise<AgentBrief> {
+  const key = briefCacheKey(input);
+  // Memory first, then the shared R2 copy, so another Worker isolate's run counts too.
   const cached = await cachedBrief(input);
   if (cached) return cached;
-  const brief = await runSubAgentsUncached(input);
-  if (brief.runs.some((run) => run.ok)) await storeBrief(input, brief);
-  return brief;
+  // Parallel variations of one frame start together: the second joins the first's agents
+  // instead of calling them again, so the batch makes one set of agent calls.
+  let shared = IN_FLIGHT.get(key);
+  if (!shared) {
+    const stage = startSubAgents(input);
+    const fullBrief = stage.full.then((brief) => {
+      if (brief.runs.some((run) => run.ok)) return storeBrief(input, brief).then(() => brief);
+      return brief;
+    }).finally(() => IN_FLIGHT.delete(key));
+    shared = { full: fullBrief, partial: stage.partial };
+    IN_FLIGHT.set(key, shared);
+  }
+  const stage = shared;
+  const full = shared.full;
+  const waitMs = Number(options.waitMs);
+  if (!Number.isFinite(waitMs) || waitMs <= 0) return full;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const early = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), waitMs); });
+  const first = await Promise.race([full, early]);
+  clearTimeout(timer);
+  if (first) return first;
+  // Keep the remaining agents alive past the response (waitUntil) so the full brief is cached.
+  deferTaskWork(full);
+  return stage.partial();
 }
 
-async function runSubAgentsUncached(input: SubAgentInput): Promise<AgentBrief> {
+function startSubAgents(input: SubAgentInput): { full: Promise<AgentBrief>; partial: () => AgentBrief } {
   const keywordDomain = detectDomain(input.prompt, input.sourceTexts);
   const componentList = input.components.slice(0, 40).map((component) => ({
     id: component.id, name: component.name, ...(component.properties ? { properties: component.properties } : {}),
@@ -232,29 +259,37 @@ async function runSubAgentsUncached(input: SubAgentInput): Promise<AgentBrief> {
   const roleNote = { role: input.role.label, roleFocus: input.role.persona, keywordDomainHint: keywordDomain.domain.id };
 
   // One hard deadline for the whole stage: when it passes, every in-flight agent call is
-  // aborted and the planner starts with whatever came back. Each agent makes one call only,
-  // and none sends the screenshot (text-only calls are several times faster; the planner sees it).
+  // aborted. Each agent makes one call only, and none sends the screenshot (text-only calls
+  // answer several times faster; the planner still sees it).
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), subAgentTimeoutMs());
   const text = { signal: deadline.signal, withImage: false };
-  let detector: AgentResult, analyst: AgentResult, scout: AgentResult;
-  try {
-    [detector, analyst, scout] = await Promise.all([
-      runAgent("detector", input, DETECTOR_SYSTEM, sharedContext(input, { keywordDomainHint: keywordDomain.domain.id }),
-        (data) => (str(data.domain) || str(data.userGoal) ? null : "missing domain and userGoal"), text),
-      runAgent("analyst", input, ANALYST_SYSTEM, sharedContext(input, roleNote),
-        (data) => (Array.isArray(data.hierarchy) || Array.isArray(data.changes) ? null : "missing hierarchy and changes"),
-        text),
-      componentIds.size
-        ? runAgent("scout", input, SCOUT_SYSTEM, sharedContext(input, { components: componentList }),
-          (data) => (Array.isArray(data.matches) ? null : "missing matches"), text)
-        : Promise.resolve(null),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-
-  return composeBrief(input, keywordDomain, detector, analyst, scout, componentIds);
+  const startedAt = Date.now();
+  const slots: { detector?: AgentResult; analyst?: AgentResult; scout?: AgentResult } = {};
+  const hasScout = componentIds.size > 0;
+  const track = <K extends keyof typeof slots>(name: K, promise: Promise<AgentResult>) =>
+    promise.then((result) => { slots[name] = result; return result; });
+  const full = Promise.all([
+    track("detector", runAgent("detector", input, DETECTOR_SYSTEM, sharedContext(input, { keywordDomainHint: keywordDomain.domain.id }),
+      (data) => (str(data.domain) || str(data.userGoal) ? null : "missing domain and userGoal"), text)),
+    track("analyst", runAgent("analyst", input, ANALYST_SYSTEM, sharedContext(input, roleNote),
+      (data) => (Array.isArray(data.hierarchy) || Array.isArray(data.changes) ? null : "missing hierarchy and changes"),
+      text)),
+    track("scout", hasScout
+      ? runAgent("scout", input, SCOUT_SYSTEM, sharedContext(input, { components: componentList }),
+        (data) => (Array.isArray(data.matches) ? null : "missing matches"), text)
+      : Promise.resolve(null)),
+  ]).then(([detector, analyst, scout]) => composeBrief(input, keywordDomain, detector, analyst, scout, componentIds))
+    .finally(() => clearTimeout(timer));
+  // Agents still running at the planner's wait are reported as pending, not as failures.
+  const pending = (agent: SubAgentRun["agent"]): AgentResult =>
+    ({ run: { agent, ok: false, ms: Date.now() - startedAt, error: "still running at planner wait" }, data: null });
+  const partial = () => composeBrief(input, keywordDomain,
+    slots.detector !== undefined ? slots.detector : pending("detector"),
+    slots.analyst !== undefined ? slots.analyst : pending("analyst"),
+    slots.scout !== undefined ? slots.scout : hasScout ? pending("scout") : null,
+    componentIds);
+  return { full, partial };
 }
 
 type AgentResult = { run: SubAgentRun; data: Rec | null } | null;

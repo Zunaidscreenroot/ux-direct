@@ -262,8 +262,17 @@ function isMeaningful(text: string): boolean {
 export function checkContentPreservation(source: CanvasTree, output: CanvasTree, prompt: string): { content: ContentCheck; issues: StructuralLintIssue[] } {
   const { mode, reason } = resolveContentMode(prompt);
   const sourceTexts = [...new Set(source.texts.map(normalizeText).filter(isMeaningful))];
+  // Short labels repeated across cards ("Pay now" on two loans) count once per copy (finding 53).
+  const occurrences = (texts: string[]) => {
+    const counts = new Map<string, number>();
+    for (const text of texts.map(normalizeText)) if (isMeaningful(text) && text.length <= 24 && words(text).length <= 3) counts.set(text, (counts.get(text) ?? 0) + 1);
+    return counts;
+  };
+  const sourceCounts = occurrences(source.texts);
+  const outputCounts = occurrences(output.texts);
+  const repeatedSlots = [...sourceCounts.values()].reduce((sum, n) => sum + Math.max(0, n - 1), 0);
   const content: ContentCheck = {
-    mode, reason, sourceTextCount: sourceTexts.length, missingText: [], missingNumbers: [], partial: output.truncated,
+    mode, reason, sourceTextCount: sourceTexts.length + repeatedSlots, missingText: [], missingNumbers: [], partial: output.truncated,
   };
   const issues: StructuralLintIssue[] = [];
   if (mode === "skipped") return { content, issues };
@@ -278,6 +287,11 @@ export function checkContentPreservation(source: CanvasTree, output: CanvasTree,
       const tokens = words(text);
       if (tokens.length && tokens.every(token => outputWords.has(token))) continue;
       content.missingText.push(text.slice(0, 80));
+    }
+    for (const [text, count] of sourceCounts) {
+      const kept = outputCounts.get(text) ?? 0;
+      if (count < 2 || kept === 0 || kept >= count) continue;
+      for (let i = kept; i < count; i += 1) content.missingText.push((text.slice(0, 60) + " (copy " + (i + 1) + " of " + count + ")"));
     }
   }
   const sourceNumbers = [...new Set(source.texts.flatMap(extractNumbers))];

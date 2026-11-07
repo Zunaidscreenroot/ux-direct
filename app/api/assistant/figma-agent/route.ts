@@ -24,7 +24,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** Longest the planner waits for the sub-agent brief before planning without it. */
-const PLANNER_AGENT_WAIT_MS = 15000;
+const PLANNER_AGENT_WAIT_MS = 6000;
+const BRAIN_WAIT_MS = 5000;
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out after " + ms + "ms")), ms);
+    promise.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
+  });
+}
 const API_ORIGINS = new Set(["https://www.figma.com", "https://figma.com", "null"]);
 function allowedOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
@@ -256,8 +263,8 @@ type CanvasNode = {
   childCount?: number; children?: CanvasNode[];
 };
 /** Model-facing canvas budget: deep enough for card internals (rows, badges, icons) of a full screen. */
-const COMPACT_NODE_LIMIT = 220;
-const COMPACT_DEPTH_LIMIT = 6;
+const COMPACT_NODE_LIMIT = 400;
+const COMPACT_DEPTH_LIMIT = 8;
 function compactNode(value: unknown, state: { count: number }, depth = 0): CanvasNode | null {
   if (!value || typeof value !== "object" || Array.isArray(value) || state.count >= COMPACT_NODE_LIMIT) return null;
   const node = value as Record<string, unknown>;
@@ -590,11 +597,8 @@ export async function POST(request: Request) {
       selectedNode: { name: selectedName, type: selectedType, width: selectedWidth, height: selectedHeight },
       sourceTexts, components: Array.isArray(canvas.components) ? canvas.components as Array<Record<string, unknown>> : [],
       renderedScreen, origin: new URL(request.url).origin,
-    }).catch(() => fallbackBrief)
+    }, { waitMs: PLANNER_AGENT_WAIT_MS }).catch(() => fallbackBrief)
     : Promise.resolve(fallbackBrief);
-  // The planner stops waiting after PLANNER_AGENT_WAIT_MS; keep the agents alive past the
-  // response so their brief is cached for the next run on this frame.
-  deferTaskWork(agentBriefPromise);
   const agentsStartedAt = Date.now();
   // Independent of brain retrieval, so both lookups run at the same time.
   const variationIndex = parsedInput.data.variation?.index ?? 0;
@@ -609,16 +613,20 @@ export async function POST(request: Request) {
   let taskRetrieval: RetrievalRecord = { status: "degraded", memoryIds: [], chunkIds: [], chars: 0 };
   const brainStarted = Date.now();
   try {
-    const retrieved = await retrieveBrainContext({
+    // Usually 0.5–3 s; a cold Neon/R2 path once took 12.9 s (finding 64). Cap it so the model
+    // call is never held up: past the cap the run continues without brain context.
+    const retrieved = await withTimeout(retrieveBrainContext({
       query: buildBrainQuery({ prompt: parsedInput.data.prompt, frameName: selectedName, designScope,
         nodes: Array.isArray(canvas.nodes) ? canvas.nodes : [] }),
       scopeKeys: resolveBrainScopes(parsedInput.data.prompt + "\n" + JSON.stringify(canvas.nodes).slice(0, 1500)),
-      limit: 6,
-      maxChars: 6000,
+      // Tokens are free and the planner prompt is ~21k tokens: a 5k-char brain slice was the
+      // smallest part of it. Give the planner up to 12 memories / ~16k chars of team knowledge.
+      limit: 12,
+      maxChars: 16000,
       includeKnowledge: true,
-    });
+    }), BRAIN_WAIT_MS);
     brain = {
-      contextText: retrieved.contextText.slice(0, 7000),
+      contextText: retrieved.contextText.slice(0, 17000),
       status: retrieved.retrieval.status,
       memoryCount: Math.max(0, retrieved.retrieval.memoryCount || 0),
       knowledgeChunkCount: Math.max(0, retrieved.retrieval.knowledgeChunkCount || 0),
@@ -630,18 +638,20 @@ export async function POST(request: Request) {
     brain = { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: Date.now() - brainStarted };
   }
   // Persist the run before model work starts so a fast completion cannot race a late INSERT.
-  await startTaskRun({ id: taskRunId, projectKey: taskScope, title: "Figma task", requestSummary: parsedInput.data.prompt, retrieval: taskRetrieval });
+  const taskRunStarted = startTaskRun({ id: taskRunId, projectKey: taskScope, title: "Figma task", requestSummary: parsedInput.data.prompt, retrieval: taskRetrieval });
 
   const scopeInstructions = componentSelection
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
     : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
   // A verified spec from this project (structure only) steers whichever model `auto` picks
   // toward the same block choices that already passed the Figma quality gate.
-  const verifiedExample = await verifiedExamplePromise;
-  // Speed first: the planner waits at most 15 s for the sub-agent notes (they run in parallel
+  const [verifiedExample] = await Promise.all([verifiedExamplePromise, taskRunStarted]);
+  // Speed first: the planner waits at most 6 s for the sub-agent notes (they run in parallel
   // with brain retrieval). Waiting up to 40 s was idle time on every run.
   const agentBrief = await Promise.race([agentBriefPromise,
-    new Promise<AgentBrief>((resolve) => setTimeout(() => resolve(fallbackBrief), PLANNER_AGENT_WAIT_MS))]);
+    // The deadline counts from when the agents started, not from here: brain retrieval and the
+    // run insert already ran in parallel with them, so a slow insert no longer adds 6 s more.
+    new Promise<AgentBrief>((resolve) => setTimeout(() => resolve(fallbackBrief), Math.max(0, agentsStartedAt + PLANNER_AGENT_WAIT_MS + 500 - Date.now())))]);
   const agentsMs = Date.now() - agentsStartedAt;
   const exampleInstructions = verifiedExample
     ? "\nVERIFIED TEAM EXAMPLE — the block structure of an earlier output that passed UX Direct's quality gate. Texts are replaced by <source text>. Follow its way of choosing sections and blocks for similar content; never copy it, and use only this screen's real content: " + verifiedExample
@@ -800,6 +810,8 @@ export async function POST(request: Request) {
   // Wall time per model attempt, returned to the plugin so a slow run shows where the time went.
   const attemptTimes: Array<{ attempt: string; ms: number; outcome: string }> = [];
   let inFlight: { attempt: string; startedAt: number } | null = null;
+  // Size of the last prompt sent, so a slow model call can be told apart from a huge prompt.
+  let promptSize: { textChars: number; approxTokens: number; imageKb: number } | null = null;
   const respond = (success: SuccessCandidate) => {
     const { candidate } = success;
     deferTaskWork(recordGeneration(taskRunId, {
@@ -828,7 +840,8 @@ export async function POST(request: Request) {
       generation: { recoveryAttempted: success.isRecovery, finishReason: success.finishReason, modelIndex: success.modelIndex + 1,
         attempts: attemptLog.length, elapsedMs: Date.now() - generationStartedAt, totalMs: Date.now() - requestStartedAt,
         preModelMs: generationStartedAt - requestStartedAt,
-        attemptTimes: [...attemptTimes, ...(inFlight ? [{ attempt: inFlight.attempt, ms: Date.now() - inFlight.startedAt, outcome: "ok" }] : [])] },
+        attemptTimes: [...attemptTimes, ...(inFlight ? [{ attempt: inFlight.attempt, ms: Date.now() - inFlight.startedAt, outcome: "ok" }] : [])],
+        prompt: promptSize },
     }, { headers });
   };
   modelLoop: for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
@@ -863,6 +876,10 @@ export async function POST(request: Request) {
         const modelImages: Array<Record<string, unknown>> = [];
         if (renderedScreen) modelImages.push({ type: "image_url", image_url: { url: renderedScreen } });
         if (referenceImage) modelImages.push({ type: "image_url", image_url: { url: referenceImage } });
+        const systemText = isRecovery ? (blockMode ? blockRecoverySystem : recoverySystem) : system;
+        const textChars = systemText.length + modelUserText.length;
+        promptSize = { textChars, approxTokens: Math.round(textChars / 3.6),
+          imageKb: Math.round(modelImages.reduce((sum, image) => sum + String((image.image_url as { url?: string })?.url || "").length, 0) * 0.75 / 1024) };
         const userContent: string | Array<Record<string, unknown>> = modelImages.length
           ? [{ type: "text", text: modelUserText }, ...modelImages]
           : modelUserText;
@@ -881,7 +898,7 @@ export async function POST(request: Request) {
           body: JSON.stringify({
             model,
             messages: [
-              { role: "system", content: isRecovery ? (blockMode ? blockRecoverySystem : recoverySystem) : system },
+              { role: "system", content: systemText },
               { role: "user", content: userContent },
             ],
             ...(activeProvider.id === "openrouter" && model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
@@ -928,13 +945,20 @@ export async function POST(request: Request) {
           attemptLog.push({ model: model + (isRecovery ? " compact retry" : ""), result: "HTTP " + response.status });
           const detail = typeof providerError.message === "string" ? providerError.message.slice(0, 260) : "HTTP " + response.status;
           errors.push(model + (isRecovery ? " compact retry" : "") + ": " + detail);
-          if (!transientRetried && [408, 429, 500, 502, 503, 504].includes(response.status) &&
+          // Same-mode retry only for a FAST failure (a tunnel blip). A 5xx after a long wait means
+          // the upstream chain already tried its models; repeating it burned ~67 s (finding 61).
+          const attemptMs = inFlight ? Date.now() - inFlight.startedAt : 0;
+          if (!transientRetried && [408, 429, 500, 502, 503, 504].includes(response.status) && attemptMs < 20000 &&
             generationDeadlineMs - (Date.now() - generationStartedAt) > 45000) {
             transientRetried = true;
             await new Promise((resolve) => setTimeout(resolve, 1500));
             recoveryAttempt -= 1;
             continue;
           }
+          // A 5xx after a long wait means the upstream chain already failed through its models;
+          // the compact retry then also timed out (60 s) in every observed run, so go straight
+          // to the source fallback instead (finding 61, round 5).
+          if ([500, 502, 503, 504].includes(response.status) && attemptMs > 45000) break modelLoop;
           // The compact retry runs without JSON mode, which covers free models that reject response_format.
           if (!isRecovery && ([408, 429, 500, 502, 503, 504].includes(response.status) ||
             shouldRetryWithoutJsonMode(activeProvider, response.status))) continue;

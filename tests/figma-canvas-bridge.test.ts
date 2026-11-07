@@ -477,3 +477,13 @@ test("block-rendered plans skip the model richness floor in the route and the pl
   assert.ok(agent.includes('candidate.plan && (candidate.stage === "ok" || candidate.stage === "quality")'), "The source fallback must not be blocked by subjective quality findings.");
   assert.ok(ui.includes('const minSections = blockRendered ? 1 : 3, minNodes = blockRendered ? 2 : 18;'), "The plugin must accept small block-rendered plans.");
 });
+
+test("variation jobs run in parallel, read their source by id and reserve canvas slots", () => {
+  const ui = readFileSync("figma-plugin/ui.html", "utf8");
+  const code = readFileSync("figma-plugin/code.js", "utf8");
+  assert.ok(ui.includes("await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, worker));"));
+  assert.ok(ui.includes("sourceId: job.frame.id"));
+  assert.ok(ui.includes('scope: "selection", nodeIds: [createdFrameId]'), "verify read does not depend on selection");
+  assert.ok(ui.includes(".concat(reservedCanvasSpots)"), "parallel builds never share a slot");
+  assert.ok(code.includes("Array.isArray(payload.nodeIds) && payload.nodeIds.length"));
+});

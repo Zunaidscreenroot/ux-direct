@@ -1536,13 +1536,15 @@
 
       stage("scanning", "Scanning and rendering the selected screen…");
       // Speed: the screenshot export starts at the same time as the layer read (both are local).
-      const preIds = selectedIds();
+      // A batch job names its source frame, so jobs can run side by side without the selection.
+      const preIds = designOptions && designOptions.sourceId ? [designOptions.sourceId] : selectedIds();
       const earlyCapture = preIds.length === 1 ? captureRenderedNodePreview(preIds[0]).catch(function (error) {
         return { dataUrl: null, scale: 0, warning: String(error && error.message || error).slice(0, 200) };
       }) : null;
       // Deep read: card internals (logos, icons, charts) must be visible to keep them in the variation.
       const canvas = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 12, maxNodes: 400, includeStyles: true, includeVariables: true, includeComponents: true
+        scope: "selection", maxDepth: 12, maxNodes: 400, includeStyles: true, includeVariables: true, includeComponents: true,
+        ...(designOptions && designOptions.sourceId ? { nodeIds: [designOptions.sourceId] } : {})
       }, 90000);
       const selectedNodes = Array.isArray(canvas && canvas.nodes) ? canvas.nodes : [];
       const expectsSelection = /\b(selected|selection|this frame|this screen|current frame|variation|variant|duplicate|redesign this|improve this)\b/i.test(prompt);
@@ -1610,12 +1612,12 @@
       stage("planning", "Plan validated · " + memory + (renderedScreen ? " · rendered screenshot analysed" : " · layer-only analysis"));
 
       const viewport = canvas && canvas.viewport && canvas.viewport.bounds ? canvas.viewport.bounds : {};
-      let rootX = placement ? Math.max(-10000, Math.min(9000, placement.x)) : sourceNode && Number.isFinite(sourceNode.x)
-        ? Math.max(-10000, Math.min(9000, sourceNode.x + (Number(sourceNode.width) || Number(plan.frame.width) || 393) + 100))
-        : Math.max(40, Math.min(9000, Number(viewport.x) + 80 || 80));
-      let rootY = placement ? Math.max(-10000, Math.min(9000, placement.y)) : sourceNode && Number.isFinite(sourceNode.y)
-        ? Math.max(-10000, Math.min(9000, sourceNode.y))
-        : Math.max(40, Math.min(9000, Number(viewport.y) + 80 || 80));
+      let rootX = placement ? Math.max(-100000, Math.min(100000, placement.x)) : sourceNode && Number.isFinite(sourceNode.x)
+        ? Math.max(-100000, Math.min(100000, sourceNode.x + (Number(sourceNode.width) || Number(plan.frame.width) || 393) + 100))
+        : Math.max(-100000, Math.min(100000, Number(viewport.x) + 80 || 80));
+      let rootY = placement ? Math.max(-100000, Math.min(100000, placement.y)) : sourceNode && Number.isFinite(sourceNode.y)
+        ? Math.max(-100000, Math.min(100000, sourceNode.y))
+        : Math.max(-100000, Math.min(100000, Number(viewport.y) + 80 || 80));
       // Every create path (improve, wireframe, each variation, flow) takes a free slot: a fixed
       // placement is only the starting point, so variations never land on existing frames (finding 45).
       {
@@ -1719,7 +1721,7 @@
       // Full-depth read without collapsing instances: header/icon instance texts and nested
       // card content must be visible, or the lint cannot prove the source content was kept.
       const verified = await runNativeCanvasCommand("read-canvas", {
-        scope: "selection", maxDepth: 12, maxNodes: 500, includeStyles: true, includeVariables: true
+        scope: "selection", nodeIds: [createdFrameId], maxDepth: 12, maxNodes: 500, includeStyles: true, includeVariables: true
       }, 90000);
       const verifiedNode = verified && Array.isArray(verified.nodes)
         ? verified.nodes.find(function (node) { return node.id === createdFrameId; })
@@ -1745,7 +1747,7 @@
         "\n" + lint.text;
       visualNote += await finalizeTaskOutcome(lint.passed ? "verified" : "failed",
         lint.passed
-          ? "Native structure/read-back and structural lint passed; post-variation visual QA disabled as requested."
+          ? "Native structure/read-back and structural lint passed; post-variation visual QA disabled as requested. " + lint.text
           : "Structural lint blocked the variation: " + lint.text,
         lint.passed ? "" : lint.text);
       const timingLine = "\nTiming: " + formatRunTiming(localReadMs, serverMs, payload, buildMs, Date.now() - checksStartedAt, Date.now() - taskStartedAt);
@@ -1789,6 +1791,9 @@
       if (payload && payload.brain && Number.isFinite(payload.brain.latencyMs)) parts.push("brain " + s(payload.brain.latencyMs));
       if (payload && payload.agents && Number.isFinite(payload.agents.latencyMs)) parts.push("agents " + s(payload.agents.latencyMs));
       if (Number.isFinite(gen.preModelMs)) parts.push("pre-model " + s(gen.preModelMs));
+      if (gen.prompt && Number.isFinite(gen.prompt.approxTokens)) {
+        parts.push("prompt ~" + (gen.prompt.approxTokens / 1000).toFixed(1) + "k tok" + (gen.prompt.imageKb ? " + " + gen.prompt.imageKb + " KB image" : ""));
+      }
       const attempts = Array.isArray(gen.attemptTimes) ? gen.attemptTimes : [];
       attempts.slice(0, 6).forEach(function (a) {
         parts.push(String(a.attempt || "model").slice(0, 60) + " " + s(a.ms) + (a.outcome && a.outcome !== "ok" ? " (failed)" : ""));
@@ -1797,30 +1802,56 @@
         " · build " + s(buildMs) + " · checks " + s(checksMs) + " · total " + s(totalMs);
     }
 
+    // Slots handed to builds that have not created their frame yet (parallel variation jobs).
+    const reservedCanvasSpots = [];
+    // Hug/auto-layout frames grow after build (planned 800 can end at 1225), so the slot check and
+    // the reservation use a padded height; otherwise a new frame grows into the one below (finding 67).
+    function paddedCanvasHeight(height) { return Math.round((Number(height) || 800) * 1.5) + 200; }
     async function findFreeCanvasSpot(x, y, width, height) {
+      const padded = paddedCanvasHeight(height);
+      const spot = await findFreeCanvasSpotRaw(x, y, width, padded);
+      const now = Date.now();
+      while (reservedCanvasSpots.length && (now - reservedCanvasSpots[0].at > 300000 || reservedCanvasSpots.length > 20)) reservedCanvasSpots.shift();
+      reservedCanvasSpots.push({ x: spot.x, y: spot.y, width: width, height: padded, at: now });
+      return spot;
+    }
+    async function findFreeCanvasSpotRaw(x, y, width, height) {
       let page = null;
       try {
         page = await runNativeCanvasCommand("read-canvas", { scope: "current-page", maxDepth: 0, maxNodes: 500 }, 30000);
       } catch (_) { return { x: x, y: y }; }
       const boxes = (page && Array.isArray(page.nodes) ? page.nodes : []).filter(function (node) {
         return node && node.visible !== false && [node.x, node.y, node.width, node.height].every(Number.isFinite);
-      });
+      }).concat(reservedCanvasSpots);
+      return pickFreeCanvasSpot(boxes, x, y, width, height);
+    }
+    // uxd-free-spot:start
+    // Pure slot search: scan right along a row, then drop to the next row below everything that
+    // occupies the row band. No coordinate clamp, so frames never pile up at a fixed y (finding 67).
+    function pickFreeCanvasSpot(boxes, x, y, width, height) {
       const gap = 100;
       const hits = function (cx, cy) {
         return boxes.find(function (b) {
           return cx < b.x + b.width + gap && cx + width + gap > b.x && cy < b.y + b.height + gap && cy + height + gap > b.y;
         });
       };
-      let cx = x;
-      for (let i = 0; i < 60; i++) {
-        const hit = hits(cx, y);
-        if (!hit) return { x: Math.round(cx), y: Math.round(y) };
-        cx = hit.x + hit.width + gap;
-        if (cx > 9000) break;
+      const rowLimit = x + 6000;
+      let cy = y;
+      for (let row = 0; row < 12; row++) {
+        let cx = x;
+        for (let i = 0; i < 60; i++) {
+          const hit = hits(cx, cy);
+          if (!hit) return { x: Math.round(cx), y: Math.round(cy) };
+          cx = hit.x + hit.width + gap;
+          if (cx > rowLimit) break;
+        }
+        const band = boxes.filter(function (b) { return b.y < cy + height + gap && b.y + b.height + gap > cy; });
+        cy = band.reduce(function (max, b) { return Math.max(max, b.y + b.height + gap); }, cy + gap);
       }
       const bottom = boxes.reduce(function (max, b) { return Math.max(max, b.y + b.height); }, y);
-      return { x: Math.round(x), y: Math.round(Math.min(9500, bottom + gap)) };
+      return { x: Math.round(x), y: Math.round(bottom + gap) };
     }
+    // uxd-free-spot:end
 
     async function captureRenderedNodePreview(nodeId) {
       const attempts = [];
@@ -1951,14 +1982,21 @@
       // Whole-prompt edits with free text values (quotes may contain "and").
       eat(/\breplace\s+"([^"]+)"\s+(?:with|by|to)\s+"([^"]*)"/gi, function (_m, from, to) { return { kind: "text", set: { replace: { from: from, to: to } }, label: "Replaced \"" + from + "\"" }; });
       eat(/"([^"]+)"\s+(?:ko|को)\s+"([^"]*)"\s+(?:se\s+)?(?:replace|badal|badlo|kar)\w*(?:\s+(?:do|de|dijiye|karo))?/gi, function (_m, from, to) { return { kind: "text", set: { replace: { from: from, to: to } }, label: "Replaced \"" + from + "\"" }; });
-      eat(/\b(?:change|set|update|edit|make)\s+(?:the\s+|this\s+)?(?:text|label|title|heading|copy|button text|cta text|cta)(?:\s+text)?\s+(?:to|as|into|=|:)\s+"([^"]+)"/gi, function (_m, value) { return { kind: "text", set: { text: value }, label: "Text set" }; });
-      eat(/\b(?:text|label|title|heading|copy)\s+(?:should\s+(?:say|read|be)|says?|=|:)\s+"([^"]+)"/gi, function (_m, value) { return { kind: "text", set: { text: value }, label: "Text set" }; });
+      // "the title" / "the button text" names ONE layer: without the noun, a frame selection had
+      // every text in it overwritten (finding 66).
+      const textNounOp = function (word, value) {
+        const w = String(word || "").toLowerCase();
+        const noun = /title|heading/.test(w) ? "title" : /button|cta/.test(w) ? "button" : /label/.test(w) ? "label" : null;
+        return Object.assign({ kind: "text", set: { text: value }, label: "Text set" }, noun ? { noun: noun, single: true } : {});
+      };
+      eat(/\b(?:change|set|update|edit|make)\s+(?:the\s+|this\s+)?(text|label|title|heading|copy|button text|cta text|cta)(?:\s+text)?\s+(?:to|as|into|=|:)\s+"([^"]+)"/gi, function (_m, word, value) { return textNounOp(word, value); });
+      eat(/\b(text|label|title|heading|copy)\s+(?:should\s+(?:say|read|be)|says?|=|:)\s+"([^"]+)"/gi, function (_m, word, value) { return textNounOp(word, value); });
       eat(/\b(?:rename|name)\s+(?:this|it|the layer|this layer|the frame|layer|frame)?\s*(?:to|as)\s+"?([^"]+?)"?\s*$/i, function (_m, value) { return { kind: "self", set: { name: value.trim() }, label: "Renamed to \"" + value.trim() + "\"" }; });
       eat(/^\s*(?:is\s*ko|isko|ise)?\s*"?([^"]+?)"?\s+naam\s+(?:do|de|dijiye|rakho|rakh do)\s*$/i, function (_m, value) { return { kind: "self", set: { name: value.trim() }, label: "Renamed to \"" + value.trim() + "\"" }; });
       const colorWords = new RegExp("^\\s*" + directColorPattern() + "\\s*$", "i");
-      eat(/\b(?:change|set|update)\s+(?:the\s+|this\s+)?(?:text|label|title|heading|copy)\s+to\s+(?!")([^,;]+?)\s*$/i, function (m, value) {
+      eat(/\b(?:change|set|update)\s+(?:the\s+|this\s+)?(text|label|title|heading|copy)\s+to\s+(?!")([^,;]+?)\s*$/i, function (m, word, value) {
         if (colorWords.test(value) || /\b(bold|italic|bigger|smaller|size|\d+\s*(px|pt)?|upper ?case|lower ?case|cent(er|re)|left|right)\b/i.test(value)) return false;
-        return { kind: "text", set: { text: value.trim() }, label: "Text set" };
+        return textNounOp(word, value.trim());
       });
       if (/"/.test(rest)) return null;
 
@@ -2561,25 +2599,36 @@
               " so it is clearly distinct from the other variations, while keeping all source content." });
         }
       }
-      for (let index = 0; index < jobs.length; index += 1) {
-        const job = jobs[index];
-        stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + job.frame.name + "…");
-        try {
-          await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: [job.frame.id] }, 90000);
-          const answer = await createFigmaDesign(job.prompt, function (status) {
-            stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + status);
-          }, { placement: job.placement, variation: job.variation });
-          results.push("**" + (index + 1) + ". " + job.frame.name + "**: " + String(answer).split("\n")[0]);
-        } catch (error) {
-          failures.push("**" + (index + 1) + ". " + job.frame.name + "**: " + String(error && error.message || error).slice(0, 240));
+      // Speed: jobs run side by side (up to 3), each reading its own source frame by id, so two
+      // variations take about as long as one instead of twice as long.
+      const batchStartedAt = Date.now();
+      const outcomes = new Array(jobs.length);
+      let nextJob = 0;
+      async function worker() {
+        while (nextJob < jobs.length) {
+          const index = nextJob++;
+          const job = jobs[index];
+          stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + job.frame.name + "…");
+          try {
+            const answer = String(await createFigmaDesign(job.prompt, function (status) {
+              stage("creating", "Variation " + (index + 1) + "/" + jobs.length + " · " + status);
+            }, { placement: job.placement, variation: job.variation, sourceId: job.frame.id }));
+            const timing = answer.split("\n").find(function (line) { return line.indexOf("Timing: ") === 0; });
+            outcomes[index] = { ok: true, text: "**" + (index + 1) + ". " + job.frame.name + "**: " + answer.split("\n")[0] + (timing ? "\n   " + timing : "") };
+          } catch (error) {
+            outcomes[index] = { ok: false, text: "**" + (index + 1) + ". " + job.frame.name + "**: " + String(error && error.message || error).slice(0, 240) };
+          }
         }
       }
+      await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, worker));
+      outcomes.forEach(function (o) { if (o) (o.ok ? results : failures).push(o.text); });
+      const batchLine = "\nBatch time: " + ((Date.now() - batchStartedAt) / 1000).toFixed(1) + "s for " + jobs.length + " job(s), up to 3 in parallel.";
       stage(failures.length ? "error" : "done", results.length + "/" + jobs.length + " variation(s) created");
       return (task.kind === "flow-variations"
         ? "Flow variation: " + results.length + " of " + jobs.length + " screens created in a new row below the original flow."
         : results.length + " of " + jobs.length + " variations created to the right of the source screen.") +
         (results.length ? "\n" + results.join("\n") : "") +
-        (failures.length ? "\n\nNot created:\n" + failures.join("\n") : "") +
+        (failures.length ? "\n\nNot created:\n" + failures.join("\n") : "") + batchLine +
         "\nThe original screens were not changed.";
     }
 

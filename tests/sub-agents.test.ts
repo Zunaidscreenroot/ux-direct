@@ -141,3 +141,54 @@ test("the brief is cached per source frame so variations of one frame skip the a
     globalThis.fetch = realFetch;
   }
 });
+
+test("planner wait returns the agents that answered and caches the full brief for the next run", async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    calls += 1;
+    const body = String(init?.body || "");
+    const analyst = body.includes("UX analyst");
+    await new Promise((resolve) => setTimeout(resolve, analyst ? 400 : 10));
+    const content = analyst
+      ? { primaryAction: "Pay ₹10,000", hierarchy: ["EMI first"], changes: ["Lead with the EMI"] }
+      : { domain: "fintech", product: "Loan app", userGoal: "Pay EMI", keyContent: ["Upcoming EMI"] };
+    return new Response(JSON.stringify({ model: "m", choices: [{ message: { content: JSON.stringify(content) } }] }), { status: 200 });
+  }) as typeof fetch;
+  const input = { prompt: "improve the partial frame", role: detectTaskRole("improve"), designScope: "selected_screen_or_frame",
+    selectedNode: { name: "Partial", type: "FRAME", width: 360, height: 800 }, sourceTexts: SOURCE,
+    components: [], renderedScreen: null, origin: "https://ux-direct.test" };
+  try {
+    const started = Date.now();
+    const early = await runSubAgents(input, { waitMs: 150 });
+    assert.ok(Date.now() - started < 380, "returned at the planner wait");
+    assert.deepEqual(early.runs.map((run) => [run.agent, run.ok]), [["detector", true], ["analyst", false]]);
+    assert.match(early.instructions, /User goal: Pay EMI/, "detector notes are used, not discarded");
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    const next = await runSubAgents(input, { waitMs: 150 });
+    assert.equal(calls, 2, "the full brief was cached, no new agent calls");
+    assert.match(next.instructions, /Primary action \(from source\): Pay ₹10,000/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("parallel variations of one frame share one set of agent calls", async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    return new Response(JSON.stringify({ model: "m", choices: [{ message: { content: JSON.stringify({ domain: "fintech", userGoal: "Pay", hierarchy: ["EMI"] }) } }] }), { status: 200 });
+  }) as typeof fetch;
+  const input = { prompt: "variation of the shared frame", role: detectTaskRole("improve"), designScope: "selected_screen_or_frame",
+    selectedNode: { name: "Shared", type: "FRAME", width: 360, height: 800 }, sourceTexts: SOURCE,
+    components: [], renderedScreen: null, origin: "https://ux-direct.test" };
+  try {
+    const [a, b] = await Promise.all([runSubAgents(input, { waitMs: 1000 }), runSubAgents(input, { waitMs: 1000 })]);
+    assert.equal(calls, 2, "detector + analyst once, not twice");
+    assert.equal(a.instructions, b.instructions);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

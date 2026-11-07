@@ -22,6 +22,12 @@ function normalizeColor(value: unknown): string | null {
   return null;
 }
 
+function monochromeOf(item: Record<string, unknown>): { ink: string; placeholder: string } | null {
+  const mono = item.monochrome && typeof item.monochrome === "object" ? item.monochrome as Record<string, unknown> : null;
+  const hexOk = (v: unknown): v is string => typeof v === "string" && /^#[0-9A-Fa-f]{6}$/.test(v);
+  return mono && hexOk(mono.ink) && hexOk(mono.placeholder) ? { ink: mono.ink, placeholder: mono.placeholder } : null;
+}
+
 function normalizeElementType(value: unknown, item: Record<string, unknown>): "RECTANGLE" | "ELLIPSE" | "TEXT" | "LINE" | "FRAME" | "POLYGON" | "STAR" | "INSTANCE" | "CLONE" {
   const raw = typeof value === "string" ? value.trim().toUpperCase().replace(/[ -]+/g, "_") : "";
   // A copy of a source layer (logo, icon, chart) placed by the block renderer.
@@ -136,7 +142,15 @@ export function repairPlanGeometry(value: unknown): unknown {
         // them squashed logos, charts and badges to a few pixels (Test #1 retest).
         // Small hug-width pills (badges, chips) size to their content, so they keep it too.
         const rigid = (child: RepairGeometryRecord) => child.type === "CLONE" || (child.type === "INSTANCE" && repairGeometryNumber(child, "width", 1) <= 96)
-          || (child.type !== "TEXT" && child.layoutSizingHorizontal === "HUG" && repairGeometryNumber(child, "width", 1) <= 160);
+          || (child.type !== "TEXT" && child.layoutSizingHorizontal === "HUG" && repairGeometryNumber(child, "width", 1) <= 160)
+          // An amount or ID is one token: squeezing it wrapped "₹12,000" into "₹12, / 000" (finding 59).
+          || (child.type === "TEXT" && typeof child.text === "string" && child.text.trim().length <= 16 && !/\s/.test(child.text.trim()));
+        // A single-token text keeps its natural one-line width (not an inflated planned width).
+        for (const child of flow) {
+          if (child.type !== "TEXT" || !rigid(child)) continue;
+          const natural = Math.ceil(String(child.text).trim().length * repairGeometryNumber(child, "fontSize", 14) * 0.6) + 4;
+          child.width = Math.min(repairGeometryNumber(child, "width", natural), natural);
+        }
         const rigidTotal = flow.filter(rigid).reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "width", 1)), 0);
         const flexTotal = Math.max(1, currentTotal - rigidTotal);
         const flexBudget = Math.max(1, contentBudget - rigidTotal);
@@ -155,6 +169,15 @@ export function repairPlanGeometry(value: unknown): unknown {
           }
         }
         flow.forEach((child, index) => { if (!rigid(child)) fitWidth(child, widths[index], mode); });
+        // Rigid parts (logos, badges, amounts) alone can be wider than the row ("Card header" was the
+        // top preflight reject, finding 65): the row wraps onto a second line instead of overflowing.
+        const finalTotal = flow.reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "width", 1)), 0);
+        if (finalTotal > contentBudget + 1) {
+          node.layoutWrap = "WRAP";
+          node.counterAxisSizingMode = "AUTO";
+          if (node.layoutSizingVertical === "FIXED") node.layoutSizingVertical = "HUG";
+          for (const child of flow) if (repairGeometryNumber(child, "width", 1) > contentBudget) fitWidth(child, contentBudget, mode);
+        }
         // Frames also use fixed allocated widths here; FILL could re-distribute
         // uneven columns and invalidate the geometry that was just repaired.
         flow.filter(child => child.type !== "TEXT" && !rigid(child)).forEach(child => {
@@ -175,6 +198,21 @@ export function repairPlanGeometry(value: unknown): unknown {
 
     // Descendants must be repaired before parent heights are recomputed.
     for (const child of children) repairNode(child, false, depth + 1);
+
+    // A child that grew during its own repair (a badge that got a cloned icon hugs wider) can
+    // push a fixed row past its width after it was allocated: wrap it rather than fail the
+    // fixed-layout-overflow preflight (finding 65, "Card header").
+    if (mode === "HORIZONTAL" && node.layoutWrap !== "WRAP" && node.layoutSizingHorizontal !== "HUG" && node.primaryAxisSizingMode !== "AUTO") {
+      const total = padL + padR + flow.reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "width", 1)), 0) + Math.max(0, flow.length - 1) * gap;
+      const rowWidth = repairGeometryNumber(node, "width", width);
+      if (total > rowWidth + 2) {
+        node.layoutWrap = "WRAP";
+        node.counterAxisSizingMode = "AUTO";
+        if (node.layoutSizingVertical === "FIXED") node.layoutSizingVertical = "HUG";
+        const budget = Math.max(1, rowWidth - padL - padR);
+        for (const child of flow) if (repairGeometryNumber(child, "width", 1) > budget) fitWidth(child, budget, mode);
+      }
+    }
 
     if (mode === "VERTICAL" && !isViewport) {
       const requiredHeight = padT + padB +
@@ -298,9 +336,8 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
       for (const key of ["layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning", "layoutGrow"]) {
         if (item[key] !== undefined) normalized[key] = item[key];
       }
-      const mono = item.monochrome && typeof item.monochrome === "object" ? item.monochrome as Record<string, unknown> : null;
-      const hexOk = (v: unknown) => typeof v === "string" && /^#[0-9A-Fa-f]{6}$/.test(v);
-      if (mono && hexOk(mono.ink) && hexOk(mono.placeholder)) normalized.monochrome = { ink: mono.ink, placeholder: mono.placeholder };
+      const mono = monochromeOf(item);
+      if (mono) normalized.monochrome = mono;
       return normalized;
     }
     if (type === "INSTANCE") {
@@ -321,6 +358,9 @@ export function normalizePlan(value: unknown, canvas: Record<string, unknown>, o
           .map(([key, value]) => [key.slice(0, 120), value.slice(0, 500)]);
         if (entries.length) normalized.textOverrides = Object.fromEntries(entries);
       }
+      // Wireframes also recolour reused source components (the app bar), not only clones (finding 52).
+      const mono = monochromeOf(item);
+      if (mono) normalized.monochrome = mono;
     }
     const fontSizeValue = item.fontSize ?? item.textSize;
     if (typeof fontSizeValue === "number" && Number.isFinite(fontSizeValue)) normalized.fontSize = Math.max(8, Math.min(96, fontSizeValue));
