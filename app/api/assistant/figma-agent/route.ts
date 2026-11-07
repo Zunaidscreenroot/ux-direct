@@ -25,8 +25,9 @@ export const dynamic = "force-dynamic";
 
 /** Longest the planner waits for the sub-agent brief before planning without it. */
 const PLANNER_AGENT_WAIT_MS = 6000;
-const FIGMA_MEMORY_TYPES = ["approved_pattern", "failure_pattern", "coaching_rule", "quality_heuristic", "design_decision",
-  "design_system", "interaction_logic", "visual_evidence"];
+// Approved memory_type values with design value (brain monitor, 2026-11-07). design_decision is left
+// out: its only row is a client-scope note.
+const FIGMA_MEMORY_TYPES = ["approved_pattern", "failure_pattern", "coaching_rule", "quality_heuristic", "domain_principle"];
 const BRAIN_WAIT_MS = 5000;
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
