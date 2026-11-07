@@ -8,7 +8,7 @@ import { objectivePlaybook } from "../src/figma-agent/design-thinking";
 
 const ui = readFileSync(join(process.cwd(), "figma-plugin/ui.html"), "utf8");
 
-function load(): { classify: (p: string, ctx?: any) => any; answering: (t: any) => boolean } {
+function load(): { classify: (p: string, ctx?: any) => any; answering: (t: any, prompt?: string) => boolean } {
   const match = /\/\/ uxd-turn-intent:start([\s\S]*?)\/\/ uxd-turn-intent:end/.exec(ui);
   assert.ok(match);
   const sandbox: Record<string, any> = {};
