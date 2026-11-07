@@ -89,7 +89,7 @@ test("missing final content remains invalid and is handled by the route recovery
     choices: [{ finish_reason: "unknown", message: { role: "assistant", reasoning: "thinking only" } }],
   }), null);
   const route = readFileSync(resolve(process.cwd(), "app/api/assistant/figma-agent/route.ts"), "utf8");
-  assert.ok(route.includes("for (let recoveryAttempt = 0; recoveryAttempt < attemptsForModel; recoveryAttempt += 1)"));
+  assert.ok(route.includes("for (let recoveryAttempt = 0; recoveryAttempt < attemptsForModel + (compactRejected ? 1 : 0); recoveryAttempt += 1)"));
   assert.ok(route.includes("const wasTruncated = finishReason === \"length\" || nativeFinishReason === \"length\""));
   assert.ok(route.includes("if (!isRecovery) continue;"), "Missing content and invalid schemas must cause a compact retry.");
   assert.ok(route.includes("compactRecoveryCanvas(canvas)"), "The retry should send a bounded source layer tree.");
@@ -114,6 +114,9 @@ test("Figma agent retains the OpenRouter chain and supports an alternate selecte
   assert.ok(route.includes("getResolvedActiveChatProvider"), "Generation shares the server-side provider selector.");
   assert.ok(route.includes('plugins: [{ id: "auto-router", cost_tier: "low" }]'), "Figma generation includes the explicit low-cost Auto fallback.");
   assert.ok(route.includes("const attemptsForModel = 2"), "The primary model and fallback each get one compact retry.");
+  assert.ok(route.includes("if (recoveryAttempt === 1 && isFreeLlmApi && validationFeedback) { compactRejected = true; continue; }") &&
+    route.includes("recoveryAttempt < attemptsForModel + (compactRejected ? 1 : 0)") && route.includes("recoveryAttempt === 2 && remainingMs < 35000"),
+    "A rejected (not timed-out) FreeLLMAPI compact spec gets one feedback repair pass while 35 s of budget remain.");
   assert.ok(route.includes("provider returned an empty response body"), "Empty provider bodies are diagnosed clearly.");
   assert.ok(route.includes("provider returned a non-JSON response body"), "Invalid response bodies are diagnosed clearly.");
   assert.equal(route.includes("Promise.all(models"), false, "Model requests stay sequential.");
