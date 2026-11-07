@@ -111,7 +111,7 @@ export function cooldownFor(status: number, message: string, retryAfter: string 
     return now + (Number.isFinite(retrySeconds) ? Math.min(Math.max(retrySeconds, 5), 3600) * 1000 : 60_000);
   }
   if (status === 401 || status === 403) return now + 3600_000;
-  if (status === 404 || (status === 400 && /model.*(not|does not|doesn't) (exist|found|support)|unknown model|decommissioned|deprecated/i.test(message))) return now + 6 * 3600_000;
+  if (status === 404 || (status === 400 && /model.*(not|does not|doesn't) (exist|found|support)|unknown model|decommissioned|deprecated|no longer available/i.test(message))) return now + 24 * 3600_000;
   if (status === 402) return now + 6 * 3600_000;
   if (status === 413 || /context|too long|maximum.*tokens|token limit/i.test(message)) return null;
   if (status >= 500 || status === 0) return now + 30_000;
@@ -136,16 +136,27 @@ async function providerModels(provider: ProviderDef, env: Env): Promise<string[]
     if (response.ok) {
       const live = freeModelsFromListing(provider, await response.json());
       if (live.length) {
-        const liveSet = new Set(live);
-        // Keep our defaults that still exist, then add any newly detected strong free model.
-        const kept = provider.models.filter((model) => liveSet.has(model));
-        const added = live.filter((model) => !kept.includes(model) && modelTier(model) === "strong").slice(0, 6);
-        models = [...kept, ...added].length ? [...kept, ...added] : provider.models;
+        models = pickDetectedModels(provider.models, live);
       }
     }
   } catch { /* detection is best-effort; defaults stay */ }
   discovered.set(provider.id, { models, at: Date.now() });
   return models;
+}
+
+const TIER_ORDER: Record<Tier, number> = { strong: 0, medium: 1, fast: 2 };
+
+/**
+ * Detected free models win over the hand-kept defaults (ids drift monthly): every live model,
+ * best tier first (defaults first inside a tier), capped at 10 so routing stays cheap.
+ * Two fast models are always kept so chat roles have something quick.
+ */
+export function pickDetectedModels(defaults: string[], live: string[]): string[] {
+  const rank = (model: string) => TIER_ORDER[modelTier(model)] * 100 + (defaults.includes(model) ? defaults.indexOf(model) : 50);
+  const sorted = [...new Set(live)].sort((a, b) => rank(a) - rank(b));
+  const fast = sorted.filter((model) => modelTier(model) === "fast").slice(0, 2);
+  const picked = [...new Set([...sorted.filter((model) => modelTier(model) !== "fast").slice(0, 8), ...fast])];
+  return picked.length ? picked : defaults;
 }
 
 export function estimatePromptTokens(body: Record<string, unknown>): number {

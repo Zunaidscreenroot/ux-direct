@@ -46,12 +46,12 @@ export const PROVIDERS: ProviderDef[] = [
   {
     id: "gemini", label: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     keyEnv: ["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
-    models: ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"],
+    models: ["gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-flash"],
     rpm: 10, rpd: 250, maxInputTokens: 200_000, maxOutputTokens: 60_000, discover: true,
   },
   {
     id: "openrouter", label: "OpenRouter (free)", baseUrl: "https://openrouter.ai/api/v1", keyEnv: ["OPENROUTER_API_KEY"],
-    models: ["deepseek/deepseek-chat-v3.1:free", "qwen/qwen3-coder:free", "z-ai/glm-4.5-air:free", "moonshotai/kimi-k2:free", "meta-llama/llama-4-maverick:free"],
+    models: ["nvidia/nemotron-3-ultra-550b-a55b:free", "nvidia/nemotron-3.5-super-vl:free", "google/gemma-4-31b-it:free", "dots-studio/dots-3-note-preview:free"],
     rpm: 20, rpd: 50, maxInputTokens: 100_000, maxOutputTokens: 32_000, discover: true,
   },
   {
@@ -82,13 +82,25 @@ export const PROVIDERS: ProviderDef[] = [
   },
 ];
 
-const STRONG = /gpt-oss-120b|235b|qwen3-coder|deepseek|kimi|glm-4\.[5-9](?!-?flash|-air)|glm-5|gemini-[\d.]+-pro|gemini-[\d.]+-flash(?!-lite)|mistral-large|mistral-medium|magistral-medium|maverick|gpt-4\.1(?!-mini|-nano)|gpt-5(?!-mini|-nano)/i;
-const FAST = /flash-lite|gpt-oss-20b|scout|qwen3-32b|30b|small|8b|mini|nano|glm-4\.5-flash|instant/i;
-const VISION = /gemini|llama-4|mistral-medium|mistral-small|pixtral|gpt-4\.1|gpt-5|glm-4\.\dv|-vl/i;
+const STRONG = /gpt-oss-120b|qwen3-coder|deepseek|kimi|glm-4\.[5-9](?!-?flash|-air)|glm-5|gemini-[\d.]+-pro|gemini-[\d.]+-flash(?!-lite)|mistral-large|mistral-medium|magistral-medium|maverick|gpt-4\.1(?!-mini|-nano)|gpt-5(?!-mini|-nano)|ultra|super/i;
+const FAST = /flash-lite|scout|(^|[-/_.:])(small|mini|nano|lite|lightning|tiny|instant)(?![a-z])|glm-4\.\d+-flash/i;
+const VISION = /gemini|llama-4|mistral-medium|mistral-small|pixtral|gpt-4\.1|gpt-5|glm-4\.\dv|-vl\b|omni|gemma-4/i;
 
+/** Total parameter count in billions from the id ("qwen3-235b-a22b" → 235; the "a22b" active count is ignored). */
+export function modelSizeB(model: string): number | null {
+  const sizes = [...model.toLowerCase().matchAll(/(?:^|[^a-z0-9.])(\d+(?:\.\d+)?)b(?![a-z])/g)].map((match) => Number(match[1]));
+  return sizes.length ? Math.max(...sizes) : null;
+}
+
+/**
+ * Quality tier from the model id. Names drift every month, so this uses families we know
+ * plus generic signals (size, "ultra"/"super" vs "nano"/"lite"), and live stats reorder within a tier.
+ */
 export function modelTier(model: string): Tier {
-  if (STRONG.test(model)) return "strong";
-  if (FAST.test(model)) return "fast";
+  const size = modelSizeB(model);
+  if (FAST.test(model) && !/super|ultra/i.test(model)) return "fast";
+  if (STRONG.test(model) || (size !== null && size >= 100)) return "strong";
+  if (size !== null && size <= 20) return "fast";
   return "medium";
 }
 
@@ -146,7 +158,7 @@ export function freeModelsFromListing(provider: ProviderDef, payload: unknown): 
     const record = row as Record<string, unknown>;
     const id = typeof record.id === "string" ? record.id.replace(/^models\//, "") : "";
     if (!id) continue;
-    if (/embed|whisper|tts|speech|audio|image|guard|moderation|vision-preview|live|native|transcri|rerank|aqa|imagen|veo|learnlm|gemma-3n|compound|allam|playai|orpheus|safeguard|customtools|computer-use|robotics/i.test(id)) continue;
+    if (/embed|whisper|tts|speech|audio|image|guard|moderation|vision-preview|live|native|transcri|rerank|aqa|imagen|veo|learnlm|gemma-3n|compound|allam|playai|orpheus|safeguard|customtools|computer-use|robotics|deep-research/i.test(id)) continue;
     if (provider.id === "openrouter") {
       const pricing = record.pricing && typeof record.pricing === "object" ? record.pricing as Record<string, unknown> : {};
       const free = id.endsWith(":free") && Number(pricing.prompt ?? 0) === 0 && Number(pricing.completion ?? 0) === 0;

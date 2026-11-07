@@ -40,12 +40,12 @@ export async function checkGatewayProviders(): Promise<{ checkedAt: string; log:
   lastCheckAt = now;
   const availability = await gatewayAvailability();
   const results = await Promise.all(availability.providers.map(async (provider): Promise<ProviderCheck> => {
-    const model = provider.models.find((id) => modelTier(id) === "fast") || provider.models[0];
+    const model = provider.models[0];
     const started = Date.now();
     const response = await gatewayChatCompletion(JSON.stringify({
       model: provider.id + ":" + model,
       messages: [{ role: "user", content: "Reply with the single word OK." }],
-      max_tokens: 16,
+      max_tokens: 400,
       temperature: 0,
     }), new Headers({ "X-UXD-Agent-Role": "classifier", "X-UXD-Gateway-Strict": "1" }), AbortSignal.timeout(30_000));
     const latencyMs = Date.now() - started;
