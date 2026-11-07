@@ -49,7 +49,81 @@ function sendSelection() {
   figma.ui.postMessage({ type: "scope-approved", fileKey: figma.fileKey });
   figma.ui.postMessage({ type: "selection", fileKey: figma.fileKey,
     pageName: figma.currentPage.name, selection: getSelectionSummary() });
+  scheduleSelectionPrewarm();
 }
+// uxd-selection-prewarm:start
+// Speed: the deep layer read and the screenshot export of a selected screen used to start only
+// after the user pressed Send ("Scanning and rendering the selected screen…"). They now start the
+// moment a frame is selected and are cached until that page changes, so Send reuses them.
+var UXD_CANVAS_VERSION = 0;
+var UXD_CANVAS_CACHE = new Map();
+var UXD_CANVAS_CACHE_MAX = 6;
+var UXD_PREWARM_TIMER = null;
+var UXD_WATCHED_PAGE = null;
+var UXD_PREWARM_READ = { scope: "selection", maxDepth: 12, maxNodes: 400, includeStyles: true, includeVariables: true, includeComponents: true };
+function bumpCanvasVersion() {
+  UXD_CANVAS_VERSION++;
+  UXD_CANVAS_CACHE.clear();
+}
+function onWatchedPageChange() { bumpCanvasVersion(); }
+function watchCurrentPage() {
+  try {
+    if (UXD_WATCHED_PAGE === figma.currentPage) return;
+    if (UXD_WATCHED_PAGE) { try { UXD_WATCHED_PAGE.off("nodechange", onWatchedPageChange); } catch (_) {} }
+    UXD_WATCHED_PAGE = figma.currentPage;
+    UXD_WATCHED_PAGE.on("nodechange", onWatchedPageChange);
+    bumpCanvasVersion();
+    // The component catalogue (instance → main component lookups, other pages) is the slowest
+    // part of the first read; build it in the background as soon as the page is known.
+    setTimeout(function () { try { cachedComponentCatalogue().catch(function () {}); } catch (_) {} }, 0);
+  } catch (_) { UXD_WATCHED_PAGE = null; }
+}
+function canvasCached(key, compute) {
+  var full = UXD_CANVAS_VERSION + "|" + figma.currentPage.id + "|" + key;
+  var hit = UXD_CANVAS_CACHE.get(full);
+  if (hit) return hit;
+  var version = UXD_CANVAS_VERSION;
+  var promise = Promise.resolve().then(compute);
+  UXD_CANVAS_CACHE.set(full, promise);
+  if (UXD_CANVAS_CACHE.size > UXD_CANVAS_CACHE_MAX) UXD_CANVAS_CACHE.delete(UXD_CANVAS_CACHE.keys().next().value);
+  promise.then(function () {
+    // An edit landed while it ran: the result may be stale, so never serve it.
+    if (version !== UXD_CANVAS_VERSION) UXD_CANVAS_CACHE.delete(full);
+  }, function () { UXD_CANVAS_CACHE.delete(full); });
+  return promise;
+}
+function scheduleSelectionPrewarm() {
+  if (UXD_PREWARM_TIMER) clearTimeout(UXD_PREWARM_TIMER);
+  UXD_PREWARM_TIMER = setTimeout(function () {
+    UXD_PREWARM_TIMER = null;
+    try {
+      assertUxDirectFileScope("prewarm selection");
+      watchCurrentPage();
+      var selected = figma.currentPage.selection;
+      if (selected.length !== 1 || !("children" in selected[0])) return;
+      var id = selected[0].id;
+      readCanvasCommand(Object.assign({}, UXD_PREWARM_READ, { nodeIds: [id] })).catch(function () {});
+      writeCanvasCommand({ confirm: true, operation: "export-node", nodeId: id, format: "JPG", maxSide: 1400 }, { local: true }).catch(function () {});
+    } catch (_) {}
+  }, 120);
+}
+// Resolves every node id named in a write payload with one parallel async lookup, so the write
+// does not scan the whole page (findOne) once per id.
+var UXD_NODE_ID_PATTERN = /^I?\d+:\d+(;\d+:\d+)*$/;
+async function prefetchPayloadNodes(payload) {
+  var ids = [];
+  (function walk(value, depth) {
+    if (ids.length >= 300 || depth > 8 || value === null || value === undefined) return;
+    if (typeof value === "string") { if (UXD_NODE_ID_PATTERN.test(value) && ids.indexOf(value) < 0) ids.push(value); return; }
+    if (Array.isArray(value)) { for (var i = 0; i < value.length; i++) walk(value[i], depth + 1); return; }
+    if (typeof value === "object") Object.keys(value).forEach(function (key) { walk(value[key], depth + 1); });
+  })(payload, 0);
+  var map = new Map();
+  var nodes = await Promise.all(ids.map(function (id) { return figma.getNodeByIdAsync(id).catch(function () { return null; }); }));
+  for (var n = 0; n < ids.length; n++) if (nodes[n]) map.set(ids[n], nodes[n]);
+  return map;
+}
+// uxd-selection-prewarm:end
 var selectionChangeListenerRegistered = false;
 figma.on("selectionchange", sendSelection);
 selectionChangeListenerRegistered = true;
@@ -1170,6 +1244,19 @@ function summarizeCanvasNode(node, depth, state) {
 async function readCanvasCommand(payload) {
   assertUxDirectFileScope("read canvas");
   payload = payload || {};
+  var isSearchRead = (typeof payload.queryName === "string" && payload.queryName.trim()) ||
+    (typeof payload.queryType === "string" && payload.queryType.trim());
+  if (!isSearchRead && payload.scope !== "current-page") {
+    // Selection reads are memoised per page version (see uxd-selection-prewarm).
+    var keyIds = Array.isArray(payload.nodeIds) && payload.nodeIds.length ? payload.nodeIds.slice(0, 20)
+      : figma.currentPage.selection.map(function (node) { return node.id; });
+    var keyPayload = Object.assign({}, payload, { nodeIds: keyIds });
+    var cached = await canvasCached("read:" + JSON.stringify(keyPayload), function () { return readCanvasUncached(keyPayload); });
+    return Object.assign({}, cached, { viewport: { zoom: figma.viewport.zoom, bounds: figma.viewport.bounds } });
+  }
+  return readCanvasUncached(payload);
+}
+async function readCanvasUncached(payload) {
   var scope = payload.scope === "current-page" ? "current-page" : "selection";
   var maxDepth = Math.max(0, Math.min(12, Number.isInteger(payload.maxDepth) ? payload.maxDepth : 2));
   // Up to 1500: a list screen's last cards must not be cut off when a journey reads its facts.
@@ -1205,10 +1292,14 @@ async function readCanvasCommand(payload) {
     var item = summarizeCanvasNode(source[i], isSearch ? 0 : maxDepth, state);
     if (item) nodes.push(item);
   }
-  // dynamic-page access forbids the sync mainComponent getter; resolve instance sources async.
+  // dynamic-page access forbids the sync mainComponent getter; resolve instance sources async,
+  // all at once (one await per instance in sequence made deep reads of big screens slow).
+  var mains = await Promise.all(state.instances.map(function (pair) {
+    return pair[0].getMainComponentAsync().catch(function () { return null; });
+  }));
   for (var k = 0; k < state.instances.length; k++) {
     try {
-      var main = await state.instances[k][0].getMainComponentAsync();
+      var main = mains[k];
       if (main) {
         var owner = main.parent && main.parent.type === "COMPONENT_SET" ? main.parent : main;
         state.instances[k][1].mainComponentId = owner.id;
@@ -1443,6 +1534,7 @@ async function writeCanvasCommand(payload, options) {
   assertUxDirectFileScope("write canvas");
   payload = payload || {};
   if (payload.confirm !== true) throw new Error("Write blocked: confirm must be true after an explicit user request.");
+  var prefetchedNodes = await prefetchPayloadNodes(payload);
   function nodeSummary(node) {
     var summary = {
       id: node.id, name: node.name, type: node.type, visible: node.visible,
@@ -1464,6 +1556,10 @@ async function writeCanvasCommand(payload, options) {
   }
   function findPageNode(id) {
     if (typeof id !== "string" || !id.trim()) return null;
+    var known = prefetchedNodes.get(id);
+    if (known && !known.removed) {
+      for (var up = known; up; up = up.parent) { if (up === figma.currentPage) return known; }
+    }
     return figma.currentPage.findOne(function (item) { return item.id === id; }) || null;
   }
   function findPageNodes(ids) {
@@ -2976,7 +3072,21 @@ async function runCanvasCommand(command) {
   try {
     if (!command || typeof command.commandId !== "string") throw new Error("Invalid canvas command envelope.");
     if (command.action === "read-canvas") result = await readCanvasCommand(command.payload);
-    else if (command.action === "write-canvas") result = await writeCanvasCommand(command.payload, { local: command.local === true });
+    else if (command.action === "write-canvas") {
+      var writePayload = command.payload || {};
+      var isLocalWrite = command.local === true;
+      if (writePayload.operation === "export-node" && isLocalWrite) {
+        result = await canvasCached("export:" + JSON.stringify([writePayload.nodeId, writePayload.format, writePayload.maxSide, writePayload.scale]),
+          function () { return writeCanvasCommand(writePayload, { local: true }); });
+      } else if (writePayload.operation === "export-node" || writePayload.operation === "export-svg") {
+        result = await writeCanvasCommand(writePayload, { local: isLocalWrite });
+      } else {
+        // Any other write may change the canvas: drop cached reads before and after it.
+        bumpCanvasVersion();
+        try { result = await writeCanvasCommand(writePayload, { local: isLocalWrite }); }
+        finally { bumpCanvasVersion(); }
+      }
+    }
     else throw new Error("Unsupported canvas command action.");
   } catch (error) {
     errorText = error && error.message ? String(error.message).slice(0, 1000) : "Canvas command failed.";
@@ -6395,6 +6505,7 @@ async function runLocalTask(message) {
     if (typeof message.requestId !== "string" || UXD_LOCAL_TASK_OPS.indexOf(message.op) < 0) throw new Error("Unsupported local task operation.");
     assertUxDirectFileScope("local task " + message.op);
     var payload = message.payload && typeof message.payload === "object" ? message.payload : {};
+    if (["read-tree", "read-image", "get-design-rules"].indexOf(message.op) < 0) bumpCanvasVersion();
     if (message.op === "read-tree") result = await localReadTree(payload);
     else if (message.op === "read-image") result = await localReadImage(payload);
     else if (message.op === "apply-image") result = await localApplyImage(payload);
@@ -6431,6 +6542,7 @@ async function runLocalTask(message) {
   } catch (error) {
     errorText = error && error.message ? String(error.message).slice(0, 600) : "Local task failed.";
   }
+  if (["read-tree", "read-image", "get-design-rules"].indexOf(message && message.op) < 0) bumpCanvasVersion();
   figma.ui.postMessage({ type: "uxd-local-result", requestId: message.requestId, result: result, error: errorText });
 }
 

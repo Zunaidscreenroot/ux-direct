@@ -363,7 +363,8 @@ test("short Figma prompts inherit the complete design-variation workflow", () =>
   // UI-started commands go straight to the plugin sandbox instead of a Worker round trip.
   assert.ok(pluginUi.includes('command: { commandId: commandId, action: action, payload: payload, local: true }'));
   assert.ok(pluginUi.includes("if (promiseEntry && promiseEntry.local)"));
-  assert.ok(plugin.includes("writeCanvasCommand(command.payload, { local: command.local === true })"));
+  assert.ok(plugin.includes("var isLocalWrite = command.local === true;"));
+  assert.ok(plugin.includes("writeCanvasCommand(writePayload, { local: isLocalWrite })"));
   assert.ok(pluginUi.includes('waiting: "Waiting for the previous Figma action to finish"'));
 });
 
@@ -486,4 +487,23 @@ test("variation jobs run in parallel, read their source by id and reserve canvas
   assert.ok(ui.includes('scope: "selection", nodeIds: [createdFrameId]'), "verify read does not depend on selection");
   assert.ok(ui.includes(".concat(reservedCanvasSpots)"), "parallel builds never share a slot");
   assert.ok(code.includes("Array.isArray(payload.nodeIds) && payload.nodeIds.length"));
+});
+
+test("selecting a frame prewarms its deep read and screenshot, and any write drops the cache", () => {
+  const plugin = readFileSync(resolve(process.cwd(), "figma-plugin/code.js"), "utf8");
+  const ui = readFileSync(resolve(process.cwd(), "figma-plugin/ui.html"), "utf8");
+  // sendSelection starts the prewarm; it uses the same read payload and export size as Send.
+  assert.match(plugin, /pageName: figma\.currentPage\.name, selection: getSelectionSummary\(\) \}\);\n  scheduleSelectionPrewarm\(\);/);
+  assert.ok(plugin.includes('UXD_PREWARM_READ = { scope: "selection", maxDepth: 12, maxNodes: 400, includeStyles: true, includeVariables: true, includeComponents: true }'));
+  assert.ok(ui.includes("scope: \"selection\", maxDepth: 12, maxNodes: 400, includeStyles: true, includeVariables: true, includeComponents: true"));
+  assert.ok(plugin.includes('operation: "export-node", nodeId: id, format: "JPG", maxSide: 1400'));
+  assert.ok(ui.includes("maxSide: maxSide") && ui.includes("const maxSides = [1400, 900];"));
+  // Cache is keyed by a page version that every edit (user nodechange, plugin write, local task) bumps.
+  assert.ok(plugin.includes('UXD_WATCHED_PAGE.on("nodechange", onWatchedPageChange)'));
+  assert.match(plugin, /bumpCanvasVersion\(\);\n        try \{ result = await writeCanvasCommand/);
+  assert.ok(plugin.includes('if (["read-tree", "read-image", "get-design-rules"].indexOf(message.op) < 0) bumpCanvasVersion();'));
+  // Writes resolve their node ids in parallel instead of a page-wide findOne per id.
+  assert.ok(plugin.includes("var prefetchedNodes = await prefetchPayloadNodes(payload);"));
+  // Instance main components resolve in parallel.
+  assert.ok(plugin.includes("var mains = await Promise.all(state.instances.map("));
 });
