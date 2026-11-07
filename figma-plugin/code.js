@@ -4543,13 +4543,29 @@ function uxdIsButtonLike(node, texts) {
   var radius = typeof node.cornerRadius === "number" ? node.cornerRadius : (node.topLeftRadius || 0);
   return boxed && (radius > 0 || node.cornerRadius === figma.mixed);
 }
+// A directly selected row whose texts sit in nested frames ("Row · Due" > "Row text" > label + value,
+// plus a status badge): the row itself is the target, labelled by its first non-value text outside badges.
+function uxdNestedRowTarget(node) {
+  if (["FRAME", "COMPONENT"].indexOf(node.type) < 0 || node.visible === false || node.locked === true) return null;
+  if ((node.height || 0) > 88 || (node.width || 0) < 40 || uxdInsideInstance(node)) return null;
+  if ((node.children || []).some(uxdIsIconLike)) return null;
+  var texts = uxdDescendants(node, function (c) { return c.type === "TEXT" && c.visible !== false; }).filter(function (t) {
+    for (var p = t.parent; p && p !== node; p = p.parent) if (/\b(badge|chip|tag|status|pill)\b/i.test(String(p.name || "")) || p.type === "INSTANCE") return false;
+    return true;
+  });
+  var labelText = texts.find(function (t) { return !uxdIsDataValueText(t) && String(t.characters || "").trim(); });
+  if (!labelText) return null;
+  var label = String(labelText.characters).trim();
+  if (label.length > 40) return null;
+  return { id: node.id, name: node.name, label: label, fontSize: typeof labelText.fontSize === "number" ? labelText.fontSize : 14, button: false, data: true };
+}
 async function localFindIconTargets(payload) {
   var roots = figma.currentPage.selection.slice();
   if (!roots.length) throw new Error("Select the buttons, rows or screen that need icons.");
   var out = [], seen = {};
   function add(info, nested) { if (info && !seen[info.id] && out.length < 40) { seen[info.id] = 1; info.selected = !nested; out.push(info); } }
   roots.forEach(function (root) {
-    var self = uxdIconTargetInfo(root);
+    var self = uxdIconTargetInfo(root) || uxdNestedRowTarget(root);
     if (self) { add(self, false); return; }
     if (root.type === "INSTANCE") return;
     uxdDescendants(root, function (c) { return c.type === "FRAME" || c.type === "COMPONENT"; }).forEach(function (c) {
@@ -4728,6 +4744,9 @@ function uxdDeliverQuickPrompt() {
   figma.ui.postMessage({ type: "uxd-quick-action", prompt: prompt });
 }
 figma.on("run", function (event) {
+  // Figma runs this file in "query mode" while the Cmd+/ parameter box is open, where showUI is not
+  // allowed, so the panel starts here (after input), not at load. Plain launches fire "run" too.
+  uxdBoot();
   var prompt = event && event.parameters && typeof event.parameters.prompt === "string" ? event.parameters.prompt.trim().slice(0, 500) : "";
   if (!prompt || !getUxDirectScopeDecision().allowed) return;
   UXD_PENDING_QUICK_PROMPT = prompt;
@@ -4735,9 +4754,16 @@ figma.on("run", function (event) {
 });
 // uxd-quick-actions:end
 var UXD_UI_READY = false;
-var uxdScopeDecision = getUxDirectScopeDecision();
-if (uxdScopeDecision.allowed) {
-  startScopedPlugin();
-} else {
-  figma.closePlugin("UX Direct blocked: " + uxdScopeDecision.reason + " Only the approved Zunaid_Workspace file is allowed.");
+var UXD_BOOTED = false;
+function uxdBoot() {
+  if (UXD_BOOTED) return;
+  UXD_BOOTED = true;
+  var uxdScopeDecision = getUxDirectScopeDecision();
+  if (uxdScopeDecision.allowed) {
+    startScopedPlugin();
+  } else {
+    figma.closePlugin("UX Direct blocked: " + uxdScopeDecision.reason + " Only the approved Zunaid_Workspace file is allowed.");
+  }
 }
+// Without the parameters API (older hosts, test harnesses) there is no query mode: start right away.
+if (!(figma.parameters && typeof figma.parameters.on === "function")) uxdBoot();

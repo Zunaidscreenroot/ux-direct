@@ -194,3 +194,16 @@ test("a selected data row is labelled by its label text, not its value, whatever
   const found = await run("find-icon-targets", {});
   assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((t: any) => [t.id, t.label]))), [["rd", "Due"]]);
 });
+
+test("a selected row with nested label/value frames and a status badge gets an icon for its label", async () => {
+  const txt = (id: string, characters: string) => ({ id, type: "TEXT", characters, fontSize: 14, fills: [], x: 0, y: 0, width: 80, height: 18 });
+  const label: any = { id: "rl", type: "FRAME", name: "Row label · Due", width: 80, height: 18, children: [txt("rlt", "Due")] };
+  const value: any = { id: "rv", type: "FRAME", name: "Row value · ₹1,00,000", width: 80, height: 18, children: [txt("rvt", "₹1,00,000")] };
+  const rowText: any = { id: "rt", type: "FRAME", name: "Row text · Due", width: 200, height: 40, children: [value, label] };
+  const badge: any = { id: "bd", type: "FRAME", name: "Status badge · Pending", width: 70, height: 24, cornerRadius: 12, fills: [{ type: "SOLID", color: { r: 1, g: 0.9, b: 0.6 } }], children: [txt("bdt", "Pending")] };
+  const row: any = { id: "row", type: "FRAME", name: "Row · Due", layoutMode: "HORIZONTAL", width: 320, height: 56, children: [rowText, badge] };
+  const { figma, run } = makeRuntime({ row, rt: rowText, rl: label, rv: value, bd: badge });
+  figma.currentPage.selection = [row];
+  const found = await run("find-icon-targets", {});
+  assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((t: any) => [t.id, t.label]))), [["row", "Due"]]);
+});
