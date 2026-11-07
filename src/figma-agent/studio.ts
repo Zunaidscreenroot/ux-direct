@@ -18,6 +18,7 @@
  */
 import { callFigmaJsonModel } from "@/src/figma-agent/json-model-call";
 import { BLOCK_SPEC_CONTRACT } from "@/src/figma-agent/block-spec";
+import { checkContentPreservation, normalizeText } from "@/src/figma-agent/structural-lint";
 import type { TaskRole } from "@/src/figma-agent/agent-roles";
 import { retrieveKnowledge } from "@/src/knowledge/store";
 import type { AgentRole } from "@/src/providers/active-chat-provider";
@@ -90,6 +91,7 @@ export function designerPersona(role: TaskRole, prompt = ""): string {
   return "YOUR SEAT: " + member(seat).title + " at UX Direct. " + member(seat).does +
     " You alone design this whole screen, top to bottom, with one mindset: repeated cards use the same structure, blocks and emphasis." +
     " Logo names and chevron glyphs (>, ›) in the layers are decoration, never text blocks." +
+    " Keep every control as a control (switches, checkboxes, inputs) and every image as an image. On a sparse screen, improve with structure, not words: group into sections or cards, make the primary task prominent, use the space; containers, dividers, icons and layout are yours, new text is not." +
     " The UX Lead reviews your finished screen and you iterate on the notes, so do it right the first time: keep every source text and value, no generic filler, no invented content.";
 }
 
@@ -121,24 +123,22 @@ export function specTexts(spec: Rec): string[] {
 }
 
 /**
- * Source texts the screen no longer shows, counted: a text the source shows three times (one per
- * loan card) must still show three times, so merging repeated cards counts as losing content.
- * Matching ignores case and spacing; a text inside a longer one ("₹10,000" in "Pay ₹10,000") counts.
+ * Source texts the screen no longer shows. This is the SAME check the plugin's structural lint runs
+ * (checkContentPreservation), so the Lead, the Director and the lint never disagree. Short labels
+ * repeated across cards count once per copy, so merging repeated cards counts as losing content;
+ * a long text counts as kept when all its words are shown. Returns the source texts as written.
  */
-export function missingFromSpec(spec: Rec, sourceTexts: string[]): string[] {
-  const shown = specTexts(spec);
-  const need = new Map<string, { raw: string; count: number }>();
-  for (const raw of sourceTexts) {
-    const text = norm(raw);
-    if (!text) continue;
-    const entry = need.get(text);
-    if (entry) entry.count += 1; else need.set(text, { raw, count: 1 });
-  }
-  const out: string[] = [];
-  for (const [text, { raw, count }] of need) {
-    const exact = shown.filter((item) => item === text).length;
-    const inside = exact >= count ? 0 : shown.filter((item) => item !== text && item.includes(text)).length;
-    for (let missing = count - exact - inside; missing > 0; missing--) out.push(raw);
+export function missingFromSpec(spec: Rec, sourceTexts: string[], prompt = ""): string[] {
+  const tree = (texts: string[]) => ({ nodes: [], truncated: false, texts });
+  const { content } = checkContentPreservation(tree(sourceTexts) as never, tree(specRawTexts(spec)) as never, prompt);
+  const raw = new Map<string, string>();
+  for (const text of sourceTexts) if (!raw.has(normalizeText(text))) raw.set(normalizeText(text), text.trim());
+  const out = content.missingText.map((text) => {
+    const base = text.replace(/ \(copy \d+ of \d+\)$/, "");
+    return raw.get(base) ?? [...raw.entries()].find(([key]) => key.startsWith(base))?.[1] ?? base;
+  });
+  for (const value of content.missingNumbers) {
+    if (!out.some((text) => text.replace(/\s+/g, "").toLowerCase().includes(value.toLowerCase()))) out.push(value);
   }
   return out;
 }
@@ -196,13 +196,54 @@ export function sourceContentTexts(nodes: unknown[]): { content: string[]; decor
   return { content, decorative };
 }
 
+/** Interactive controls and media in the source that the redesign must keep as controls/media. */
+export function sourceControls(nodes: unknown[]): { toggles: number; images: number } {
+  let toggles = 0;
+  let images = 0;
+  const visit = (items: unknown[], depth: number) => {
+    if (depth > 14) return;
+    for (const value of items) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const node = value as Rec;
+      if (node.visible === false) continue;
+      const name = typeof node.name === "string" ? node.name : "";
+      if (node.type !== "TEXT" && /\b(switch|toggle)\b/i.test(name)) { toggles += 1; continue; }
+      if (node.imageFill === true) images += 1;
+      if (Array.isArray(node.children)) visit(node.children, depth + 1);
+    }
+  };
+  visit(nodes, 0);
+  return { toggles, images };
+}
+
+const blockCount = (spec: Rec, types: RegExp): number => {
+  let count = 0;
+  const visit = (value: unknown) => {
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (!value || typeof value !== "object") return;
+    const record = value as Rec;
+    if (typeof record.type === "string" && types.test(record.type)) count += 1;
+    if (typeof record.image === "string" || typeof record.thumbnail === "string" || typeof record.avatar === "string") count += 1;
+    for (const [key, item] of Object.entries(record)) if (key !== "type" && typeof item === "object") visit(item);
+  };
+  visit(spec.sections);
+  return count;
+};
+
 /** Amounts, counts, dates and percentages: never allowed to disappear in an iteration. */
 export const isValueText = (text: string) => /[\d₹$€£%]/.test(text);
 
 /** What the Lead can see for sure without a model: missing source content, competing primaries, duplicated content. */
-export function deterministicLeadNotes(spec: Rec, sourceTexts: string[] = [], decorative: string[] = []): LeadNote[] {
+export function deterministicLeadNotes(spec: Rec, sourceTexts: string[] = [], decorative: string[] = [], controls: { toggles: number; images: number } = { toggles: 0, images: 0 }, prompt = ""): LeadNote[] {
   const notes: LeadNote[] = [];
-  const missing = sourceTexts.length ? [...new Set(missingFromSpec(spec, sourceTexts))] : [];
+  const missing = sourceTexts.length ? [...new Set(missingFromSpec(spec, sourceTexts, prompt))] : [];
+  // Controls stay controls and media stays media: a switch is not a text badge, a photo is not an icon.
+  if (controls.toggles && blockCount(spec, /^(checkbox|toggle|switch|component)$/) < controls.toggles) notes.push({ code: "control", severity: "medium",
+    issue: "Source switches (" + controls.toggles + ") are no longer controls (shown as text or badges)",
+    fix: "Keep each switch as a checkbox block (toggle) or as a component block with the source's componentId." });
+  if (controls.images && blockCount(spec, /^(image|component)$/) < Math.min(controls.images, 6)) notes.push({ code: "media", severity: "medium",
+    issue: "Source images/thumbnails (" + controls.images + ") were replaced or dropped",
+    fix: "Keep each image as an image block (or the source component) in its own item." });
   if (missing.length) notes.push({ code: "missing", severity: "high", issue: "Source content missing from the screen (" + missing.length + "): " + missing.slice(0, 8).join(", "),
     fix: "Put every one of these exact texts back, in the block that matches its meaning (amounts as values, never dropped)." });
   const shownDecoration = [...new Set(decorative.map((text) => text.trim()))].filter((text) => {
@@ -239,25 +280,50 @@ export function deterministicLeadNotes(spec: Rec, sourceTexts: string[] = [], de
 
 const LEAD_SYSTEM = [
   "You are the UX Lead at UX Direct, a senior design lead reviewing your designer's finished screen, top to bottom, before it goes to the UX Director. Review UX and UI alike. Think like a senior lead at Apple: one clear goal per screen, ruthless hierarchy, consistency, content first. Be specific; never praise.",
-  "Review the designed screen (a block spec) against the source text list and the user's request. Check: 1) the screen does what the user asked; 2) every source text and value is still shown; 3) hierarchy: one focal point per card/section, secondary info quieter; 4) consistency: repeated cards use the same structure, blocks and emphasis; 5) grouping: label/value pairs together, lists instead of many rows; 6) action priority: one primary action type; 7) right block per content (amount → stat/row value, % → ring/bar with the real value, status → badge); 8) visual: tones, emphasis and components used consistently; 9) no generic AI filler (invented headings, taglines, decorative text, features not in the source); 10) accessibility: labels present, status not by colour only.",
+  "Review the designed screen (a block spec) against the source text list and the user's request. Check: 1) the screen does what the user asked; 2) every source text and value is still shown; 3) hierarchy: one focal point per card/section, secondary info quieter; 4) consistency: repeated cards use the same structure, blocks and emphasis; 5) grouping: label/value pairs together, lists instead of many rows; 6) action priority: one primary action type; 7) right block per content (amount → stat/row value, % → ring/bar with the real value, status → badge); 8) visual: tones, emphasis and components used consistently, controls kept as controls, space used with clear grouping (no large empty area, no wall of identical tiles); 9) no generic AI filler (invented headings, taglines, decorative text, features not in the source); 10) accessibility: labels present, status not by colour only.",
   "Score with the rubric, not by feel, so every screen and domain is judged the same way: for each of the 10 checks answer true (passes) or false (a fix is needed that the designer can make with the block contract and the source content). Judge only what the block contract can change; never fail a check for polish the renderer controls (exact pixels, fonts, shadows) or for content the source does not have.",
   "Return {\"checks\": {\"1\": boolean, ..., \"10\": boolean}, \"notes\": [{\"check\": number, \"severity\": \"high\"|\"medium\"|\"low\", \"issue\": string, \"fix\": string}]} with one note per failed check (at most 6, most important first), each naming the exact section/block and the fix.",
 ].join("\n");
 
-/** The Lead's score from the 10-check rubric: the share of checks passed, 0-100 (null without checks). */
-export function rubricScore(checks: unknown): number | null {
-  if (!checks || typeof checks !== "object") return null;
-  const values = (Array.isArray(checks) ? checks : Object.values(checks as Rec)).filter((value) => typeof value === "boolean") as boolean[];
-  if (values.length < 5) return null;
-  return Math.round((values.filter(Boolean).length / values.length) * 100);
+const verdict = (value: unknown): boolean | null => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
+  if (typeof value === "string") {
+    const text = value.trim().toLowerCase();
+    if (/^(true|pass|passed|yes|ok|y|✓|✔)$/.test(text)) return true;
+    if (/^(false|fail|failed|no|n|✗|✘|x)$/.test(text)) return false;
+    return null;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Rec;
+    for (const key of ["pass", "passed", "ok", "result", "status", "value", "verdict"]) if (key in record) return verdict(record[key]);
+  }
+  return null;
+};
+
+/**
+ * The Lead's score from the 10-check rubric: the share of checks passed, 0-100. Accepts the shapes
+ * free models send ({"1": true}, [true, ...], [{"check": 1, "pass": "yes"}], "pass"/"fail" strings);
+ * without checks, failed-check numbers on the notes give the score. Null when nothing is usable.
+ */
+export function rubricScore(checks: unknown, notes: unknown = null): number | null {
+  if (checks && typeof checks === "object") {
+    const values = (Array.isArray(checks) ? checks : Object.values(checks as Rec)).map(verdict).filter((value): value is boolean => value !== null);
+    if (values.length >= 5) return Math.round((values.filter(Boolean).length / values.length) * 100);
+  }
+  if (Array.isArray(notes)) {
+    const failed = new Set(notes.map((note) => Number((note as Rec)?.check)).filter((n) => Number.isInteger(n) && n >= 1 && n <= 10));
+    if (failed.size) return (10 - failed.size) * 10;
+  }
+  return null;
 }
 
 export interface LeadReview { notes: LeadNote[]; score: number | null; model?: string; ms: number }
 
 /** The Lead's top-to-bottom review. A high deterministic note caps the score below the bar. */
-export async function leadReview(spec: Rec, context: { prompt: string; role: TaskRole; sourceTexts: string[]; decorativeTexts?: string[]; origin: string; brain: string; knowledge?: string; round?: number; signal?: AbortSignal; timeoutMs: number }): Promise<LeadReview> {
+export async function leadReview(spec: Rec, context: { prompt: string; role: TaskRole; sourceTexts: string[]; decorativeTexts?: string[]; controls?: { toggles: number; images: number }; origin: string; brain: string; knowledge?: string; round?: number; signal?: AbortSignal; timeoutMs: number }): Promise<LeadReview> {
   const started = Date.now();
-  const notes = deterministicLeadNotes(spec, context.sourceTexts, context.decorativeTexts ?? []);
+  const notes = deterministicLeadNotes(spec, context.sourceTexts, context.decorativeTexts ?? [], context.controls, context.prompt);
   const result = await callFigmaJsonModel({
     system: LEAD_SYSTEM +
       (context.knowledge ? "\nUX LEAD KNOWLEDGE (review checklist and critique format):\n" + context.knowledge.slice(0, 3000) : "") +
@@ -277,7 +343,7 @@ export async function leadReview(spec: Rec, context: { prompt: string; role: Tas
   }).catch(() => null);
   let score: number | null = null;
   if (result && result.ok) {
-    score = rubricScore(result.data.checks);
+    score = rubricScore(result.data.checks, result.data.notes);
     // Older-style answers with only a score still count.
     if (score === null && typeof result.data.score === "number" && Number.isFinite(result.data.score)) score = Math.max(0, Math.min(100, Math.round(result.data.score <= 1 ? result.data.score * 100 : result.data.score)));
     for (const entry of (Array.isArray(result.data.notes) ? result.data.notes as unknown[] : []).slice(0, 6)) {
@@ -296,7 +362,8 @@ export async function leadReview(spec: Rec, context: { prompt: string; role: Tas
 /** Lead's verdict on a review: ready when the score meets the bar and no high note is open. */
 export function leadApproves(review: LeadReview): boolean {
   if (review.notes.some((note) => note.severity === "high")) return false;
-  if (review.score === null) return !review.notes.some((note) => note.severity === "medium");
+  // An unscored review is a failed review, never a pass.
+  if (review.score === null) return false;
   return review.score >= leadPassScore();
 }
 
