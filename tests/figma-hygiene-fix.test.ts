@@ -197,3 +197,15 @@ test("spacing fix aligns repeated items that drifted apart to the group's most c
   assert.equal(result.counts.repeated, 1);
   assert.ok(result.snapshot.some((item: any) => item.id === c.id && item.prop === "cornerRadius" && item.before === 12));
 });
+
+test("text styles bind on texts inside instances and on close line heights", async () => {
+  const r = runtime();
+  const cardTitle = r.make({ type: "TEXT", name: "Card title", characters: "Home loan", fontSize: 20, fontName: { family: "Inter", style: "Bold" } }, r.instance);
+  cardTitle.lineHeight = { unit: "PIXELS", value: 24 }; // AUTO on 20px is ~24px: the same style
+  const tooLoose = r.make({ type: "TEXT", name: "Loose", characters: "Note", fontSize: 20, fontName: { family: "Inter", style: "Bold" } }, r.screen);
+  tooLoose.lineHeight = { unit: "PIXELS", value: 40 };
+  const result = await r.fix(["tokens"]);
+  assert.equal(cardTitle.textStyleId, "T:h2", "instance text gets the matching style");
+  assert.equal(tooLoose.textStyleId, "", "a clearly different line height is not forced onto a style");
+  assert.equal(result.counts.textStyles, 2);
+});

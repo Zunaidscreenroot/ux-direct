@@ -4108,18 +4108,37 @@ function uxdSameNumberish(a, b) {
   }
   return a === b;
 }
+// Line height in px for comparison (AUTO ~ 1.2 x size), so 20px and 125% on a 16px font count as equal.
+function uxdLineHeightPx(lineHeight, fontSize) {
+  if (!lineHeight || typeof lineHeight !== "object") return null;
+  if (lineHeight.unit === "AUTO") return fontSize * 1.2;
+  if (lineHeight.unit === "PERCENT") return fontSize * Number(lineHeight.value) / 100;
+  return Number(lineHeight.value);
+}
+function uxdLetterSpacingPx(spacing, fontSize) {
+  if (!spacing || typeof spacing !== "object") return 0;
+  return spacing.unit === "PERCENT" ? fontSize * Number(spacing.value) / 100 : Number(spacing.value);
+}
+// Same family, weight and size is required; among those, the closest line height and letter spacing wins
+// (within 2px / 0.5px), the way a designer would pick "Body/Medium" for an unstyled 14 Medium text.
 function uxdMatchTextStyle(node, styles) {
   if (typeof node.textStyleId === "string" && node.textStyleId) return null;
   if (!node.fontName || typeof node.fontName !== "object" || typeof node.fontSize !== "number") return null;
-  var matches = styles.filter(function (style) {
+  var nodeLh = uxdLineHeightPx(node.lineHeight, node.fontSize);
+  var nodeLs = uxdLetterSpacingPx(node.letterSpacing, node.fontSize);
+  var scored = styles.filter(function (style) {
     return style.fontName && style.fontName.family === node.fontName.family && style.fontName.style === node.fontName.style &&
       Math.abs(style.fontSize - node.fontSize) < 0.01 &&
-      (node.lineHeight === undefined || typeof node.lineHeight !== "object" || uxdSameNumberish(style.lineHeight, node.lineHeight)) &&
-      (node.letterSpacing === undefined || typeof node.letterSpacing !== "object" || uxdSameNumberish(style.letterSpacing, node.letterSpacing)) &&
-      (style.textCase === undefined || node.textCase === undefined || style.textCase === node.textCase) &&
+      (style.textCase === undefined || node.textCase === undefined || style.textCase === node.textCase || style.textCase === "ORIGINAL") &&
       (style.textDecoration === undefined || node.textDecoration === undefined || style.textDecoration === node.textDecoration);
-  });
-  return matches.sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); })[0] || null;
+  }).map(function (style) {
+    var lh = uxdLineHeightPx(style.lineHeight, style.fontSize);
+    var lhGap = nodeLh === null || lh === null ? 0 : Math.abs(lh - nodeLh);
+    var lsGap = Math.abs(uxdLetterSpacingPx(style.letterSpacing, style.fontSize) - nodeLs);
+    return { style: style, lhGap: lhGap, lsGap: lsGap };
+  }).filter(function (x) { return x.lhGap <= 2 && x.lsGap <= 0.5; });
+  scored.sort(function (a, b) { return (a.lhGap + a.lsGap) - (b.lhGap + b.lsGap) || String(a.style.name).localeCompare(String(b.style.name)); });
+  return scored.length ? scored[0].style : null;
 }
 function uxdTextBackground(node) {
   for (var parent = node.parent; parent && parent.type !== "PAGE"; parent = parent.parent) {
@@ -4277,16 +4296,25 @@ async function localApplyHygieneFixes(payload) {
           var stroke = await uxdBindPaintToken(node, "strokes", palette, "stroke");
           if (stroke === "variable") counts.colorVariables++; else if (stroke === "style") counts.colorStyles++;
         }
-        if (node.type === "TEXT" && textStyles.length) {
-          var match = uxdMatchTextStyle(node, textStyles);
-          if (match) {
-            uxdSnapProp(node, "textStyleId");
-            if (typeof node.setTextStyleIdAsync === "function") await node.setTextStyleIdAsync(match.id);
-            else node.textStyleId = match.id;
-            counts.textStyles++;
-          }
-        }
       } catch (error) { skip("\"" + String(node.name).slice(0, 30) + "\": " + String(error && error.message || error).slice(0, 80)); }
+    }
+    // Text styles also bind on text inside instances (a style override is a normal instance override):
+    // cards and rows are usually instances, so skipping them left almost every text unstyled.
+    if (textStyles.length) {
+      var styleTexts = uxdHygieneNodes(roots, true).filter(function (n) { return n.type === "TEXT"; });
+      for (var ts = 0; ts < styleTexts.length; ts++) {
+        var text = styleTexts[ts];
+        try {
+          var match = uxdMatchTextStyle(text, textStyles);
+          if (!match) continue;
+          await uxdLoadTextFonts(text);
+          if (match.fontName) await figma.loadFontAsync(match.fontName);
+          uxdSnapProp(text, "textStyleId");
+          if (typeof text.setTextStyleIdAsync === "function") await text.setTextStyleIdAsync(match.id);
+          else text.textStyleId = match.id;
+          counts.textStyles++;
+        } catch (error) { skip("\"" + String(text.name).slice(0, 30) + "\": " + String(error && error.message || error).slice(0, 80)); }
+      }
     }
   }
   if (typeof figma.commitUndo === "function") figma.commitUndo();
