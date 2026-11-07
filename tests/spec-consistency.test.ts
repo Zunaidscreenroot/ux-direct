@@ -126,7 +126,7 @@ test("figma route applies consistency steps for every model auto picks", () => {
   assert.ok(route.includes("stabilizeBlockSpec(rawPlan, canvas, parsedInput.data.prompt)"));
   assert.ok(route.includes("isFreeLlmApi && !paramsRejected ? { temperature: isRecovery ? 0.1 : 0.2 }"));
   assert.ok(route.includes("appendMissingSourceText(specInput, missing)"));
-  assert.ok(route.includes("loadVerifiedExample(taskScope, designScope)"));
+  assert.ok(route.includes("loadVerifiedExample(taskScope, exampleScope)"));
   assert.ok(route.includes("recordGeneration(taskRunId"));
   assert.ok(route.includes("if (fallback) return respond(fallback);"));
 });
