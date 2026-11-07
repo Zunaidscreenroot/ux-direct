@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { commandCenterLockedResponse, isCommandCenterAuthorized, knowledgeEditState } from "@/src/command-center/access";
 import { loadSharedKnowledge } from "@/src/command-center/knowledge";
+import { filterKnowledge, pageParams, slicePage } from "@/src/command-center/paging";
 import { CORE_KNOWLEDGE_VERSION } from "@/src/knowledge/corpus";
 import { rankKnowledge, packKnowledge } from "@/src/knowledge/retrieve";
-import { listKnowledgeForPage, loadKnowledgeEntries, removeKnowledgeEntry, restoreCoreEntry, saveKnowledgeEntry } from "@/src/knowledge/store";
+import { loadKnowledgeEntries, removeKnowledgeEntry, restoreCoreEntry, saveKnowledgeEntry } from "@/src/knowledge/store";
 import { CATEGORY_LABELS, KNOWLEDGE_DOMAINS, KNOWLEDGE_ROLES, type KnowledgeCategory } from "@/src/knowledge/types";
 
 export const runtime = "nodejs";
@@ -19,9 +20,11 @@ function sameOrigin(request: Request) {
 
 /**
  * Knowledge base for the command center.
- * GET            → every entry (core + owner), hidden core entries, legacy brain rules/docs, edit state.
+ * GET            → one page of entries (?offset, ?limit, ?search, ?category, ?role, ?domain) + counts.
+ * GET ?legacy=1  → learned brain rules/docs (loaded only when that section is opened).
  * GET ?q=…       → retrieval preview: what a role would be given for that task.
- * POST           → save | remove | restore (edit-gated, see knowledgeEditState).
+ * POST           → save | remove | restore (edit-gated, see knowledgeEditState). Dormant: the page has no
+ *                  editing UI for now (owner, 2026-11-07); kept for later.
  */
 export async function GET(request: Request) {
   if (!sameOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
@@ -38,18 +41,24 @@ export async function GET(request: Request) {
         packedIds: pack.ids, packedChars: pack.chars, preview: pack.text,
       }, { headers });
     }
-    const [page, legacy] = await Promise.all([
-      listKnowledgeForPage(),
-      loadSharedKnowledge(60).catch(() => ({ rules: [], documents: [] })),
-    ]);
+    if (url.searchParams.get("legacy") === "1") {
+      return NextResponse.json(await loadSharedKnowledge(60).catch(() => ({ rules: [], documents: [] })), { headers });
+    }
+    // Browse: one small page at a time (filters + search run here, the page asks for more on "View more").
+    const entries = await loadKnowledgeEntries();
+    const { offset, limit } = pageParams(url);
+    const matches = filterKnowledge(entries, {
+      search: url.searchParams.get("search"), category: url.searchParams.get("category"),
+      role: url.searchParams.get("role"), domain: url.searchParams.get("domain"),
+    });
+    const page = slicePage(matches, offset, limit);
     return NextResponse.json({
       ...page,
-      legacy,
+      counts: { entries: entries.length, categories: new Set(entries.map((entry) => entry.category)).size },
       version: CORE_KNOWLEDGE_VERSION,
       categories: CATEGORY_LABELS,
       roles: KNOWLEDGE_ROLES,
       domains: KNOWLEDGE_DOMAINS,
-      edit: knowledgeEditState(request),
     }, { headers });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message.slice(0, 200) : "Knowledge base is unavailable." }, { status: 503, headers });

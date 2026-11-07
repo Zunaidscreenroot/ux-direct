@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { commandCenterLockedResponse, isCommandCenterAuthorized } from "@/src/command-center/access";
 import { ACTIVITY_WINDOW_DAYS, loadRecentActivity, summarizeActivity } from "@/src/command-center/activity";
 import { loadSharedKnowledge } from "@/src/command-center/knowledge";
-import { checkGatewayProviders, loadModelAnalytics } from "@/src/command-center/models";
+import { MODELS_TABS, checkGatewayProviders, loadModelAnalytics } from "@/src/command-center/models";
+import { pageParams, slicePage } from "@/src/command-center/paging";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,15 +20,19 @@ export async function GET(request: Request) {
   const view = new URL(request.url).searchParams.get("view");
   try {
     if (view === "activity") {
+      // Summary covers the whole window; only one small page of rows is sent ("View more" asks for the next).
       const items = await loadRecentActivity(ACTIVITY_WINDOW_DAYS);
-      return NextResponse.json({ items, summary: summarizeActivity(items) }, { headers });
+      const { offset, limit } = pageParams(new URL(request.url));
+      return NextResponse.json({ ...slicePage(items, offset, limit), summary: summarizeActivity(items) }, { headers });
     }
     if (view === "models-check") {
       return NextResponse.json(await checkGatewayProviders(), { headers });
     }
     if (view === "models") {
-      const hours = Number(new URL(request.url).searchParams.get("hours")) || 24;
-      return NextResponse.json(await loadModelAnalytics(hours), { headers });
+      const params = new URL(request.url).searchParams;
+      const hours = Number(params.get("hours")) || 24;
+      const tab = MODELS_TABS.find((item) => item === params.get("tab"));
+      return NextResponse.json(await loadModelAnalytics(hours, tab), { headers });
     }
     if (view === "knowledge") {
       return NextResponse.json(await loadSharedKnowledge(), { headers });

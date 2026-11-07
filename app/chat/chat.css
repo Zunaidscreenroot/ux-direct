@@ -80,3 +80,11 @@
 .ud-kb-preview{white-space:pre-wrap;max-height:320px;overflow:auto;margin:6px 0 0;color:#9aa8bd;font:10px/1.6 'DM Mono',monospace}
 @media(max-width:700px){.ud-kb-row .ud-kb-select{flex:1 1 45%}}
 .ud-connections-heading .ud-cc-actions{flex-wrap:nowrap}
+/* Models tabs + "View more" (lighter command-center pages, 2026-11-07) */
+.ud-cc-tabs{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 16px;border-bottom:1px solid #293649}
+.ud-cc-tab{border:0;border-bottom:2px solid transparent;background:none;color:#8191a7;font:500 13px Manrope,sans-serif;padding:10px 14px;margin-bottom:-1px;cursor:pointer}
+.ud-cc-tab:hover{color:#d6deea}
+.ud-cc-tab.active{color:#9cf0d4;border-bottom-color:#9cf0d4}
+.ud-cc-tab:focus-visible{outline:2px solid #9cf0d4;outline-offset:2px}
+.ud-cc-tab-actions{margin:0 0 12px}
+.ud-cc-more{display:flex;justify-content:center;margin:14px 0 4px}
