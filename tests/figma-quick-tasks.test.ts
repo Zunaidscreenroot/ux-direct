@@ -323,3 +323,30 @@ test("copy rewrite keeps the screen title and tab label widths unless asked", ()
   const nested = [{ id: "a", type: "TEXT", name: "Text", parent: "Left", text: "Manage Loans" }];
   assert.deepEqual(normalizeTextEdits("rewrite", { updates: [{ ref: "t1", text: "Loan Management" }] }, nested, "", "make it clearer", "Manage Loans"), []);
 });
+
+test("copy rewrite: plain-header title, no topic repetition, standard abbreviations, one label case", async () => {
+  const { inferScreenTitleId, dominantLabelCase } = await import("../src/figma-agent/text-tasks");
+  const settings = [
+    { id: "t", type: "TEXT", name: "Settings", parent: "Frame 12", text: "Settings", fontSize: 24 },
+    { id: "n", type: "TEXT", name: "Row", parent: "Row", text: "Notifications", fontSize: 16 },
+    { id: "p", type: "TEXT", name: "Row", parent: "Row", text: "Privacy", fontSize: 16 },
+    { id: "h", type: "TEXT", name: "Row", parent: "Row", text: "Help & support", fontSize: 16 },
+    { id: "a", type: "TEXT", name: "Row", parent: "Row", text: "About this app", fontSize: 16 },
+    { id: "d", type: "TEXT", name: "Row", parent: "Row", text: "Delete account", fontSize: 16 },
+  ];
+  assert.equal(inferScreenTitleId(settings), "t");
+  assert.equal(dominantLabelCase(settings.map((i) => i.text)), "sentence");
+  const out = normalizeTextEdits("rewrite", { updates: [
+    { ref: "t1", text: "App Settings" }, { ref: "t2", text: "Alerts and reminders" }, { ref: "t3", text: "Privacy settings" },
+    { ref: "t4", text: "Help & Support Center" },
+  ] }, settings, "", "rewrite the text on this screen to be clearer");
+  assert.deepEqual(out.map((e) => [e.id, e.value]), [["n", "Alerts and reminders"], ["h", "Help & support center"]]);
+
+  const cart = [
+    { id: "c", type: "TEXT", name: "Title", parent: "Header", text: "Your Cart", fontSize: 22 },
+    { id: "q", type: "TEXT", name: "Meta", parent: "Item", text: "Qty 1", fontSize: 13 },
+    { id: "s", type: "TEXT", name: "Link", parent: "Footer", text: "continue shopping", fontSize: 14 },
+  ];
+  const cartOut = normalizeTextEdits("rewrite", { updates: [{ ref: "t2", text: "Quantity: 1" }, { ref: "t3", text: "Keep shopping" }] }, cart, "", "make it clearer");
+  assert.deepEqual(cartOut.map((e) => [e.id, e.value]), [["s", "Keep shopping"]]);
+});
