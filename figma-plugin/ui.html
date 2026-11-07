@@ -3009,7 +3009,8 @@
     function revertSnapshot(label, snapshot) {
       recordChange(label, function () {
         return localTask("restore-props", { items: snapshot }, 120000).then(function (restore) {
-          return restore.restored + " change(s) restored" + (restore.changedSince ? ", " + restore.changedSince + " left as you edited them" : "");
+          return restore.restored + " change(s) restored" + (restore.changedSince ? ", " + restore.changedSince + " left as you edited them" : "") +
+            (restore.missing ? ", " + restore.missing + " could not be restored" : "");
         });
       });
     }
