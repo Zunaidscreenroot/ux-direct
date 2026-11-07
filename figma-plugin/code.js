@@ -2975,7 +2975,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire", "learn-baseline", "learn-corrections", "apply-theme", "restore-theme-modes"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire", "learn-baseline", "learn-corrections", "apply-theme", "restore-theme-modes", "componentize-repeats"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -4136,6 +4136,79 @@ function uxdRestoreKey(prop, value) {
   if (prop === "annotations") return JSON.stringify(uxdCleanAnnotations(value));
   return JSON.stringify(value);
 }
+// uxd-componentize:start
+// Claude-in-Figma habit: repeated items (loan cards, list rows) are one component plus instances.
+// Runs on a frame UX Direct just built: sibling frames with the same structure become a local
+// component (the first one) and instances carrying each copy's own text, fills and visibility.
+function uxdShapeKey(node, depth) {
+  if (depth > 6) return "…";
+  var key = node.type + (node.layoutMode && node.layoutMode !== "NONE" ? ":" + node.layoutMode : "");
+  if (node.type === "INSTANCE") return key;
+  if (!("children" in node)) return key;
+  return key + "(" + node.children.map(function (c) { return uxdShapeKey(c, depth + 1); }).join(",") + ")";
+}
+function uxdPairedNodes(a, b, out) {
+  out.push([a, b]);
+  if ("children" in a && "children" in b && a.type !== "INSTANCE" && a.children.length === b.children.length) {
+    for (var i = 0; i < a.children.length; i++) uxdPairedNodes(a.children[i], b.children[i], out);
+  }
+  return out;
+}
+async function localComponentizeRepeats(payload) {
+  var root = payload && payload.rootId ? await figma.getNodeByIdAsync(String(payload.rootId)) : figma.currentPage.selection[0];
+  if (!root || !("findAll" in root) || typeof figma.createComponentFromNode !== "function") return { ok: true, components: 0, instances: 0 };
+  var components = 0, instances = 0;
+  var parents = [root].concat(root.findAll(function (n) { return n.type === "FRAME" && n.children && n.children.length >= 2; }));
+  for (var p = 0; p < parents.length && components < 6; p++) {
+    var parent = parents[p];
+    if (!parent || parent.removed || !("children" in parent)) continue;
+    var groups = {};
+    parent.children.forEach(function (child) {
+      if (child.type !== "FRAME" || child.visible === false) return;
+      var size = child.findAll ? child.findAll(function () { return true; }).length : 0;
+      if (size < 3 || !child.findAll(function (n) { return n.type === "TEXT"; }).length) return;
+      var key = uxdShapeKey(child, 0) + "|" + Math.round(child.width);
+      (groups[key] = groups[key] || []).push(child);
+    });
+    for (var key in groups) {
+      var group = groups[key];
+      if (group.length < 2) continue;
+      var first = group[0];
+      var index = parent.children.indexOf(first);
+      var component = figma.createComponentFromNode(first);
+      if (!component || component.type !== "COMPONENT") continue;
+      component.name = String(component.name || "Item").replace(/\s*\d+$/, "").slice(0, 60) || "Item";
+      components++;
+      for (var g = 1; g < group.length; g++) {
+        var copy = group[g];
+        var instance = component.createInstance();
+        var at = parent.children.indexOf(copy);
+        parent.insertChild(at, instance);
+        ["layoutSizingHorizontal", "layoutSizingVertical", "layoutGrow", "layoutAlign"].forEach(function (prop) {
+          try { if (prop in copy) instance[prop] = copy[prop]; } catch (_) {}
+        });
+        var pairs = uxdPairedNodes(copy, instance, []);
+        for (var k = 0; k < pairs.length; k++) {
+          var src = pairs[k][0], dst = pairs[k][1];
+          try {
+            if (src.visible !== dst.visible) dst.visible = src.visible;
+            if ("fills" in src && JSON.stringify(src.fills) !== JSON.stringify(dst.fills) && src.fills !== figma.mixed) dst.fills = src.fills;
+            if (src.type === "TEXT" && dst.type === "TEXT" && src.characters !== dst.characters) {
+              await uxdLoadTextFonts(dst);
+              dst.characters = src.characters;
+            }
+          } catch (_) {}
+        }
+        instance.name = copy.name;
+        copy.remove();
+        instances++;
+      }
+      void index;
+    }
+  }
+  return { ok: true, components: components, instances: instances };
+}
+// uxd-componentize:end
 async function localRestoreProps(payload) {
   var items = Array.isArray(payload.items) ? payload.items.slice(0, 3000) : [];
   var restored = 0, changedSince = 0, missing = 0;
@@ -5687,6 +5760,7 @@ async function runLocalTask(message) {
     else if (message.op === "fill-realistic-data") result = await localFillRealisticData(payload);
     else if (message.op === "restore-texts") result = await localRestoreTexts(payload);
     else if (message.op === "restore-props") result = await localRestoreProps(payload);
+    else if (message.op === "componentize-repeats") result = await localComponentizeRepeats(payload);
     else if (message.op === "find-icon-targets") result = await localFindIconTargets(payload);
     else if (message.op === "insert-icons") result = await localInsertIcons(payload);
     else if (message.op === "section-state") result = await localSectionState(payload);

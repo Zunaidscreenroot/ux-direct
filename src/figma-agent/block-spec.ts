@@ -1060,7 +1060,7 @@ function expandCard(ctx: Ctx, block: Rec, width: number, depth: number, nameFall
     const headerKids = [titleNode, badgeNodeValue].filter((x): x is NativeNode => !!x);
     kids.push(headerKids.length > 1 ? b.hstack("Card header", inner, headerKids, { gap: 12, justify: "SPACE_BETWEEN", align: "MIN" }) : headerKids[0]);
   }
-  const cardBlocks = alignRowLeading(arr(block.blocks ?? block.children ?? block.items ?? block.content).map(asRec).filter((x): x is Rec => !!x));
+  const cardBlocks = groupCardMetrics(alignRowLeading(arr(block.blocks ?? block.children ?? block.items ?? block.content).map(asRec).filter((x): x is Rec => !!x)));
   for (let index = 0; index < cardBlocks.length; index += 1) {
     const rec = cardBlocks[index];
     const type = blockType(rec);
@@ -1082,6 +1082,34 @@ function expandCard(ctx: Ctx, block: Rec, width: number, depth: number, nameFall
   if (!kids.length) return null;
   const name = clean(block.name, 80) || (title ? label(title, "Card") : nameFallback);
   return b.vstack(name, width, kids, { gap: 12, pad: [16, 16, 16, 16], fill: t.surface, radius: t.radius, stroke: t.border });
+}
+
+/**
+ * Models often emit a card's metrics as loose blocks: 2–3 adjacent `stat` blocks become one stat_row
+ * (side by side, like the source), and 2–3 adjacent `row` blocks right after a ring become one list,
+ * so the ring | metrics pairing applies whatever shape the spec used.
+ */
+function groupCardMetrics(blocks: Rec[]): Rec[] {
+  const out: Rec[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const type = blockType(blocks[i]) || inferBlockType(blocks[i]);
+    if (type === "stat") {
+      let j = i;
+      while (j < blocks.length && (blockType(blocks[j]) || inferBlockType(blocks[j])) === "stat") j++;
+      if (j - i >= 2 && j - i <= 3) {
+        out.push({ type: "stat_row", items: blocks.slice(i, j).map((st) => ({ label: st.label ?? st.title, value: st.value ?? st.amount ?? st.text, caption: st.caption })) });
+        i = j - 1;
+        continue;
+      }
+    }
+    if (type === "row" && out.length && (blockType(out[out.length - 1]) || inferBlockType(out[out.length - 1])) === "progress_ring") {
+      let j = i;
+      while (j < blocks.length && (blockType(blocks[j]) || inferBlockType(blocks[j])) === "row") j++;
+      if (j - i >= 2 && j - i <= 3) { out.push({ type: "list", items: blocks.slice(i, j) }); i = j - 1; continue; }
+    }
+    out.push(blocks[i]);
+  }
+  return out;
 }
 
 function singleButton(block: Rec): Rec | null {

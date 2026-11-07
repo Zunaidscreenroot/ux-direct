@@ -272,7 +272,7 @@ function runtime() {
     if (message.error) throw new Error(message.error);
     return message.result;
   }
-  return { apply, make, screen, card, title, body, button, label, hidden, page, figma, sandbox };
+  return { apply, make, screen, card, title, body, button, label, hidden, page, figma, sandbox, posted };
 }
 
 test("direct edits change real node properties in code.js", async () => {
@@ -534,4 +534,31 @@ test("'add another loan card' duplicates the last card in its own list, not a ne
   assert.deepEqual(stack.children.map((n: any) => n.name), ["Loan Card", "Loan Card", "Loan Card", "Footer"], "copy sits right after the last card");
   assert.notEqual(stack.children[2], b);
   assert.match(JSON.stringify(result), /added another/);
+});
+
+test("repeated cards on a built frame become one component and instances that keep each card's copy", async () => {
+  const r = runtime();
+  const screen = r.make({ type: "FRAME", name: "New screen", width: 360, height: 800, layoutMode: "VERTICAL" });
+  const cards: any[] = [];
+  for (const id of ["DMI001", "DMI002", "DMI003"]) {
+    const card = r.make({ type: "FRAME", name: "Loan card", width: 320, height: 120, layoutMode: "VERTICAL" }, screen);
+    const header = r.make({ type: "FRAME", name: "Header", width: 320, height: 40, layoutMode: "HORIZONTAL" }, card);
+    r.make({ type: "TEXT", name: "Title", characters: "Personal loan" }, header);
+    r.make({ type: "TEXT", name: "ID", characters: id }, header);
+    cards.push(card);
+  }
+  const deepClone = (n: any, parent: any): any => {
+    const c = r.make({ type: n.type === "COMPONENT" ? "INSTANCE" : n.type, name: n.name, characters: n.characters, width: n.width, layoutMode: n.layoutMode }, parent);
+    for (const k of n.children ?? []) deepClone(k, c);
+    return c;
+  };
+  r.figma.createComponentFromNode = (n: any) => { n.type = "COMPONENT"; n.createInstance = () => { const inst = deepClone(n, r.page); return inst; }; return n; };
+  r.posted.length = 0;
+  await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "c", op: "componentize-repeats", payload: { rootId: screen.id } });
+  const message = r.posted.find((m: any) => m.type === "uxd-local-result");
+  assert.ok(!message.error, message.error);
+  assert.deepEqual(plain({ c: message.result.components, i: message.result.instances }), { c: 1, i: 2 });
+  assert.deepEqual(screen.children.map((n: any) => n.type), ["COMPONENT", "INSTANCE", "INSTANCE"]);
+  const ids = screen.children.map((n: any) => n.children[0].children[1].characters);
+  assert.deepEqual(ids, ["DMI001", "DMI002", "DMI003"], "each instance keeps its own text, in order");
 });
