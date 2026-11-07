@@ -5,7 +5,7 @@ import { z } from "zod";
 import { NATIVE_INSTANCE_ELEMENT_FIELDS } from "@/src/figma-agent/native-action-schema";
 import { detectDomain, detectTaskRole, roleInstructions } from "@/src/figma-agent/agent-roles";
 import { runSubAgents, subAgentsEnabled, type AgentBrief } from "@/src/figma-agent/sub-agents";
-import { designerPersona, gatewaySeat, inventedTexts, leadApproves, leadMaxRounds, leadReview, lostTexts, missingFromSpec, reviseFromNotes, seatKnowledge, studioReviewEnabled, taskOwner } from "@/src/figma-agent/studio";
+import { designerPersona, gatewaySeat, inventedTexts, isValueText, leadApproves, sourceContentTexts, leadMaxRounds, leadReview, lostTexts, missingFromSpec, reviseFromNotes, seatKnowledge, studioReviewEnabled, taskOwner } from "@/src/figma-agent/studio";
 import { agencyEnabled, agencyHandlesRole, runAgency, truncatedContentNames, type AgencyResult } from "@/src/figma-agent/agency";
 import { buildBrainSystemPrompt, resolveBrainScopes, type BrainContextPromptInput } from "@/src/memory/chat-context";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
@@ -899,8 +899,10 @@ export async function POST(request: Request) {
     // Coverage is judged on the plugin's full read (the compact planner copy cuts deep card texts),
     // except for a state screen, which drops texts on purpose.
     // Counted, not de-duplicated: three loan cards with the same labels must stay three cards.
-    const fullSource = screenState ? [] : collectSourceTextInventory(Array.isArray((rawSourceCanvas ?? canvas).nodes) ? (rawSourceCanvas ?? canvas).nodes as unknown[] : []).map((item) => item.text);
-    const shared = { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts: fullSource.length ? fullSource : sourceTexts, origin };
+    // Logo and chevron glyph texts are decoration: not required, and flagged when shown as content.
+    const sourceRead = sourceContentTexts(Array.isArray((rawSourceCanvas ?? canvas).nodes) ? (rawSourceCanvas ?? canvas).nodes as unknown[] : []);
+    const fullSource = screenState ? [] : sourceRead.content;
+    const shared = { prompt: parsedInput.data.prompt, role: taskRole, sourceTexts: fullSource.length ? fullSource : sourceTexts, decorativeTexts: screenState ? [] : sourceRead.decorative, origin };
     const owner = taskOwner(taskRole, parsedInput.data.prompt);
     // Each seat gets the knowledge for its role (Lead: review checklist, critique format; designer: its craft).
     const knowledgeQuery = parsedInput.data.prompt + " " + taskRole.label + " " + agentBrief.domain.id;
@@ -920,10 +922,13 @@ export async function POST(request: Request) {
      * restore that dumps texts outside their cards), and must cover the source at least as well.
      */
     const directorKeeps = (spec: Record<string, unknown>, model?: string): boolean => {
-      const lost = lostTexts(current.spec as Record<string, unknown>, spec);
+      // Only content counts as lost: dropping a stray logo or chevron text is a fix, not a loss.
+      const contentKeys = new Set(fullSource.map((text) => text.toLowerCase().replace(/\s+/g, " ").trim()));
+      const lost = lostTexts(current.spec as Record<string, unknown>, spec).filter((text) => !fullSource.length || contentKeys.has(text.toLowerCase().replace(/\s+/g, " ").trim()) || isValueText(text));
       if (lost.length) { log("iteration dropped " + lost.length + " texts (" + lost.slice(0, 4).join(", ") + "); previous version kept"); return false; }
-      const inventedBefore = inventedTexts(current.spec as Record<string, unknown>, fullSource.length ? fullSource : sourceTexts, parsedInput.data.prompt).length;
-      const invented = inventedTexts(spec, fullSource.length ? fullSource : sourceTexts, parsedInput.data.prompt);
+      const known = [...(fullSource.length ? fullSource : sourceTexts), ...sourceRead.decorative];
+      const inventedBefore = inventedTexts(current.spec as Record<string, unknown>, known, parsedInput.data.prompt).length;
+      const invented = inventedTexts(spec, known, parsedInput.data.prompt);
       if (invented.length > inventedBefore) { log("iteration invented text (" + invented.slice(0, 4).join(", ") + "); previous version kept"); return false; }
       const candidate = renderCandidate(spec);
       const before = missingNow(current.spec);
