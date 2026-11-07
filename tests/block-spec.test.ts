@@ -614,3 +614,64 @@ test("renders keep at most 5 font sizes, and improve never invents a ring value 
   assert.ok(!texts.includes("100%"), "no invented ring value: " + texts.join(" | "));
   assert.ok(!texts.includes("←"), "no invented back arrow");
 });
+
+test("a labelled ring keeps its stat cells side by side in the Body row, never flattened into one column", () => {
+  const spec = {
+    summary: "Loan cards with ring and stats side by side.",
+    frame: { name: "Loans" },
+    sections: [
+      { name: "Header", blocks: [{ type: "app_bar", title: "Manage loans" }] },
+      { name: "Current loan", surface: "card", title: "Personal Loan", blocks: [
+        { type: "progress_ring", percent: 90, label: "Paid" },
+        { type: "stat_row", items: [{ label: "Loan Amount", value: "₹12,000" }, { label: "Outstanding", value: "₹1,07,649" }] },
+      ] },
+      { name: "Other loan", surface: "card", title: "Home Loan", blocks: [
+        { type: "progress_ring", percent: 40 },
+        { type: "list", items: [{ label: "Loan Amount", value: "₹2,00,000" }, { label: "Overdue", value: "₹12,570" }] },
+      ] },
+    ],
+    learningCandidate: null,
+  };
+  const out = expandBlockSpec(spec, lightCanvas);
+  assert.ok(out.plan, out.errors.join("; "));
+  for (const name of ["Current loan", "Other loan"]) {
+    const card: N = (out.plan!.elements as N[]).find((n) => n.name === name)!;
+    const body: N = card.children!.find((n: N) => n.name === "Body")!;
+    assert.equal(body.layoutMode, "HORIZONTAL");
+    const cells = body.children!.slice(1);
+    assert.equal(cells.length, 2, name + ": two stat cells beside the ring");
+    for (const cell of cells) {
+      assert.equal(cell.layoutMode, "VERTICAL");
+      assert.deepEqual(cell.children!.map((c: N) => String(c.name).split(" · ")[0]), ["Stat label", "Stat value"]);
+    }
+  }
+  assert.ok(!out.warnings.some((w) => /Flattened/.test(w)), out.warnings.join("; "));
+  const labelled = (out.plan!.elements as N[]).find((n) => n.name === "Current loan")!;
+  assert.ok(labelled.children!.some((n) => String(n.name).startsWith("Progress label")), "the ring label sits above the row");
+});
+
+test("a copied source chevron replaces the generated chevron glyph in the same card", () => {
+  const source = { nodes: [{ id: "1:1", name: "Loans", type: "FRAME", width: 360, height: 800, fillColors: ["#F6F7F9"], children: [
+    { id: "1:2", name: "Card", type: "FRAME", x: 16, y: 80, width: 328, height: 120, fillColors: ["#FFFFFF"], children: [
+      { id: "1:3", name: "Title", type: "TEXT", text: "Personal Loan", x: 16, y: 16, width: 120, height: 20 },
+      { id: "1:4", name: "Amount", type: "TEXT", text: "₹12,000", x: 16, y: 48, width: 80, height: 20 },
+      { id: "1:5", name: "arrow-right", type: "VECTOR", x: 300, y: 16, width: 13, height: 13 },
+    ] },
+  ] }], components: [] };
+  const spec = {
+    summary: "Loan card with its chevron.",
+    frame: { name: "Loans" },
+    sections: [
+      { name: "Header", blocks: [{ type: "heading", title: "Loans" }] },
+      { name: "Loan", surface: "card", blocks: [{ type: "row", label: "Personal Loan", chevron: true }, { type: "stat", label: "Amount", value: "₹12,000" }] },
+      { name: "Help", blocks: [{ type: "text", text: "Need help?" }] },
+    ],
+    learningCandidate: null,
+  };
+  const out = expandBlockSpec(spec, source, { sourceCanvas: source });
+  assert.ok(out.plan, out.errors.join("; "));
+  const all: N[] = [];
+  walk(out.plan!.elements as N[], (n) => all.push(n));
+  assert.equal(all.filter((n) => n.type === "TEXT" && n.text === "›").length, 0, "no generated chevron left");
+  assert.equal(all.filter((n) => n.type === "CLONE" && n.sourceNodeId === "1:5").length, 1, "one copied chevron");
+});

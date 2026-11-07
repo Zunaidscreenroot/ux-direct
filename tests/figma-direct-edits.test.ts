@@ -562,3 +562,49 @@ test("repeated cards on a built frame become one component and instances that ke
   const ids = screen.children.map((n: any) => n.children[0].children[1].characters);
   assert.deepEqual(ids, ["DMI001", "DMI002", "DMI003"], "each instance keeps its own text, in order");
 });
+
+test("componentize keeps an item's own layers when its instance cannot show the same text in the same order", async () => {
+  const r = runtime();
+  const screen = r.make({ type: "FRAME", name: "New screen", width: 360, height: 800, layoutMode: "VERTICAL" });
+  const statuses = [["Current"], ["Matured"], ["40%", "Delinquent"]];
+  statuses.forEach((words) => {
+    const card = r.make({ type: "FRAME", name: "Loan card", width: 320, height: 120, layoutMode: "VERTICAL" }, screen);
+    r.make({ type: "TEXT", name: "Title", characters: "Personal loan" }, card);
+    // A nested instance hides its inner structure from the shape key: card 3's has two texts.
+    const graph = r.make({ type: "INSTANCE", name: "Loan Graph", width: 60, height: 60 }, card);
+    for (const w of words) r.make({ type: "TEXT", name: "Label", characters: w }, graph);
+  });
+  const deepClone = (n: any, parent: any): any => {
+    const c = r.make({ type: n.type === "COMPONENT" ? "INSTANCE" : n.type, name: n.name, characters: n.characters, width: n.width, layoutMode: n.layoutMode }, parent);
+    for (const k of n.children ?? []) deepClone(k, c);
+    return c;
+  };
+  r.figma.createComponentFromNode = (n: any) => { n.type = "COMPONENT"; n.createInstance = () => deepClone(n, r.page); return n; };
+  r.posted.length = 0;
+  await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "c", op: "componentize-repeats", payload: { rootId: screen.id } });
+  const message = r.posted.find((m: any) => m.type === "uxd-local-result");
+  assert.deepEqual(plain({ i: message.result.instances, kept: message.result.kept }), { i: 1, kept: 1 });
+  assert.deepEqual(screen.children.map((n: any) => n.type), ["COMPONENT", "INSTANCE", "FRAME"]);
+  const texts = (n: any) => n.findAll((x: any) => x.type === "TEXT").map((x: any) => x.characters);
+  assert.deepEqual(texts(screen.children[1]), ["Personal loan", "Matured"]);
+  assert.deepEqual(texts(screen.children[2]), ["Personal loan", "40%", "Delinquent"], "card 3 keeps its own content");
+});
+
+test("an insert that runs past a fixed-height screen grows the screen, and Revert restores its height", async () => {
+  const r = runtime();
+  const screen = r.make({ type: "FRAME", name: "QA lock", width: 360, height: 800, layoutMode: "NONE" });
+  screen.absoluteBoundingBox = { x: 0, y: 0, width: 360, height: 800 };
+  screen.resize = (w: number, h: number) => { screen.width = w; screen.height = h; };
+  const stack = r.make({ type: "FRAME", name: "Cards", width: 320, height: 700, layoutMode: "VERTICAL" }, screen);
+  const a = r.make({ type: "INSTANCE", name: "Loan Card", width: 320, height: 150 }, stack);
+  const b = r.make({ type: "INSTANCE", name: "Loan Card", width: 320, height: 150 }, stack);
+  r.make({ type: "TEXT", name: "Label", characters: "Loan card" }, a);
+  b.clone = () => { const c = r.make({ type: "INSTANCE", name: "Loan Card", width: 320, height: 150 }, stack); c.absoluteBoundingBox = { x: 16, y: 757, width: 320, height: 150 }; return c; };
+  const result = await r.apply("add another loan card", [screen]);
+  assert.equal(screen.height, 923, "907px bottom + 16px gutter");
+  assert.match(JSON.stringify(result), /grew the screen to 923px/);
+  const posted: any[] = [];
+  r.figma.ui.postMessage = (m: any) => posted.push(m);
+  await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "u", op: "restore-props", payload: { items: result.snapshot } });
+  assert.equal(screen.height, 800);
+});

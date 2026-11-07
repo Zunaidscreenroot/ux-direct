@@ -303,6 +303,19 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
     };
     const card = [...anchorRef.ancestors].reverse().find(isCardLike) ?? anchorRef.ancestors[0] ?? null;
 
+    // A source arrow/chevron icon takes the place of the renderer's "›" glyph in the same card, so
+    // the card does not show two chevrons (one generated, one copied; benchmark T12).
+    if (card && Math.max(graphic.rect.w, graphic.rect.h) <= 24 && /arrow|chevron|caret/i.test(graphic.name)) {
+      const glyph = indexOutput(card.children ?? []).find((r) => r.node.type === "TEXT" && r.node.text === "›" && String(r.node.name).startsWith("Chevron"));
+      if (glyph) {
+        const host = glyph.parent ? glyph.parent.children! : card.children!;
+        host.splice(host.indexOf(glyph.node), 1, clone);
+        result.clones += 1;
+        usedSourceIds.add(graphic.id);
+        continue;
+      }
+    }
+
     // A generated ring next to the anchor is replaced by the real source chart.
     const ringLike = graphic.type === "ELLIPSE" || descendants(graphic).some((d) => d.type === "ELLIPSE");
     if (ringLike && card) {

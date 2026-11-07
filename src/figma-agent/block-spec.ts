@@ -772,7 +772,7 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       left.layoutSizingHorizontal = "FILL";
       left.layoutGrow = 1;
       // Trailing items sit directly in the row (no wrapper) to keep the tree shallow.
-      return b.hstack(label(lbl, "Row"), W, [...(slot ? [slot] : []), left, ...right], { gap, pad: [10, 0, 10, 0], justify: "SPACE_BETWEEN" });
+      return b.hstack(label(lbl, "Row"), W, [...(slot ? [slot] : []), left, ...right], { gap, pad: [8, 0, 8, 0], justify: "SPACE_BETWEEN" });
     }
     case "badge": {
       const value = clean(block.text ?? block.label ?? block.value, 40);
@@ -1068,7 +1068,7 @@ function expandCard(ctx: Ctx, block: Rec, width: number, depth: number, nameFall
     // A ring/visual keeps its metrics beside it (source row grouping), and an alert keeps its single
     // CTA inline, so cards stay compact and the screen keeps its height budget (benchmark gaps 4, 5).
     const paired = next ? pairCardBlocks(cardCtx, rec, next, inner, depth + 1) : null;
-    if (paired) { kids.push(paired); index += 1; continue; }
+    if (paired) { kids.push(...paired); index += 1; continue; }
     if (type === "card") {
       // Cards never nest: keep the content, drop the extra surface.
       b.warnings.push("Flattened a card nested inside another card.");
@@ -1126,34 +1126,56 @@ function singleButton(block: Rec): Rec | null {
  * - an alert (banner or text) followed by one short button → alert text | compact button.
  * Returns null when the pair does not apply, so the blocks render stacked as before.
  */
-function pairCardBlocks(ctx: Ctx, first: Rec, second: Rec, width: number, depth: number): NativeNode | null {
+function pairCardBlocks(ctx: Ctx, first: Rec, second: Rec, width: number, depth: number): NativeNode[] | null {
   const { b, t, bg } = ctx;
   const a = blockType(first) || inferBlockType(first);
   const c = blockType(second) || inferBlockType(second);
   if (a === "progress_ring" && ["stat_row", "stat", "list", "row"].includes(c)) {
-    const listItems = c === "list" ? arr(second.items ?? second.rows) : [];
-    if (c === "list" && (listItems.length < 1 || listItems.length > 3)) return null;
-    if (c === "stat_row" && arr(second.items ?? second.stats ?? second.metrics).length > 3) return null;
+    // Every metric kind becomes label/value cells: ring | cell | cell (or ring | stacked cells).
+    // Cells sit straight in the Body row, so they never cross the layer depth limit (a Stats
+    // column holding a Stats row got its cells flattened into one vertical text pile; tester T12).
+    const rawItems = c === "list" ? arr(second.items ?? second.rows) : c === "stat_row" ? arr(second.items ?? second.stats ?? second.metrics) : [second];
+    const items = rawItems.map((item) => asRec(item) ?? (typeof item === "string" ? { label: item } : null)).filter((x): x is Rec => !!x).map((item) => ({
+      label: clean(item.label ?? item.title ?? item.name, 80),
+      value: clean(item.value ?? item.amount ?? item.detail ?? (c === "list" || c === "row" ? undefined : item.text), 40),
+      caption: clean(item.caption ?? item.subtitle ?? item.status ?? item.badge, 80),
+    })).filter((item) => item.label || item.value);
+    if (items.length < 1 || items.length > 3) return null;
     const ring = expandLeaf(ctx, { ...first, label: undefined, title: undefined, caption: undefined, subtitle: undefined }, "progress_ring", 72, depth + 1);
     if (!ring) return null;
     const restW = Math.max(120, width - ring.width - 16);
     if (restW < 160) return null;
     const lbl = clean(first.label ?? first.title, 120);
     const caption = clean(first.caption ?? first.subtitle, 200);
+    // The ring's own label/caption sit above the ring row, full width.
     const head: NativeNode[] = [];
-    if (lbl) head.push(b.text("Progress label", lbl, restW, { size: 15, weight: "Semi Bold", color: t.text, bg }));
-    if (caption) head.push(b.text("Progress caption", caption, restW, { size: 13, color: t.muted, bg }));
-    const metrics = expandBlock(ctx, second, restW, depth + 1);
-    if (!metrics.length) return null;
-    // Without a ring label, stat cells sit straight in the row (ring | stat | stat), keeping the tree shallow.
-    if (!head.length && metrics.length === 1 && metrics[0].layoutMode === "HORIZONTAL" && metrics[0].name === "Stats row") {
-      const cells = metrics[0].children ?? [];
-      b.count -= 1;
-      return b.hstack("Body", width, [ring, ...cells], { gap: 16, align: "CENTER" });
+    if (lbl) head.push(b.text("Progress label", lbl, width, { size: 14, weight: "Semi Bold", color: t.text, bg }));
+    if (caption) head.push(b.text("Progress caption", caption, width, { size: 12, color: t.muted, bg }));
+    const gap = 12;
+    const fitsIn = (cellW: number) => [16, 14].find((size) => items.every((item) => (!item.value || textWidth(item.value, size) <= cellW) &&
+      (!item.label || item.label.split(/\s+/).every((word) => textWidth(word, 12) <= cellW))));
+    const across = Math.floor((restW - gap * (items.length - 1)) / items.length);
+    const acrossSize = fitsIn(across);
+    const horizontal = !!acrossSize;
+    const cellW = horizontal ? across : restW;
+    const valueSize = acrossSize ?? fitsIn(restW) ?? 14;
+    const cells = items.map((item) => {
+      const kids: NativeNode[] = [];
+      if (item.label) kids.push(b.text("Stat label", item.label, cellW, { size: 12, color: t.muted, bg }));
+      if (item.value) kids.push(b.text("Stat value", item.value, cellW, { size: valueSize, weight: "Semi Bold", color: t.text, bg }));
+      if (item.caption) kids.push(b.text("Stat caption", item.caption, cellW, { size: 12, color: t.muted, bg }));
+      const cell = kids.length === 1 ? kids[0] : b.vstack(label(item.label || item.value, "Stat"), cellW, kids, { gap: 4 });
+      if (horizontal) { cell.layoutSizingHorizontal = "FILL"; cell.layoutGrow = 1; }
+      return cell;
+    });
+    let body: NativeNode;
+    if (horizontal) body = b.hstack("Body", width, [ring, ...cells], { gap: 16, align: "CENTER" });
+    else {
+      const column = b.vstack("Stats", restW, cells, { gap: 8 });
+      column.layoutGrow = 1;
+      body = b.hstack("Body", width, [ring, column], { gap: 16, align: "CENTER" });
     }
-    const column = b.vstack("Stats", restW, [...head, ...metrics], { gap: head.length ? 8 : 4 });
-    column.layoutGrow = 1;
-    return b.hstack("Body", width, [ring, column], { gap: 16, align: "CENTER" });
+    return [...head, body];
   }
   const button = singleButton(second);
   if ((a === "banner" || a === "text") && button) {
@@ -1178,7 +1200,7 @@ function pairCardBlocks(ctx: Ctx, first: Rec, second: Rec, width: number, depth:
     const textNode = texts.length > 1 ? b.vstack("Alert text", textW, texts, { gap: 4 }) : texts[0];
     textNode.layoutGrow = 1;
     textNode.layoutSizingHorizontal = "FILL";
-    return b.hstack("Alert", width, [textNode, btn], { gap: 12, pad, fill, radius: fill ? t.radius : undefined, stroke: fill ? mix(t.surface, accent, 0.35) : undefined, justify: "SPACE_BETWEEN", align: "CENTER" });
+    return [b.hstack("Alert", width, [textNode, btn], { gap: 12, pad, fill, radius: fill ? t.radius : undefined, stroke: fill ? mix(t.surface, accent, 0.35) : undefined, justify: "SPACE_BETWEEN", align: "CENTER" })];
   }
   return null;
 }
@@ -1325,6 +1347,8 @@ function compactToBudget(elements: NativeNode[]) {
     }
     if (node.layoutMode === "VERTICAL" && Number(node.itemSpacing) >= 12) node.itemSpacing = 8;
     if (!node.noFill && Number(node.paddingTop) === 16 && Number(node.paddingBottom) === 16) { node.paddingTop = 12; node.paddingBottom = 12; }
+    // Unfilled list rows inside a card already sit in the card's padding: 8px → 4px top and bottom.
+    if (node.noFill && node.layoutMode === "HORIZONTAL" && /^Row\b/.test(String(node.name)) && Number(node.paddingTop) === 8 && Number(node.paddingBottom) === 8) { node.paddingTop = 4; node.paddingBottom = 4; }
   };
   elements.forEach(visit);
   elements.forEach(relayout);
