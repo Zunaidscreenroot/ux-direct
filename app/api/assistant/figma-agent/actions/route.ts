@@ -272,6 +272,14 @@ export async function OPTIONS(request: Request) {
   return new Response(null, { status: 204, headers: cors(request) });
 }
 
+/** One correction turn for a plan that failed strict validation: the plan, the issues, and the contract. */
+function actionRepairPrompt(plan: unknown, issues: string[]): string {
+  return "Your previous plan failed validation and was NOT applied.\nPlan: " + JSON.stringify(plan).slice(0, 3000) +
+    "\nValidator issues:\n- " + issues.join("\n- ") +
+    "\nReturn the corrected plan as JSON { \"summary\": string, \"actions\": [...] }. Each action uses the key \"operation\" with one of: " +
+    FIGMA_CANVAS_STEP_OPERATION_IDS.join(", ") + ". Property changes on an existing node are { \"operation\": \"update-node\", \"nodeId\": ..., \"patch\": { ... } }. Use only keys the schema allows; no comments.";
+}
+
 export async function POST(request: Request) {
   const headers = cors(request);
   if (!allowedOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
@@ -377,11 +385,11 @@ export async function POST(request: Request) {
   const hasVisionInput = Boolean(renderedScreen || referenceImage);
   const models = figmaModelChain(activeProvider, hasVisionInput, FIGMA_AGENT_MODELS.map((entry) => entry.id));
   // A model that rejects JSON mode with a 4xx is retried once without response_format.
-  const attempts = models.map((model) => ({ model, jsonMode: true }));
+  const attempts: Array<{ model: string; jsonMode: boolean; repair?: string }> = models.map((model) => ({ model, jsonMode: true }));
   const errors: string[] = [];
   const retriedShape = new Set<string>();
   for (let modelIndex = 0; modelIndex < attempts.length; modelIndex++) {
-    const { model, jsonMode } = attempts[modelIndex];
+    const { model, jsonMode, repair } = attempts[modelIndex];
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), figmaAttemptTimeoutMs(activeProvider, modelIndex, 60000, 45000));
     try {
@@ -390,7 +398,9 @@ export async function POST(request: Request) {
         headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json", Accept: "application/json",
             ...figmaRoutingHeaders(activeProvider, { role: "planner" }),
           ...(activeProvider.id === "openrouter" ? { "HTTP-Referer": new URL(request.url).origin, "X-OpenRouter-Title": "UX Direct Native Figma Actions" } : {}) },
-        body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content }],
+        body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content },
+            // Repair turn: the model's previous plan and the validator's exact complaints, fixed once.
+            ...(repair ? [{ role: "user", content: repair }] : [])],
           ...(activeProvider.id === "openrouter" && model === "openrouter/auto" ? { plugins: [{ id: "auto-router", cost_tier: "low" }] } : {}),
           ...(model.startsWith("google/gemini-") ? { temperature: 0.1 } : {}),
           // Qwen 3.5 thinks by default; keep reasoning short so the JSON arrives within the timeout.
@@ -422,7 +432,13 @@ export async function POST(request: Request) {
         continue;
       }
       const parsedActions = z.object({ summary: z.string().trim().min(4).max(500), actions: z.array(actionSchema).min(1).max(12) }).strict().safeParse(decoded);
-      if (!parsedActions.success) { errors.push(model + ": invalid actions schema: " + parsedActions.error.issues.slice(0, 3).map(i => i.path.join(".") + " " + i.message).join("; ")); continue; }
+      if (!parsedActions.success) {
+        const issues = parsedActions.error.issues.slice(0, 6).map(i => i.path.join(".") + " " + i.message);
+        errors.push(model + ": invalid actions schema: " + issues.slice(0, 3).join("; "));
+        // Schema drift is usually one wrong key or value: send the validator's complaints back once.
+        if (!repair) attempts.splice(modelIndex + 1, 0, { model, jsonMode, repair: actionRepairPrompt(decoded, issues) });
+        continue;
+      }
       const actions = parsedActions.data.actions;
       const badId = actions.flatMap(idsUsedByAction).find(id => !allowedIds.has(id));
       if (badId) { errors.push(model + ": action used a node ID not present in the inspected selection"); continue; }
