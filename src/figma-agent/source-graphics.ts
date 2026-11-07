@@ -402,6 +402,10 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
         children: before ? [clone, textNode] : [textNode, clone],
       };
       siblings.splice(index, 1, row);
+    } else if (host && host.layoutMode === "HORIZONTAL" && besideColumn) {
+      // A chevron at the card's right edge, anchored to a row's label: it goes to the row's end, not
+      // between the label and its value (">Outstanding", "Overdue >₹12,570"; round 8 error state).
+      if (g.x + g.w / 2 > a.x + a.w / 2) siblings.push(clone); else siblings.splice(index, 0, clone);
     } else {
       siblings.splice(before ? index : index + 1, 0, clone);
     }

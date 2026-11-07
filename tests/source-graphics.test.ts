@@ -412,3 +412,38 @@ test("a lender logo beside a repeated card title stays in the title row, not abo
   });
   assert.equal(checked, 3, "all three logos restored");
 });
+
+test("a right-edge chevron anchored to a key-value row goes to the row's end, not before its label (round 8)", () => {
+  const src = { nodes: [{ id: "6:1", name: "Loans", type: "FRAME", x: 0, y: 0, width: 360, height: 400, fillColors: ["#111111"], children: [
+    { id: "6:2", name: "Title", type: "TEXT", x: 16, y: 16, width: 200, height: 28, text: "Manage Loans" },
+    { id: "6:3", name: "Card", type: "FRAME", x: 20, y: 60, width: 320, height: 144, fillColors: ["#2A2A2A"], layoutMode: "HORIZONTAL", children: [
+      { id: "6:4", name: "Col", type: "FRAME", x: 16, y: 20, width: 271, height: 108, layoutMode: "VERTICAL", children: [
+        { id: "6:5", name: "Name", type: "TEXT", x: 0, y: 0, width: 211, height: 15, text: "Personal Loan" },
+        { id: "6:6", name: "Out", type: "TEXT", x: 104, y: 69, width: 70, height: 15, text: "Outstanding" },
+        { id: "6:7", name: "Val", type: "TEXT", x: 104, y: 88, width: 96, height: 17, text: "₹1,07,649" },
+      ] },
+      { id: "6:8", name: "arrow-right", type: "FRAME", x: 288, y: 48, width: 13, height: 13, children: [
+        { id: "6:9", name: "Vector", type: "VECTOR", x: 3, y: 4, width: 4, height: 8 },
+      ] },
+    ] },
+  ] }], components: [] };
+  const s = { summary: "Loan card.", sections: [
+    { name: "Header", blocks: [{ type: "heading", title: "Manage Loans" }] },
+    { name: "Loan", surface: "card", blocks: [
+      { type: "text", text: "Personal Loan" },
+      { type: "row", label: "Outstanding", value: "₹1,07,649" },
+    ] },
+  ] };
+  const expansion = expandBlockSpec(s, src, { sourceCanvas: src });
+  assert.ok(expansion.plan, expansion.errors.join("; "));
+  let checked = false;
+  walk(expansion.plan!.elements as N[], (node) => {
+    const kids = node.children || [];
+    const at = kids.findIndex((c) => c.type === "CLONE" && c.sourceNodeId === "6:8");
+    if (at < 0) return;
+    checked = true;
+    const order = kids.map((c) => c.type === "CLONE" ? "chevron" : JSON.stringify(c).includes("Outstanding") ? "label" : JSON.stringify(c).includes("₹1,07,649") ? "value" : c.type);
+    assert.equal(order[order.length - 1], "chevron", "chevron is last in its row: " + order.join(","));
+  });
+  assert.ok(checked, "chevron restored");
+});

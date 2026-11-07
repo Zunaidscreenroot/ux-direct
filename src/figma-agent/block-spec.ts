@@ -391,6 +391,7 @@ const TYPE_ALIASES: Record<string, string> = {
   divider: "divider", separator: "divider", line: "divider",
   checkbox: "checkbox", consent: "checkbox", toggle: "checkbox", switch: "checkbox", radio: "checkbox",
   bottom_nav: "bottom_nav", bottom_bar: "bottom_nav", tab_navigation: "bottom_nav",
+  skeleton: "skeleton", shimmer: "skeleton", skeleton_lines: "skeleton", loading_placeholder: "skeleton",
   image: "image", illustration: "image", placeholder: "image", media: "image", hero_image: "image",
   otp: "otp", pin: "otp", code_input: "otp",
   steps: "steps", stepper: "steps", timeline: "steps",
@@ -478,10 +479,29 @@ function percent(value: unknown): number {
 // Expansion
 // ---------------------------------------------------------------------------
 
-type Ctx = { b: Builder; t: BlockTheme; bg: string; componentIds: Set<string> };
+type Ctx = { b: Builder; t: BlockTheme; bg: string; componentIds: Set<string>; skeleton?: boolean };
 
 function toneColor(t: BlockTheme, kind: ReturnType<typeof tone>): string {
   return kind === "neutral" ? t.muted : t[kind];
+}
+
+/** Text-free placeholder shapes in the screen's own theme: lines, one block, or a circle (empty-state art). */
+function skeletonNode(ctx: Ctx, block: Rec, W: number): NativeNode {
+  const { b, t } = ctx;
+  // A shade between the surface and the text colour reads as a skeleton on light and dark screens.
+  const shade = mix(t.surface === t.background ? t.surfaceAlt : t.surface, t.text, 0.14);
+  const height = typeof block.height === "number" ? Math.max(8, Math.min(320, block.height)) : 0;
+  if (clean(block.shape, 20).toLowerCase() === "circle") {
+    const size = Math.max(40, Math.min(160, height || 96));
+    const circle: NativeNode = { type: "ELLIPSE", name: "Skeleton circle", x: 0, y: 0, width: size, height: size, color: mix(t.background, t.primary, 0.18) };
+    b.count += 1;
+    return b.hstack("Skeleton art", W, [circle], { justify: "CENTER", align: "CENTER" });
+  }
+  if (height >= 40) return b.rect("Skeleton block", W, height, shade, { cornerRadius: 8, layoutSizingHorizontal: "FILL" });
+  const lines = Math.max(1, Math.min(6, typeof block.lines === "number" ? Math.round(block.lines) : 3));
+  const lineHeight = height || 12;
+  const bars = Array.from({ length: lines }, (_, i) => b.rect("Skeleton line", Math.round(W * (i === 0 ? 0.6 : i === lines - 1 ? 0.45 : 0.85)), lineHeight, shade, { cornerRadius: Math.min(6, lineHeight / 2) }));
+  return b.vstack("Skeleton", W, bars, { gap: 8 });
 }
 
 function badgeNode(ctx: Ctx, textValue: string, kind: ReturnType<typeof tone>): NativeNode {
@@ -777,7 +797,11 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       text.layoutGrow = 1;
       return b.hstack(label(lbl, "Checkbox row"), W, [box, text], { gap: 12, align: "MIN" });
     }
+    case "skeleton":
+      return skeletonNode(ctx, block, W);
     case "image": {
+      // A loading state draws text-free skeleton shapes, never "Illustration"/"Loading" boxes.
+      if (ctx.skeleton) return skeletonNode(ctx, { ...block, lines: 1 }, W);
       const caption = clean(block.label ?? block.alt ?? block.text, 120) || "Illustration";
       const h = Math.max(48, Math.min(320, typeof block.height === "number" ? block.height : 140));
       const txt = b.text("Image label", caption, W - 32, { size: 13, color: t.muted, bg: t.surfaceAlt, align: "CENTER" });
@@ -1099,7 +1123,7 @@ export function isBlockSpec(value: unknown): boolean {
   return !!rec && Array.isArray(rec.sections) && !Array.isArray(rec.elements);
 }
 
-export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean } = {}): BlockExpansion {
+export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>, options: { componentSelection?: boolean; sourceCanvas?: Record<string, unknown> | null; allowClones?: boolean; monochrome?: boolean; contentDropped?: boolean; skeleton?: boolean } = {}): BlockExpansion {
   const spec = asRec(value) ?? {};
   const sourceNodes = arr(canvas.nodes);
   const source = asRec(sourceNodes[0]) ?? {};
@@ -1109,7 +1133,7 @@ export function expandBlockSpec(value: unknown, canvas: Record<string, unknown>,
   const theme = resolveTheme(spec.theme ?? rawFrame.theme, hex(rawFrame.backgroundColor) ?? sourceFill, ctaFill);
   const componentIds = new Set(arr(canvas.components).map((c) => asRec(c)?.id).filter((id): id is string => typeof id === "string"));
   const b = new Builder(theme, collectSourceTokens(canvas, componentIds));
-  const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds };
+  const ctx: Ctx = { b, t: theme, bg: theme.background, componentIds, skeleton: options.skeleton === true };
 
   const sourceWidth = typeof source.width === "number" ? source.width : 0;
   const sourceHeight = typeof source.height === "number" ? source.height : 0;
@@ -1249,6 +1273,7 @@ export const BLOCK_SPEC_CONTRACT = [
   "- tabs {items:[...], active: index}   - chips {items:[...], active?}   - bottom_nav {items:[...], active}",
   "- banner {title?, body?, tone: info|success|warning|danger, action?}   - steps {items:[...], current: index}",
   "- image {label, height?}  — placeholder only, never invent assets",
+  "- skeleton {lines?: 1–6, height?, shape?: \"circle\"}  — text-free loading placeholder (lines, or one block when height ≥ 40); shape circle = simple empty-state art",
   "- divider {}",
   "- card {title?, subtitle?, badge?: {text, tone}, blocks:[...]}  — a card inside a plain section (cards do not nest)",
   "- component {componentId, name, instanceProperties?, height?}  — a REAL design-system component; componentId must be an exact id from canvas.components; prefer this for buttons, inputs, tabs, nav, list items when the file has them",

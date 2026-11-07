@@ -755,7 +755,7 @@ export async function POST(request: Request) {
     let planInput: unknown = candidateInput;
     let blockSpec: BlockSpecInfo | null = null;
     if (isBlockSpec(candidateInput)) {
-      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone, monochrome: wireframeRequest, contentDropped: stateDropsContent(screenState) });
+      const expansion = expandBlockSpec(candidateInput, canvas, { componentSelection, sourceCanvas: rawSourceCanvas, allowClones: pluginCanClone, monochrome: wireframeRequest, contentDropped: stateDropsContent(screenState), skeleton: screenState === "loading" });
       blockSpec = { blocks: expansion.blockCount, nodes: expansion.nodeCount, warnings: expansion.warnings };
       if (!expansion.plan) {
         const issues = expansion.errors.slice(0, 4).join("; ");
