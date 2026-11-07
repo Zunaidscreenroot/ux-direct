@@ -2324,6 +2324,20 @@
         return { kind: "generate-image", description: imageDescriptionFrom(text) };
       }
       if (/\brename\b[^.]{0,25}\blayers?\b|\b(layer names?|name (the |all |these )?layers)\b/i.test(text)) return { kind: "rename-layers" };
+      // Icons (Lucide via Iconify, no model): "add icons to these buttons", "add a wallet icon", "replace icon with bell", "icon lagao".
+      if (count > 0 && /\bicons?\b/i.test(text) && !/\b(colou?r|white|black|grey|gray|red|blue|green|bigger|smaller|size|resize|rotate|align|remove|delete|hide|hatao)\b/i.test(text)) {
+        const vague = /^(an?|the|some|relevant|matching|suitable|appropriate|proper|right|good|nice|correct|missing|all|new|more|these|this|my)$/i;
+        const swap = /\b(replace|swap|change)\b[^.]{0,25}\bicons?\b[^.]{0,12}?\b(?:with|to|into|by)\s+(?:an?\s+|the\s+)?([a-z0-9][a-z0-9 -]{1,28}?)(?:\s+icons?)?\s*[.!]?$/i.exec(text);
+        const named = /\b(?:add|insert|put|place|use|show|need)\s+(?:an?\s+|the\s+)?([a-z0-9][a-z0-9 -]{1,28}?)\s+icons?\b/i.exec(text) ||
+          /\b(?:an?\s+)?([a-z0-9][a-z0-9 -]{1,28}?)\s+(?:ka\s+)?icons?\s+(?:lagao|laga do|daalo|daal do|dal do|daal|add karo|chahiye)\b/i.exec(text);
+        const query = swap ? swap[2] : named ? named[1].replace(/^(an?|the)\s+/i, "") : "";
+        if (query && !vague.test(query.trim()) && !/^(relevant|matching|suitable|appropriate)\b/i.test(query.trim())) {
+          return { kind: "icon", mode: "named", query: query.trim().slice(0, 40) };
+        }
+        if (/\b(add|insert|put|place|use|give|need)\b[^.]{0,30}\bicons?\b|\bicons?\b[^.]{0,20}\b(lagao|laga do|daalo|daal do|dal do|add karo|chahiye)\b|\b(replace|swap|change)\b[^.]{0,20}\bicons?\b/i.test(text)) {
+          return { kind: "icon", mode: "auto" };
+        }
+      }
       // Realistic sample data (no model): "fill with realistic data", "dummy data bhar do", "use sample Indian names".
       if (count > 0 && !/lorem/i.test(text) && (
         /\b(fill|populate|add|put|use|replace|generate)\b[^.]{0,40}\b(realistic|real|dummy|sample|mock|fake|demo|test|indian)\b[^.]{0,20}\b(data|content|values|details|numbers|names|amounts)\b/i.test(text) ||
@@ -2675,6 +2689,54 @@
         (result.lorem ? "\n\n" + result.lorem + " layer(s) still have lorem ipsum. Say **replace the lorem ipsum with realistic content** for that." : "") +
         (result.changed ? "\nSay **fill different data** for a new set. Revert restores the original values, even after other edits." : "");
     }
+    async function runIconTask(task, stage) {
+      const ids = selectedIds();
+      if (!ids.length) throw new Error("Select the buttons, rows or icon to change.");
+      let targets = [];
+      let response;
+      if (task.mode === "named") {
+        if (ids.length > 12) throw new Error("Select up to 12 layers for one icon.");
+        stage("creating", "Finding a \"" + task.query + "\" icon (Lucide)…");
+        response = await postQuickTask("/api/assistant/figma-agent/icon", { queries: [task.query] });
+        targets = ids.map(function (id) { return { id: id }; });
+      } else {
+        stage("scanning", "Finding buttons and rows without icons…");
+        targets = (await localTask("find-icon-targets", {})).targets || [];
+        if (!targets.length) throw new Error("No buttons or rows without an icon were found in the selection. Select a button and say, for example, **add a wallet icon**.");
+        stage("creating", "Picking icons for " + targets.length + " label(s)…");
+        response = await postQuickTask("/api/assistant/figma-agent/icon", { labels: targets.map(function (t) { return t.label; }) });
+      }
+      const icons = response.icons || [];
+      const items = [];
+      const unmatched = [];
+      targets.forEach(function (target, index) {
+        const icon = task.mode === "named" ? icons[0] : icons[index];
+        if (icon && icon.svg) items.push({ targetId: target.id, svg: icon.svg, name: icon.name });
+        else if (target.label) unmatched.push(target.label);
+      });
+      if (!items.length) throw new Error("No matching icon for: " + unmatched.slice(0, 6).join(", ") + ". Select one and name it, e.g. **add a bank icon**.");
+      stage("creating", "Placing " + items.length + " icon(s)…");
+      const result = await localTask("insert-icons", { items: items }, 60000);
+      if ((result.createdIds || []).length) {
+        const created = result.createdIds.slice();
+        const restore = (result.restore || []).slice();
+        recordChange("Icons (" + created.length + ")", async function () {
+          const removed = await localTask("delete-created", { nodeIds: created });
+          if (restore.length) await localTask("restore-props", { items: restore });
+          return removed.deleted.length + " icon(s) removed" + (restore.length ? ", original icon(s) shown again" : "");
+        });
+      }
+      stage("done", "Icons placed · " + (result.inserted || []).length);
+      const lines = (result.inserted || []).map(function (item) { return "- **" + item.target + "**: " + item.icon + " (" + item.size + "px, " + item.mode + ")"; });
+      const skips = (result.skipped || []).map(function (item) { return "- " + (item.name || item.id) + ": " + item.reason; });
+      return ((result.inserted || []).length
+        ? "Added " + result.inserted.length + " Lucide icon(s) as native vector layers, coloured like the label next to them."
+        : "No icons were placed.") +
+        (lines.length ? "\n" + lines.join("\n") : "") +
+        (skips.length ? "\n\nSkipped:\n" + skips.join("\n") : "") +
+        (unmatched.length ? "\n\nNo icon picked for: " + unmatched.slice(0, 8).join(", ") + ". Select one and name it, e.g. **add a bank icon**." : "") +
+        ((result.inserted || []).length ? "\nRevert removes them and brings back any icon that was swapped." : "");
+    }
     async function hygieneSnapshot(prompt) {
       try {
         const tree = await localTask("read-tree", { maxDepth: 12, maxNodes: 800 });
@@ -2910,6 +2972,7 @@
       if (task.kind === "rename-layers") return runTextTask("rename", prompt, stage);
       if (task.kind === "hygiene-fix") return runHygieneFixTask(task, prompt, stage);
       if (task.kind === "fill-data") return runFillDataTask(task, stage);
+      if (task.kind === "icon") return runIconTask(task, stage);
       if (task.kind === "hygiene" || task.kind === "ux-audit") return runAuditTask(task.kind, prompt, stage);
       if (task.kind === "flow-variations" || task.kind === "screen-variations" || task.kind === "states-pack") return runVariationsTask(task, prompt, stage);
       throw new Error("Unknown quick task.");
