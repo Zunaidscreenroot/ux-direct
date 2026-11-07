@@ -1,3 +1,6 @@
+/** Base URL used with FREELLMAPI_TRANSPORT=vpc; the VPC Service decides the real target, this host only fills Host. */
+export const FREELLMAPI_VPC_BASE_URL = "http://localhost:31415/v1";
+
 export type ChatProviderId = "openrouter" | "freellmapi" | "invalid";
 
 export type ActiveChatProvider = {
@@ -73,10 +76,14 @@ export function getActiveChatProvider(
   if (selected === "freellmapi") {
     const apiKey = env.FREELLMAPI_API_KEY?.trim() || "";
     // FREELLMAPI_TUNNEL_URL (secret, synced from the self-hosted tunnel) wins over the static base URL.
-    const baseUrl = trimTrailingSlashes(env.FREELLMAPI_TUNNEL_URL?.trim() || env.FREELLMAPI_BASE_URL?.trim() || "");
+    // FREELLMAPI_TRANSPORT=vpc: reach the Mac over the FREELLMAPI_VPC binding (named tunnel, no public URL).
+    const viaVpc = env.FREELLMAPI_TRANSPORT?.trim().toLowerCase() === "vpc";
+    const baseUrl = viaVpc
+      ? FREELLMAPI_VPC_BASE_URL
+      : trimTrailingSlashes(env.FREELLMAPI_TUNNEL_URL?.trim() || env.FREELLMAPI_BASE_URL?.trim() || "");
     const model = env.FREELLMAPI_CHAT_MODEL?.trim() || "auto";
     const visionModel = env.FREELLMAPI_VISION_MODEL?.trim() || "auto";
-    const urlError = validateFreeLlmApiBaseUrl(baseUrl, env);
+    const urlError = viaVpc ? undefined : validateFreeLlmApiBaseUrl(baseUrl, env);
     const configurationError = urlError || (!apiKey
       ? "FreeLLMAPI is selected, but FREELLMAPI_API_KEY is missing. Use the unified key from your FreeLLMAPI dashboard."
       : undefined);

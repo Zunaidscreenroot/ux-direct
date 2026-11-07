@@ -1,3 +1,4 @@
+import { providerFetch } from "@/src/providers/provider-fetch";
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { buildBrainSystemPrompt, buildRetrievalQuery, resolveBrainScopes } from "@/src/memory/chat-context";
@@ -440,7 +441,7 @@ export async function POST(request: Request) {
     const timer = setTimeout(() => controller.abort(), startupTimeoutMs);
     const promise = (async (): Promise<{ model: string; probe: ProbedStream; controller: AbortController }> => {
       try {
-        const providerResponse = await fetch(endpoint, {
+        const providerResponse = await providerFetch(endpoint, {
           method: "POST",
           headers: {
             Authorization: "Bearer " + key,

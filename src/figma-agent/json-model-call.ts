@@ -1,3 +1,4 @@
+import { providerFetch } from "@/src/providers/provider-fetch";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
 import { figmaAttemptTimeoutMs, figmaModelChain, routedVia, shouldRetryWithoutJsonMode } from "@/src/providers/active-chat-provider";
@@ -52,7 +53,7 @@ export async function callFigmaJsonModel(options: {
     options.signal?.addEventListener("abort", abortFromParent, { once: true });
     const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? figmaAttemptTimeoutMs(provider, index, 60000, 45000));
     try {
-      const response = await fetch(endpoint, {
+      const response = await providerFetch(endpoint, {
         method: "POST",
         headers: {
           Authorization: "Bearer " + provider.apiKey,

@@ -144,3 +144,16 @@ test("FreeLLMAPI Figma calls are uncapped and ask auto for intelligence-first ro
   assert.deepEqual(figmaRoutingHeaders(free), { "X-FreeLLM-Task-Type": "code" });
   assert.deepEqual(figmaRoutingHeaders(openrouter), {});
 });
+
+test("FREELLMAPI_TRANSPORT=vpc routes FreeLLMAPI to the VPC base URL without public-URL checks", async () => {
+  const { FREELLMAPI_VPC_BASE_URL } = await import("../src/providers/active-chat-provider");
+  const provider = getActiveChatProvider({
+    NODE_ENV: "production",
+    UX_DIRECT_MODEL_PROVIDER: "freellmapi",
+    FREELLMAPI_TRANSPORT: "vpc",
+    FREELLMAPI_TUNNEL_URL: "https://stale.trycloudflare.com/v1",
+    FREELLMAPI_API_KEY: "k",
+  });
+  assert.equal(provider.configured, true);
+  assert.equal(provider.baseUrl, FREELLMAPI_VPC_BASE_URL);
+});

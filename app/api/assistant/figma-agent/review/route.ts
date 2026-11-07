@@ -1,3 +1,4 @@
+import { providerFetch } from "@/src/providers/provider-fetch";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { retrieveBrainContext } from "@/src/memory/shared-brain";
@@ -252,7 +253,7 @@ export async function POST(request: Request) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), figmaAttemptTimeoutMs(activeProvider, modelIndex, 60000, 45000));
     try {
-      const response = await fetch(endpoint, {
+      const response = await providerFetch(endpoint, {
         method: "POST",
         headers: {
           Authorization: "Bearer " + apiKey,
