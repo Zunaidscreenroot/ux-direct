@@ -74,7 +74,7 @@ test("concurrency stays under the Worker's 6 connections; roles and route wiring
   assert.match(route, /agencyEnabled\(\) && blockMode && !createMode/);
   assert.match(route, /agency: agencyReport/);
   // The agency runs before the monolithic planner, which stays the fallback.
-  assert.ok(route.indexOf("runAgency(canvas") < route.indexOf("modelLoop: for"));
+  assert.ok(route.indexOf("runAgency(agencySource") > 0 && route.indexOf("runAgency(agencySource") < route.indexOf("modelLoop: for"));
 });
 
 test("hard checks: dropped values, custom trees and nested cards are rejected; container is locked", () => {
@@ -107,4 +107,22 @@ test("agency only runs on a complete layer tree; fake progress rings are rejecte
   const rows = [{ type: "list", items: [{ label: "Outstanding", value: "₹45,000" }, { label: "EMI", value: "₹8,450" }, { label: "Paid", value: "60%" }] }];
   assert.ok("error" in groundDesignerSection(summary, { blocks: [...rows, { type: "progress_ring", label: "Paid" }] }));
   assert.ok(!("error" in groundDesignerSection(summary, { blocks: [...rows, { type: "progress_ring", percent: 60, label: "Paid" }] })));
+});
+
+test("small marks (logos ≤64px) below the read depth do not block the agency", async () => {
+  const { truncatedContentNames } = await import("../src/figma-agent/agency");
+  const canvas = { nodes: [frame("Screen", [{ type: "INSTANCE", name: "Loan Card", width: 320, height: 144, childCount: 1, children: [
+    { type: "GROUP", name: "slice logo", width: 48, height: 20, childCount: 5 }] }], { childCount: 1 })] };
+  assert.deepEqual(truncatedContentNames(canvas), []);
+  assert.deepEqual(truncatedContentNames({ ...canvas, truncated: true }), ["read node cap"]);
+});
+
+test("Director coverage: texts the source split missed go into a kept More details item", () => {
+  const canvas = { ...loanCanvas, nodes: [{ ...loanCanvas.nodes[0], children: [...loanCanvas.nodes[0].children,
+    ...Array.from({ length: 9 }, (_, i) => frame("Extra " + i, [text("Extra value ₹" + (i + 1) + "00")], { fillColors: ["#FFFFFF"] }))] }] };
+  const order = planWorkOrder(canvas, improve)!;
+  const more = order.items.find((item) => item.name === "More details");
+  assert.ok(more && more.designer.keepAsIs);
+  const all = order.items.flatMap((item) => item.sourceTexts);
+  for (let i = 0; i < 9; i++) assert.ok(all.includes("Extra value ₹" + (i + 1) + "00"), "missing extra " + i);
 });

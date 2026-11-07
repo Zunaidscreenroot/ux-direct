@@ -126,7 +126,12 @@ export function agencyHandlesRole(role: TaskRole): boolean {
  * icons are ignored. Returns the number of truncated content nodes (0 = complete).
  */
 export function truncatedContentNodes(canvas: Rec): number {
-  let truncated = 0;
+  return truncatedContentNames(canvas).length;
+}
+
+/** Names of the truncated content nodes (shown in Timing so a skip can be checked). */
+export function truncatedContentNames(canvas: Rec): string[] {
+  const names: string[] = [];
   const visit = (value: unknown) => {
     if (!value || typeof value !== "object") return;
     const node = value as Rec;
@@ -134,12 +139,17 @@ export function truncatedContentNodes(canvas: Rec): number {
     const children = Array.isArray(node.children) ? node.children : [];
     const width = typeof node.width === "number" ? node.width : 999;
     const height = typeof node.height === "number" ? node.height : 999;
-    const icon = width <= 48 && height <= 48;
-    if (!icon && typeof node.childCount === "number" && node.childCount > children.length && !["VECTOR", "BOOLEAN_OPERATION"].includes(String(node.type))) truncated += 1;
+    // Logos, icons and small marks (≤64px) are drawn shapes, not content; their vectors are
+    // often below the read depth (frame 15: the card logos were reported as unread).
+    const mark = width <= 64 && height <= 64;
+    if (!mark && typeof node.childCount === "number" && node.childCount > children.length && !["VECTOR", "BOOLEAN_OPERATION"].includes(String(node.type))) {
+      names.push(String(node.name || node.type).slice(0, 40));
+    }
     for (const child of children) visit(child);
   };
   for (const node of Array.isArray(canvas.nodes) ? canvas.nodes : []) visit(node);
-  return truncated + (canvas.truncated === true ? 1 : 0);
+  if (canvas.truncated === true) names.push("read node cap");
+  return names;
 }
 
 const MAX_BLOCKS_PER_DESIGNER = 12;
@@ -241,7 +251,33 @@ export function planWorkOrder(canvas: Rec, role: TaskRole): WorkOrder | null {
     const keep = new Set(designed.sort((a, b) => b.sourceTexts.length - a.sourceTexts.length).slice(0, MAX_DESIGNERS));
     for (const item of items) if (!item.designer.keepAsIs && !keep.has(item)) item.designer = { ...item.designer, keepAsIs: true };
   }
+  // Coverage: every visible source text must be in some work item. The source split caps
+  // sections and blocks, so anything it missed goes into a kept "More details" item — inserted
+  // deterministically, never left for a model to copy (brain monitor: 7–8 of 34 texts dropped).
+  const covered = norm(items.map((item) => item.sourceTexts.join(" \u0001 ")).join(" \u0001 "));
+  const missing = [...new Set(canvasTexts(canvas))].filter((text) => !covered.includes(norm(text)));
+  if (missing.length) {
+    const extra = { name: "More details", surface: "card", blocks: [{ type: "list", items: missing.map((text) => ({ label: text })) }] };
+    const index = order.length;
+    items.push({ index, name: "More details", designer: { ...SPECIALISTS.information, keepAsIs: true }, source: extra, sourceTexts: missing });
+    order.push({ name: "More details", parts: 1 });
+  }
   return { items, sections: order };
+}
+
+/** Visible TEXT strings of the selected frame, in reading order. */
+export function canvasTexts(canvas: Rec): string[] {
+  const out: string[] = [];
+  const visit = (value: unknown, depth: number) => {
+    if (!value || typeof value !== "object" || depth > 14) return;
+    const node = value as Rec;
+    if (node.visible === false || node.opacity === 0) return;
+    if (node.type === "TEXT" && typeof node.text === "string" && node.text.trim()) out.push(node.text.replace(/\s+/g, " ").trim());
+    for (const child of Array.isArray(node.children) ? node.children : []) visit(child, depth + 1);
+  };
+  const root = Array.isArray(canvas.nodes) ? canvas.nodes[0] : null;
+  visit(root, 0);
+  return out;
 }
 
 const norm = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}₹%.]+/gu, " ").trim();
