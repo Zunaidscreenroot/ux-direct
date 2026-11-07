@@ -718,6 +718,13 @@ function expandLeaf(ctx: Ctx, block: Rec, type: string, width: number, depth: nu
       const isSecondary = !isText && /secondary|outline|outlined/.test(variant);
       const fill = isText ? null : isSecondary ? t.surface : t.primaryFill;
       const fg = isText || isSecondary ? t.primary : t.onPrimary;
+      if (block.compact === true) {
+        // Inline CTA beside an alert: hugs its label at 36px instead of a full-width 48px bar.
+        const small = b.text("Button label", text, W - 24, { size: 13, weight: "Semi Bold", color: fg, bg: fill ?? bg, align: "CENTER", hug: true });
+        return b.hstack(isText ? "Text button" : isSecondary ? "Button / Secondary" : "Button / Primary", W, [small], {
+          pad: [8, 12, 8, 12], fill, radius: Math.min(t.radius, 8), stroke: isSecondary ? t.primary : undefined, justify: "CENTER", align: "CENTER", hugWidth: true, fixedHeight: isText ? undefined : 36,
+        });
+      }
       const textNode = b.text("Button label", text, W - 32, { size: 15, weight: "Semi Bold", color: fg, bg: fill ?? bg, align: "CENTER", hug: true });
       const btn = b.hstack(label(text, isText ? "Text button" : isSecondary ? "Secondary button" : "Primary button"), W, [textNode], {
         pad: [12, 16, 12, 16], fill, radius: t.radius, stroke: isSecondary ? t.primary : undefined, justify: "CENTER", align: "CENTER", fixedHeight: isText ? undefined : 48,
@@ -928,10 +935,15 @@ function expandCard(ctx: Ctx, block: Rec, width: number, depth: number, nameFall
     const headerKids = [titleNode, badgeNodeValue].filter((x): x is NativeNode => !!x);
     kids.push(headerKids.length > 1 ? b.hstack("Card header", inner, headerKids, { gap: 12, justify: "SPACE_BETWEEN", align: "MIN" }) : headerKids[0]);
   }
-  for (const child of alignRowLeading(arr(block.blocks ?? block.children ?? block.items ?? block.content).map(asRec).filter((x): x is Rec => !!x))) {
-    const rec = asRec(child);
-    if (!rec) continue;
+  const cardBlocks = alignRowLeading(arr(block.blocks ?? block.children ?? block.items ?? block.content).map(asRec).filter((x): x is Rec => !!x));
+  for (let index = 0; index < cardBlocks.length; index += 1) {
+    const rec = cardBlocks[index];
     const type = blockType(rec);
+    const next = cardBlocks[index + 1];
+    // A ring/visual keeps its metrics beside it (source row grouping), and an alert keeps its single
+    // CTA inline, so cards stay compact and the screen keeps its height budget (benchmark gaps 4, 5).
+    const paired = next ? pairCardBlocks(cardCtx, rec, next, inner, depth + 1) : null;
+    if (paired) { kids.push(paired); index += 1; continue; }
     if (type === "card") {
       // Cards never nest: keep the content, drop the extra surface.
       b.warnings.push("Flattened a card nested inside another card.");
@@ -945,6 +957,77 @@ function expandCard(ctx: Ctx, block: Rec, width: number, depth: number, nameFall
   if (!kids.length) return null;
   const name = clean(block.name, 80) || (title ? label(title, "Card") : nameFallback);
   return b.vstack(name, width, kids, { gap: 12, pad: [16, 16, 16, 16], fill: t.surface, radius: t.radius, stroke: t.border });
+}
+
+function singleButton(block: Rec): Rec | null {
+  const type = blockType(block);
+  if (type === "button") return block;
+  if (type !== "buttons") return null;
+  const items = arr(block.items ?? block.buttons ?? block.actions).map((item) => typeof item === "string" ? { label: item } : asRec(item)).filter((x): x is Rec => !!x);
+  return items.length === 1 ? { variant: "primary", ...items[0] } : null;
+}
+
+/**
+ * Two adjacent card blocks that belong in one horizontal row:
+ * - a progress ring followed by its metrics (stat_row, stat, or a short list) → ring | metrics;
+ * - an alert (banner or text) followed by one short button → alert text | compact button.
+ * Returns null when the pair does not apply, so the blocks render stacked as before.
+ */
+function pairCardBlocks(ctx: Ctx, first: Rec, second: Rec, width: number, depth: number): NativeNode | null {
+  const { b, t, bg } = ctx;
+  const a = blockType(first) || inferBlockType(first);
+  const c = blockType(second) || inferBlockType(second);
+  if (a === "progress_ring" && ["stat_row", "stat", "list", "row"].includes(c)) {
+    const listItems = c === "list" ? arr(second.items ?? second.rows) : [];
+    if (c === "list" && (listItems.length < 1 || listItems.length > 3)) return null;
+    if (c === "stat_row" && arr(second.items ?? second.stats ?? second.metrics).length > 3) return null;
+    const ring = expandLeaf(ctx, { ...first, label: undefined, title: undefined, caption: undefined, subtitle: undefined }, "progress_ring", 72, depth + 1);
+    if (!ring) return null;
+    const restW = Math.max(120, width - ring.width - 16);
+    if (restW < 160) return null;
+    const lbl = clean(first.label ?? first.title, 120);
+    const caption = clean(first.caption ?? first.subtitle, 200);
+    const head: NativeNode[] = [];
+    if (lbl) head.push(b.text("Progress label", lbl, restW, { size: 15, weight: "Semi Bold", color: t.text, bg }));
+    if (caption) head.push(b.text("Progress caption", caption, restW, { size: 13, color: t.muted, bg }));
+    const metrics = expandBlock(ctx, second, restW, depth + 1);
+    if (!metrics.length) return null;
+    // Without a ring label, stat cells sit straight in the row (ring | stat | stat), keeping the tree shallow.
+    if (!head.length && metrics.length === 1 && metrics[0].layoutMode === "HORIZONTAL" && metrics[0].name === "Stats row") {
+      const cells = metrics[0].children ?? [];
+      b.count -= 1;
+      return b.hstack("Body", width, [ring, ...cells], { gap: 16, align: "CENTER" });
+    }
+    const column = b.vstack("Stats", restW, [...head, ...metrics], { gap: head.length ? 8 : 4 });
+    column.layoutGrow = 1;
+    return b.hstack("Body", width, [ring, column], { gap: 16, align: "CENTER" });
+  }
+  const button = singleButton(second);
+  if ((a === "banner" || a === "text") && button) {
+    const btnLabel = clean(button.label ?? button.text ?? button.title, 60);
+    if (!btnLabel || btnLabel.length > 18) return null;
+    // A long paragraph keeps its full-width button below it; only a short alert line goes inline.
+    if (a === "text" && clean(first.text ?? first.value ?? first.content ?? first.body ?? first.label, 1200).length > 60) return null;
+    const btn = expandLeaf(ctx, { ...button, compact: true }, "button", width / 2, depth + 1);
+    if (!btn) return null;
+    const kind = tone(first.tone ?? first.variant ?? (a === "banner" ? "info" : "neutral"));
+    const accent = kind === "neutral" ? t.primary : toneColor(t, kind);
+    const fill = a === "banner" ? mix(t.surface, accent, t.dark ? 0.18 : 0.08) : null;
+    const pad: [number, number, number, number] = a === "banner" ? [12, 12, 12, 16] : [0, 0, 0, 0];
+    const textW = Math.max(80, width - btn.width - 12 - pad[1] - pad[3]);
+    const title = clean(first.title ?? (a === "text" ? first.text ?? first.value ?? first.label : first.text), a === "text" ? 600 : 160);
+    const body = a === "banner" ? clean(first.body ?? first.description ?? first.message, 400) : "";
+    const texts: NativeNode[] = [];
+    const textBg = fill ?? bg;
+    if (title) texts.push(b.text(a === "banner" ? "Alert title" : "Alert text", title, textW, { size: a === "banner" ? 14 : 13, weight: a === "banner" && body ? "Semi Bold" : "Regular", color: a === "text" && kind !== "neutral" ? accent : t.text, bg: textBg }));
+    if (body) texts.push(b.text("Alert body", body, textW, { size: 13, color: t.text, bg: textBg }));
+    if (!texts.length) return null;
+    const textNode = texts.length > 1 ? b.vstack("Alert text", textW, texts, { gap: 4 }) : texts[0];
+    textNode.layoutGrow = 1;
+    textNode.layoutSizingHorizontal = "FILL";
+    return b.hstack("Alert", width, [textNode, btn], { gap: 12, pad, fill, radius: fill ? t.radius : undefined, stroke: fill ? mix(t.surface, accent, 0.35) : undefined, justify: "SPACE_BETWEEN", align: "CENTER" });
+  }
+  return null;
 }
 
 function expandBlock(ctx: Ctx, block: Rec, width: number, depth: number): NativeNode[] {
@@ -1302,6 +1385,7 @@ export const BLOCK_SPEC_CONTRACT = [
   "- card {title?, subtitle?, badge?: {text, tone}, blocks:[...]}  — a card inside a plain section (cards do not nest)",
   "- component {componentId, name, instanceProperties?, height?}  — a REAL design-system component; componentId must be an exact id from canvas.components; prefer this for buttons, inputs, tabs, nav, list items when the file has them",
   "- custom {node: native FRAME/TEXT/RECTANGLE/ELLIPSE tree with type,name,width,height,color,...}  — escape hatch ONLY for something no block can express; keep it small",
+  "LAYOUT: inside a card, put a progress_ring directly before its stat_row (they render side by side), and an alert (banner) directly before its one action button (the button renders inline beside it). Keep the source's card count and screen height; do not add full-width buttons the source did not have.",
   "tone values: success|warning|danger|info|neutral. Budget: about 15–35 blocks, max 105 native layers after rendering.",
   "Copy every meaningful source string (labels, amounts, dates, statuses, actions) into block fields exactly as written. Put content in the block that matches its meaning (amount → stat or row value, status → badge/status, % paid ring → progress_ring).",
 ].join("\n");
