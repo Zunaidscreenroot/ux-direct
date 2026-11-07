@@ -394,7 +394,7 @@ export async function gatewayChatCompletion(rawBody: string, headers: Headers, s
     providers: withModels, role, promptTokens: estimatePromptTokens(body), vision: hasImages(body),
     usage, cooldowns, localHits, pinned, maxAttempts,
   });
-  if (!candidates.length && pinned) {
+  if (!candidates.length && pinned && !headers.get("x-uxd-gateway-strict")) {
     candidates = rankCandidates({ providers: withModels, role, promptTokens: estimatePromptTokens(body), vision: hasImages(body), usage, cooldowns, localHits, maxAttempts });
   }
   if (!candidates.length) {

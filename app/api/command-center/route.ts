@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { commandCenterLockedResponse, isCommandCenterAuthorized } from "@/src/command-center/access";
 import { ACTIVITY_WINDOW_DAYS, loadRecentActivity, summarizeActivity } from "@/src/command-center/activity";
 import { loadSharedKnowledge } from "@/src/command-center/knowledge";
-import { loadModelAnalytics } from "@/src/command-center/models";
+import { checkGatewayProviders, loadModelAnalytics } from "@/src/command-center/models";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +21,9 @@ export async function GET(request: Request) {
     if (view === "activity") {
       const items = await loadRecentActivity(ACTIVITY_WINDOW_DAYS);
       return NextResponse.json({ items, summary: summarizeActivity(items) }, { headers });
+    }
+    if (view === "models-check") {
+      return NextResponse.json(await checkGatewayProviders(), { headers });
     }
     if (view === "models") {
       const hours = Number(new URL(request.url).searchParams.get("hours")) || 24;
