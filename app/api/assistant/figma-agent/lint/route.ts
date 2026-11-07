@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { runStructuralLint, summarizeStructuralLint } from "@/src/figma-agent/structural-lint";
+import { SCREEN_STATES, stateDroppableTexts } from "@/src/figma-agent/screen-states";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,11 +40,14 @@ export async function POST(request: Request) {
     outputCanvas: z.unknown(),
     sourceRootId: z.string().max(100).optional(),
     outputRootId: z.string().max(100).optional(),
+    /** States pack: the texts an empty/loading state drops on purpose are not "missing". */
+    state: z.enum(SCREEN_STATES).optional(),
   }).strict().safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Lint input is invalid.", details: parsed.error.issues }, { status: 400, headers });
   if (JSON.stringify(parsed.data.outputCanvas ?? null).length > 400_000 || JSON.stringify(parsed.data.sourceCanvas ?? null).length > 400_000) {
     return NextResponse.json({ error: "Canvas evidence is too large to lint." }, { status: 413, headers });
   }
-  const result = runStructuralLint(parsed.data);
+  const { state, ...lintInput } = parsed.data;
+  const result = runStructuralLint({ ...lintInput, ignoreTexts: stateDroppableTexts(lintInput.sourceCanvas, state ?? null) });
   return NextResponse.json({ ok: true, ...result, summary: summarizeStructuralLint(result) }, { headers });
 }

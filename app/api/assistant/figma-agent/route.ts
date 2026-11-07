@@ -15,6 +15,7 @@ import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-prov
 import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
+import { SCREEN_STATES, STATE_BRIEFS, stateFallbackSpec, stateGatePrompt } from "@/src/figma-agent/screen-states";
 import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, promptRequestsWireframe, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
 import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
@@ -523,6 +524,8 @@ export async function POST(request: Request) {
     capabilities: z.array(z.string().trim().max(40)).max(20).optional(),
     /** Position in a "Create N variations" batch (0-based); later ones get a different direction. */
     variation: z.object({ index: z.number().int().min(0).max(3), count: z.number().int().min(1).max(4) }).optional(),
+    /** States pack: render the empty / loading / error / success version of the selected screen. */
+    state: z.enum(SCREEN_STATES).optional(),
   }).strict();
   const parsedInput = requestSchema.safeParse(input);
   if (!parsedInput.success) return NextResponse.json({ error: "Invalid Figma agent request.", details: parsedInput.error.issues.map((issue) => (issue.path.length ? issue.path.join(".") + ": " : "request: ") + issue.message) }, { status: 400, headers });
@@ -551,6 +554,9 @@ export async function POST(request: Request) {
       /\b(card|component|widget|tile|row|button|panel|item|summary|breakdown|loan)\b/i.test(selectedName) &&
       !/\b(screen|page|dashboard|flow)\b/i.test(selectedName));
   const designScope = componentSelection ? "selected_component_or_card" : "selected_screen_or_frame";
+  // State runs (empty/loading/...) keep their own verified examples, so they never steer a normal
+  // improve toward an empty screen, and a state gets examples of the same state.
+  const exampleScope = parsedInput.data.state ? designScope + ":state-" + parsedInput.data.state : designScope;
   const blockMode = (process.env.UXD_FIGMA_PLAN_MODE || "blocks").trim().toLowerCase() !== "legacy";
   const blockOperatingContract = [
     "Treat the user's short prompt as the requested design change, not as the full procedure. Apply the built-in senior designer workflow automatically.",
@@ -610,7 +616,7 @@ export async function POST(request: Request) {
   const variationDirection = parsedInput.data.variation ? variationIndex + 1 : 0;
   // Later variations must not be anchored to the same verified structure as the first.
   const verifiedExamplePromise = blockMode && !parsedInput.data.variation
-    ? loadVerifiedExample(taskScope, designScope).catch(() => "")
+    ? loadVerifiedExample(taskScope, exampleScope).catch(() => "")
     : Promise.resolve("");
   let brain: BrainContextPromptInput = { contextText: "", status: "degraded", memoryCount: 0, knowledgeChunkCount: 0, durationMs: 0 };
   let taskRetrieval: RetrievalRecord = { status: "degraded", memoryIds: [], chunkIds: [], chars: 0 };
@@ -662,7 +668,8 @@ export async function POST(request: Request) {
   const exampleInstructions = verifiedExample
     ? "\nVERIFIED TEAM EXAMPLE — the block structure of an earlier output that passed UX Direct's quality gate. Texts are replaced by <source text>. Follow its way of choosing sections and blocks for similar content; never copy it, and use only this screen's real content: " + verifiedExample
     : "";
-  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + "\n" + agentBrief.instructions + exampleInstructions, brain);
+  const stateInstructions = parsedInput.data.state ? "\n" + STATE_BRIEFS[parsedInput.data.state] : "";
+  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + stateInstructions + "\n" + agentBrief.instructions + exampleInstructions, brain);
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its configured free-model chain.
   // Both are bounded by compact retry and the shared generation deadline.
@@ -727,6 +734,9 @@ export async function POST(request: Request) {
     .map((component) => component.id).filter((id): id is string => typeof id === "string"));
   const styleSets = canvas.styles && typeof canvas.styles === "object" ? canvas.styles as Record<string, unknown> : {};
   const wireframeRequest = promptRequestsWireframe(parsedInput.data.prompt);
+  const screenState = parsedInput.data.state ?? null;
+  // Gates read the prompt plus the texts the state intentionally drops (header and nav stay guarded).
+  const gatePrompt = stateGatePrompt(parsedInput.data.prompt, screenState, rawSourceCanvas ?? canvas);
   /** Every deterministic gate a model answer must pass before anything is written to Figma. */
   const renderCandidate = (candidateInput: unknown): Candidate => {
     // A block spec is rendered deterministically; a raw layer tree (legacy mode or a model
@@ -750,7 +760,7 @@ export async function POST(request: Request) {
       return { stage: "schema", blockSpec, error: "invalid design plan schema (" + issues + ")",
         feedback: "The previous plan failed native Figma schema validation: " + issues + ". Return a corrected complete plan; do not repeat these errors." };
     }
-    const quality = auditDesignPlanQuality(parsedPlan.data, canvas, parsedInput.data.prompt);
+    const quality = auditDesignPlanQuality(parsedPlan.data, canvas, gatePrompt);
     if (!quality.passed) {
       const issues = quality.findings.slice(0, 8)
         .map((finding) => finding.code + ": " + finding.message).join("; ");
@@ -822,7 +832,7 @@ export async function POST(request: Request) {
     const { candidate } = success;
     deferTaskWork(recordGeneration(taskRunId, {
       model: success.servedModel, routedVia: success.routed,
-      planFormat: candidate.blockSpec ? "blocks" : "elements", designScope,
+      planFormat: candidate.blockSpec ? "blocks" : "elements", designScope: exampleScope,
       qualityScore: candidate.quality?.score, themeLocked: success.themeLocked,
       repairedTexts: success.repairedTexts, attempts: attemptLog,
     }, candidate.blockSpec && !success.sourceFallback ? success.spec : null));
@@ -1062,7 +1072,7 @@ export async function POST(request: Request) {
         // back in, so a weaker model can't lose content and doesn't need another attempt.
         if (candidate.stage === "quality" && candidate.plan && isBlockSpec(specInput) &&
             candidate.quality?.findings.every((finding) => finding.code === "missing-source-content")) {
-          const missing = missingSourceTexts(candidate.plan, canvas, parsedInput.data.prompt);
+          const missing = missingSourceTexts(candidate.plan, canvas, gatePrompt);
           if (missing.length && missing.length <= MAX_REPAIRED_TEXTS) {
             const repairedSpec = appendMissingSourceText(specInput, missing);
             const repaired = renderCandidate(repairedSpec);
@@ -1112,7 +1122,8 @@ export async function POST(request: Request) {
   if (blockMode) {
     // The full read: the model-facing canvas is cut at depth 6, which dropped every card title,
     // ID, label and amount (they sit 7–8 levels deep) from the fallback (findings 27, 42).
-    const sourceSpec = sourceFallbackSpec(rawSourceCanvas ?? canvas);
+    const baseSpec = sourceFallbackSpec(rawSourceCanvas ?? canvas);
+    const sourceSpec = baseSpec && screenState ? stateFallbackSpec(baseSpec, screenState, rawSourceCanvas ?? canvas) : baseSpec;
     if (sourceSpec) {
       const stabilized = stabilizeBlockSpec(sourceSpec, canvas, parsedInput.data.prompt);
       // Say why the model answers were not used (timeout, parse error, schema, quality gate). This
@@ -1132,7 +1143,7 @@ export async function POST(request: Request) {
       errors.push("source-fallback: " + candidate.error);
     }
   }
-  deferTaskWork(recordGeneration(taskRunId, { model: lastServedModel || models[0] || "unknown", planFormat: "none", designScope,
+  deferTaskWork(recordGeneration(taskRunId, { model: lastServedModel || models[0] || "unknown", planFormat: "none", designScope: exampleScope,
     attempts: errors.map((entry) => ({ model: entry.split(":")[0] || "unknown", result: entry })) }, null));
   deferTaskWork(finishTaskRun({ id: taskRunId, outcome: "failed", durationMs: Date.now() - requestStartedAt,
     retrieval: taskRetrieval, errorSummary: errors[0] || "Plan generation failed." }));
