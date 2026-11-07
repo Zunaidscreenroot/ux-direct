@@ -199,6 +199,21 @@ export function repairPlanGeometry(value: unknown): unknown {
     // Descendants must be repaired before parent heights are recomputed.
     for (const child of children) repairNode(child, false, depth + 1);
 
+    // A child that grew during its own repair (a badge that got a cloned icon hugs wider) can
+    // push a fixed row past its width after it was allocated: wrap it rather than fail the
+    // fixed-layout-overflow preflight (finding 65, "Card header").
+    if (mode === "HORIZONTAL" && node.layoutWrap !== "WRAP" && node.layoutSizingHorizontal !== "HUG" && node.primaryAxisSizingMode !== "AUTO") {
+      const total = padL + padR + flow.reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "width", 1)), 0) + Math.max(0, flow.length - 1) * gap;
+      const rowWidth = repairGeometryNumber(node, "width", width);
+      if (total > rowWidth + 2) {
+        node.layoutWrap = "WRAP";
+        node.counterAxisSizingMode = "AUTO";
+        if (node.layoutSizingVertical === "FIXED") node.layoutSizingVertical = "HUG";
+        const budget = Math.max(1, rowWidth - padL - padR);
+        for (const child of flow) if (repairGeometryNumber(child, "width", 1) > budget) fitWidth(child, budget, mode);
+      }
+    }
+
     if (mode === "VERTICAL" && !isViewport) {
       const requiredHeight = padT + padB +
         flow.reduce((sum, child) => sum + Math.max(1, repairGeometryNumber(child, "height", 1)), 0) +
