@@ -116,3 +116,13 @@ test("small marks (logos ≤64px) below the read depth do not block the agency",
   assert.deepEqual(truncatedContentNames(canvas), []);
   assert.deepEqual(truncatedContentNames({ ...canvas, truncated: true }), ["read node cap"]);
 });
+
+test("Director coverage: texts the source split missed go into a kept More details item", () => {
+  const canvas = { ...loanCanvas, nodes: [{ ...loanCanvas.nodes[0], children: [...loanCanvas.nodes[0].children,
+    ...Array.from({ length: 9 }, (_, i) => frame("Extra " + i, [text("Extra value ₹" + (i + 1) + "00")], { fillColors: ["#FFFFFF"] }))] }] };
+  const order = planWorkOrder(canvas, improve)!;
+  const more = order.items.find((item) => item.name === "More details");
+  assert.ok(more && more.designer.keepAsIs);
+  const all = order.items.flatMap((item) => item.sourceTexts);
+  for (let i = 0; i < 9; i++) assert.ok(all.includes("Extra value ₹" + (i + 1) + "00"), "missing extra " + i);
+});
