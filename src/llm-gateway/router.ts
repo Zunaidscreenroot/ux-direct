@@ -1,7 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 import {
-  configuredProviders, freeModelsFromListing, modelLimits, modelSupportsVision, modelTier, providerKeys,
+  configuredProviders, freeModelsFromListing, isAllowedModel, modelLimits, modelSupportsVision, modelTier, providerKeys,
   type ProviderDef, type Tier,
 } from "./catalog";
 import { readModelUsage, writeCalls, type CallRecord, type ModelUsage } from "./call-log";
@@ -39,7 +39,7 @@ function cfEnv(): Record<string, unknown> {
   try { return getCloudflareContext().env as unknown as Record<string, unknown>; } catch { return {}; }
 }
 
-function gatewayEnv(): Env {
+export function gatewayEnv(): Env {
   const env: Env = { ...process.env };
   for (const [key, value] of Object.entries(cfEnv())) if (typeof value === "string" && env[key] === undefined) env[key] = value;
   return env;
@@ -205,6 +205,7 @@ export function rankCandidates(input: {
       if (today >= Math.floor(provider.accountRpd * 0.9)) continue;
     }
     for (const model of models) {
+      if (!isAllowedModel(provider, model)) continue;
       if (input.pinned && (input.pinned.model !== model || (input.pinned.provider && input.pinned.provider !== provider.id))) continue;
       const key = slot(provider.id, model);
       if ((input.cooldowns.get(key) ?? 0) > now) continue;
@@ -449,6 +450,8 @@ export async function gatewayChatCompletion(rawBody: string, headers: Headers, s
     if (signal?.aborted) { errors.push("stopped by caller"); break; }
     const { provider, model } = candidates[index];
     const key = slot(provider.id, model);
+    // Never send a paid OpenRouter id, whatever the ranking or a pinned request says.
+    if (!isAllowedModel(provider, model)) { errors.push(key + ": refused (not a :free model)"); continue; }
     const keys = providerKeys(provider, env);
     const apiKey = keys.length ? keys[(keyCursor++) % keys.length] : "";
     const payload = providerBody(provider, model, body, !plainRetryAt.has(index));

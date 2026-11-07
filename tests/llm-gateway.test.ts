@@ -191,8 +191,8 @@ test("OpenRouter's account-wide daily cap and free-tier-only models are respecte
     { provider: byId("groq"), models: ["openai/gpt-oss-120b"] },
   ];
   const usage = new Map([
-    ["openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", { provider: "openrouter", model: "x", lastMinute: 0, today: 30, tokensToday: 0, calls24h: 30, ok24h: 30, avgLatencyMs: 0 }],
-    ["openrouter/google/gemma-4-31b-it:free", { provider: "openrouter", model: "y", lastMinute: 0, today: 16, tokensToday: 0, calls24h: 16, ok24h: 16, avgLatencyMs: 0 }],
+    ["openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", { provider: "openrouter", model: "x", lastMinute: 0, today: 600, tokensToday: 0, calls24h: 600, ok24h: 600, avgLatencyMs: 0 }],
+    ["openrouter/google/gemma-4-31b-it:free", { provider: "openrouter", model: "y", lastMinute: 0, today: 300, tokensToday: 0, calls24h: 300, ok24h: 300, avgLatencyMs: 0 }],
   ]);
   const ranked = rankCandidates({ providers, role: "lead", promptTokens: 500, vision: false, usage, cooldowns: new Map(), localHits: new Map(), random: fixedRandom });
   assert.deepEqual(ranked.map((candidate) => candidate.provider.id), ["groq"]);
@@ -207,4 +207,20 @@ test("Workers AI answers are read from chat, legacy and Responses-API shapes", a
   assert.equal(workersAiText({ choices: [{ message: { content: "a" } }] }), "a");
   assert.equal(workersAiText({ response: "b" }), "b");
   assert.equal(workersAiText({ output: [{ type: "reasoning", content: [{ type: "reasoning_text", text: "think" }] }, { type: "message", content: [{ type: "output_text", text: "c" }] }] }), "c");
+});
+
+test("OpenRouter paid models are never routed, even when pinned or listed in an override", async () => {
+  const { isAllowedModel } = await import("../src/llm-gateway/catalog");
+  assert.equal(isAllowedModel(byId("openrouter"), "openai/gpt-5"), false);
+  assert.equal(isAllowedModel(byId("openrouter"), "nvidia/nemotron-3-ultra-550b-a55b:free"), true);
+  const [openrouter] = configuredProviders({ OPENROUTER_API_KEY: "k", UXD_GW_OPENROUTER_MODELS: "openai/gpt-5,google/gemma-4-31b-it:free", UXD_GW_OPENROUTER_RPD: "50" }, false);
+  assert.deepEqual(openrouter.models, ["google/gemma-4-31b-it:free"]);
+  assert.equal(openrouter.accountRpd, 50);
+  assert.equal(configuredProviders({ OPENROUTER_API_KEY: "k" }, false)[0].accountRpd, 1000);
+  const ranked = rankCandidates({
+    providers: [{ provider: byId("openrouter"), models: ["anthropic/claude-x", "google/gemma-4-31b-it:free"] }],
+    role: "lead", promptTokens: 100, vision: false, usage: new Map(), cooldowns: new Map(), localHits: new Map(), random: fixedRandom,
+    pinned: { provider: "openrouter", model: "anthropic/claude-x" },
+  });
+  assert.deepEqual(ranked, []);
 });

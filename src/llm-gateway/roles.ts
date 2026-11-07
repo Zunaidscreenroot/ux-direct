@@ -15,8 +15,8 @@
  *  - Gemini flash family: strong, vision, 1M context; each model has its own small daily quota,
  *    so spreading across 3.5/3.6/3.7/3.8/2.5-flash multiplies capacity. Pro: 100/day.
  *  - Workers AI (binding): gpt-oss-120b, nemotron-3-120b, qwq-32b, llama-3.3-70b; no key, neurons/day.
- *  - OpenRouter :free: nemotron ultra (strong), nemotron super-vl (vision); only 50 calls/day for the
- *    whole account, so it is reserved for review and director judgement, never bulk work.
+ *  - OpenRouter :free only (paid ids are refused in code): nemotron ultra (strong), nemotron super-vl
+ *    (vision), gemma-4; 1000 calls/day for the whole account (it holds credit), 20 RPM per model.
  *  - Mistral free tier: codestral (mistral-code-latest) and ministral 3b/8b/14b; large/medium are paid.
  *  - Z.ai glm-4.5-flash: free but slow; a far fallback.
  */
@@ -88,13 +88,13 @@ export const ROLE_ROUTES: Record<Exclude<GatewayRole, "planner" | "section-desig
     purpose: "UX designer: research, synthesis, audit, benchmarking, flows and wireframes.",
     tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 60_000, maxAttempts: 7,
     primary: [GROQ_120, WAI_120],
-    fallback: [WAI_NEMO, CEREBRAS, MI_CODE, WAI_QWQ, GROQ_QWEN, GEM_FLASH, OR_GEMMA, MI_14, ZAI],
+    fallback: [WAI_NEMO, OR_ULTRA, CEREBRAS, MI_CODE, WAI_QWQ, GROQ_QWEN, GEM_FLASH, OR_GEMMA, MI_14, ZAI],
   },
   "ui-designer": {
     purpose: "UI designer: visual design on approved wireframes, components, type, colour, spacing.",
     tiers: ["strong", "medium", "fast"], lowLatency: true, attemptTimeoutMs: 50_000, maxAttempts: 7,
     primary: [WAI_120, GROQ_120, WAI_NEMO],
-    fallback: [MI_CODE, CEREBRAS, GROQ_KIMI, GROQ_QWEN, GEM_FLASH, OR_GEMMA, WAI_LLAMA70, MI_14, ZAI],
+    fallback: [OR_VL, MI_CODE, CEREBRAS, GROQ_KIMI, GROQ_QWEN, GEM_FLASH, OR_GEMMA, WAI_LLAMA70, MI_14, ZAI],
   },
   researcher: {
     purpose: "Researcher: domain, user and pattern research from the knowledge base; long context.",

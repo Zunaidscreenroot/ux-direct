@@ -54,7 +54,9 @@ export const PROVIDERS: ProviderDef[] = [
   {
     id: "openrouter", label: "OpenRouter (free)", baseUrl: "https://openrouter.ai/api/v1", keyEnv: ["OPENROUTER_API_KEY"],
     models: ["nvidia/nemotron-3-ultra-550b-a55b:free", "nvidia/nemotron-3.5-super-vl:free", "google/gemma-4-31b-it:free", "dots-studio/dots-3-note-preview:free"],
-    rpm: 20, rpd: 50, accountRpd: 50, maxInputTokens: 100_000, maxOutputTokens: 32_000, discover: true,
+    // Free models only, never paid ones (hard guard: isAllowedModel). With $10+ credit on the account the
+    // free-model allowance is 1000 calls a day (else 50); override with UXD_GW_OPENROUTER_RPD.
+    rpm: 20, rpd: 1_000, accountRpd: 1_000, maxInputTokens: 100_000, maxOutputTokens: 32_000, discover: true,
   },
   {
     id: "mistral", label: "Mistral", baseUrl: "https://api.mistral.ai/v1", keyEnv: ["MISTRAL_API_KEY"],
@@ -140,6 +142,15 @@ function envModelsName(provider: ProviderDef): string {
   return "UXD_GW_" + provider.id.toUpperCase().replace(/-/g, "_") + "_MODELS";
 }
 
+/**
+ * Hard guard against paid calls: OpenRouter ids must end in ":free". Its account holds credit, so a
+ * paid id would be billed; free-tier-only providers cannot bill at all.
+ */
+export function isAllowedModel(provider: Pick<ProviderDef, "id">, model: string): boolean {
+  if (provider.id === "openrouter") return /:free$/.test(model.trim());
+  return true;
+}
+
 /** Providers the gateway can call right now (key present, or binding for Workers AI). */
 export function configuredProviders(env: Env, hasAiBinding: boolean): ProviderDef[] {
   const disabled = new Set(csv(env.UXD_GW_DISABLED_PROVIDERS).map((id) => id.toLowerCase()));
@@ -148,8 +159,10 @@ export function configuredProviders(env: Env, hasAiBinding: boolean): ProviderDe
     if (provider.id === "workers-ai") return hasAiBinding && env.UXD_GW_WORKERS_AI !== "off";
     return providerKeys(provider, env).length > 0;
   }).map((provider) => {
-    const override = csv(env[envModelsName(provider)]);
-    return override.length ? { ...provider, models: override, discover: false } : provider;
+    const override = csv(env[envModelsName(provider)]).filter((model) => isAllowedModel(provider, model));
+    const rpdOverride = Number(env["UXD_GW_" + provider.id.toUpperCase().replace(/-/g, "_") + "_RPD"]);
+    const base = Number.isFinite(rpdOverride) && rpdOverride > 0 ? { ...provider, rpd: rpdOverride, accountRpd: provider.accountRpd ? rpdOverride : undefined } : provider;
+    return override.length ? { ...base, models: override, discover: false } : base;
   });
 }
 
@@ -167,7 +180,7 @@ export function freeModelsFromListing(provider: ProviderDef, payload: unknown): 
     if (provider.id === "openrouter") {
       const pricing = record.pricing && typeof record.pricing === "object" ? record.pricing as Record<string, unknown> : {};
       const free = id.endsWith(":free") && Number(pricing.prompt ?? 0) === 0 && Number(pricing.completion ?? 0) === 0;
-      if (!free) continue;
+      if (!free || !isAllowedModel(provider, id)) continue;
     }
     if (provider.id === "gemini" && !/^gemini-/.test(id)) continue;
     if (record.active === false) continue;
