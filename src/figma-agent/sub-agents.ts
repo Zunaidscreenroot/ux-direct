@@ -12,6 +12,8 @@
  * time out; the planner then runs with the deterministic role/domain detection alone.
  */
 import { callFigmaJsonModel, type JsonModelContent } from "@/src/figma-agent/json-model-call";
+import { readR2Json, writeR2Json } from "@/src/storage/r2-json-store";
+import { deferTaskWork } from "@/src/memory/task-run-log";
 import { detectDomain, domainById, roleInstructions, type DomainProfile, type TaskRole } from "@/src/figma-agent/agent-roles";
 
 type Rec = Record<string, unknown>;
@@ -51,7 +53,7 @@ export function subAgentsEnabled(): boolean {
 
 function subAgentTimeoutMs(): number {
   const value = Number(process.env.UXD_SUB_AGENT_TIMEOUT_MS);
-  return Number.isFinite(value) && value >= 5000 ? Math.min(value, 60000) : 12000;
+  return Number.isFinite(value) && value >= 5000 ? Math.min(value, 60000) : 25000;
 }
 
 const AGENT_RULES = "You are one sub-agent in a team; another model will design the screen from your notes. Report only what the request, the source text list and the screenshot show. If something is unclear, say \"unknown\" rather than guessing. Return one JSON object only, no markdown.";
@@ -94,7 +96,7 @@ function sharedContext(input: SubAgentInput, extra: Rec = {}): string {
     designScope: input.designScope,
     selectedNode: input.selectedNode,
     sourceTexts: input.sourceTexts.slice(0, 80),
-    screenshot: input.renderedScreen ? "attached to the UX analyst only" : "not available",
+    screenshot: "not sent (the planner sees it); work from sourceTexts and selectedNode",
     ...extra,
   });
 }
@@ -114,7 +116,7 @@ async function runAgent(
       system: AGENT_RULES + "\n" + system,
       user: userContent(user, image),
       hasVisionInput: Boolean(image),
-      maxTokens: 1800,
+      maxTokens: 900,
       temperature: 0.1,
       title: "UX Direct sub-agent: " + agent,
       origin: input.origin,
@@ -160,9 +162,49 @@ const BRIEF_TTL_MS = 15 * 60 * 1000;
 const BRIEF_CACHE_SIZE = 30;
 const IN_FLIGHT = new Map<string, { full: Promise<AgentBrief>; partial: () => AgentBrief }>();
 
+// The key is the source frame and the role, not the prompt: variation runs append their own
+// direction to the prompt, and a brief describes the screen, which those runs share.
 function briefCacheKey(input: SubAgentInput): string {
-  return [input.role.id, input.designScope, input.prompt.trim().toLowerCase(), input.selectedNode.name,
+  return [input.role.id, input.designScope, input.selectedNode.name,
     input.selectedNode.width, input.selectedNode.height, input.sourceTexts.join("\u0001")].join("\u0002");
+}
+
+async function r2BriefKey(key: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+  return "uxd-agent-briefs/" + Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 40) + ".json";
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([promise.catch(() => fallback), new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
+}
+
+function asCached(brief: AgentBrief): AgentBrief {
+  return { ...brief, runs: brief.runs.map((run) => ({ ...run, ms: 0, cached: true })) };
+}
+
+/**
+ * A brief cached for this frame, from this isolate's memory or the shared R2 bucket
+ * (so another Worker isolate's run counts too). Never waits more than 1.5 s.
+ */
+export async function cachedBrief(input: SubAgentInput): Promise<AgentBrief | null> {
+  const key = briefCacheKey(input);
+  const hit = BRIEF_CACHE.get(key);
+  if (hit && Date.now() - hit.at < BRIEF_TTL_MS) return asCached(hit.brief);
+  const stored = await withTimeout((async () => {
+    const record = await readR2Json<{ at: number; brief: AgentBrief }>(await r2BriefKey(key));
+    return record && typeof record.at === "number" && Date.now() - record.at < BRIEF_TTL_MS && record.brief?.instructions ? record : null;
+  })(), 1500, null);
+  if (!stored) return null;
+  BRIEF_CACHE.set(key, stored);
+  return asCached(stored.brief);
+}
+
+async function storeBrief(input: SubAgentInput, brief: AgentBrief): Promise<void> {
+  const key = briefCacheKey(input);
+  if (BRIEF_CACHE.size >= BRIEF_CACHE_SIZE) BRIEF_CACHE.delete(BRIEF_CACHE.keys().next().value as string);
+  const record = { at: Date.now(), brief };
+  BRIEF_CACHE.set(key, record);
+  await withTimeout(r2BriefKey(key).then((objectKey) => writeR2Json(objectKey, record)), 3000, undefined);
 }
 
 export function clearBriefCache(): void {
@@ -179,20 +221,16 @@ export function clearBriefCache(): void {
  */
 export async function runSubAgents(input: SubAgentInput, options: { waitMs?: number } = {}): Promise<AgentBrief> {
   const key = briefCacheKey(input);
-  const hit = BRIEF_CACHE.get(key);
-  if (hit && Date.now() - hit.at < BRIEF_TTL_MS) {
-    return { ...hit.brief, runs: hit.brief.runs.map((run) => ({ ...run, ms: 0, cached: true })) };
-  }
+  // Memory first, then the shared R2 copy, so another Worker isolate's run counts too.
+  const cached = await cachedBrief(input);
+  if (cached) return cached;
   // Parallel variations of one frame start together: the second joins the first's agents
   // instead of calling them again, so the batch makes one set of agent calls.
   let shared = IN_FLIGHT.get(key);
   if (!shared) {
     const stage = startSubAgents(input);
     const fullBrief = stage.full.then((brief) => {
-      if (brief.runs.some((run) => run.ok)) {
-        if (BRIEF_CACHE.size >= BRIEF_CACHE_SIZE) BRIEF_CACHE.delete(BRIEF_CACHE.keys().next().value as string);
-        BRIEF_CACHE.set(key, { at: Date.now(), brief });
-      }
+      if (brief.runs.some((run) => run.ok)) return storeBrief(input, brief).then(() => brief);
       return brief;
     }).finally(() => IN_FLIGHT.delete(key));
     shared = { full: fullBrief, partial: stage.partial };
@@ -207,7 +245,8 @@ export async function runSubAgents(input: SubAgentInput, options: { waitMs?: num
   const first = await Promise.race([full, early]);
   clearTimeout(timer);
   if (first) return first;
-  full.catch(() => undefined);
+  // Keep the remaining agents alive past the response (waitUntil) so the full brief is cached.
+  deferTaskWork(full);
   return stage.partial();
 }
 
@@ -220,8 +259,8 @@ function startSubAgents(input: SubAgentInput): { full: Promise<AgentBrief>; part
   const roleNote = { role: input.role.label, roleFocus: input.role.persona, keywordDomainHint: keywordDomain.domain.id };
 
   // One hard deadline for the whole stage: when it passes, every in-flight agent call is
-  // aborted. Each agent makes one call only, and only the analyst gets the screenshot,
-  // so the stage adds one vision request, not three.
+  // aborted. Each agent makes one call only, and none sends the screenshot (text-only calls
+  // answer several times faster; the planner still sees it).
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), subAgentTimeoutMs());
   const text = { signal: deadline.signal, withImage: false };
@@ -235,7 +274,7 @@ function startSubAgents(input: SubAgentInput): { full: Promise<AgentBrief>; part
       (data) => (str(data.domain) || str(data.userGoal) ? null : "missing domain and userGoal"), text)),
     track("analyst", runAgent("analyst", input, ANALYST_SYSTEM, sharedContext(input, roleNote),
       (data) => (Array.isArray(data.hierarchy) || Array.isArray(data.changes) ? null : "missing hierarchy and changes"),
-      { signal: deadline.signal, withImage: true })),
+      text)),
     track("scout", hasScout
       ? runAgent("scout", input, SCOUT_SYSTEM, sharedContext(input, { components: componentList }),
         (data) => (Array.isArray(data.matches) ? null : "missing matches"), text)
