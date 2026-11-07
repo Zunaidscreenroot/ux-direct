@@ -38,16 +38,17 @@ export function createModeCanvas(canvas: unknown, size: { width: number; height:
   };
 }
 
-export function createScopeInstructions(size: { width: number; height: number; platform: "mobile" | "web" }): string {
+export function createScopeInstructions(size: { width: number; height: number; platform: "mobile" | "web" }, localeLine = ""): string {
   return [
     "TARGET SCOPE: NEW SCREEN FROM PROMPT (create mode). Nothing is selected: figmaCanvas.nodes[0] is an EMPTY " + size.width + "×" + size.height + " " + size.platform + " frame, not a source design.",
     "Every instruction about preserving, copying or inventorying source texts does not apply: there are no source texts. Design the complete screen the prompt asks for.",
-    "Write realistic, specific content for the product domain instead of placeholders: real-looking labels, values, statuses, dates and action copy (for Indian finance: ₹ with lakh grouping like ₹1,25,000, dates like 12 Mar 2026, masked IDs like XXXX 4821). Never use lorem ipsum or 'Label'/'Value'.",
+    "Write realistic, specific content for the product domain instead of placeholders: real-looking labels, values, statuses, dates and action copy in the CONTENT LOCALE below (masked IDs like XXXX 4821). Never use lorem ipsum or 'Label'/'Value'.",
+    localeLine,
     size.platform === "mobile"
       ? "Mobile structure: app bar with the screen title, the primary content (summary card, list or form), then the primary action; add tabs or bottom navigation only when the screen needs them. 4–7 sections."
       : "Web structure: page header with title and primary action, a summary/KPI row, the main table/list/chart area and supporting detail. 4–7 sections.",
     "DESIGN SYSTEM FIRST still applies: when figmaCanvas.components lists a button, input, tab, chip, badge, list row, nav bar or card component, use it through a component block.",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 export const CREATE_OPERATING_CONTRACT = [

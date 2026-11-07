@@ -19,6 +19,7 @@ import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, FREELLMAPI_RECOVE
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
 import { designRulesBlock } from "@/src/figma-agent/design-rules";
+import { canvasTexts, contentLocaleInstruction, inferContentLocale } from "@/src/figma-agent/content-locale";
 import { CREATE_DESIGN_SCOPE, CREATE_OPERATING_CONTRACT, createFrameSize, createModeCanvas, createScopeInstructions } from "@/src/figma-agent/create-mode";
 import { SCREEN_STATES, STATE_BRIEFS, stateDropsContent, stateFallbackSpec, stateGatePrompt } from "@/src/figma-agent/screen-states";
 import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, promptRequestsWireframe, stabilizeBlockSpec } from "@/src/figma-agent/spec-consistency";
@@ -472,7 +473,7 @@ const SYSTEM = [
   "For a mobile 360×800 design, use consistent 16–24 px side margins, a deliberate vertical rhythm, a clear type scale (screen title 22–26, section headings 17–20, key amounts 24–30, body 13–16, muted metadata 11–13), high contrast, and visible space between sections. Match the selected screen's visual system and information density rather than inventing a new generic template. Do not fill empty space with random cards.",
   "Use Inter as fontFamily and Regular or Medium as fontStyle when available. Define a coherent spacing scale, typography scale, surface palette and accent usage from the source screenshot/layers. For dark screens, retain the dark canvas and source's card/surface contrast; don't put a single grey slab in an otherwise black screen. Use moderate, consistent corner radii, separator lines only where useful, and strong text contrast. Keep copy and visible values faithful to the selection; never invent features just to decorate a screen.",
   "Preserve the source's user intent, content taxonomy, and brand tone while producing a genuinely improved variation rather than copying its layout mechanically. Preserve every visible meaningful datum and repeated row. Use the selected frame's actual scope and size. Keep the source untouched.",
-  "For Indian BFSI designs, emphasize transparency, clear amount/date/status hierarchy, user control and accessible legibility. Never make up actual interest rates, contractual terms, or legal-compliance claims. Label illustrative financial values as sample.",
+  "For finance designs (banking, lending, payments, insurance, investing), emphasize transparency, clear amount/date/status hierarchy, user control and accessible legibility. Never make up actual interest rates, contractual terms, or legal-compliance claims. Label illustrative financial values as sample.",
   "Keep all elements within frame bounds, use reasonable minimum touch targets for CTAs, and include the primary action and meaningful secondary paths where appropriate. Limit to 80 elements and use only supported properties.",
   "CRITICAL GEOMETRY CHECK BEFORE RETURNING: check every sibling for accidental overlap and make each text box wide/tall enough for its full copy. Never put different labels or amounts at the same coordinates. When the source uses one enclosing loan card, keep the summary and loan-wise breakdown inside the same outer card FRAME with the source's surface split; do not turn them into unrelated peer cards. Keep the status badge inside that card at its top-right edge and preserve the right-chevron/action cue. Avoid giant empty panels and never invent cards to fill scrollable whitespace.",
   "Progress indicators must preserve their meaning. Do not replace a partial progress ring (for example 60% paid) with a solid disc. Use a native ELLIPSE arcData for the progress segment (radian angles, endingAngle > startingAngle, innerRadius about 0.68–0.8), plus a muted full-circle track and centered percentage/status text. Keep the indicator layers inside a named Progress indicator FRAME. Use arcData whenever the source has a partial progress ring.",
@@ -492,7 +493,7 @@ const BLOCK_SYSTEM = [
   "Analyse BOTH the attached rendered screen image (when present) and the native layer tree. Use the image for hierarchy, grouping, density and colours; use the layer tree for exact text and values.",
   "Map the short prompt to a concrete design objective and keep everything else stable: product context, information architecture, content, interaction meaning and the source's colours (copy them into theme). Do not replace a task-specific screen with a generic dashboard or a stack of similar cards; do not invent features to fill space.",
   "Group content the way a senior product designer would: one clear primary action, related values together in one card, status next to what it describes, secondary detail in lists.",
-  "For Indian BFSI designs, emphasize transparency, clear amount/date/status hierarchy, user control and accessible legibility. Never make up actual interest rates, contractual terms or legal-compliance claims; label illustrative financial values as sample.",
+  "For finance designs (banking, lending, payments, insurance, investing), emphasize transparency, clear amount/date/status hierarchy, user control and accessible legibility. Never make up actual interest rates, contractual terms or legal-compliance claims; label illustrative financial values as sample.",
   "Progress indicators must keep their meaning: a partial ring (for example 60% paid) is a progress_ring with percent 60, never a solid shape.",
   BLOCK_SPEC_CONTRACT,
   "EXAMPLE OF THE SHAPE ONLY (never copy its content): " + BLOCK_SPEC_EXAMPLE,
@@ -668,9 +669,13 @@ export async function POST(request: Request) {
   // Persist the run before model work starts so a fast completion cannot race a late INSERT.
   const taskRunStarted = startTaskRun({ id: taskRunId, projectKey: taskScope, title: "Figma task", requestSummary: parsedInput.data.prompt, retrieval: taskRetrieval });
 
-  const scopeInstructions = createSize ? createScopeInstructions(createSize) : componentSelection
+  // Sample data follows the request, the file's design rules or the canvas's own currency; ₹/India only without a signal.
+  const contentLocale = inferContentLocale({ prompt: parsedInput.data.prompt, designRules: parsedInput.data.designRules,
+    texts: canvasTexts(parsedInput.data.canvas) });
+  const localeLine = contentLocaleInstruction(contentLocale);
+  const scopeInstructions = createSize ? createScopeInstructions(createSize, localeLine) : (componentSelection
     ? "TARGET SCOPE: COMPONENT/CARD. The selected source is " + selectedName + " at " + selectedWidth + "×" + selectedHeight + ". Create only a high-quality component variation, preserving all source data and relationships. Prefer card header, status badge, key values, progress indicator, secondary rows and actions when these exist. Use nested card/row FRAMEs and appropriate Auto Layout; no whole-screen navbar or unrelated screen sections."
-    : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.";
+    : "TARGET SCOPE: FULL SCREEN/FRAME. Preserve the screen's information architecture and complete content inventory. Structure navigation, tabs, summary cards, repeated rows, supporting detail and actions in meaningful native FRAMEs with suitable Auto Layout.") + "\n" + localeLine;
   // A verified spec from this project (structure only) steers whichever model `auto` picks
   // toward the same block choices that already passed the Figma quality gate.
   const [verifiedExample] = await Promise.all([verifiedExamplePromise, taskRunStarted]);
