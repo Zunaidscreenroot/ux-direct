@@ -436,3 +436,13 @@ test("direct edits return a property snapshot so Revert restores them after late
   assert.equal((r.card.effects || []).length, 0);
   assert.equal(r.title.characters, "edited later", "unrelated later edits are kept");
 });
+
+test("snapshot Revert is wired into the direct-edit runner, not the native action planner", () => {
+  const ui = readFileSync(join(process.cwd(), "figma-plugin/ui.html"), "utf8");
+  const fn = (name: string) => { const start = ui.indexOf("async function " + name + "("); assert.ok(start > 0, name); return ui.slice(start, ui.indexOf("\n    }\n", start)); };
+  const direct = fn("runDirectEditTask");
+  assert.match(direct, /localTask\("restore-props", \{ items: snapshot \}\)/);
+  assert.ok(direct.indexOf('localTask("apply-direct-edits"') < direct.indexOf("result.layoutChanged"), "uses the result after it exists");
+  const native = fn("executeNativeActionPlan");
+  assert.equal(native.includes("result.layoutChanged"), false, "the planner has no direct-edit result to read");
+});

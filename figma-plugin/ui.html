@@ -1409,22 +1409,11 @@
       stage("creating", "Applying " + actions.length + " validated native Figma action(s)…");
       // Group the whole edit into one Figma undo step so "revert" can undo it in one go.
       await localTask("commit-undo", {}).catch(function () {});
-      if (!result.layoutChanged && Array.isArray(result.snapshot)) {
-        // Property snapshot: Revert puts back exactly these values, even after later changes.
-        const snapshot = result.snapshot.slice();
-        recordChange("Edit: " + prompt.slice(0, 80), function () {
-          return localTask("restore-props", { items: snapshot }).then(function (restore) {
-            return restore.restored + " value(s) restored" + (restore.changedSince ? ", " + restore.changedSince + " left as you edited them" : "");
-          });
-        });
-      } else {
-        // Duplicates, placed components and auto layout move layers, which a snapshot cannot put back.
-        recordChange("Edit: " + prompt.slice(0, 80), function () {
-          return localTask("commit-undo", {}).catch(function () {})
-            .then(function () { return localTask("trigger-undo", {}); })
-            .then(function () { return "undone with Figma undo"; });
-        }, { mustBeLatest: true });
-      }
+      recordChange("Edit: " + prompt.slice(0, 80), function () {
+        return localTask("commit-undo", {}).catch(function () {})
+          .then(function () { return localTask("trigger-undo", {}); })
+          .then(function () { return "undone with Figma undo"; });
+      }, { mustBeLatest: true });
       for (let index = 0; index < actions.length; index += 1) {
         const action = actions[index];
         if (!action || typeof action.operation !== "string") throw new Error("Invalid action at step " + (index + 1) + ".");
@@ -2999,11 +2988,22 @@
       notify("Applying " + edit.ops.length + " direct edit(s)…");
       const result = await localTask("apply-direct-edits", { ops: edit.ops }, 60000);
       if (!result || result.needsModel) return null;
-      recordChange("Edit: " + prompt.slice(0, 80), function () {
-        return localTask("commit-undo", {}).catch(function () {})
-          .then(function () { return localTask("trigger-undo", {}); })
-          .then(function () { return "undone with Figma undo"; });
-      }, { mustBeLatest: true });
+      if (!result.layoutChanged && Array.isArray(result.snapshot)) {
+        // Property snapshot: Revert puts back exactly these values, even after later changes.
+        const snapshot = result.snapshot.slice();
+        recordChange("Edit: " + prompt.slice(0, 80), function () {
+          return localTask("restore-props", { items: snapshot }).then(function (restore) {
+            return restore.restored + " value(s) restored" + (restore.changedSince ? ", " + restore.changedSince + " left as you edited them" : "");
+          });
+        });
+      } else {
+        // Duplicates, placed components and auto layout move layers, which a snapshot cannot put back.
+        recordChange("Edit: " + prompt.slice(0, 80), function () {
+          return localTask("commit-undo", {}).catch(function () {})
+            .then(function () { return localTask("trigger-undo", {}); })
+            .then(function () { return "undone with Figma undo"; });
+        }, { mustBeLatest: true });
+      }
       setProcessState("done", "Edit applied directly · no model needed");
       const lines = (result.applied || []).map(function (item) {
         return "- " + item.label + (item.note ? " (" + item.note + ")" : " on " + item.count + " layer" + (item.count === 1 ? "" : "s"));
