@@ -26,7 +26,7 @@ import { appendMissingSourceText, applyVariationDirection, MAX_REPAIRED_TEXTS, p
 import { loadVerifiedExample, recordGeneration, type GenerationRecord } from "@/src/memory/verified-specs";
 import { describeModelContent, extractPlanJson } from "@/src/figma-agent/extract-plan-json";
 import { BLOCK_SPEC_CONTRACT, BLOCK_SPEC_EXAMPLE, PLAN_NODE_LIMIT, expandBlockSpec, isBlockSpec, sourceFallbackSpec } from "@/src/figma-agent/block-spec";
-import { CLAUDE_DESIGN_PLAYBOOK } from "@/src/figma-agent/design-thinking";
+import { CLAUDE_DESIGN_PLAYBOOK, objectivePlaybook } from "@/src/figma-agent/design-thinking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -705,7 +705,7 @@ export async function POST(request: Request) {
     : "";
   const designRulesInstructions = designRulesBlock(parsedInput.data.designRules);
   const stateInstructions = parsedInput.data.state ? "\n" + STATE_BRIEFS[parsedInput.data.state] : "";
-  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + stateInstructions + designRulesInstructions + "\n" + agentBrief.instructions + "\n" + designerPersona(taskRole, parsedInput.data.prompt) + exampleInstructions, brain);
+  const system = buildBrainSystemPrompt((blockMode ? BLOCK_SYSTEM : SYSTEM) + "\n" + scopeInstructions + stateInstructions + designRulesInstructions + "\n" + (blockMode && !createMode ? objectivePlaybook(parsedInput.data.prompt) + "\n" : "") + agentBrief.instructions + "\n" + designerPersona(taskRole, parsedInput.data.prompt) + exampleInstructions, brain);
   const endpoint = activeProvider.baseUrl.replace(/\/+$/, "") + "/chat/completions";
   // OpenRouter uses the quality-first model chain; FreeLLMAPI uses its configured free-model chain.
   // Both are bounded by compact retry and the shared generation deadline.
@@ -746,6 +746,7 @@ export async function POST(request: Request) {
     "SOURCE TEXT INVENTORY is an explicit checklist from the selected native Figma tree. Copy every listed text string exactly into block fields, including short statuses such as Current, unless the user's request specifically asks to change/remove that exact string.",
     "Do not redesign it as a generic dashboard. Do not invent contractual financial details.",
     createMode ? "" : CLAUDE_DESIGN_PLAYBOOK,
+    createMode ? "" : objectivePlaybook(parsedInput.data.prompt),
     BLOCK_SPEC_CONTRACT,
     "OUTPUT BUDGET: 3–6 sections and 10–22 blocks. Prefer list over many single rows. Finish every string, array, object and the final closing brace. learningCandidate:null. No markdown, explanation or reasoning.",
   ].join("\n");

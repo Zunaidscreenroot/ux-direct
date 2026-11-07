@@ -985,7 +985,8 @@
       });
       return message + "\n\n[Current Figma context — metadata only] Page: " + (currentSelection.pageName || "unknown") +
         ". Selected nodes: " + JSON.stringify(nodes).slice(0, 4500) +
-        ". Work only within the user's selected context unless asked otherwise.";
+        ". Work only within the user's selected context unless asked otherwise." +
+        " You are UX Direct inside Figma: canvas changes run when the designer asks for them, so never say you cannot edit the canvas, and answer a question directly and briefly instead of auditing the screen.";
     }
 
     async function streamAssistantResponse(response, onDelta) {
@@ -1754,6 +1755,8 @@
     function uxdWantsPolish(prompt, designOptions) {
       if (designOptions && (designOptions.variation || designOptions.state || designOptions.sourceId)) return false;
       const text = String(prompt || "");
+      // A rejected attempt asks for a visible change, which a structure-keeping polish cannot give.
+      if (/FEEDBACK ON THE PREVIOUS ATTEMPT/.test(text)) return false;
       if (!/\b(improve|improved|polish|refine|better|clean\s?up|cleaner|tidy|enhance|fix (the )?(design|screen|ui)|sudhar\w*|behtar|acha|achha|accha)\b/i.test(text)) return false;
       return !/\b(redesign|re-?design|rebuild|from scratch|new layout|re-?layout|restructure|variations?|variants?|versions?|wireframe|dark|light|theme|colou?rs?|modern|premium|minimal|playful|bold|restyle|style|look like|inspired|similar|states?|empty|error|loading|copy|text|content|rewrite|icons?|images?|data)\b/i.test(text);
     }
@@ -4019,6 +4022,96 @@
       throw new Error("Unknown quick task.");
     }
 
+    // uxd-turn-intent:start
+    // Claude-style conversation: read each message in the context of the last one before choosing a
+    // tool. A question gets an answer (never a canvas job or a JSON planner), feedback on the last
+    // screen gets that screen redone with the critique, "remember this" is saved, and praise is
+    // acknowledged. Generic: no screen or domain words. Returns null when the normal routing applies.
+    function classifyTurn(prompt, context) {
+      const text = String(prompt || "").trim();
+      const ctx = context || {};
+      if (!text) return null;
+      const lower = text.toLowerCase();
+      const actionVerb = "(make|create|add|change|fix|redo|re-?do|simplif\\w*|improve|design|build|generate|remove|delete|update|edit|apply|try|use|turn|convert|move|rename|align|resize|refine|polish|clean)";
+      const politeRequest = new RegExp("^(please\\s+)?(can|could|would|will)\\s+(you|u)\\s+(please\\s+)?" + actionVerb + "\\b", "i").test(text);
+      const questionWord = /^(is|are|am|was|were|can|could|will|would|do|does|did|have|has|what|why|how|where|when|which|who|whom|should|shall|kya|kaise|kaisa|kyun|kyu|kab|kaun|kitna|kitne)\b/i.test(text);
+      const isQuestion = !politeRequest && (/\?\s*$/.test(text) || questionWord ||
+        /\b(will|would|can|could|do|does)\s+(you|u|it|ux direct)\b[^.]{0,60}$/i.test(text) && /^(so|and|but|if|agar|toh|to)\b/i.test(text));
+      const aboutLearning = /\b(learn\w*|learning|remember\w*|save\w*|knowledge( base)?|kb|memory|yaad|seekh\w*|store)\b/i.test(text);
+      if (isQuestion && aboutLearning) return { kind: "learning-question" };
+      // "remember: cards never use shadows", "from now on keep one primary button", "aage se ... mat karna".
+      const teach = /^(remember|note|save|yaad rakh\w*)\b|\b(from now on|going forward|in future|aage se|hamesha|always|never|kabhi (bhi )?mat)\b/i.test(text) ||
+        /\b(remember|yaad rakh\w*|save)\b[^.]{0,20}\b(this|that|it|rule|feedback|learning|ye|yeh)\b/i.test(text);
+      if (teach && !isQuestion) {
+        const rule = text.replace(/^(please\s+)?(remember|note|save( this| that)?( rule| feedback| learning)?|yaad rakh\w*)\s*(that|this|:|-)?\s*/i, "").trim();
+        return { kind: "teach", rule: rule || text };
+      }
+      if (isQuestion) return { kind: "question" };
+      if (!ctx.lastDesign) return null;
+      // Praise or "keep it" about the last result: acknowledge, change nothing.
+      if (/^(for me |to me |i think )?(it'?s |its |this is |ye |yeh )?(not cluttered|fine|good|ok(ay)?|great|perfect|nice|looks good|keep (it|this)|acha hai|achha hai|theek hai|thik hai|sahi hai|badhiya)\b/i.test(lower) &&
+          !/\b(not (good|fine|ok|great|perfect|nice)|but|lekin|par)\b/i.test(lower)) return { kind: "keep" };
+      // Critique of the last result: redo it with the critique as the brief.
+      const negative = /\b(not|isn'?t|isnt|no|nahi|nhi|nahin|na)\b[^.]{0,30}\b(simplif\w*|simple|clean\w*|minimal|good|right|better|correct|enough|what i (asked|wanted|said)|sahi|acha|achha|theek|thik|changed?|different)\b/i.test(text) ||
+        /\b(still|abhi bhi|ab bhi|phir bhi)\b[^.]{0,30}\b(cluttered|busy|complex|complicated|same|bad|messy|heavy|crowded)\b/i.test(text) ||
+        /\b(worse|wrong|galat|bekar|bakwas|ugly|nothing changed|didn'?t change|same as before|kuch nahi badla|try again|again|dobara|phir se|redo|re-?do)\b/i.test(text);
+      const instruction = /^(use|apply|follow|make it|more|less|zyada|kam)\b/i.test(text) && text.split(/\s+/).length <= 12 &&
+        !/\b(screens?|flows?|journeys?|new)\b/i.test(text);
+      if (negative || instruction) return { kind: "redo", critique: text };
+      return null;
+    }
+    function learningAnswer() {
+      return "Yes. Three ways I learn, all saved in this Figma file so they apply to every later task:\n" +
+        "- **Tell me the rule**: start with **remember** (for example *remember: one primary button per screen*). I save it to this file's design rules and send it with every design task.\n" +
+        "- **Correct my output by hand**, then say **learn from my edits**. I compare your edits with what I made and keep the lessons.\n" +
+        "- **Tell me what's wrong** right after I make a screen (for example *this is not simplified*). I redo that screen with your feedback.";
+    }
+    async function runTeachTurn(turn, stage) {
+      const rule = String(turn.rule || "").replace(/\s+/g, " ").trim().slice(0, 400);
+      if (rule.length < 4) return "Tell me the rule to remember, for example **remember: one primary button per screen**.";
+      stage("creating", "Saving to this file's design rules…");
+      const before = await localTask("get-design-rules", {});
+      const previousText = String(before && before.text || "");
+      if (previousText.toLowerCase().indexOf(rule.toLowerCase()) >= 0) { stage("done", "Already remembered"); return "I already have that in this file's design rules: *" + rule + "*"; }
+      const nextText = (previousText ? previousText.replace(/\s+$/, "") + "\n" : "") + "- " + rule;
+      await localTask("set-design-rules", { text: nextText, rules: parseDesignRules(nextText) });
+      cachedDesignRules = nextText;
+      recordChange("Remembered: " + rule.slice(0, 60), async function () {
+        await localTask("set-design-rules", { text: previousText, rules: before && before.rules || null });
+        cachedDesignRules = previousText;
+        return "rule removed";
+      });
+      stage("done", "Remembered");
+      return "Saved to this file's design rules: *" + rule + "*\nEvery design task on this file now follows it. Say **show design rules** to see them all.";
+    }
+    // The last screen UX Direct made in this chat, so feedback can redo it.
+    let lastDesignRun = null;
+    async function runRedoTurn(turn, report) {
+      const run = lastDesignRun;
+      const stage = function (state, message) { setProcessState(state, message); report(message); };
+      const open = changeJournal.filter(function (entry) { return entry.seq > run.seqStart && entry.seq <= run.seqEnd && !entry.reverted; });
+      if (open.length) {
+        stage("creating", "Taking your feedback · removing the attempt you rejected…");
+        await revertEntries(open, stage).catch(function () { /* keep going: the new attempt lands beside it */ });
+      }
+      if (run.sourceIds.length) {
+        await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: run.sourceIds }, 30000).catch(function () { return null; });
+        await refreshSelection();
+      }
+      const brief = run.prompt + "\nFEEDBACK ON THE PREVIOUS ATTEMPT (rejected by the designer): \"" + turn.critique +
+        "\". Act on it: the change must be clearly visible against the source, not a near copy.";
+      const answer = await createFigmaDesign(brief, report);
+      return "Redid it with your feedback (*" + turn.critique.slice(0, 120) + "*).\n" + answer;
+    }
+    function isAnsweringQuickTask(task) {
+      if (!task) return false;
+      if (["hygiene", "ux-audit", "revert"].indexOf(task.kind) >= 0) return true;
+      if (["consistency", "detached", "prototype-wire"].indexOf(task.kind) >= 0) return task.fix === false;
+      if (task.kind === "design-rules") return task.mode === "show";
+      if (task.kind === "learn") return task.preview === true;
+      return false;
+    }
+    // uxd-turn-intent:end
     async function submitPrompt(rawPrompt) {
       const prompt = String(rawPrompt || "").trim();
       if (!prompt || isSending) return;
@@ -4052,14 +4145,34 @@
           await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: lastTargetIds }, 30000).catch(function () { return null; });
           await refreshSelection();
         }
-        const quickTask = classifyQuickTask(prompt, {
+        const turn = classifyTurn(prompt, { lastDesign: Boolean(lastDesignRun) });
+        if (turn && turn.kind !== "question") {
+          typingRow.remove();
+          assistantMessage = appendMessage("assistant", turn.kind === "redo" ? "Taking your feedback…" : "…");
+          const report = function (status) { if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; } };
+          const stageFn = function (state, message) { setProcessState(state, message); report(message); };
+          const seqStart = changeSeq;
+          const answer = turn.kind === "learning-question" ? learningAnswer()
+            : turn.kind === "keep" ? "Got it, keeping it as it is. If there's a reason behind it you want me to apply everywhere, say **remember: …** and I'll save it."
+            : turn.kind === "teach" ? await runTeachTurn(turn, stageFn)
+            : await runRedoTurn(turn, report);
+          if (turn.kind === "redo" && lastDesignRun) { lastDesignRun.seqStart = seqStart; lastDesignRun.seqEnd = changeSeq; }
+          if (turn.kind === "learning-question" || turn.kind === "keep") setProcessState("done", "Answered");
+          assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
+          chatHistory.push({ role: "assistant", content: answer });
+          return;
+        }
+        const classifiedQuick = classifyQuickTask(prompt, {
           selectionTypes: (currentSelection.selection || []).map(function (node) { return node.type; }),
           hasAttachment: Boolean(attachedImageData)
         });
+        // A question only reaches a quick task that answers it without changing the canvas.
+        const quickTask = turn && turn.kind === "question" && !isAnsweringQuickTask(classifiedQuick) ? null : classifiedQuick;
         const directEdit = parseDirectEdit(prompt, {
           selectionTypes: (currentSelection.selection || []).map(function (node) { return node.type; })
         });
-        if (directEdit && (!quickTask || quickTask.kind === "rewrite-text" || quickTask.kind === "generate-image")) {
+        const isQuestionTurn = Boolean(turn && turn.kind === "question");
+        if (!isQuestionTurn && directEdit && (!quickTask || quickTask.kind === "rewrite-text" || quickTask.kind === "generate-image")) {
           typingRow.remove();
           assistantMessage = appendMessage("assistant", "Applying the edit…");
           const answer = await runDirectEditTask(directEdit, prompt, function (status) {
@@ -4094,7 +4207,7 @@
           });
           return;
         }
-        if (isDirectCanvasActionPrompt(prompt)) {
+        if (!isQuestionTurn && isDirectCanvasActionPrompt(prompt)) {
           typingRow.remove();
           assistantMessage = appendMessage("assistant", "Inspecting selected layers and planning native edits…");
           const answer = await executeNativeActionPlan(prompt, function (status) {
@@ -4107,9 +4220,11 @@
           });
           return;
         }
-        if (isDesignActionPrompt(prompt)) {
+        if (!isQuestionTurn && isDesignActionPrompt(prompt)) {
           typingRow.remove();
           assistantMessage = appendMessage("assistant", "Scanning selected screen and native layers…");
+          const designSeqStart = changeSeq;
+          const designSourceIds = (currentSelection.selection || []).map(function (node) { return node.id; }).filter(Boolean).slice(0, 20);
           const answer = await createFigmaDesign(prompt, function (status) {
             if (assistantMessage) {
               assistantMessage.bubble.textContent = status;
@@ -4118,6 +4233,7 @@
           });
           assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
           chatHistory.push({ role: "assistant", content: answer });
+          lastDesignRun = { prompt: prompt, sourceIds: designSourceIds, seqStart: designSeqStart, seqEnd: changeSeq };
           await sendTelemetry("Figma design-agent task completed", "success", "UX Direct generated a native layout, executed Figma Plugin API commands, and verified the selected variation.", {
             durationMs: Date.now() - startedAt,
             selectedCount: (currentSelection.selection || []).length,
