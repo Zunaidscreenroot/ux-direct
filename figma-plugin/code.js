@@ -4451,6 +4451,9 @@ function uxdThemeColor(color, toLight, isText) {
   // Chroma, not HSL saturation: near-black slates (#111827) have high saturation but read as neutral.
   var chroma = Math.max(color.r, color.g, color.b) - Math.min(color.r, color.g, color.b);
   if (chroma < 0.14) {
+    // A neutral already right for the asked mode stays (light mode: light surfaces, dark ink), so a
+    // second run or a half-themed screen is not flipped back (tester T8: two runs left the arrow dark).
+    if (toLight ? (isText ? hsl.l < 0.45 : hsl.l > 0.55) : (isText ? hsl.l > 0.55 : hsl.l < 0.45)) return color;
     // Neutral: mirror lightness, with a soft floor/ceiling (pure black/white read harsh in both modes).
     var l = 1 - hsl.l;
     l = toLight ? Math.min(0.99, Math.max(isText ? 0.1 : 0.12, l)) : Math.max(0.06, Math.min(isText ? 0.95 : 0.92, l));
@@ -4487,6 +4490,17 @@ async function uxdThemeModeSwitch(root, toLight) {
   }
   return null;
 }
+function uxdScreenBackgroundLuminance(root) {
+  var own = uxdSingleSolid(root.fills);
+  if (own) return uxdLuminance(own.color);
+  var best = null, area = 0;
+  if (typeof root.findAll === "function") root.findAll(function (n) {
+    var p = n.visible !== false && "fills" in n ? uxdSingleSolid(n.fills) : null;
+    if (p && n.width * n.height > area) { area = n.width * n.height; best = p; }
+    return false;
+  });
+  return best ? uxdLuminance(best.color) : null;
+}
 async function localApplyTheme(payload) {
   var toLight = payload.target !== "dark";
   var roots = figma.currentPage.selection.slice();
@@ -4505,16 +4519,41 @@ async function localApplyTheme(payload) {
   var isAlready = rootBg.every(function (l) { return l !== null && (toLight ? l > 0.5 : l < 0.2); });
   if (!modes.length && isAlready) already = roots.length;
   else {
+    // Colours bound to a variable whose collection has no matching mode would never change (the
+    // screen and its cards stayed dark while only loose neutrals flipped; tester T8): those paints
+    // are remapped from their current colour and unbound. Revert restores the binding.
+    var switchedCollections = {};
+    modes.forEach(function (m) { switchedCollections[m.collectionId] = true; });
+    var variableCollection = {};
+    for (var vi = 0; vi < nodes.length; vi++) {
+      ["fills", "strokes"].forEach(function (prop) {
+        var list = nodes[vi][prop];
+        if (!Array.isArray(list)) return;
+        list.forEach(function (paint) { if (paint && paint.boundVariables && paint.boundVariables.color) variableCollection[paint.boundVariables.color.id] = null; });
+      });
+    }
+    var variableIds = Object.keys(variableCollection);
+    for (var vj = 0; vj < variableIds.length; vj++) {
+      try { var v = await figma.variables.getVariableByIdAsync(variableIds[vj]); variableCollection[variableIds[vj]] = v ? v.variableCollectionId : null; } catch (_) {}
+    }
+    var keepsBinding = function (paint) {
+      var id = paint && paint.boundVariables && paint.boundVariables.color && paint.boundVariables.color.id;
+      return !!id && !!switchedCollections[variableCollection[id]];
+    };
     // Figma node proxies are not extensible: keep pending text fills in a Map, never on the node.
     var pendingFills = new Map();
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];
       var isText = node.type === "TEXT";
+      // Icons and glyphs are ink like text: a white back arrow turns dark on a light screen.
+      var isInk = isText || ["VECTOR", "BOOLEAN_OPERATION", "LINE", "STAR", "POLYGON"].indexOf(node.type) >= 0;
       ["fills", "strokes"].forEach(function (prop) {
         if (!(prop in node) || !Array.isArray(node[prop]) || !node[prop].length) return;
         var next = node[prop].map(function (paint) {
-          if (!paint || paint.type !== "SOLID" || (paint.boundVariables && paint.boundVariables.color)) return paint;
-          return Object.assign({}, paint, { color: uxdThemeColor(paint.color, toLight, isText) });
+          if (!paint || paint.type !== "SOLID" || keepsBinding(paint)) return paint;
+          var out = Object.assign({}, paint, { color: uxdThemeColor(paint.color, toLight, isInk) });
+          delete out.boundVariables;
+          return out;
         });
         if (JSON.stringify(next) === JSON.stringify(node[prop])) return;
         uxdSnapProp(node, prop);
@@ -4553,7 +4592,14 @@ async function localApplyTheme(payload) {
     return { id: item.node.id, prop: item.prop, before: item.before, after: after === undefined ? null : after };
   });
   UXD_HYGIENE_SNAPSHOT = null;
-  return { ok: true, target: toLight ? "light" : "dark", modes: modes, changed: changed, contrast: contrast, already: already, checked: nodes.length, snapshot: snapshot };
+  // Read back what the screen shows now: its own background, or its largest filled layer.
+  var unverified = [];
+  roots.forEach(function (root) {
+    var lum = uxdScreenBackgroundLuminance(root);
+    if (lum !== null && (toLight ? lum < 0.5 : lum > 0.2)) unverified.push(String(root.name).slice(0, 40));
+  });
+  return { ok: true, target: toLight ? "light" : "dark", modes: modes, changed: changed, contrast: contrast, already: already, checked: nodes.length, snapshot: snapshot,
+    verified: unverified.length === 0, unverified: unverified };
 }
 async function localRestoreThemeModes(payload) {
   var items = Array.isArray(payload.modes) ? payload.modes : [];
@@ -4750,11 +4796,19 @@ async function localApplyHygieneFixes(payload) {
     // cards and rows are usually instances, so skipping them left almost every text unstyled.
     if (textStyles.length) {
       var styleTexts = uxdHygieneNodes(roots, true).filter(function (n) { return n.type === "TEXT"; });
+      var noStyle = {};
       for (var ts = 0; ts < styleTexts.length; ts++) {
         var text = styleTexts[ts];
         try {
           var match = uxdMatchTextStyle(text, textStyles);
-          if (!match) continue;
+          if (!match) {
+            // Say which size/weight the file has no style for, instead of leaving them silently (T10).
+            if (!text.textStyleId && typeof text.fontSize === "number" && text.fontName !== figma.mixed && text.fontName) {
+              var combo = Math.round(text.fontSize) + "px " + String(text.fontName.style || "Regular");
+              noStyle[combo] = (noStyle[combo] || 0) + 1;
+            }
+            continue;
+          }
           await uxdLoadTextFonts(text);
           if (match.fontName) await figma.loadFontAsync(match.fontName);
           // A near style changes size/line height slightly: snapshot them so Revert is exact.
@@ -4765,6 +4819,9 @@ async function localApplyHygieneFixes(payload) {
           counts.textStyles++;
         } catch (error) { skip("\"" + String(text.name).slice(0, 30) + "\": " + String(error && error.message || error).slice(0, 80)); }
       }
+      Object.keys(noStyle).sort(function (a, b) { return noStyle[b] - noStyle[a]; }).slice(0, 4).forEach(function (combo) {
+        skip(noStyle[combo] + " text layer(s) at " + combo + ": this file has no text style of that size and weight");
+      });
     }
   }
   if (typeof figma.commitUndo === "function") figma.commitUndo();

@@ -276,3 +276,37 @@ test("text without an exact style binds the nearest same-weight style within 1px
   assert.equal(far.textStyleId, "", "more than 1px away stays unstyled");
   for (const prop of ["fontSize", "textStyleId"]) assert.ok(result.snapshot.some((item: any) => item.id === small.id && item.prop === prop), "snapshot has " + prop);
 });
+
+test("light mode remaps variable-bound backgrounds when no mode can switch, flips icons like text, and checks the result", async () => {
+  const r = runtime();
+  const run = async (op: string, payload: any) => {
+    r.posted.length = 0;
+    await r.figma.ui.onmessage({ type: "uxd-local-task", requestId: "t", op, payload });
+    const message = r.posted.find((m: any) => m.type === "uxd-local-result");
+    if (message.error) throw new Error(message.error);
+    return message.result;
+  };
+  const dark = { type: "SOLID", color: r.rgb("#111827"), opacity: 1, visible: true, boundVariables: { color: { type: "VARIABLE_ALIAS", id: "VariableID:3" } } };
+  r.screen.fills = [dark];
+  r.title.fills = [{ type: "SOLID", color: r.rgb("#FFFFFF"), opacity: 1, visible: true }];
+  const arrow = r.make({ type: "VECTOR", name: "Back arrow", width: 16, height: 16, fills: [{ type: "SOLID", color: r.rgb("#FFFFFF"), opacity: 1, visible: true }] }, r.screen);
+  r.figma.currentPage.selection = [r.screen];
+  const lum = (c: any) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  const result = await run("apply-theme", { target: "light" });
+  assert.ok(lum(r.screen.fills[0].color) > 0.7, "the bound dark background went light");
+  assert.equal(r.screen.fills[0].boundVariables, undefined, "the stale binding is dropped");
+  assert.ok(lum(arrow.fills[0].color) < 0.2, "a white icon turns dark like text");
+  assert.equal(result.verified, true);
+  // A second run changes nothing that is already right for light mode.
+  const again = await run("apply-theme", { target: "light" });
+  assert.ok(lum(arrow.fills[0].color) < 0.2 && again.already === 1);
+  await run("restore-props", { items: result.snapshot });
+  assert.equal(r.screen.fills[0].boundVariables.color.id, "VariableID:3", "Revert restores the binding");
+  assert.ok(lum(arrow.fills[0].color) > 0.9);
+});
+
+test("token fix names the text sizes the file has no style for instead of leaving them silently", async () => {
+  const r = runtime();
+  const result = await r.fix(["tokens"]);
+  assert.ok(result.skipped.some((s: string) => /10px Regular: this file has no text style/.test(s)), result.skipped.join("; "));
+});

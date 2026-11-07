@@ -3408,6 +3408,10 @@
         });
       }
       stage("done", "Theme switched · no model needed");
+      if (result.verified === false) {
+        return "I changed " + (result.changed || 0) + " colour(s), but " + (result.unverified || []).join(", ") +
+          " still reads as " + (task.target === "light" ? "dark" : "light") + " after the change, so the switch is not complete. Revert undoes what changed.";
+      }
       const lines = [];
       modes.forEach(function (m) { lines.push("- Switched " + m.collectionName + " to the " + m.modeName + " mode"); });
       if (result.changed) lines.push("- Remapped " + result.changed + " hard-coded colour(s): neutrals flipped, brand colours kept their hue");
