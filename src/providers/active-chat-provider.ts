@@ -118,7 +118,14 @@ export function getActiveChatProvider(
  * an always-on Mac (no Render cold start), and a block spec is small, so 150 s only meant a hung
  * route held the user for minutes before the retry (speed priority, 2026-11-06).
  */
-export const FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS = 100_000;
+export const FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS = 90_000;
+
+/**
+ * The compact FreeLLMAPI retry gets the rest of the budget (up to 100 s), not a flat 60 s:
+ * FreeLLMAPI's own per-model timeout is 60 s, so a 60 s client cut killed the retry exactly
+ * when its first hop stalled and the second hop was about to answer (2026-11-07 retest).
+ */
+export const FREELLMAPI_RECOVERY_TIMEOUT_MS = 100_000;
 
 /**
  * Ordered model chain for Figma routes. OpenRouter keeps its explicit quality chain;
@@ -148,11 +155,15 @@ export function figmaMaxTokens(provider: ActiveChatProvider, cap: number): { max
 }
 
 /**
- * FreeLLMAPI treats `code` turns as "a wrong answer costs more than a slow one" and shifts
- * routing weight from speed to intelligence, while still using plain `auto`.
+ * Plain `auto` follows the user's own FreeLLMAPI routing (now the default blend), so normal calls
+ * send no task-type bias. The old `code` bias pushed long Figma prompts onto slow "smart" models
+ * (dots-3-note, glm-5.3-flash) that hit FreeLLMAPI's 60 s per-model timeout and left no answer.
+ * A compact retry (`fast`) sends `chat`, FreeLLMAPI's soft speed bias, so a fallback fits the
+ * budget. Still plain `auto`: no model is pinned and the user's chain decides.
  */
-export function figmaRoutingHeaders(provider: ActiveChatProvider): Record<string, string> {
-  return provider.id === "freellmapi" ? { "X-FreeLLM-Task-Type": "code" } : {};
+export function figmaRoutingHeaders(provider: ActiveChatProvider, options: { fast?: boolean } = {}): Record<string, string> {
+  if (provider.id !== "freellmapi") return {};
+  return options.fast ? { "X-FreeLLM-Task-Type": "chat" } : {};
 }
 
 /** Per-attempt timeout; the first FreeLLMAPI attempt also covers a host cold start. */

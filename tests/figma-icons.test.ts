@@ -113,7 +113,7 @@ function makeRuntime(nodes: Record<string, any>) {
 test("insert-icons adds before the label in auto layout, coloured like the label; swap hides the old icon; instances are skipped", async () => {
   const blue = { r: 0.1, g: 0.3, b: 0.9 };
   const label = { id: "t1", type: "TEXT", characters: "Pay now", fontSize: 16, fills: [{ type: "SOLID", color: blue }], x: 16, y: 12, width: 60, height: 20 };
-  const button: any = { id: "b1", type: "FRAME", name: "Primary CTA", layoutMode: "HORIZONTAL", counterAxisAlignItems: "MIN", width: 160, height: 48, children: [label] };
+  const button: any = { id: "b1", type: "FRAME", name: "Primary CTA", layoutMode: "HORIZONTAL", counterAxisAlignItems: "MIN", itemSpacing: 0, width: 160, height: 48, children: [label] };
   const oldIcon = { id: "i1", type: "VECTOR", name: "Vector", width: 24, height: 24, x: 8, y: 8, visible: true, strokes: [{ type: "SOLID", color: blue }], fills: [] };
   const row: any = { id: "r1", type: "FRAME", name: "Row", layoutMode: "NONE", width: 320, height: 40, children: [oldIcon] };
   const inst = { id: "n1", type: "INSTANCE", name: "Button instance", width: 120, height: 40, children: [] };
@@ -134,6 +134,7 @@ test("insert-icons adds before the label in auto layout, coloured like the label
   assert.equal(button.children[0].width, 20, "16px label gets a 20px icon");
   assert.deepEqual(JSON.parse(JSON.stringify(button.children[0].children[0].strokes[0].color)), blue);
   assert.equal(button.counterAxisAlignItems, "CENTER");
+  assert.equal(button.itemSpacing, 8, "the icon gets a gap instead of touching its label");
   assert.equal(button.children[0].getPluginData("uxdCreated"), "1");
   assert.equal(oldIcon.visible, false, "swapped icon is hidden, not deleted");
   assert.equal(row.children[1].name, "Icon / bell");
@@ -143,5 +144,30 @@ test("insert-icons adds before the label in auto layout, coloured like the label
   const restored = await run("restore-props", { items: result.restore });
   assert.equal(oldIcon.visible, true);
   assert.equal(button.counterAxisAlignItems, "MIN");
-  assert.equal(restored.restored, 2);
+  assert.equal(button.itemSpacing, 0);
+  assert.equal(restored.restored, 3);
+});
+
+test("find-icon-targets on a screen picks buttons only, not label/value data rows", async () => {
+  const txt = (id: string, characters: string) => ({ id, type: "TEXT", characters, fontSize: 14, fills: [], x: 0, y: 0, width: 80, height: 18 });
+  const pay: any = { id: "p1", type: "FRAME", name: "Frame 12", width: 140, height: 44, cornerRadius: 22,
+    fills: [{ type: "SOLID", color: { r: 0, g: 0.3, b: 1 } }], children: [txt("pt", "Pay now")] };
+  const row: any = { id: "row1", type: "FRAME", name: "Row · Loan Amount", width: 320, height: 40, fills: [], children: [txt("rl", "Loan Amount"), txt("rv", "₹2,00,000")] };
+  const plain: any = { id: "row2", type: "FRAME", name: "Personal Loan", width: 320, height: 40, fills: [], children: [txt("pl", "Personal Loan")] };
+  const screen: any = { id: "s1", type: "FRAME", name: "Screen", width: 360, height: 800, children: [row, plain, pay] };
+  const nodes: Record<string, any> = { s1: screen, p1: pay, row1: row, row2: plain };
+  const { figma, run } = makeRuntime(nodes);
+  figma.currentPage.selection = [screen];
+  const found = await run("find-icon-targets", {});
+  assert.deepEqual(JSON.parse(JSON.stringify(found.targets.map((t: any) => t.id))), ["p1"]);
+
+  figma.currentPage.selection = [row];
+  const direct = await run("find-icon-targets", {});
+  assert.deepEqual(JSON.parse(JSON.stringify(direct.targets.map((t: any) => t.id))), ["row1"], "a directly selected row still gets an icon");
+
+  const list: any = { id: "l1", type: "FRAME", name: "List", width: 360, height: 200, children: [plain] };
+  nodes.l1 = list;
+  figma.currentPage.selection = [list];
+  const rows = await run("find-icon-targets", {});
+  assert.deepEqual(JSON.parse(JSON.stringify(rows.targets.map((t: any) => t.id))), ["row2"], "with no button in the selection, rows are used");
 });

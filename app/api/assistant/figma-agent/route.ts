@@ -13,7 +13,7 @@ import { sanitizeInlineLearningCandidate } from "@/src/memory/inline-learning";
 import { deferTaskWork, finishTaskRun, startTaskRun, type RetrievalRecord } from "@/src/memory/task-run-log";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
-import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
+import { figmaModelChain, FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS, FREELLMAPI_RECOVERY_TIMEOUT_MS, routedVia, shouldRetryWithoutJsonMode, figmaMaxTokens, figmaRoutingHeaders, RENDERED_IMAGE_MAX_CHARS } from "@/src/providers/active-chat-provider";
 import { normalizePlan } from "@/src/figma-agent/normalize-plan";
 import { auditDesignPlanQuality, missingSourceTexts } from "@/src/figma-agent/design-plan-quality";
 import { designRulesBlock } from "@/src/figma-agent/design-rules";
@@ -892,7 +892,7 @@ export async function POST(request: Request) {
       }
       // The first FreeLLMAPI attempt also absorbs a sleeping host's cold start.
       const firstAttemptMs = isFreeLlmApi ? FREELLMAPI_FIRST_ATTEMPT_TIMEOUT_MS : 80000;
-      const attemptTimeoutMs = Math.min(isRecovery ? (isFreeLlmApi ? 60000 : 45000) : (modelIndex === 0 ? firstAttemptMs : 70000), remainingMs);
+      const attemptTimeoutMs = Math.min(isRecovery ? (isFreeLlmApi ? FREELLMAPI_RECOVERY_TIMEOUT_MS : 45000) : (modelIndex === 0 ? firstAttemptMs : 70000), remainingMs);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
       const errorsBefore = errors.length;
@@ -922,7 +922,7 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "application/json",
-            ...figmaRoutingHeaders(activeProvider),
+            ...figmaRoutingHeaders(activeProvider, { fast: isRecovery }),
             ...(activeProvider.id === "openrouter" ? {
               "HTTP-Referer": new URL(request.url).origin,
               "X-OpenRouter-Title": "UX Direct Figma Agent",
