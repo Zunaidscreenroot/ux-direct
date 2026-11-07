@@ -3811,6 +3811,14 @@ async function localApplyDirectEdits(payload) {
   await uxdPrewarmDirectEditFonts(plan);
   if (typeof figma.commitUndo === "function") figma.commitUndo();
   var applied = [], notes = [], errors = [];
+  // Snapshot every property a set-op can touch, so Revert restores exactly these values later,
+  // whatever happened on the canvas since (Figma undo would pop the wrong step).
+  UXD_HYGIENE_SNAPSHOT = { keys: {}, items: [] };
+  var structural = false;
+  plan.forEach(function (step) {
+    if (step.op.action) { structural = true; return; }
+    step.nodes.forEach(function (node) { UXD_DIRECT_SNAP_PROPS.forEach(function (prop) { if (prop in node) uxdSnapProp(node, prop); }); });
+  });
   for (var p = 0; p < plan.length; p++) {
     var step = plan[p];
     if (step.op.action) {
@@ -3829,9 +3837,19 @@ async function localApplyDirectEdits(payload) {
     if (done) applied.push({ label: step.op.label || Object.keys(step.op.set)[0], count: done });
   }
   if (typeof figma.commitUndo === "function") figma.commitUndo();
+  var snapshot = UXD_HYGIENE_SNAPSHOT.items.map(function (item) {
+    var after = uxdCloneValue(item.node[item.prop]);
+    return { id: item.node.id, prop: item.prop, before: item.before, after: after === undefined ? null : after };
+  }).filter(function (item) { return JSON.stringify(item.before) !== JSON.stringify(item.after); });
+  UXD_HYGIENE_SNAPSHOT = null;
+  var layoutChanged = structural || snapshot.some(function (item) { return item.prop === "layoutMode" || item.prop === "layoutWrap"; });
   if (!applied.length) throw new Error(errors.slice(0, 3).join(" ") || "Nothing could be changed.");
-  return { ok: true, applied: applied, notes: notes.slice(0, 6), errors: errors.slice(0, 6) };
+  return { ok: true, applied: applied, notes: notes.slice(0, 6), errors: errors.slice(0, 6), snapshot: snapshot, layoutChanged: layoutChanged };
 }
+var UXD_DIRECT_SNAP_PROPS = ["fills", "strokes", "strokeWeight", "dashPattern", "cornerRadius", "opacity", "effects",
+  "paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "itemSpacing", "layoutMode", "layoutWrap",
+  "primaryAxisAlignItems", "counterAxisAlignItems", "textAlignHorizontal", "textAlignVertical", "fontSize", "fontName",
+  "textCase", "textDecoration", "letterSpacing", "lineHeight", "x", "y"];
 // uxd-hygiene-fix:start
 // One-click hygiene fixer. Deterministic, no model: every change is computed from live layer properties,
 // so the same selection always gets the same fix. Groups: "spacing" (4px grid + near-symmetric padding),
@@ -3967,6 +3985,7 @@ async function localRestoreProps(payload) {
     if (JSON.stringify(uxdCloneValue(node[item.prop]) === undefined ? null : uxdCloneValue(node[item.prop])) !== JSON.stringify(item.after === undefined ? null : item.after)) { changedSince++; continue; }
     try {
       if (node.type === "TEXT") await uxdLoadTextFonts(node);
+      if (item.prop === "fontName" && item.before && item.before.family) await figma.loadFontAsync(item.before);
       await uxdSetPropValue(node, item.prop, item.before);
       restored++;
     } catch (_) { missing++; }
@@ -4035,7 +4054,7 @@ async function localApplyHygieneFixes(payload) {
   if (!roots.length) throw new Error("Select the screen (or layers) to fix first.");
   var nodes = uxdHygieneNodes(roots);
   UXD_HYGIENE_SNAPSHOT = { keys: {}, items: [] };
-  var counts = { spacing: 0, symmetry: 0, colorVariables: 0, colorStyles: 0, textStyles: 0, contrast: 0, smallText: 0, touchTargets: 0, autoLayout: 0 };
+  var counts = { spacing: 0, symmetry: 0, repeated: 0, colorVariables: 0, colorStyles: 0, textStyles: 0, contrast: 0, smallText: 0, touchTargets: 0, autoLayout: 0 };
   var skipped = [];
   function skip(message) { if (skipped.length < 8 && skipped.indexOf(message) < 0) skipped.push(message); }
   var has = function (g) { return groups.indexOf(g) >= 0; };
@@ -4075,6 +4094,37 @@ async function localApplyHygieneFixes(payload) {
         uxdSnapProp(frame, "paddingLeft"); uxdSnapProp(frame, "paddingRight");
         frame.paddingLeft = both; frame.paddingRight = both; counts.symmetry++;
       }
+    });
+    // Repeated items (same type + name under one parent) that drifted apart get the most common
+    // padding, gap and radius of the group, the same grouping the hygiene check reports.
+    var parents = roots.concat(nodes).filter(function (n, i, all) { return Array.isArray(n.children) && n.type !== "INSTANCE" && all.indexOf(n) === i; });
+    parents.forEach(function (parent) {
+      var groupsByName = {};
+      parent.children.forEach(function (kid) {
+        if (["FRAME", "COMPONENT"].indexOf(kid.type) < 0 || kid.visible === false || kid.locked === true) return;
+        var key = kid.type + "|" + kid.name;
+        (groupsByName[key] = groupsByName[key] || []).push(kid);
+      });
+      Object.keys(groupsByName).forEach(function (key) {
+        var group = groupsByName[key];
+        if (group.length < 2) return;
+        var touched = {};
+        ["paddingLeft", "paddingRight", "paddingTop", "paddingBottom", "itemSpacing", "cornerRadius"].forEach(function (prop) {
+          var tally = {}, best = null;
+          group.forEach(function (item) {
+            if (typeof item[prop] !== "number") return;
+            tally[item[prop]] = (tally[item[prop]] || 0) + 1;
+            if (best === null || tally[item[prop]] > tally[best]) best = item[prop];
+          });
+          if (best === null) return;
+          group.forEach(function (item) {
+            if (typeof item[prop] !== "number" || item[prop] === best || uxdBound(item, prop)) return;
+            if (prop !== "cornerRadius" && !uxdHasAutoLayout(item)) return;
+            uxdSnapProp(item, prop); item[prop] = best; touched[item.id] = true;
+          });
+        });
+        counts.repeated += Object.keys(touched).length;
+      });
     });
   }
   if (has("a11y")) {
