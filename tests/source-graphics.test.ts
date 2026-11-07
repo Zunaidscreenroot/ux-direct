@@ -366,3 +366,49 @@ test("a merged '60% Paid' label beside the restored donut is dropped (round 8)",
   assert.ok(!texts.includes("60% Paid"), "merged label dropped: " + texts.join(" | "));
   assert.ok(texts.includes("Outstanding ₹12,000"));
 });
+
+test("a lender logo beside a repeated card title stays in the title row, not above a unique stat (round 8)", () => {
+  const stat = ["Outstanding", "Charges Due", "Overdue"];
+  const card = (i: number, y: number): N => {
+    const id = (n: number) => "8:" + (i * 100 + n);
+    return { id: id(0), name: "Loan Card", type: "FRAME", x: 20, y, width: 320, height: 144, fillColors: ["#FFFFFF"], cornerRadius: 12, layoutMode: "VERTICAL", children: [
+      { id: id(1), name: "Top", type: "FRAME", x: 16, y: 20, width: 271, height: 29, layoutMode: "HORIZONTAL", children: [
+        { id: id(2), name: "Ids", type: "FRAME", x: 0, y: 0, width: 211, height: 29, layoutMode: "VERTICAL", children: [
+          { id: id(3), name: "Personal Loan", type: "TEXT", x: 0, y: 0, width: 211, height: 15, text: "Personal Loan" },
+          { id: id(4), name: "DMI", type: "TEXT", x: 0, y: 17, width: 211, height: 12, text: "DMI1234567890" },
+        ] },
+        { id: id(5), name: "Logo box", type: "FRAME", x: 215, y: 0, width: 56, height: 28, children: [
+          { id: id(6), name: "image 361", type: "RECTANGLE", x: 8, y: 8, width: 40, height: 14, imageFill: true },
+        ] },
+      ] },
+      { id: id(7), name: "Stats", type: "FRAME", x: 16, y: 69, width: 271, height: 36, layoutMode: "HORIZONTAL", children: [
+        { id: id(8), name: "Amount", type: "TEXT", x: 0, y: 0, width: 96, height: 15, text: "Loan Amount" },
+        { id: id(9), name: "Stat", type: "TEXT", x: 104, y: 0, width: 96, height: 15, text: stat[i - 1] },
+        { id: id(10), name: "Value", type: "TEXT", x: 104, y: 19, width: 96, height: 17, text: "₹" + i + "2,000" },
+      ] },
+    ] };
+  };
+  const src = { nodes: [{ id: "8:1", name: "Manage Loans", type: "FRAME", x: 0, y: 0, width: 360, height: 640, fillColors: ["#F6F7F9"], children: [
+    { id: "8:2", name: "Title", type: "TEXT", x: 16, y: 16, width: 200, height: 28, text: "Manage Loans" },
+    card(1, 60), card(2, 220), card(3, 380),
+  ] }], components: [] };
+  const s = { summary: "Clearer loan cards.", sections: [
+    { name: "Header", blocks: [{ type: "heading", title: "Manage Loans" }] },
+    ...[1, 2, 3].map((i) => ({ name: "Loan " + i, surface: "card", title: "Personal Loan", blocks: [
+      { type: "text", text: "DMI1234567890" },
+      { type: "stats", items: [{ label: "Loan Amount", value: "₹" + i + "2,000" }, { label: stat[i - 1], value: "—" }] },
+    ] })),
+  ] };
+  const expansion = expandBlockSpec(s, src, { sourceCanvas: src });
+  assert.ok(expansion.plan, expansion.errors.join("; "));
+  let checked = 0;
+  walk(expansion.plan!.elements as N[], (node) => {
+    const logo = node.children?.find((c) => c.type === "CLONE" && /^8:\d0[56]$/.test(String(c.sourceNodeId)));
+    if (!logo) return;
+    const texts = (node.children || []).filter((c) => c.type === "TEXT").map((c) => String(c.text));
+    assert.ok(texts.includes("Personal Loan") || texts.includes("DMI1234567890"), "logo sits beside the title/id, got: " + texts.join(" | "));
+    assert.ok(!stat.some((t) => texts.includes(t)), "logo is not stacked over a stat label");
+    checked += 1;
+  });
+  assert.equal(checked, 3, "all three logos restored");
+});

@@ -271,6 +271,16 @@ export function restoreSourceFidelity(elements: NativeNode[], canvas: Rec, theme
       else if (pastCard) break;
       else if (candidates[0] && !repeatedFallback) repeatedFallback = candidates[0];
     }
+    // The unique text was only found higher up (another row of the card), but a repeated text sat
+    // right beside the graphic ("Personal Loan" next to the lender logo). Use the unique text to
+    // find the right output card, then anchor to that card's own copy of the nearer text, so the
+    // logo lands in the title row rather than above "Outstanding" (tester round 8).
+    if (anchor && anchorRef && repeatedFallback) {
+      const outCard = [...anchorRef.ancestors].reverse().find(isCardLike);
+      const key = norm(repeatedFallback.d.text);
+      const inCard = outCard ? refs.filter((r) => r.node.type === "TEXT" && typeof r.node.text === "string" && norm(r.node.text) === key && r.ancestors.includes(outCard)) : [];
+      if (inCard.length === 1 && allowed(repeatedFallback.d, inCard[0])) { anchor = repeatedFallback.d; anchorRef = inCard[0]; }
+    }
     if ((!anchor || !anchorRef) && repeatedFallback) { anchor = repeatedFallback.d; anchorRef = repeatedFallback.ref; }
     if (!anchor || !anchorRef) { result.unplaced.push(graphic.name); continue; }
 
