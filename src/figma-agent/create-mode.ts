@@ -103,7 +103,7 @@ export function createScopeInstructions(size: { width: number; height: number; p
 }
 
 /** A new screen uses its whole height with real content, like a senior designer's first draft. */
-export const CREATE_DENSITY_RULE = "FILL THE SCREEN: use the frame's full height with real content, never an empty lower third. An overview or dashboard screen shows a summary of totals, the next action, and a list of at least 2-3 items of the same kind built with the same block structure (they become one reusable component). A form or detail screen shows every field or detail the task needs.";
+export const CREATE_DENSITY_RULE = "FILL THE SCREEN: use the frame's full height with real content, never an empty lower third. An overview or dashboard screen shows a summary of totals, the next action, and a list of at least 2-3 items of the same kind built with the same block structure (they become one reusable component). A form or detail screen shows every field or detail the task needs. Totals and counts must agree with the items shown (a total is their sum, \"3 active\" counts only active items).";
 
 export const CREATE_OPERATING_CONTRACT = [
   "The user's prompt describes a NEW screen to design from scratch; there is no source frame to preserve.",

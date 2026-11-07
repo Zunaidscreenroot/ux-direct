@@ -94,3 +94,20 @@ test("a journey screen shows its own title in the kit app bar, with the first sc
   const sections = out.plan!.elements.slice(1) as N[];
   assert.ok(sections.every((n) => n.paddingLeft === 20 || n.x === 20), "every section sits on the 20px gutter");
 });
+
+test("an alert keeps its short CTA inline in a plain section, and a screen has one app bar", () => {
+  const canvas = createModeCanvas({ nodes: [], components: [{ id: "10:1", name: "App bar", width: 360, height: 64 }, { id: "30:3", name: "Loan Card", width: 320, height: 220 }] }, { width: 360, height: 800 }, "loans");
+  const out = expandBlockSpec({ summary: "Loans with an overdue alert.", sections: [
+    { name: "Header", surface: "plain", blocks: [{ type: "app_bar", title: "Manage loans" }] },
+    { name: "Alert", surface: "plain", blocks: [{ type: "banner", title: "₹12,570 overdue", tone: "danger" }, { type: "button", label: "Pay now", variant: "primary" }] },
+    { name: "Loans", surface: "plain", blocks: [{ type: "app_bar", title: "Manage Loan" }, { type: "component", componentId: "10:1", name: "App bar" }, { type: "component", componentId: "30:3", name: "Loan Card" }] },
+  ] }, canvas, { create: true });
+  assert.ok(out.plan, out.errors.join("; "));
+  const nodes = all(out.plan!.elements as N[]);
+  const pay = nodes.find((n) => n.name === "Button / Primary");
+  assert.ok(pay && pay.height === 36, "inline compact CTA");
+  assert.equal(nodes.filter((n) => n.type === "INSTANCE" && n.componentId === "10:1").length, 1, "one app bar instance");
+  assert.ok(!nodes.some((n) => /App bar · Manage Loan/.test(n.name)), "no second hand-drawn app bar");
+  const card = nodes.find((n) => n.componentId === "30:3");
+  assert.equal(card!.height, 220, "instance keeps its own height");
+});
