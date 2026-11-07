@@ -36,3 +36,47 @@ test("a new screen from a prompt passes the gates against the empty virtual fram
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   assert.equal(missingSourceTexts(plan as any, canvas, "create a loan dashboard").length, 0);
 });
+
+test("create mode uses the file's background and reuses its app bar component with the new title", () => {
+  const raw = {
+    nodes: [],
+    pageBackground: "#0e0f12",
+    styles: { paint: [{ id: "S:bg", name: "DMI / Observed / Colors / Background", color: "#0E0F12" }, { id: "S:primary", name: "Primary", color: "#22D3EE" }] },
+    components: [
+      { id: "C:bottom", name: "Bottom nav bar", width: 360, height: 64, uses: 9 },
+      { id: "C:appbar", name: "App bar", width: 360, height: 56, uses: 7, properties: {} },
+      { id: "C:card", name: "Loan card", width: 320, height: 120, uses: 3 },
+    ],
+  };
+  const canvas = createModeCanvas(raw, { width: 360, height: 800 }, "create a loan dashboard");
+  const root = (canvas.nodes as Record<string, unknown>[])[0];
+  assert.deepEqual(root.fillColors, ["#0E0F12"]);
+  const kids = root.children as Record<string, unknown>[];
+  assert.equal(kids.length, 1);
+  assert.equal(kids[0].mainComponentId, "C:appbar");
+  assert.equal(kids[0].type, "INSTANCE");
+
+  const spec = { summary: "Loan dashboard.", sections: [
+    { name: "Header", blocks: [{ type: "app_bar", title: "Loan dashboard" }] },
+    { name: "Summary", surface: "card", title: "Total outstanding", blocks: [{ type: "stat", value: "₹4,20,000" }] },
+    { name: "Loans", blocks: [{ type: "list", items: [{ label: "Personal loan", value: "₹1,20,000" }] }] },
+  ], learningCandidate: null };
+  const out = expandBlockSpec(spec, { ...canvas, components: raw.components });
+  assert.ok(out.plan, out.errors.join("; "));
+  const header = (out.plan!.elements as Record<string, unknown>[])[0];
+  const instance = ((header.children as Record<string, unknown>[] | undefined)?.[0] ?? header) as Record<string, unknown>;
+  assert.equal(instance.type, "INSTANCE");
+  assert.equal(instance.componentId, "C:appbar");
+  assert.deepEqual(instance.textOverrides, { __title: "Loan dashboard" });
+  assert.equal(String(out.plan!.frame.backgroundColor).toUpperCase(), "#0E0F12");
+});
+
+test("create mode without page fill falls back to a background paint style, else white; no header without a fitting app bar", () => {
+  const styled = createModeCanvas({ styles: { paint: [{ id: "a", name: "Button / bg", color: "#FF0000" }, { id: "b", name: "Colors/Background", color: "#101820" }] }, components: [{ id: "x", name: "Header", width: 1440, height: 80 }] },
+    { width: 360, height: 800 }, "create a profile screen");
+  const root = (styled.nodes as Record<string, unknown>[])[0];
+  assert.deepEqual(root.fillColors, ["#101820"]);
+  assert.deepEqual(root.children, []);
+  const plain = createModeCanvas({}, { width: 360, height: 800 }, "create a profile screen");
+  assert.deepEqual((plain.nodes as Record<string, unknown>[])[0].fillColors, ["#FFFFFF"]);
+});

@@ -589,7 +589,7 @@ function restoreButtons(elements: NativeNode[], root: SrcNode, theme: BlockTheme
     // demoted it to an outline pill lost the screen's main action (finding 62).
     // Also a CTA the model turned into a chip or status pill (finding 62).
     const pill = parent && /\b(chip|status badge|badge)\b/i.test(parent.name);
-    if (parent && (/secondary button/i.test(parent.name) || pill) && strong.has(norm(node.text)) && (parent.children?.length ?? 0) === 1) {
+    if (parent && (/secondary button|button \/ secondary/i.test(parent.name) || pill) && strong.has(norm(node.text)) && (parent.children?.length ?? 0) === 1) {
       parent.name = node.text.slice(0, 60) + " button";
       parent.color = theme.primaryFill;
       delete parent.strokeColor; delete parent.strokeWeight;

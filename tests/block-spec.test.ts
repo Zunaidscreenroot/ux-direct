@@ -421,3 +421,93 @@ test("progress ring value is centred across the ring; repeated rows share one le
   for (const row of rows) assert.equal((row.children as Array<Record<string, unknown>>)[0].width, 36, String(row.name) + " starts with a 36px leading slot");
   assert.equal(alignRowLeading([{ type: "row", label: "A" }, { type: "row", label: "B" }]).some((b) => b.leadingSpacer), false, "no icons, no spacers");
 });
+
+test("card keeps a ring beside its metrics and an alert's single CTA inline", () => {
+  const spec = {
+    summary: "Loan cards keep their row groupings and fit the screen.",
+    frame: { name: "Loans" },
+    sections: [
+      { name: "Header", blocks: [{ type: "app_bar", title: "Manage loans" }] },
+      { name: "Personal loan", surface: "card", title: "Personal Loan", badge: { text: "Delinquent", tone: "danger" }, blocks: [
+        { type: "progress_ring", percent: 40 },
+        { type: "stat_row", items: [{ label: "Outstanding", value: "₹1,20,000" }, { label: "Next EMI", value: "₹8,450" }] },
+        { type: "banner", body: "EMI overdue by 5 days", tone: "danger" },
+        { type: "button", label: "Pay now", variant: "primary" },
+      ] },
+      { name: "Home loan", surface: "card", title: "Home Loan", blocks: [
+        { type: "progress_ring", percent: 70, label: "70% paid" },
+        { type: "list", items: [{ label: "Outstanding", value: "₹9,00,000" }] },
+        { type: "text", text: "Statement ready" },
+        { type: "buttons", items: [{ label: "View" }] },
+      ] },
+    ],
+    learningCandidate: null,
+  };
+  const out = expandBlockSpec(spec, lightCanvas);
+  assert.ok(out.plan, out.errors.join("; "));
+  const cards = (out.plan!.elements as N[]).filter((n) => n.name === "Personal loan" || n.name === "Home loan");
+  assert.equal(cards.length, 2);
+  for (const card of cards) {
+    const body = card.children!.find((n) => n.name === "Body")!;
+    assert.ok(body, "ring and metrics share one row");
+    assert.equal(body.layoutMode, "HORIZONTAL");
+    assert.equal(body.children![0].name, "Progress ring");
+    const alert = card.children!.find((n) => n.name === "Alert")!;
+    assert.ok(alert, "alert and CTA share one row");
+    assert.equal(alert.layoutMode, "HORIZONTAL");
+    const btn = alert.children![alert.children!.length - 1];
+    assert.equal(btn.height, 36);
+    assert.equal(btn.layoutSizingHorizontal, "HUG");
+    assert.ok((btn.width as number) < 140);
+  }
+  // Ring without a label: stat cells sit straight beside the ring.
+  const first = cards.find((n) => n.name === "Personal loan")!.children!.find((n) => n.name === "Body")!;
+  assert.equal(first.children!.length, 3);
+  // The screen keeps the source height (800) instead of growing.
+  assert.equal(out.plan!.frame.height, 800);
+});
+
+test("ring pairing leaves long metric lists and long CTA labels stacked", () => {
+  const spec = {
+    summary: "Stacked fallback.",
+    frame: { name: "Loans" },
+    sections: [
+      { name: "A", blocks: [{ type: "heading", title: "Loans" }] },
+      { name: "B", surface: "card", title: "Loan", blocks: [
+        { type: "progress_ring", percent: 50 },
+        { type: "list", items: [{ label: "a", value: "1" }, { label: "b", value: "2" }, { label: "c", value: "3" }, { label: "d", value: "4" }] },
+        { type: "banner", body: "Overdue", tone: "danger" },
+        { type: "button", label: "Pay the full outstanding amount" },
+      ] },
+      { name: "C", blocks: [{ type: "text", text: "Footer" }] },
+    ],
+    learningCandidate: null,
+  };
+  const out = expandBlockSpec(spec, lightCanvas);
+  assert.ok(out.plan, out.errors.join("; "));
+  const card = (out.plan!.elements as N[]).find((n) => n.name === "B")!;
+  assert.ok(!card.children!.some((n) => n.name === "Body"));
+  assert.ok(!card.children!.some((n) => n.name === "Alert"));
+});
+
+test("a source text keeps its accent colour and style when the spec reuses the same copy", () => {
+  const source = { nodes: [{ name: "Loans", type: "FRAME", width: 360, height: 800, fillColors: ["#0E0F12"], children: [
+    { type: "TEXT", name: "Product", text: "Personal Loan", fontSize: 16, fontStyle: "Semi Bold", fillColors: ["#22D3EE"], textStyleId: "S:brand" },
+    { type: "TEXT", name: "Body", text: "Outstanding", fontSize: 12, fontStyle: "Regular", fillColors: ["#FFFFFF"] },
+    { type: "TEXT", name: "Dup A", text: "Pay now", fontSize: 14, fontStyle: "Semi Bold", fillColors: ["#FF0000"] },
+    { type: "TEXT", name: "Dup B", text: "Pay now", fontSize: 14, fontStyle: "Semi Bold", fillColors: ["#00FF00"] },
+  ] }], components: [] };
+  const spec = { summary: "Loan card.", sections: [
+    { name: "A", blocks: [{ type: "heading", title: "Loans" }] },
+    { name: "Loan", surface: "card", title: "Personal Loan", blocks: [{ type: "row", label: "Outstanding", value: "₹1,000" }, { type: "text", text: "Pay now" }] },
+    { name: "C", blocks: [{ type: "text", text: "Footer" }] },
+  ], learningCandidate: null };
+  const out = expandBlockSpec(spec, source);
+  assert.ok(out.plan, out.errors.join("; "));
+  const found: Record<string, N> = {};
+  walk(out.plan!.elements as N[], (n) => { if (n.type === "TEXT") found[String(n.text)] = n; });
+  assert.equal(String(found["Personal Loan"].color).toUpperCase(), "#22D3EE");
+  assert.equal(found["Personal Loan"].textStyleId, "S:brand");
+  assert.notEqual(String(found["Pay now"].color).toUpperCase(), "#FF0000", "ambiguous copy keeps the renderer colour");
+  assert.notEqual(String(found["Pay now"].color).toUpperCase(), "#00FF00");
+});

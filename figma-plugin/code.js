@@ -1227,6 +1227,20 @@ async function readCanvasCommand(payload) {
     result.pagesTruncated = figma.root.children.length > 100;
   }
   if (payload.includeStyles === true) {
+    // The page's dominant screen fill (by area of top-level frames), so a new screen matches the file's theme.
+    try {
+      var fillArea = {};
+      figma.currentPage.children.slice(0, 200).forEach(function (top) {
+        if (top.type !== "FRAME" && top.type !== "COMPONENT" && top.type !== "INSTANCE") return;
+        var fills = Array.isArray(top.fills) ? top.fills : [];
+        var solid = fills.filter(function (f) { return f && f.visible !== false && f.type === "SOLID" && (f.opacity === undefined || f.opacity >= 0.99); })[0];
+        if (!solid || top.width < 240 || top.height < 400) return;
+        var hexValue = canvasColorHex(solid.color);
+        fillArea[hexValue] = (fillArea[hexValue] || 0) + top.width * top.height;
+      });
+      var bestFill = Object.keys(fillArea).sort(function (a, b) { return fillArea[b] - fillArea[a]; })[0];
+      if (bestFill) result.pageBackground = bestFill;
+    } catch (_) {}
     var styles = await Promise.all([
       figma.getLocalPaintStylesAsync(),
       figma.getLocalTextStylesAsync(),
@@ -1710,6 +1724,19 @@ async function writeCanvasCommand(payload, options) {
     if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) return 0;
     var applied = 0;
     var texts = instance.findAll(function (child) { return child.type === "TEXT"; });
+    // "__title": a new screen reusing the file's app bar sets its title, the instance's largest text.
+    if (typeof overrides.__title === "string" && overrides.__title.trim() && texts.length) {
+      var titleNode = texts.filter(function (tx) { return tx.visible !== false; }).sort(function (a, b) {
+        var sa = a.fontSize === figma.mixed ? 0 : a.fontSize, sb = b.fontSize === figma.mixed ? 0 : b.fontSize;
+        return sb - sa;
+      })[0];
+      if (titleNode && titleNode.characters !== overrides.__title) {
+        var titleFonts = titleNode.fontName === figma.mixed ? titleNode.getRangeAllFontNames(0, titleNode.characters.length) : [titleNode.fontName];
+        for (var tf = 0; tf < titleFonts.length; tf++) await figma.loadFontAsync(titleFonts[tf]);
+        titleNode.characters = overrides.__title.slice(0, 200);
+        applied += 1;
+      }
+    }
     for (var t = 0; t < texts.length; t++) {
       var textNode = texts[t];
       if (!Object.prototype.hasOwnProperty.call(overrides, textNode.name)) continue;
