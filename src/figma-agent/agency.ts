@@ -356,6 +356,7 @@ export async function runAgency(canvas: Rec, context: AgencyContext, options: { 
         maxTokens: 2500,
         temperature: 0.2,
         title: "UX Direct " + item.designer.title,
+        role: "section-designer",
         origin: context.origin,
         timeoutMs: options.deadlineMs ?? 45000,
         signal: deadline.signal,

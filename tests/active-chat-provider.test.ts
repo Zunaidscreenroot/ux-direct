@@ -145,6 +145,7 @@ test("FreeLLMAPI Figma calls are uncapped, follow the user's routing, and bias o
   assert.deepEqual(figmaRoutingHeaders(free, { fast: true }), { "X-FreeLLM-Task-Type": "chat" });
   assert.deepEqual(figmaRoutingHeaders(openrouter, { fast: true }), {});
   assert.deepEqual(figmaRoutingHeaders(openrouter), {});
+  assert.deepEqual(figmaRoutingHeaders(free, { role: "planner" }), { "X-UXD-Agent-Role": "planner" });
 });
 
 test("FREELLMAPI_TRANSPORT=vpc routes FreeLLMAPI to the VPC base URL without public-URL checks", async () => {

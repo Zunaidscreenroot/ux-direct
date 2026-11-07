@@ -176,10 +176,17 @@ export function figmaMaxTokens(provider: ActiveChatProvider, cap: number): { max
  * A compact retry (`fast`) sends `chat`, FreeLLMAPI's soft speed bias, so a fallback fits the
  * budget. Still plain `auto`: no model is pinned and the user's chain decides.
  */
-export function figmaRoutingHeaders(provider: ActiveChatProvider, options: { fast?: boolean } = {}): Record<string, string> {
+export function figmaRoutingHeaders(provider: ActiveChatProvider, options: { fast?: boolean; role?: AgentRole } = {}): Record<string, string> {
   if (provider.id !== "freellmapi") return {};
-  return options.fast ? { "X-FreeLLM-Task-Type": "chat" } : {};
+  return {
+    ...(options.fast ? { "X-FreeLLM-Task-Type": "chat" } : {}),
+    // UX Direct's own gateway (src/llm-gateway) picks the model pool by agent role; FreeLLMAPI ignores it.
+    ...(options.role ? { "X-UXD-Agent-Role": options.role } : {}),
+  };
 }
+
+/** Agent roles the own gateway routes on (see ROLE_POLICIES in src/llm-gateway/router.ts). */
+export type AgentRole = "chat" | "fast-retry" | "classifier" | "planner" | "section-designer" | "critic" | "writer";
 
 /** Per-attempt timeout; the first FreeLLMAPI attempt also covers a host cold start. */
 export function figmaAttemptTimeoutMs(provider: ActiveChatProvider, attemptIndex: number, firstMs: number, laterMs: number): number {

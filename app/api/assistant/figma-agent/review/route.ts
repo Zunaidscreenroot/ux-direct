@@ -259,7 +259,7 @@ export async function POST(request: Request) {
           Authorization: "Bearer " + apiKey,
           "Content-Type": "application/json",
           Accept: "application/json",
-            ...figmaRoutingHeaders(activeProvider),
+            ...figmaRoutingHeaders(activeProvider, { role: "critic" }),
           ...(activeProvider.id === "openrouter" ? {
             "HTTP-Referer": new URL(request.url).origin,
             "X-OpenRouter-Title": "UX Direct Visual QA",

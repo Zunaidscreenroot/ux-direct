@@ -1,7 +1,7 @@
 import { providerFetch } from "@/src/providers/provider-fetch";
 import { FIGMA_AGENT_MODELS, UX_DIRECT_DESIGN_ROLE } from "@/src/providers/openrouter-models";
 import { getResolvedActiveChatProvider } from "@/src/providers/runtime-chat-provider";
-import { figmaAttemptTimeoutMs, figmaModelChain, figmaRoutingHeaders, routedVia, shouldRetryWithoutJsonMode } from "@/src/providers/active-chat-provider";
+import { figmaAttemptTimeoutMs, figmaModelChain, figmaRoutingHeaders, routedVia, shouldRetryWithoutJsonMode, type AgentRole } from "@/src/providers/active-chat-provider";
 import { extractJsonObject } from "@/src/figma-agent/extract-json-object";
 
 export type JsonModelContent = string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
@@ -33,6 +33,8 @@ export async function callFigmaJsonModel(options: {
   maxAttempts?: number;
   /** Small, latency-sensitive call: FreeLLMAPI routes it as a chat task (agency designers). */
   fast?: boolean;
+  /** Agent role for the own gateway's model choice (planner, section-designer, critic …). */
+  role?: AgentRole;
   accept: (data: Record<string, unknown>, raw: string) => string | null;
 }): Promise<JsonModelResult> {
   const provider = await getResolvedActiveChatProvider();
@@ -61,7 +63,7 @@ export async function callFigmaJsonModel(options: {
           Authorization: "Bearer " + provider.apiKey,
           "Content-Type": "application/json",
           Accept: "application/json",
-          ...(options.fast ? figmaRoutingHeaders(provider, { fast: true }) : {}),
+          ...figmaRoutingHeaders(provider, { fast: options.fast, role: options.role }),
           ...(provider.id === "openrouter" ? { "HTTP-Referer": options.origin, "X-OpenRouter-Title": options.title } : {}),
         },
         body: JSON.stringify({

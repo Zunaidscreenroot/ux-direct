@@ -966,7 +966,7 @@ export async function POST(request: Request) {
             Authorization: "Bearer " + key,
             "Content-Type": "application/json",
             Accept: "application/json",
-            ...figmaRoutingHeaders(activeProvider, { fast: isRecovery }),
+            ...figmaRoutingHeaders(activeProvider, { fast: isRecovery, role: isRecovery ? "fast-retry" : "planner" }),
             ...(activeProvider.id === "openrouter" ? {
               "HTTP-Referer": new URL(request.url).origin,
               "X-OpenRouter-Title": "UX Direct Figma Agent",
