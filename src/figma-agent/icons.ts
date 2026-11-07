@@ -40,7 +40,7 @@ const LABEL_ICONS: Array<[RegExp, string]> = [
   [/\b(edit|update|change)\b/i, "pencil"],
   [/\b(delete|remove)\b/i, "trash-2"],
   [/\b(filter|sort)\b/i, "sliders-horizontal"],
-  [/\b(calendar|date|schedule)\b/i, "calendar"],
+  [/\b(calendar|date|schedule|due|due date|tenure)\b/i, "calendar"],
   [/\b(call|phone|contact)\b/i, "phone"],
   [/\b(e-?mail|mail|message)\b/i, "mail"],
   [/\b(location|branch|atm|address|map)\b/i, "map-pin"],
