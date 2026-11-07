@@ -56,7 +56,8 @@ export const PROVIDERS: ProviderDef[] = [
   },
   {
     id: "mistral", label: "Mistral", baseUrl: "https://api.mistral.ai/v1", keyEnv: ["MISTRAL_API_KEY"],
-    models: ["mistral-medium-latest", "mistral-large-latest", "magistral-medium-latest", "mistral-small-latest"],
+    // Ids from the account's own free-tier rate-limit table (admin.mistral.ai/plateforme/limits); large-2512 has the biggest TPM.
+    models: ["mistral-large-2512", "ministral-14b-2512", "mistral-medium-latest", "mistral-small-2603"],
     rpm: 50, maxInputTokens: 100_000, maxOutputTokens: 32_000,
   },
   {
