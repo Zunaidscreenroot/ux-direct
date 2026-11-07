@@ -70,7 +70,18 @@ function candidateEntries(data: unknown, raw: string): unknown[] {
   return entries;
 }
 
-export function normalizeTextEdits(mode: TextTaskMode, data: unknown, items: TextTaskItem[], raw = ""): TextEdit[] {
+/** Values and IDs ("₹1,07,649", "60%", "DMI1234567890", "12 Nov 2026") are data, not copy. */
+export function isValueText(text: string): boolean {
+  const value = text.trim();
+  if (!value || !/\d/.test(value)) return false;
+  if (!/\s/.test(value)) return true;
+  return /^[\d₹$€£¥%.,:/+\-\s]+([a-z]{3,9}\.?)?[\d,\s]*$/i.test(value) && value.replace(/[^a-z]/gi, "").length <= 9;
+}
+
+const VALUE_EDIT_REQUEST = /\b(numbers?|amounts?|values?|ids?|dates?|prices?|figures?|data|currency|format|translate|hindi|placeholder|sample|dummy)\b/i;
+
+export function normalizeTextEdits(mode: TextTaskMode, data: unknown, items: TextTaskItem[], raw = "", prompt = ""): TextEdit[] {
+  const allowValueEdits = VALUE_EDIT_REQUEST.test(prompt);
   const byRef = new Map(items.map((item, index) => [refFor(index), item]));
   const byId = new Map(items.map((item) => [item.id, item]));
   const nameCounts = new Map<string, number>();
@@ -102,6 +113,11 @@ export function normalizeTextEdits(mode: TextTaskMode, data: unknown, items: Tex
     if (value === null || seen.has(source.id)) return;
     if (mode === "rewrite") {
       if (source.type !== "TEXT" || !value.trim() || value.length > 5000 || value === (source.text || "")) return;
+      // Whitespace-only "changes" are no-ops (tester: "Personal Loan " → "Personal Loan" ×3).
+      const squash = (text: string) => text.replace(/\s+/g, " ").trim();
+      if (squash(value) === squash(source.text || "")) return;
+      // A copy rewrite never touches IDs, amounts or dates unless the request is about them.
+      if (!allowValueEdits && isValueText(source.text || "")) return;
       edits.push({ id: source.id, value, before: source.text || "" });
     } else {
       const clean = value.replace(/\s+/g, " ").trim().slice(0, 60);
