@@ -4736,8 +4736,18 @@ function uxdSimplifyIsButton(node) {
   var texts = uxdSimplifyTexts(node);
   if (texts.length !== 1 || texts[0].characters.trim().split(/\s+/).length > 4) return false;
   if (/\b(button|btn|cta)\b/i.test(node.name || "")) return true;
-  var h = Number(node.height) || 0;
-  return h >= 28 && h <= 64 && !!uxdSimplifySolid(node) && Number(node.cornerRadius) > 0;
+  var h = typeof node.height === "number" ? node.height : 0;
+  // cornerRadius is figma.mixed (a symbol) when corners differ; Number(symbol) throws.
+  var radius = typeof node.cornerRadius === "number" ? node.cornerRadius : (typeof node.topLeftRadius === "number" ? node.topLeftRadius : 0);
+  return h >= 28 && h <= 64 && !!uxdSimplifySolid(node) && radius > 0;
+}
+function uxdSimplifyHasButton(node) {
+  var kids = node.children || [];
+  for (var i = 0; i < kids.length; i++) {
+    if (!uxdSimplifyVisible(kids[i])) continue;
+    if (uxdSimplifyIsButton(kids[i]) || uxdSimplifyHasButton(kids[i])) return true;
+  }
+  return false;
 }
 function uxdSimplifyIsBanner(node) {
   return ["FRAME", "INSTANCE", "GROUP", "COMPONENT"].indexOf(node.type) >= 0 &&
@@ -4762,7 +4772,8 @@ function uxdSimplifyPlan(root) {
     (node.children || []).forEach(function (child) {
       if (!uxdSimplifyVisible(child)) return;
       // A banner goes when every value in it is also shown elsewhere (checked below).
-      if (uxdSimplifyIsBanner(child)) { drop(child, "banner"); return; }
+      // A banner that carries an action is kept: actions are never deleted (its helper copy can still go).
+      if (uxdSimplifyIsBanner(child) && !uxdSimplifyHasButton(child)) { drop(child, "banner"); return; }
       if (uxdSimplifyIsDecor(child)) { drop(child, "decoration"); return; }
       walk(child);
     });
@@ -4831,8 +4842,12 @@ async function uxdSimplifyDemote(button) {
   return "outline";
 }
 async function localSimplifyPass(payload) {
+  try { return await uxdSimplifyRun(payload); }
+  catch (error) { return { ok: false, error: String(error && error.message || error).slice(0, 200) }; }
+}
+async function uxdSimplifyRun(payload) {
   var root = await localTaskNode(payload.rootId);
-  var heightBefore = Number(root.height) || 0;
+  var heightBefore = typeof root.height === "number" ? root.height : 0;
   var plan = uxdSimplifyPlan(root);
   var removed = [];
   plan.drops.forEach(function (entry) {

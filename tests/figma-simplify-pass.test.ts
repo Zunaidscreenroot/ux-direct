@@ -58,5 +58,21 @@ test("a value that only exists in a banner is never dropped", () => {
 test("the plugin runs the simplify pass on simplify requests and reports it", () => {
   assert.match(code, /message\.op === "simplify-pass"\) result = await localSimplifyPass\(payload\)/);
   assert.match(ui, /localTask\("simplify-pass", \{ rootId: createdFrameId \}/);
-  assert.match(ui, /polishNote \+ simplifyNote \+ timingLine/);
+  assert.match(ui, /polishNote \+ simplifyNote \+ attemptsLine \+ timingLine/);
+});
+
+test("a banner that carries an action is kept, and mixed corner radii do not break the pass", () => {
+  const { plan } = load();
+  const mixed = Symbol("mixed");
+  const pay = node("FRAME", "Pay", { height: 40, cornerRadius: mixed, topLeftRadius: 8, fills: [{ type: "SOLID", color: { r: 1, g: 0, b: 0 } }] }, [text("Pay now")]);
+  const root = node("FRAME", "Screen", {}, [text("Loans", 22), text("₹500", 18),
+    node("FRAME", "Alert banner", {}, [text("Overdue ₹500"), pay])]);
+  const result = plan(root);
+  assert.ok(!result.drops.some((d: any) => d.node.name === "Alert banner"), "the pay action must stay");
+});
+
+test("simplify runs before componentize and provider errors stay in Details", () => {
+  assert.ok(ui.indexOf('localTask("simplify-pass"') < ui.indexOf('localTask("componentize-repeats"'));
+  assert.match(ui, /split\(\/\\s\*Model attempts:\\s\*\/\)/);
+  assert.match(ui, /Model attempts:\|Simplify pass:\|/);
 });

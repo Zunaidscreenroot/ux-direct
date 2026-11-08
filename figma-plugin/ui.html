@@ -1509,7 +1509,7 @@
     // uxd-short-reply:start
     // Replies stay short and plain: run diagnostics (timing, models, lint/read-back notes) fold
     // into a collapsed "Details" line, and backend architecture names never reach the designer.
-    var UXD_TECH_LINE = /^\s*(Timing:|Generation model:|Design model:|Model:|UX Direct Brain|Post-variation visual QA|Native structure|Native layer|Structural lint|Visual capture note:|Visual QA|Lint:|Read-back|Routed via|Served by|Attempts?:|Task run|Task outcome|Brain learning|Brain:|Memory:)/i;
+    var UXD_TECH_LINE = /^\s*(Timing:|Generation model:|Design model:|Model:|UX Direct Brain|Post-variation visual QA|Native structure|Native layer|Structural lint|Visual capture note:|Visual QA|Model attempts:|Simplify pass:|Lint:|Read-back|Routed via|Served by|Attempts?:|Task run|Task outcome|Brain learning|Brain:|Memory:)/i;
     function uxdScrubArchitecture(text) {
       return String(text || "")
         .replace(/\b(?:the\s+)?UX\s+Director\s+agency\b/gi, "UX Direct")
@@ -2656,8 +2656,6 @@
         stage("creating", "Applying the file's colour and text styles and the spacing grid…");
         await localTask("apply-hygiene-fixes", { groups: ["tokens", "spacing", "names"], keepRootFill: !!(designOptions && designOptions.keepFrameFill) }, 120000);
       } catch (_) { /* styling is a bonus pass; the build itself already succeeded */ }
-      // Repeated cards and rows become one local component plus instances (reuse, like Claude in Figma).
-      try { await localTask("componentize-repeats", { rootId: createdFrameId }, 60000); } catch (_) { /* bonus pass */ }
       // Simplify: the model rarely removes anything, so the copy gets Claude's simplify moves
       // deterministically (banners that repeat a fact, helper sentences, extra primary buttons,
       // decoration). Amounts, IDs and short values always stay; the note says what changed.
@@ -2666,15 +2664,18 @@
         try {
           stage("creating", "Simplifying: removing repeated banners, helper copy and extra primary buttons…");
           const simplified = await localTask("simplify-pass", { rootId: createdFrameId }, 60000);
-          if (simplified && simplified.ok) {
+          if (simplified && simplified.ok === false) simplifyNote = "\nSimplify pass: skipped (" + String(simplified.error || "no result") + ")";
+          else if (simplified && simplified.ok) {
             simplifyNote = "\nSimplified: removed " + simplified.removed.length + " layer(s)" +
               (simplified.removed.length ? " (" + simplified.removed.slice(0, 6).map(function (item) { return item.why + " \u201c" + item.name + "\u201d"; }).join(", ") + ")" : "") +
               (simplified.demoted ? ", made " + simplified.demoted + " extra primary button(s) secondary" : "") +
               "; visible texts " + simplified.textsBefore + " \u2192 " + simplified.textsAfter + ". Every amount and ID is kept.";
           }
-        } catch (_) { /* the design itself is done; simplify is an extra pass */ }
+        } catch (error) { simplifyNote = "\nSimplify pass: skipped (" + String(error && error.message || error).slice(0, 160) + ")"; }
       }
 
+      // Repeated cards and rows become one local component plus instances (reuse, like Claude in Figma).
+      try { await localTask("componentize-repeats", { rootId: createdFrameId }, 60000); } catch (_) { /* bonus pass */ }
       const buildMs = Date.now() - buildStartedAt;
       const checksStartedAt = Date.now();
       stage("verifying", "Checking the final native layer tree and frame bounds…");
@@ -2718,18 +2719,22 @@
       await localTask("learn-baseline", { nodeIds: [createdFrameId] }).catch(function () {});
       if (lint.passed) stage("done", "Variation created · native structure read-back passed");
       else stage("error", "Variation created · structural lint found issues to fix");
+      // Provider errors ("HTTP 429 …") belong in Details, never in the reply text.
+      const summaryParts = String(plan.summary || "").split(/\s*Model attempts:\s*/);
+      const summaryMain = summaryParts[0];
+      const attemptsLine = summaryParts.length > 1 ? "\nModel attempts: " + summaryParts.slice(1).join(" ") : "";
       const model = typeof payload.model === "string" ? payload.model : selectedModel;
       if (createMode) {
-        return 'Created **' + frameName + '**. ' + String(plan.summary || "") +
+        return 'Created **' + frameName + '**. ' + summaryMain +
           (lint.passed ? '' : '\n**Not ready yet:** ' + uxdLintHeadline(lint) + ' Say **retry** to fix it.') +
           '\nNext: **add icons**, **fill with realistic data** or **add states**.' +
-          '\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory + visualNote + timingLine;
+          '\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory + visualNote + attemptsLine + timingLine;
       }
-      return 'Created **' + frameName + '** next to the original. ' + String(plan.summary || "") +
+      return 'Created **' + frameName + '** next to the original. ' + summaryMain +
         (lint.passed ? '' : '\n**Not ready yet:** ' + uxdLintHeadline(lint) + ' Say **retry** to fix it.') +
         '\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory +
         visualNote +
-        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') + polishNote + simplifyNote + timingLine;
+        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') + polishNote + simplifyNote + attemptsLine + timingLine;
       } catch (error) {
         if (taskRunId) {
           await finalizeTaskOutcome("failed", String(error && error.message || error || "Native Figma task failed"),
