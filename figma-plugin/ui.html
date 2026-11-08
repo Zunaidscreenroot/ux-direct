@@ -2658,6 +2658,22 @@
       } catch (_) { /* styling is a bonus pass; the build itself already succeeded */ }
       // Repeated cards and rows become one local component plus instances (reuse, like Claude in Figma).
       try { await localTask("componentize-repeats", { rootId: createdFrameId }, 60000); } catch (_) { /* bonus pass */ }
+      // Simplify: the model rarely removes anything, so the copy gets Claude's simplify moves
+      // deterministically (banners that repeat a fact, helper sentences, extra primary buttons,
+      // decoration). Amounts, IDs and short values always stay; the note says what changed.
+      let simplifyNote = "";
+      if (!createMode && /\b(simplif\w*|declutter\w*|de-clutter\w*|less clutter\w*|cluttered|too busy|less busy|minimali[sz]e|saaf|aasan)\b/i.test(prompt)) {
+        try {
+          stage("creating", "Simplifying: removing repeated banners, helper copy and extra primary buttons…");
+          const simplified = await localTask("simplify-pass", { rootId: createdFrameId }, 60000);
+          if (simplified && simplified.ok) {
+            simplifyNote = "\nSimplified: removed " + simplified.removed.length + " layer(s)" +
+              (simplified.removed.length ? " (" + simplified.removed.slice(0, 6).map(function (item) { return item.why + " \u201c" + item.name + "\u201d"; }).join(", ") + ")" : "") +
+              (simplified.demoted ? ", made " + simplified.demoted + " extra primary button(s) secondary" : "") +
+              "; visible texts " + simplified.textsBefore + " \u2192 " + simplified.textsAfter + ". Every amount and ID is kept.";
+          }
+        } catch (_) { /* the design itself is done; simplify is an extra pass */ }
+      }
 
       const buildMs = Date.now() - buildStartedAt;
       const checksStartedAt = Date.now();
@@ -2713,7 +2729,7 @@
         (lint.passed ? '' : '\n**Not ready yet:** ' + uxdLintHeadline(lint) + ' Say **retry** to fix it.') +
         '\nGeneration model: ' + model + ' · UX Direct Brain: ' + memory +
         visualNote +
-        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') + polishNote + timingLine;
+        (visualCaptureWarning ? '\nVisual capture note: ' + visualCaptureWarning : '') + polishNote + simplifyNote + timingLine;
       } catch (error) {
         if (taskRunId) {
           await finalizeTaskOutcome("failed", String(error && error.message || error || "Native Figma task failed"),
