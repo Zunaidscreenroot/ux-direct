@@ -83,6 +83,14 @@ const FEEDBACK_KINDS = new Set([
   "visual_evidence", "accessibility", "interaction_logic", "design_system",
   "cost_optimization", "other",
 ]);
+// The table's CHECK constraint (uxd_brain_feedback_feedback_kind_check) predates "design_system" and
+// "interaction_logic"; inserting them failed with a constraint error, so a taught rule never reached
+// the knowledge base (2026-11-08 replay). They are stored as "general" with the precise kind in metadata.
+const STORED_FEEDBACK_KINDS = new Set([
+  "general", "false_positive", "missed_issue", "severity_calibration", "recommendation_quality",
+  "duplicate_finding", "benchmarking", "scope", "visual_evidence", "accessibility", "cost_optimization",
+  "retrieval_quality", "workflow_quality", "other",
+]);
 
 function textValue(value: unknown, max: number, label: string, required = false): string {
   const result = typeof value === "string" ? value.trim() : "";
@@ -328,7 +336,7 @@ export async function saveBrainFeedback(input: BrainFeedbackInput): Promise<Reco
   const payload = {
     source_product: sourceProduct,
     scope_key: scopeKey,
-    feedback_kind: feedbackKind,
+    feedback_kind: STORED_FEEDBACK_KINDS.has(feedbackKind) ? feedbackKind : "general",
     raw_feedback: rawFeedback,
     summary,
     title,
@@ -343,6 +351,7 @@ export async function saveBrainFeedback(input: BrainFeedbackInput): Promise<Reco
     idempotency_key: idempotencyKey,
     metadata: {
       ...(input.metadata && typeof input.metadata === "object" ? input.metadata : {}),
+      ...(STORED_FEEDBACK_KINDS.has(feedbackKind) ? {} : { feedbackKind }),
       ingestion: {
         mode: "automatic",
         relevanceScore: relevance.score,

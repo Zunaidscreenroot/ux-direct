@@ -12,7 +12,7 @@ function load(): { classify: (p: string, ctx?: any) => any; answering: (t: any, 
   const match = /\/\/ uxd-turn-intent:start([\s\S]*?)\/\/ uxd-turn-intent:end/.exec(ui);
   assert.ok(match);
   const sandbox: Record<string, any> = {};
-  runInNewContext(match[1] + "\nthis.classify = classifyTurn; this.answering = isAnsweringQuickTask;", sandbox);
+  runInNewContext(match[1] + "\nthis.classify = classifyTurn; this.answering = isAnsweringQuickTask; this.resource = isResourceInstruction;", sandbox);
   return { classify: (p, ctx) => { const out = sandbox.classify(p, ctx); return out === null ? null : JSON.parse(JSON.stringify(out)); }, answering: sandbox.answering };
 }
 
@@ -76,3 +76,11 @@ test("explanations are lessons; a critique with a reason still redoes the screen
   assert.equal(classify("make the cards flatter because they look heavy", {}), null, "an instruction with a reason is a normal request");
 });
 
+
+test("telling me which resource to use is not saved as a design lesson", () => {
+  const match = /\/\/ uxd-turn-intent:start([\s\S]*?)\/\/ uxd-turn-intent:end/.exec(ui);
+  const sandbox: Record<string, any> = {};
+  runInNewContext(match![1] + "\nthis.resource = isResourceInstruction;", sandbox);
+  for (const text of ["use knowledge base", "please use the knowledge base", "follow the design rules", "KB use karo"]) assert.equal(sandbox.resource(text), true, text);
+  for (const text of ["this is not simplified", "use fewer colours", "use the design system buttons, the cards are too heavy", "too many banners"]) assert.equal(sandbox.resource(text), false, text);
+});

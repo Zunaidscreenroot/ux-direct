@@ -741,7 +741,9 @@
       const words = prompt.split(/\s+/).filter(Boolean).length;
       const name = frames[0] && frames[0].name ? String(frames[0].name).slice(0, 40) : "your selection";
       const improve = /\b(improve\w*|better|polish|refine|enhance|clean\w*|simplif\w*|moderni[sz]e|sudhar\w*|behtar)\b/i.test(prompt);
-      const specific = words > 16 || /\b(redesign|re-?design|variations?|versions?|wireframe|dark|light|theme|keep|only|exactly|states?)\b/i.test(prompt);
+      // A named objective ("simplify", "declutter", "fix the hierarchy") is already a clear ask: no menu.
+      const namedObjective = /\b(simplif\w*|declutter\w*|clutter\w*|minimal\w*|hierarch\w*|readab\w*|scannab\w*|accessib\w*|a11y|contrast|saaf|aasan)\b/i.test(prompt);
+      const specific = namedObjective || words > 16 || /\b(redesign|re-?design|variations?|versions?|wireframe|dark|light|theme|keep|only|exactly|states?)\b/i.test(prompt);
       if (frames.length === 1 && improve && !specific) {
         const pick = await agentAsk({
           question: "How should I improve “" + name + "”?",
@@ -4750,6 +4752,14 @@
     }
     // The last screen UX Direct made in this chat, so feedback can redo it.
     let lastDesignRun = null;
+    // True when feedback only tells me which resource to use ("use knowledge base", "follow the design
+    // rules", "KB use karo") and says nothing about the design itself.
+    function isResourceInstruction(text) {
+      const filler = /^(please|pls|plz|use|using|check|refer|to|follow|apply|look|at|try|consult|read|the|your|my|our|this|that|it|from|with|and|again|now|first|karo|kar|do|dekho|dekh|se|ka|ki|ke|knowledge|base|kb|brain|memory|learnings?|design|rules?|guidelines?|system|library|components?|tokens?|styles?)$/i;
+      const words = String(text || "").toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
+      return words.length > 0 && words.length <= 8 && words.every(function (word) { return filler.test(word); }) &&
+        /\b(knowledge|kb|brain|memory|rules?|guidelines?|design system|library|components?|tokens?)\b/i.test(text);
+    }
     async function runRedoTurn(turn, report) {
       const run = lastDesignRun;
       const stage = function (state, message) { setProcessState(state, message); report(message); };
@@ -4763,7 +4773,9 @@
         await refreshSelection();
       }
       // Learn from the critique first, so the redo below already gets it in its design rules.
-      const learned = await learnFromDesigner("critique", turn.critique, run.prompt).catch(function () { return null; });
+      // "use knowledge base" is an instruction for this redo, not a lesson about design: nothing to save.
+      const learned = isResourceInstruction(turn.critique) ? null
+        : await learnFromDesigner("critique", turn.critique, run.prompt).catch(function () { return null; });
       const brief = run.prompt + "\nFEEDBACK ON THE PREVIOUS ATTEMPT (rejected by the designer): \"" + turn.critique +
         "\". Act on it: the change must be clearly visible against the source, not a near copy.";
       const answer = await createFigmaDesign(brief, report);

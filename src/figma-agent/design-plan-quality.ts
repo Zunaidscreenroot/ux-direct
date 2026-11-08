@@ -1,5 +1,5 @@
 export type DesignPlanQualityFinding = {
-  code: "missing-source-content" | "fixed-layout-overflow" | "child-out-of-bounds" | "low-contrast" | "implicit-frame-fill";
+  code: "missing-source-content" | "objective-not-met" | "fixed-layout-overflow" | "child-out-of-bounds" | "low-contrast" | "implicit-frame-fill";
   severity: "high" | "medium";
   message: string;
 };
@@ -67,6 +67,39 @@ function collectText(nodes: RecordLike[], output: string[] = [], depth = 0, sour
     collectText(childrenOf(node), output, depth + 1, sourceById);
   }
   return output;
+}
+
+function countNodes(nodes: RecordLike[], depth = 0): number {
+  if (depth > 12) return 0;
+  let total = 0;
+  for (const node of nodes) {
+    if (node.visible === false || node.opacity === 0) continue;
+    total += 1 + countNodes(childrenOf(node), depth + 1);
+  }
+  return total;
+}
+
+/**
+ * "Simplify / declutter / too busy": the designer asked for less. Keeping every source string made
+ * every simplify a near copy (2026-11-08 replay: same cards, banners and rings), so on this objective
+ * non-essential copy may go. Amounts, IDs and short values (dates, percentages, counts) stay.
+ */
+export function isSimplifyObjective(prompt: string): boolean {
+  return /\b(simplif\w*|declutter\w*|de-clutter\w*|less clutter\w*|cluttered|too busy|less busy|too much (going on|stuff|noise)|minimali[sz]e|saaf|aasan)\b/i.test(String(prompt || ""));
+}
+
+function droppableOnSimplify(text: string): boolean {
+  if (/₹|\bINR\b|\brs\.?\s*\d/i.test(text) || /\b[A-Z]{2,}[A-Z0-9-]{6,}\b/.test(text)) return false;
+  // A short text with a digit is a value ("12 Mar", "45%", "3 EMIs left"); a sentence with one is copy.
+  return !/\d/.test(text) || text.trim().split(/\s+/).length >= 5;
+}
+
+/** Missing texts that the simplify objective lets go: secondary copy only, at most 40% of the source. */
+function simplifyExempt(missing: string[], sourceUniqueCount: number, prompt: string): Set<string> {
+  if (!isSimplifyObjective(prompt)) return new Set();
+  const droppable = missing.filter(droppableOnSimplify);
+  const cap = Math.max(2, Math.floor(sourceUniqueCount * 0.4));
+  return droppable.length <= cap ? new Set(droppable) : new Set();
 }
 
 function hasExplicitRemoval(text: string, prompt: string): boolean {
@@ -160,11 +193,23 @@ export function auditDesignPlanQuality(
   const sourceUnique = [...new Set(sourceTexts)];
   // Retain all source copy/data by default. A removal/rewrite is allowed only
   // when the request names the exact source text it intends to change.
-  const missing = sourceUnique.filter((text) => {
+  const missingAll = sourceUnique.filter((text) => {
     const normalized = fold(text);
     if (!normalized || normalized.length < 2 || hasExplicitRemoval(text, prompt)) return false;
     return !outputCorpus.includes(normalized);
   });
+  const exempt = simplifyExempt(missingAll, sourceUnique.length, prompt);
+  const missing = missingAll.filter((text) => !exempt.has(text));
+  // A simplify that keeps every source string and every layer is a near copy, not a simpler screen.
+  if (isSimplifyObjective(prompt) && sourceUnique.length >= 6 && missingAll.length === 0) {
+    const sourceCount = countNodes(sourceNodes);
+    const outputCount = countNodes(outputNodes);
+    if (sourceCount > 0 && outputCount >= sourceCount * 0.9) {
+      add("objective-not-met", "high",
+        "Simplify was requested, but the plan keeps all " + sourceUnique.length + " source texts and about as many layers (" + outputCount + " vs " + sourceCount +
+        "). Make it visibly lighter: remove non-essential copy (promo or marketing banners, helper sentences, repeated labels, decorative visuals and rings), merge duplicate status indicators, and flatten heavy cards into rows. Keep every amount, date, ID and action.");
+    }
+  }
 
   // Values and identifiers are especially easy for a generative model to drop.
   // Validate them independently so text simplification cannot hide financial-data loss.
@@ -345,8 +390,11 @@ export function missingSourceTexts(planValue: unknown, sourceCanvasValue: unknow
   const sourceCanvas = isRecord(sourceCanvasValue) ? sourceCanvasValue : {};
   const prompt = typeof promptValue === "string" ? promptValue : "";
   const outputCorpus = fold(collectText(nodesOf(plan.elements), [], 0, indexById(nodesOf(sourceCanvas.nodes))).join(" "));
-  return [...new Set(collectText(nodesOf(sourceCanvas.nodes)))].filter((text) => {
+  const sourceUnique = [...new Set(collectText(nodesOf(sourceCanvas.nodes)))];
+  const missing = sourceUnique.filter((text) => {
     const normalized = fold(text);
     return normalized.length >= 2 && !hasExplicitRemoval(text, prompt) && !outputCorpus.includes(normalized);
   });
+  const exempt = simplifyExempt(missing, sourceUnique.length, prompt);
+  return missing.filter((text) => !exempt.has(text));
 }
