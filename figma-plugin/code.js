@@ -4736,8 +4736,18 @@ function uxdSimplifyIsButton(node) {
   var texts = uxdSimplifyTexts(node);
   if (texts.length !== 1 || texts[0].characters.trim().split(/\s+/).length > 4) return false;
   if (/\b(button|btn|cta)\b/i.test(node.name || "")) return true;
-  var h = Number(node.height) || 0;
-  return h >= 28 && h <= 64 && !!uxdSimplifySolid(node) && Number(node.cornerRadius) > 0;
+  var h = typeof node.height === "number" ? node.height : 0;
+  // cornerRadius is figma.mixed (a symbol) when corners differ; Number(symbol) throws.
+  var radius = typeof node.cornerRadius === "number" ? node.cornerRadius : (typeof node.topLeftRadius === "number" ? node.topLeftRadius : 0);
+  return h >= 28 && h <= 64 && !!uxdSimplifySolid(node) && radius > 0;
+}
+function uxdSimplifyHasButton(node) {
+  var kids = node.children || [];
+  for (var i = 0; i < kids.length; i++) {
+    if (!uxdSimplifyVisible(kids[i])) continue;
+    if (uxdSimplifyIsButton(kids[i]) || uxdSimplifyHasButton(kids[i])) return true;
+  }
+  return false;
 }
 function uxdSimplifyIsBanner(node) {
   return ["FRAME", "INSTANCE", "GROUP", "COMPONENT"].indexOf(node.type) >= 0 &&
@@ -4757,12 +4767,18 @@ function uxdSimplifyPlan(root) {
   var allTexts = uxdSimplifyTexts(root);
   var dropped = new Set();
   function covered(node) { for (var p = node; p; p = p.parent) { if (dropped.has(p)) return true; if (p === root) break; } return false; }
-  function drop(node, why) { if (!covered(node)) { drops.push({ node: node, why: why }); dropped.add(node); } }
+  // A main component's layers are shared by all its instances: editing them changes every copy.
+  function inComponent(node) {
+    for (var p = node; p && p !== root; p = p.parent) if (p.type === "COMPONENT" || p.type === "COMPONENT_SET") return true;
+    return false;
+  }
+  function drop(node, why) { if (!covered(node) && !inComponent(node)) { drops.push({ node: node, why: why }); dropped.add(node); } }
   (function walk(node) {
     (node.children || []).forEach(function (child) {
       if (!uxdSimplifyVisible(child)) return;
       // A banner goes when every value in it is also shown elsewhere (checked below).
-      if (uxdSimplifyIsBanner(child)) { drop(child, "banner"); return; }
+      // A banner that carries an action is kept: actions are never deleted (its helper copy can still go).
+      if (uxdSimplifyIsBanner(child) && !uxdSimplifyHasButton(child)) { drop(child, "banner"); return; }
       if (uxdSimplifyIsDecor(child)) { drop(child, "decoration"); return; }
       walk(child);
     });
@@ -4788,7 +4804,7 @@ function uxdSimplifyPlan(root) {
       find(child);
     });
   })(root);
-  buttons.slice(1).forEach(function (button) { demote.push(button); });
+  buttons.slice(1).forEach(function (button) { if (!inComponent(button)) demote.push(button); });
   // Never lose a critical value: a drop stays only if each amount, ID and short value in it is
   // still visible somewhere that is kept.
   var safe = [], gone = [];
@@ -4831,8 +4847,12 @@ async function uxdSimplifyDemote(button) {
   return "outline";
 }
 async function localSimplifyPass(payload) {
+  try { return await uxdSimplifyRun(payload); }
+  catch (error) { return { ok: false, error: String(error && error.message || error).slice(0, 200) }; }
+}
+async function uxdSimplifyRun(payload) {
   var root = await localTaskNode(payload.rootId);
-  var heightBefore = Number(root.height) || 0;
+  var heightBefore = typeof root.height === "number" ? root.height : 0;
   var plan = uxdSimplifyPlan(root);
   var removed = [];
   plan.drops.forEach(function (entry) {
