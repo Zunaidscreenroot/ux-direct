@@ -778,7 +778,7 @@ export async function POST(request: Request) {
   // Gates read the prompt plus the texts the state intentionally drops (header and nav stay guarded).
   const gatePrompt = stateGatePrompt(parsedInput.data.prompt, screenState, rawSourceCanvas ?? canvas);
   /** Every deterministic gate a model answer must pass before anything is written to Figma. */
-  const renderCandidate = (candidateInput: unknown): Candidate => {
+  const renderCandidate = (candidateInput: unknown, renderOptions: { skipObjective?: boolean } = {}): Candidate => {
     // A block spec is rendered deterministically; a raw layer tree (legacy mode or a model
     // that ignored the contract) still goes through the same normalizer and gates.
     let planInput: unknown = candidateInput;
@@ -801,7 +801,11 @@ export async function POST(request: Request) {
       return { stage: "schema", blockSpec, error: "invalid design plan schema (" + issues + ")",
         feedback: "The previous plan failed native Figma schema validation: " + issues + ". Return a corrected complete plan; do not repeat these errors." };
     }
-    const quality = auditDesignPlanQuality(parsedPlan.data, canvas, gatePrompt);
+    const audited = auditDesignPlanQuality(parsedPlan.data, canvas, gatePrompt);
+    const quality = renderOptions.skipObjective
+      ? (() => { const findings = audited.findings.filter((finding) => finding.code !== "objective-not-met");
+        return { ...audited, findings, passed: findings.length === 0 }; })()
+      : audited;
     if (!quality.passed) {
       const issues = quality.findings.slice(0, 8)
         .map((finding) => finding.code + ": " + finding.message).join("; ");
@@ -1321,6 +1325,17 @@ export async function POST(request: Request) {
                 attemptLog.push({ model: attemptName, result: "dropped " + missing.length + " source texts; repaired copy kept as fallback" });
               }
             }
+          }
+        }
+        // A simplify that came back as a near copy gets another attempt with the feedback, but stays
+        // the fallback so a run where every model does this still returns a design.
+        if (candidate.stage === "quality" && candidate.plan && candidate.quality && !fallback &&
+            candidate.quality.findings.every((finding) => finding.code === "objective-not-met")) {
+          const accepted = renderCandidate(specInput, { skipObjective: true });
+          if (accepted.stage === "ok") {
+            fallback = { candidate: accepted, spec: specInput, learningCandidate, servedModel,
+              routed: routedVia(response), isRecovery, finishReason, modelIndex, themeLocked, repairedTexts };
+            attemptLog.push({ model: attemptName, result: "simplify kept everything; kept as fallback" });
           }
         }
         if (candidate.stage !== "ok" || !candidate.plan || !candidate.quality) {

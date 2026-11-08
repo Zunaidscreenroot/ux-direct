@@ -27,11 +27,12 @@ export function objectivePlaybook(prompt: string): string {
   const lines: string[] = [];
   if (/\b(simplif\w*|simple|simpler|declutter\w*|clutter\w*|minimal\w*|cleaner|less busy|calm\w*|saaf|aasan)\b/i.test(text)) {
     lines.push(
-      "OBJECTIVE: SIMPLIFY. Keep every fact, cut the noise; the result must look clearly calmer than the source at a glance.",
+      "OBJECTIVE: SIMPLIFY. The result must look clearly lighter than the source at a glance: aim for roughly a third fewer blocks and layers.",
+      "- KEEP every amount, date, percentage, ID, status and action. REMOVE non-essential copy: promo or marketing banners, helper sentences, repeated labels, decorative illustrations, progress rings that repeat a number already shown.",
+      "- Merge duplicates: one status indicator per item, one summary instead of the same fact in a banner and a card.",
       "- One primary action style per screen; other actions become secondary or text buttons.",
       "- Drop decoration that groups nothing: extra borders, shadows, tinted panels, divider lines. One surface colour for all cards.",
       "- Fewer colours: neutral text, one accent, status tones only. At most 4 type sizes and 2 weights.",
-      "- Secondary detail (IDs, captions, helper text) goes into one muted caption line under its title.",
       "- Flatten: no card inside a card; simple items become list rows instead of heavy cards.",
       "- More space between groups, less inside them.",
     );
