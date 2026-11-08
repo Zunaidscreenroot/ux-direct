@@ -4767,7 +4767,12 @@ function uxdSimplifyPlan(root) {
   var allTexts = uxdSimplifyTexts(root);
   var dropped = new Set();
   function covered(node) { for (var p = node; p; p = p.parent) { if (dropped.has(p)) return true; if (p === root) break; } return false; }
-  function drop(node, why) { if (!covered(node)) { drops.push({ node: node, why: why }); dropped.add(node); } }
+  // A main component's layers are shared by all its instances: editing them changes every copy.
+  function inComponent(node) {
+    for (var p = node; p && p !== root; p = p.parent) if (p.type === "COMPONENT" || p.type === "COMPONENT_SET") return true;
+    return false;
+  }
+  function drop(node, why) { if (!covered(node) && !inComponent(node)) { drops.push({ node: node, why: why }); dropped.add(node); } }
   (function walk(node) {
     (node.children || []).forEach(function (child) {
       if (!uxdSimplifyVisible(child)) return;
@@ -4799,7 +4804,7 @@ function uxdSimplifyPlan(root) {
       find(child);
     });
   })(root);
-  buttons.slice(1).forEach(function (button) { demote.push(button); });
+  buttons.slice(1).forEach(function (button) { if (!inComponent(button)) demote.push(button); });
   // Never lose a critical value: a drop stays only if each amount, ID and short value in it is
   // still visible somewhere that is kept.
   var safe = [], gone = [];

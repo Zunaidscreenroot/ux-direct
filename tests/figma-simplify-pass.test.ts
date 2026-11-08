@@ -76,3 +76,12 @@ test("simplify runs before componentize and provider errors stay in Details", ()
   assert.match(ui, /split\(\/\\s\*Model attempts:\\s\*\/\)/);
   assert.match(ui, /Model attempts:\|Simplify pass:\|/);
 });
+
+test("layers of a main component are never edited, since every instance would change", () => {
+  const { plan } = load();
+  const root = node("FRAME", "Screen", {}, [text("Loans", 22), text("₹500", 18), button("Pay now"),
+    node("COMPONENT", "Loan Card section", {}, [node("FRAME", "Promo banner", {}, [text("Get an instant top-up loan with zero paperwork today")]), button("Pay now")])]);
+  const result = plan(root);
+  assert.equal(result.drops.length, 0);
+  assert.equal(result.demote.length, 0);
+});
