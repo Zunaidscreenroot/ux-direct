@@ -245,6 +245,12 @@ export function rankCandidates(input: {
   return ordered.slice(0, input.maxAttempts ?? policy.maxAttempts);
 }
 
+/** One readable line from a provider error body (Gemini sends a JSON array as its message). */
+function shortError(message: string): string {
+  const inner = /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(message);
+  return (inner ? inner[1] : message).replace(/\\n/g, " ").replace(/\s+/g, " ").trim().slice(0, 140);
+}
+
 /** A 429 that empties the whole account for the day (every model of that provider), not one model. */
 export function isAccountWideQuota(message: string): boolean {
   return /free-models-per-day|per[\s_-]?day.*(account|key)|\b4006\b|daily free allocation/i.test(message);
@@ -509,7 +515,7 @@ export async function gatewayChatCompletion(rawBody: string, headers: Headers, s
     // Account-wide daily cap hit: the whole provider is out until it resets.
     if (until && outcome.status === 429 && isAccountWideQuota(outcome.message)) cooldowns.set(provider.id + "/*", until);
     records.push({ ...base, ok: false, httpStatus: outcome.status, latencyMs, error: outcome.message, ...(until ? { cooldownUntil: new Date(until).toISOString() } : {}) });
-    errors.push(key + ": " + (outcome.status ? "HTTP " + outcome.status + " " : "") + outcome.message.slice(0, 140));
+    errors.push(key + ": " + (outcome.status ? "HTTP " + outcome.status + " " : "") + shortError(outcome.message));
     // Some free models reject JSON mode with a 400/422: retry the same model once without it.
     if (!jsonRetryUsed && body.response_format !== undefined && [400, 422].includes(outcome.status) && !until) {
       jsonRetryUsed = true;

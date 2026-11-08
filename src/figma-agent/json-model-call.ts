@@ -16,7 +16,33 @@ export type JsonModelResult =
  * walking the configured Figma model chain. `accept` rejects a decoded object so the
  * next model is tried; it is how each quick task enforces its own schema.
  */
-export async function callFigmaJsonModel(options: {
+type JsonModelOptions = Parameters<typeof callFigmaJsonModelOnce>[0];
+
+/**
+ * One JSON model call with the provider's fallback chain. A request with screenshots is served by
+ * vision models only; when every one of them is rate limited or fails, the same request is retried
+ * once text-only (layer tree and texts), so a task degrades to a structural answer instead of failing.
+ */
+export async function callFigmaJsonModel(options: JsonModelOptions): Promise<JsonModelResult> {
+  const first = await callFigmaJsonModelOnce(options);
+  if (first.ok || !options.hasVisionInput || options.signal?.aborted || !Array.isArray(options.user)) return first;
+  const textOnly = options.user.filter((part) => part.type === "text");
+  if (!textOnly.length) return first;
+  textOnly.push({ type: "text", text: "Screenshots could not be read this time: work from the layer tree and texts only, and say the answer is structural." });
+  const second = await callFigmaJsonModelOnce({ ...options, hasVisionInput: false, user: textOnly });
+  return second.ok ? second : { ...first, errors: [...first.errors, ...second.errors.map((entry) => "text-only: " + entry)] };
+}
+
+/** A provider error as one readable line (Gemini returns a JSON array as its message). */
+export function readableProviderError(value: string): string {
+  const text = String(value || "");
+  const message = /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(text);
+  const cleaned = (message ? message[1] : text).replace(/\\n/g, " ").replace(/\s+/g, " ").trim();
+  if (/\b(429|quota|rate limit|resource_exhausted)\b/i.test(cleaned)) return "rate limited (free quota used up)";
+  return cleaned.slice(0, 180);
+}
+
+async function callFigmaJsonModelOnce(options: {
   system: string;
   user: JsonModelContent;
   hasVisionInput: boolean;
@@ -94,7 +120,7 @@ export async function callFigmaJsonModel(options: {
       const record = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
       if (!response.ok) {
         const providerError = record.error && typeof record.error === "object" ? record.error as Record<string, unknown> : {};
-        errors.push(model + (jsonMode ? "" : " (no JSON mode)") + ": " + String(providerError.message || "HTTP " + response.status).slice(0, 180));
+        errors.push(model + (jsonMode ? "" : " (no JSON mode)") + ": " + readableProviderError(String(providerError.message || "HTTP " + response.status)));
         if (jsonMode && shouldRetryWithoutJsonMode(provider, response.status)) attempts.splice(index + 1, 0, { model, jsonMode: false });
         continue;
       }
