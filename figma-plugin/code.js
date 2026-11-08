@@ -3102,7 +3102,7 @@ async function runCanvasCommand(command) {
 // Local quick-task channel: image bytes and large selection trees go straight between the plugin
 // UI and this sandbox instead of through the backend bridge (whose results are capped at 60 KB).
 // Only these named operations exist; every one checks the approved-file scope first.
-var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire", "learn-baseline", "learn-corrections", "apply-theme", "restore-theme-modes", "componentize-repeats", "claude-polish", "claude-self-check"];
+var UXD_LOCAL_TASK_OPS = ["read-tree", "read-image", "apply-image", "restore-fills", "delete-created", "commit-undo", "trigger-undo", "apply-direct-edits", "apply-hygiene-fixes", "fill-realistic-data", "restore-texts", "restore-props", "find-icon-targets", "insert-icons", "section-state", "get-design-rules", "set-design-rules", "consistency", "restore-missing-texts", "detached-rescue", "handoff-notes", "prototype-wire", "learn-baseline", "learn-corrections", "apply-theme", "restore-theme-modes", "componentize-repeats", "claude-polish", "claude-self-check", "simplify-pass"];
 // Revert support: fills captured before each image change, kept for this plugin session.
 var UXD_FILL_SNAPSHOTS = new Map();
 var UXD_FILL_SNAPSHOT_SEQ = 0;
@@ -4703,6 +4703,157 @@ async function localClaudeSelfCheck(payload) {
   return { ok: true, passed: checks[0].pass && checks[1].pass, checks: checks, lost: lost.slice(0, 6), invented: invented.slice(0, 6) };
 }
 // uxd-claude-polish:end
+// uxd-simplify:start
+// Deterministic SIMPLIFY on the new copy. Free models kept every text, banner and button even when
+// told to simplify (2026-11-08 replay: 34/34 texts, both alerts, two "Pay now"), so the moves Claude
+// makes run here: drop banners that repeat a fact shown elsewhere, drop long helper copy, keep one
+// primary action, drop decoration with no content. Amounts, IDs and short values are never lost.
+function uxdSimplifyVisible(node) { return node && node.visible !== false && node.opacity !== 0; }
+function uxdSimplifyTexts(node, out) {
+  out = out || [];
+  if (!uxdSimplifyVisible(node)) return out;
+  if (node.type === "TEXT" && typeof node.characters === "string" && node.characters.trim()) out.push(node);
+  (node.children || []).forEach(function (child) { uxdSimplifyTexts(child, out); });
+  return out;
+}
+function uxdSimplifyNorm(text) { return String(text || "").toLowerCase().replace(/\s+/g, " ").trim(); }
+function uxdSimplifyCriticalTokens(text) {
+  var value = String(text || "");
+  // Amounts, IDs, dates and percentages, wherever they sit in a sentence.
+  var out = (value.match(/\b[A-Z]{2,}[A-Z0-9-]{6,}\b/g) || []).concat(value.match(/₹\s*[\d,]+(?:\.\d+)?|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}\b|\b\d{1,4}[\/.-]\d{1,2}[\/.-]\d{1,4}\b|\d+(?:\.\d+)?\s?%/gi) || []);
+  if (/\d/.test(value) && value.trim().split(/\s+/).length < 5) out.push(value);
+  return out;
+}
+function uxdSimplifySolid(node) {
+  var fills = Array.isArray(node.fills) ? node.fills : [];
+  for (var i = 0; i < fills.length; i++) {
+    if (fills[i] && fills[i].type === "SOLID" && fills[i].visible !== false && (fills[i].opacity === undefined || fills[i].opacity > 0.5)) return fills[i];
+  }
+  return null;
+}
+function uxdSimplifyIsButton(node) {
+  if (["FRAME", "INSTANCE", "COMPONENT"].indexOf(node.type) < 0 || !uxdSimplifyVisible(node)) return false;
+  var texts = uxdSimplifyTexts(node);
+  if (texts.length !== 1 || texts[0].characters.trim().split(/\s+/).length > 4) return false;
+  if (/\b(button|btn|cta)\b/i.test(node.name || "")) return true;
+  var h = Number(node.height) || 0;
+  return h >= 28 && h <= 64 && !!uxdSimplifySolid(node) && Number(node.cornerRadius) > 0;
+}
+function uxdSimplifyIsBanner(node) {
+  return ["FRAME", "INSTANCE", "GROUP", "COMPONENT"].indexOf(node.type) >= 0 &&
+    /\b(alert|banner|promo|offer|notice|notification|nudge|callout|toast|tip|hint|info ?(box|bar|banner)|advert\w*|ad)\b/i.test(String(node.name || "").replace(/[_-]/g, " "));
+}
+function uxdSimplifyIsDecor(node) {
+  return /\b(illustration|decor\w*|graphic|artwork|hero image|ring|donut|progress ring|blob|pattern)\b/i.test(String(node.name || "")) &&
+    uxdSimplifyTexts(node).length === 0;
+}
+function uxdSimplifyInsideInstance(node, root) {
+  for (var p = node.parent; p && p !== root; p = p.parent) if (p.type === "INSTANCE") return true;
+  return false;
+}
+/** Pure planning step: which layers to drop and which buttons to demote. Exported for tests. */
+function uxdSimplifyPlan(root) {
+  var drops = [], demote = [];
+  var allTexts = uxdSimplifyTexts(root);
+  var dropped = new Set();
+  function covered(node) { for (var p = node; p; p = p.parent) { if (dropped.has(p)) return true; if (p === root) break; } return false; }
+  function drop(node, why) { if (!covered(node)) { drops.push({ node: node, why: why }); dropped.add(node); } }
+  (function walk(node) {
+    (node.children || []).forEach(function (child) {
+      if (!uxdSimplifyVisible(child)) return;
+      // A banner goes when every value in it is also shown elsewhere (checked below).
+      if (uxdSimplifyIsBanner(child)) { drop(child, "banner"); return; }
+      if (uxdSimplifyIsDecor(child)) { drop(child, "decoration"); return; }
+      walk(child);
+    });
+  })(root);
+  // Long helper sentences: small, no values, not the biggest text on screen, not inside a button.
+  var maxSize = 0;
+  allTexts.forEach(function (t) { if (typeof t.fontSize === "number") maxSize = Math.max(maxSize, t.fontSize); });
+  allTexts.forEach(function (t) {
+    if (covered(t)) return;
+    var words = t.characters.trim().split(/\s+/).length;
+    var size = typeof t.fontSize === "number" ? t.fontSize : 14;
+    if (words >= 7 && size <= 14 && size < maxSize && !/\d|₹/.test(t.characters)) {
+      for (var p = t.parent; p && p !== root; p = p.parent) if (uxdSimplifyIsButton(p)) return;
+      drop(t, "helper copy");
+    }
+  });
+  // One primary action: filled buttons after the first become secondary (outline).
+  var buttons = [];
+  (function find(node) {
+    (node.children || []).forEach(function (child) {
+      if (!uxdSimplifyVisible(child) || covered(child)) return;
+      if (uxdSimplifyIsButton(child)) { if (uxdSimplifySolid(child)) buttons.push(child); return; }
+      find(child);
+    });
+  })(root);
+  buttons.slice(1).forEach(function (button) { demote.push(button); });
+  // Never lose a critical value: a drop stays only if each amount, ID and short value in it is
+  // still visible somewhere that is kept.
+  var safe = [], gone = [];
+  function under(t, nodes) { for (var p = t; p; p = p.parent) { if (nodes.indexOf(p) >= 0) return true; if (p === root) break; } return false; }
+  drops.forEach(function (entry) {
+    var inside = uxdSimplifyTexts(entry.node);
+    var rest = allTexts.filter(function (t) { return inside.indexOf(t) < 0 && !under(t, gone); })
+      .map(function (t) { return uxdSimplifyNorm(t.characters); }).join(" | ");
+    var ok = inside.every(function (t) {
+      return uxdSimplifyCriticalTokens(t.characters).every(function (v) { return rest.indexOf(uxdSimplifyNorm(v)) >= 0; });
+    });
+    if (ok) { safe.push(entry); gone.push(entry.node); }
+  });
+  return { drops: safe, demote: demote, textsBefore: allTexts.length };
+}
+async function uxdSimplifyDemote(button) {
+  if (button.type === "INSTANCE" && button.componentProperties && typeof button.setProperties === "function") {
+    var props = button.componentProperties;
+    for (var key in props) {
+      var prop = props[key];
+      if (!prop || prop.type !== "VARIANT") continue;
+      var options = [];
+      try {
+        var main = await button.getMainComponentAsync();
+        var set = main && main.parent && main.parent.type === "COMPONENT_SET" ? main.parent : null;
+        if (set && set.componentPropertyDefinitions && set.componentPropertyDefinitions[key]) options = set.componentPropertyDefinitions[key].variantOptions || [];
+      } catch (_) {}
+      var pick = options.filter(function (o) { return /secondary|outline|tertiary|ghost|text|link/i.test(o); })[0];
+      if (pick) { var change = {}; change[key] = pick; try { button.setProperties(change); return "variant"; } catch (_) {} }
+    }
+    return "";
+  }
+  var fill = uxdSimplifySolid(button);
+  if (!fill || button.type === "INSTANCE") return "";
+  var color = { r: fill.color.r, g: fill.color.g, b: fill.color.b };
+  button.fills = [];
+  button.strokes = [{ type: "SOLID", color: color }];
+  button.strokeWeight = 1;
+  uxdSimplifyTexts(button).forEach(function (t) { try { t.fills = [{ type: "SOLID", color: color }]; } catch (_) {} });
+  return "outline";
+}
+async function localSimplifyPass(payload) {
+  var root = await localTaskNode(payload.rootId);
+  var heightBefore = Number(root.height) || 0;
+  var plan = uxdSimplifyPlan(root);
+  var removed = [];
+  plan.drops.forEach(function (entry) {
+    var name = String(entry.node.name || entry.node.characters || "").slice(0, 40);
+    if (uxdSimplifyInsideInstance(entry.node, root)) entry.node.visible = false;
+    else entry.node.remove();
+    removed.push({ name: name, why: entry.why });
+  });
+  var demoted = 0;
+  for (var i = 0; i < plan.demote.length; i++) { if (await uxdSimplifyDemote(plan.demote[i])) demoted++; }
+  // Let an Auto Layout screen close the gaps, but never shorter than the screen it replaces.
+  if (root.layoutMode === "VERTICAL" && removed.length) {
+    try {
+      root.primaryAxisSizingMode = "AUTO";
+      if ((Number(root.height) || 0) < heightBefore && typeof root.resize === "function") { root.primaryAxisSizingMode = "FIXED"; root.resize(root.width, heightBefore); }
+    } catch (_) {}
+  }
+  return { ok: true, removed: removed, demoted: demoted, textsBefore: plan.textsBefore, textsAfter: uxdSimplifyTexts(root).length,
+    heightBefore: heightBefore, heightAfter: Number(root.height) || 0 };
+}
+// uxd-simplify:end
 async function localRestoreProps(payload) {
   var items = Array.isArray(payload.items) ? payload.items.slice(0, 3000) : [];
   var restored = 0, changedSince = 0, missing = 0;
@@ -6521,6 +6672,7 @@ async function runLocalTask(message) {
     else if (message.op === "componentize-repeats") result = await localComponentizeRepeats(payload);
     else if (message.op === "claude-polish") result = await localClaudePolish(payload);
     else if (message.op === "claude-self-check") result = await localClaudeSelfCheck(payload);
+    else if (message.op === "simplify-pass") result = await localSimplifyPass(payload);
     else if (message.op === "find-icon-targets") result = await localFindIconTargets(payload);
     else if (message.op === "insert-icons") result = await localInsertIcons(payload);
     else if (message.op === "section-state") result = await localSectionState(payload);
