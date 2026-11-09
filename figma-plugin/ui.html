@@ -4701,14 +4701,30 @@
       // Praise or "keep it" about the last result: acknowledge, change nothing.
       if (/^(for me |to me |i think )?(it'?s |its |this is |ye |yeh )?(not cluttered|fine|good|ok(ay)?|great|perfect|nice|looks good|keep (it|this)|acha hai|achha hai|theek hai|thik hai|sahi hai|badhiya)\b/i.test(lower) &&
           !/\b(not (good|fine|ok|great|perfect|nice)|but|lekin|par)\b/i.test(lower)) return { kind: "keep" };
+      // After a screen is made, only an explicit revert removes or undoes it (the revert task does that).
+      if (/\b(revert|undo|roll ?back)\b|\b(wapas|vapas|waapas)\b|pehle (jaisa|jaise|wala)|purana (wala|jaisa)/i.test(text)) return null;
       // Critique of the last result: redo it with the critique as the brief.
       const negative = /\b(not|isn'?t|isnt|no|nahi|nhi|nahin|na)\b[^.]{0,30}\b(simplif\w*|simple|clean\w*|minimal|good|right|better|correct|enough|what i (asked|wanted|said)|sahi|acha|achha|theek|thik|changed?|different)\b/i.test(text) ||
         /\b(still|abhi bhi|ab bhi|phir bhi)\b[^.]{0,30}\b(cluttered|busy|complex|complicated|same|bad|messy|heavy|crowded)\b/i.test(text) ||
         /\b(worse|wrong|galat|bekar|bakwas|ugly|nothing changed|didn'?t change|same as before|kuch nahi badla|try again|again|dobara|phir se|redo|re-?do)\b/i.test(text);
       const instruction = /^(use|apply|follow|make it|more|less|zyada|kam)\b/i.test(text) && text.split(/\s+/).length <= 12 &&
         !/\b(screens?|flows?|journeys?|new)\b/i.test(text);
-      if (negative || instruction) return { kind: "redo", critique: text };
+      // "improve / better / thik karo" and a critique ("not simplified", "still cluttered") get a better
+      // version as a NEW frame beside the last one; the screen I made stays as it is.
+      const improve = /\b(improve\w*|better|behtar\w*|enhance\w*|polish\w*|refine\w*|sudhar\w*|upgrade)\b/i.test(text) ||
+        /\b(thik|theek|theek|sahi|acha|achha|accha|accha sa)\s+(karo|kro|kar do|kardo|kr do|krdo|bana do|banao|kar ke do)\b/i.test(text) ||
+        /^(please\s+)?fix (it|this|the (screen|design|ui))\s*$/i.test(text);
+      if (improve || negative || isResourceInstruction(text)) return { kind: "improve", critique: text, rejected: negative && !improve };
+      // A change ("make it bigger", "more spacing", "header blue karo", "button hata do") edits that same
+      // frame in place: never delete it and build a new one.
+      const hinglishChange = /\b(karo|kro|kar do|kardo|kr do|krdo|badlo|badal do|hatao|hata do|lagao|laga do|daalo|daal do|dalo|dal do|bada|chhota|chota)\b/i.test(text) &&
+        !/\b(nay[ai]|new|alag|dusr[aie]|doosr[aie]|another)\b/i.test(text);
+      if (instruction || hinglishChange) return { kind: "edit", change: text };
       return explainTurn(text, actionVerb);
+    }
+    // A change after a design run edits the frame in place unless the prompt asks for a new frame.
+    function wantsNewFrame(prompt) {
+      return /\b(create|generate|build|new|nay[ai]|another|alag|dusr[aie]|doosr[aie]|redesign|re-?design|improve\w*|better|behtar\w*|variations?|variants?|versions?|clone|duplicate|states?|wireframes?|from scratch|flows?|journeys?)\b|^(please\s+)?design\b/i.test(String(prompt || ""));
     }
     function explainTurn(text, actionVerb) {
       // The designer explaining how things should be ("simplified means fewer colours and one CTA",
@@ -4721,7 +4737,7 @@
     }
     function learningAnswer() {
       return "Yes, and it's automatic. Whatever you tell me is saved two ways: to this file's design rules (sent with every task on this file) and to the shared knowledge base (every later task can retrieve it).\n" +
-        "- **Feedback on a screen I made** (for example *this is not simplified*): I save the lesson, then redo the screen with it.\n" +
+        "- **Feedback on a screen I made** (for example *this is not simplified*): I save the lesson, then make a better version next to it (the screen stays; only **revert** removes anything).\n" +
         "- **Explanations** (for example *simplified means fewer colours and one CTA*): saved as guidance.\n" +
         "- **Rules** (*remember: …*, *from now on …*): saved as rules.\n" +
         "- **Your manual corrections**: fix my output by hand, then say **learn from my edits**.";
@@ -4781,27 +4797,62 @@
       return words.length > 0 && words.length <= 8 && words.every(function (word) { return filler.test(word); }) &&
         /\b(knowledge|kb|brain|memory|rules?|guidelines?|design system|library|components?|tokens?)\b/i.test(text);
     }
-    async function runRedoTurn(turn, report) {
+    // The frame(s) a follow-up works on: the screen I made last, unless the designer has since selected
+    // something else (then their selection wins). Nothing is reverted or deleted here.
+    async function focusLastDesign() {
       const run = lastDesignRun;
-      const stage = function (state, message) { setProcessState(state, message); report(message); };
-      const open = changeJournal.filter(function (entry) { return entry.seq > run.seqStart && entry.seq <= run.seqEnd && !entry.reverted; });
-      if (open.length) {
-        stage("creating", "Taking your feedback · removing the attempt you rejected…");
-        await revertEntries(open, stage).catch(function () { /* keep going: the new attempt lands beside it */ });
-      }
-      if (run.sourceIds.length) {
+      const selected = (currentSelection.selection || []).map(function (node) { return node.id; }).filter(Boolean);
+      const outputs = run && run.outputIds || [];
+      const onOutput = selected.length > 0 && selected.every(function (id) { return outputs.indexOf(id) >= 0; });
+      if (selected.length && !onOutput && !(run && selected.every(function (id) { return run.sourceIds.indexOf(id) >= 0; }))) return selected;
+      const targets = outputs.length ? outputs : run ? run.sourceIds : [];
+      if (!targets.length) return selected;
+      await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: targets }, 30000).catch(function () { return null; });
+      await refreshSelection();
+      const now = (currentSelection.selection || []).map(function (node) { return node.id; }).filter(Boolean);
+      if (!now.length && outputs.length && run.sourceIds.length) {
+        // The frame I made was deleted by hand: work from the original source instead.
         await runNativeCanvasCommand("write-canvas", { confirm: true, operation: "set-selection", nodeIds: run.sourceIds }, 30000).catch(function () { return null; });
         await refreshSelection();
       }
-      // Learn from the critique first, so the redo below already gets it in its design rules.
-      // "use knowledge base" is an instruction for this redo, not a lesson about design: nothing to save.
-      const learned = isResourceInstruction(turn.critique) ? null
+      return (currentSelection.selection || []).map(function (node) { return node.id; }).filter(Boolean);
+    }
+    async function rememberDesignOutput() {
+      await refreshSelection().catch(function () {});
+      const ids = (currentSelection.selection || []).map(function (node) { return node.id; }).filter(Boolean).slice(0, 20);
+      // A failed run leaves the source selected: that is not a frame I made.
+      const made = ids.filter(function (id) { return !lastDesignRun || lastDesignRun.sourceIds.indexOf(id) < 0; });
+      if (lastDesignRun && made.length) lastDesignRun.outputIds = made;
+    }
+    // "improve / better / thik karo" or a critique: a better version as a new frame beside the screen
+    // I made. The previous frame stays; only "revert" removes anything.
+    async function runImproveTurn(turn, report) {
+      const run = lastDesignRun;
+      const stage = function (state, message) { setProcessState(state, message); report(message); };
+      stage("scanning", "Making a better version next to the current screen; the current one stays…");
+      await focusLastDesign();
+      // Learn from the critique first, so the new version already gets it in its design rules.
+      // "use knowledge base" is an instruction for this run, not a lesson about design: nothing to save.
+      const learned = !turn.rejected || isResourceInstruction(turn.critique) ? null
         : await learnFromDesigner("critique", turn.critique, run.prompt).catch(function () { return null; });
-      const brief = run.prompt + "\nFEEDBACK ON THE PREVIOUS ATTEMPT (rejected by the designer): \"" + turn.critique +
-        "\". Act on it: the change must be clearly visible against the source, not a near copy.";
+      const brief = "Improve this screen into a better version (original request: \"" + run.prompt.slice(0, 600) + "\"). Designer's ask: \"" + turn.critique + "\"." +
+        (turn.rejected ? "\nFEEDBACK ON THE PREVIOUS ATTEMPT (rejected by the designer): \"" + turn.critique + "\". Act on it: the change must be clearly visible against the source, not a near copy." : "");
       const answer = await createFigmaDesign(brief, report);
-      return "Redid it with your feedback (*" + turn.critique.slice(0, 120) + "*)" +
-        (learned && (learned.brain || learned.local && learned.local.added) ? ", and saved the lesson" + (learned.brain ? " to the knowledge base" : " to this file's design rules") + " so I don't repeat it" : "") + ".\n" + answer;
+      await rememberDesignOutput();
+      return "Made a better version next to it (*" + turn.critique.slice(0, 120) + "*). The previous screen is untouched; say **revert** to remove the new one" +
+        (learned && (learned.brain || learned.local && learned.local.added) ? ". Saved the lesson" + (learned.brain ? " to the knowledge base" : " to this file's design rules") + " so I don't repeat it" : "") + ".\n" + answer;
+    }
+    // A change ("make it bigger", "header blue karo"): edit the same frame in place.
+    async function runEditTurn(turn, report) {
+      const stage = function (state, message) { setProcessState(state, message); report(message); };
+      stage("scanning", "Editing the same screen in place…");
+      await focusLastDesign();
+      const direct = parseDirectEdit(turn.change, { selectionTypes: (currentSelection.selection || []).map(function (node) { return node.type; }) });
+      if (direct) {
+        const answer = await runDirectEditTask(direct, turn.change, report);
+        if (answer) return answer;
+      }
+      return executeNativeActionPlan(turn.change, report);
     }
     function isAnsweringQuickTask(task, prompt) {
       if (!task) return false;
@@ -4852,9 +4903,14 @@
           await refreshSelection();
         }
         const turn = classifyTurn(prompt, { lastDesign: Boolean(lastDesignRun) });
+        // The selection is (still) the screen I made last: a change edits it in place, never a new frame.
+        const onLastDesign = Boolean(lastDesignRun && (lastDesignRun.outputIds || []).length) && (function () {
+          const ids = (currentSelection.selection || []).map(function (node) { return node.id; }).filter(Boolean);
+          return ids.length > 0 && ids.every(function (id) { return lastDesignRun.outputIds.indexOf(id) >= 0; });
+        })();
         if (turn && turn.kind !== "question") {
           typingRow.remove();
-          assistantMessage = appendMessage("assistant", turn.kind === "redo" ? "Taking your feedback…" : "…");
+          assistantMessage = appendMessage("assistant", turn.kind === "improve" ? "Taking your feedback…" : turn.kind === "edit" ? "Editing the same screen…" : "…");
           const report = function (status) { if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; } };
           const stageFn = function (state, message) { setProcessState(state, message); report(message); };
           const seqStart = changeSeq;
@@ -4862,8 +4918,9 @@
             : turn.kind === "keep" ? "Got it, keeping it as it is. If there's a reason behind it you want me to apply everywhere, say **remember: …** and I'll save it."
             : turn.kind === "teach" ? await runTeachTurn(turn, stageFn)
             : turn.kind === "explain" ? await runTeachTurn({ kind: "explain", rule: turn.lesson }, stageFn)
-            : await runRedoTurn(turn, report);
-          if (turn.kind === "redo" && lastDesignRun) { lastDesignRun.seqStart = seqStart; lastDesignRun.seqEnd = changeSeq; }
+            : turn.kind === "edit" ? await runEditTurn(turn, report)
+            : await runImproveTurn(turn, report);
+          if ((turn.kind === "improve" || turn.kind === "edit") && lastDesignRun) { lastDesignRun.seqStart = seqStart; lastDesignRun.seqEnd = changeSeq; }
           if (turn.kind === "learning-question" || turn.kind === "keep") setProcessState("done", "Answered");
           assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
           chatHistory.push({ role: "assistant", content: answer });
@@ -4930,6 +4987,17 @@
           });
           return;
         }
+        if (!isQuestionTurn && onLastDesign && isDesignActionPrompt(prompt) && !wantsNewFrame(prompt)) {
+          agentRoute("native");
+          typingRow.remove();
+          assistantMessage = appendMessage("assistant", "Editing the same screen in place…");
+          const answer = await executeNativeActionPlan(prompt, function (status) {
+            if (assistantMessage) { assistantMessage.bubble.textContent = status; $("conversation").scrollTop = $("conversation").scrollHeight; }
+          });
+          assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
+          chatHistory.push({ role: "assistant", content: answer });
+          return;
+        }
         if (!isQuestionTurn && isDesignActionPrompt(prompt)) {
           agentRoute("design");
           typingRow.remove();
@@ -4960,7 +5028,8 @@
           });
           assistantMessage.bubble.innerHTML = renderReplyHtml(answer);
           chatHistory.push({ role: "assistant", content: answer });
-          lastDesignRun = { prompt: prompt, sourceIds: designSourceIds, seqStart: designSeqStart, seqEnd: changeSeq };
+          lastDesignRun = { prompt: prompt, sourceIds: designSourceIds, outputIds: [], seqStart: designSeqStart, seqEnd: changeSeq };
+          await rememberDesignOutput();
           await sendTelemetry("Figma design-agent task completed", "success", "UX Direct generated a native layout, executed Figma Plugin API commands, and verified the selected variation.", {
             durationMs: Date.now() - startedAt,
             selectedCount: (currentSelection.selection || []).length,
