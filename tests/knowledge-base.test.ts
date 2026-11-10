@@ -89,3 +89,12 @@ test("screen pattern references are picked for screen-type tasks", () => {
     assert.doesNotMatch(entry.body, /mobbin|page flows/i, entry.id + " must stay abstract, not tied to a reference library");
   }
 });
+
+test("top-company design lessons are retrieved and carry no brand palettes", () => {
+  assert.ok(top("make it look premium like Stripe", "ui-designer").includes("brand-lesson-style-directions"));
+  assert.ok(top("balance amount typography on fintech home", "ui-designer", "fintech").includes("brand-lesson-money-numbers"));
+  assert.ok(top("too many shadows on cards, clean it up", "ui-designer").includes("brand-lesson-depth-restraint"));
+  for (const entry of CORE_KNOWLEDGE.filter((item) => item.id.startsWith("brand-lesson-"))) {
+    assert.doesNotMatch(entry.body, /#[0-9a-f]{3,6}\b/i, entry.id + " must not copy brand hex colours");
+  }
+});
