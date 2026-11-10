@@ -22,6 +22,7 @@ export type KnowledgeCategory =
   | "layout"
   | "patterns"
   | "screens"
+  | "components"
   | "content"
   | "motion"
   | "dataviz"
@@ -93,6 +94,7 @@ export const CATEGORY_LABELS: Record<KnowledgeCategory, string> = {
   layout: "Layout and grids",
   patterns: "UI patterns",
   screens: "Screen patterns (reference library)",
+  components: "Components (open design systems)",
   content: "Content design",
   motion: "Motion",
   dataviz: "Data visualisation",

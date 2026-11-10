@@ -98,3 +98,14 @@ test("top-company design lessons are retrieved and carry no brand palettes", () 
     assert.doesNotMatch(entry.body, /#[0-9a-f]{3,6}\b/i, entry.id + " must not copy brand hex colours");
   }
 });
+
+test("component guidance and extra screens are retrieved", () => {
+  assert.ok(top("dropdown with 20 banks", "ui-designer").includes("comp-select-dropdown"));
+  assert.ok(top("show a toast after saving", "ui-designer").includes("comp-snackbar-toast"));
+  assert.ok(top("skeleton loading for list", "ui-designer").includes("comp-progress-loading"));
+  assert.ok(top("forgot password screen", "ux-designer").includes("screen-forgot-password"));
+  assert.ok(top("card controls freeze card", "ux-designer", "fintech").includes("screen-wallet-cards"));
+  assert.ok(top("insurance claim flow", "ux-designer", "insurance").includes("screen-insurance-claim"));
+  assert.ok(top("dark mode for the app", "ui-designer").includes("brand-lesson-dark-mode"));
+  assert.ok(CORE_KNOWLEDGE.length >= 180);
+});
