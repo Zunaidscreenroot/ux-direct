@@ -74,3 +74,18 @@ test("UX Direct no longer calls itself a BFSI design partner", () => {
   const plugin = readFileSync("figma-plugin/ui.html", "utf8");
   assert.doesNotMatch(plugin, /UX Audit service/);
 });
+
+test("screen pattern references are picked for screen-type tasks", () => {
+  assert.ok(top("design a login screen with mobile number", "ux-designer").includes("screen-login"));
+  assert.ok(top("create OTP verification screen", "ui-designer").includes("screen-otp-verify"));
+  assert.ok(top("make KYC flow with PAN and selfie", "ux-designer", "fintech").includes("screen-kyc-flow"));
+  assert.ok(top("transaction history list with filters", "ui-designer", "fintech").includes("screen-transaction-history"));
+  assert.ok(top("payment failed screen", "writer", "fintech").includes("screen-payment-status"));
+  assert.ok(top("admin data table for customers", "ux-designer", "saas").includes("screen-admin-table"));
+  assert.ok(top("design like mobbin references", "lead").includes("screen-reference-use"));
+  // Fintech-only screens stay out of other domains.
+  assert.ok(!top("create appointment booking screen", "ux-designer", "healthcare").includes("screen-loan-application"));
+  for (const entry of CORE_KNOWLEDGE.filter((item) => item.category === "screens")) {
+    assert.doesNotMatch(entry.body, /mobbin|page flows/i, entry.id + " must stay abstract, not tied to a reference library");
+  }
+});
