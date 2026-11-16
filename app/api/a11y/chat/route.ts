@@ -46,7 +46,7 @@ export async function POST(request: Request) {
   const headers = cors(origin);
   if (!originOk(origin)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
   const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-  const limit = checkGatewayRateLimit("a11y:" + ip, Date.now(), 20);
+  const limit = checkGatewayRateLimit("a11y:" + ip, Date.now(), 40);
   if (!limit.allowed) return NextResponse.json({ error: "Too many AI requests. Try again in a minute." }, { status: 429, headers: { ...headers, "Retry-After": String(limit.retryAfterSeconds) } });
 
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
