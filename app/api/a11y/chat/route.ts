@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 /**
  * A11y gateway: the entry point A11y Studio (accessaudit-sigma.vercel.app) and its Figma plugin use
  * to reach UX Direct's own free-model gateway (src/llm-gateway). Same providers and keys, separate door:
- * - only the "accessibility" seat routing is used, whatever the caller sends;
+ * - one of four seats (accessibility by default; researcher, lead or content-writer for long reviews and reports);
  * - text only (no images), small token caps, per-IP rate limit;
  * - the caller supplies its own system prompt and knowledge (A11y Studio's accessibility knowledge base),
  *   so UX Direct's design persona, brain and learning are not involved.
@@ -38,7 +38,7 @@ export async function OPTIONS(request: Request) {
 
 export async function GET(request: Request) {
   const origin = request.headers.get("origin");
-  return NextResponse.json({ ok: true, gateway: "a11y", seat: "accessibility" }, { headers: cors(origin) });
+  return NextResponse.json({ ok: true, gateway: "a11y", seats: ["accessibility", "researcher", "lead", "content-writer"] }, { headers: cors(origin) });
 }
 
 export async function POST(request: Request) {
@@ -61,10 +61,13 @@ export async function POST(request: Request) {
     clean.push({ role, content: m.content as string });
   }
   if (total > 24_000) return NextResponse.json({ error: "Request too large." }, { status: 413, headers });
-  const maxTokens = Math.max(64, Math.min(900, Number(body?.max_tokens) || 500));
+  const maxTokens = Math.max(64, Math.min(1400, Number(body?.max_tokens) || 500));
+  // Seat: short answers go to the fast accessibility seat; long reviews and reports may ask for the stronger seats.
+  const SEATS = ["accessibility", "researcher", "lead", "content-writer"] as const;
+  const seat = SEATS.includes(String(body?.seat) as (typeof SEATS)[number]) ? String(body?.seat) : "accessibility";
 
-  const upstreamHeaders = new Headers({ "content-type": "application/json", "x-uxd-agent-role": "accessibility" });
-  const upstream = await gatewayChatCompletion(JSON.stringify({ model: "auto", messages: clean, max_tokens: maxTokens, temperature: 0.2 }), upstreamHeaders, request.signal);
+  const upstreamHeaders = new Headers({ "content-type": "application/json", "x-uxd-agent-role": seat });
+  const upstream = await gatewayChatCompletion(JSON.stringify({ model: "auto", messages: clean, max_tokens: maxTokens, temperature: 0.2, response_format: { type: "json_object" } }), upstreamHeaders, request.signal);
   const text = await upstream.text();
   return new Response(text, { status: upstream.status, headers: { ...headers, "content-type": "application/json" } });
 }
