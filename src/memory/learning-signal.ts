@@ -68,11 +68,19 @@ const SCOPE_RELEVANCE_SIGNALS: Record<string, RelevanceSignal[]> = {
     { label: "brain-and-retrieval", pattern: /\b(memory|knowledge base|retrieval|learning|context|token|model)\b/i },
     { label: "product-design", pattern: /\b(design|screen|interface|component|prototype|quality|review)\b/i },
   ],
+  // A11y Studio writes here. Its lessons are phrased in criteria, assistive technology and
+  // Indian rules, and without those signals a real accessibility rule scored on generic UX
+  // words alone and fell under the threshold.
   "project:ux-audit": [
     { label: "audit-evidence", pattern: /\b(audit|finding|evidence|severity|recommendation)\b/i },
     { label: "ia-and-journey", pattern: /\b(ia|information architecture|navigation|journey|workflow)\b/i },
     { label: "benchmarking", pattern: /\b(benchmark|competitor|comparison|pattern|reference)\b/i },
     { label: "visual-validation", pattern: /\b(screenshot|viewport|accessibility|usability|responsive)\b/i },
+    { label: "wcag-criteria", pattern: /\b(wcag|apca|contrast ratio|target size|text spacing|reflow|[1-4]\.\d{1,2}\.\d{1,2})\b/i },
+    { label: "assistive-tech", pattern: /\b(screen reader|talkback|voiceover|nvda|jaws|keyboard|focus order|landmark|alt text|aria)\b/i },
+    { label: "india-rules", pattern: /\b(rbi|dfs|rpwd|is ?17802|irdai|npci|upi)\b/i },
+    { label: "persona-testing", pattern: /\b(persona|participant|think[- ]aloud|low vision|colou?r blind|tremor|dyslexia|older user)\b/i },
+    { label: "dark-patterns", pattern: /\b(dark pattern|ccpa|drip pricing|confirm shaming|basket sneaking|nagging|forced action)\b/i },
   ],
   "project:general-ux": [
     { label: "user-centered-design", pattern: /\b(user|persona|task|usability|research|journey)\b/i },

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { commandCenterLockedResponse, isCommandCenterAuthorized, knowledgeEditState } from "@/src/command-center/access";
-import { loadSharedKnowledge } from "@/src/command-center/knowledge";
+import { loadApprovalQueue, loadSharedKnowledge, loadStudioKnowledge } from "@/src/command-center/knowledge";
+import { reviewBrainFeedback } from "@/src/memory/shared-brain";
 import { filterKnowledge, pageParams, slicePage } from "@/src/command-center/paging";
 import { CORE_KNOWLEDGE_VERSION } from "@/src/knowledge/corpus";
 import { rankKnowledge, packKnowledge } from "@/src/knowledge/retrieve";
@@ -44,6 +45,17 @@ export async function GET(request: Request) {
     if (url.searchParams.get("legacy") === "1") {
       return NextResponse.json(await loadSharedKnowledge(60).catch(() => ({ rules: [], documents: [] })), { headers });
     }
+    // A11y Studio's own branch of the knowledge base, shown on its own tab.
+    if (url.searchParams.get("view") === "studio") {
+      return NextResponse.json(await loadStudioKnowledge(80).catch(() => ({ rules: [] })), { headers });
+    }
+    // Drafts waiting for a decision. Anything that clears the 50% relevance gate lands here
+    // first, whichever product saved it, and is only used once someone approves it.
+    if (url.searchParams.get("view") === "approvals") {
+      const source = (url.searchParams.get("source") || "").trim();
+      const queue = await loadApprovalQueue({ sourceProduct: source || undefined, limit: 60 }).catch(() => ({ rules: [] }));
+      return NextResponse.json(queue, { headers });
+    }
     // Browse: one small page at a time (filters + search run here, the page asks for more on "View more").
     const entries = await loadKnowledgeEntries();
     const { offset, limit } = pageParams(url);
@@ -82,11 +94,34 @@ const bodySchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("restore"), id: z.string().trim().min(1).max(80) }).strict(),
 ]);
 
+const reviewSchema = z.object({
+  action: z.literal("review"),
+  feedbackId: z.string().uuid(),
+  decision: z.enum(["approve", "reject", "archive"]),
+  reviewNote: z.string().max(1000).optional(),
+}).strict();
+
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return NextResponse.json({ error: "Origin not allowed." }, { status: 403, headers });
+
+  // Deciding on a brain draft is not editing the knowledge corpus, and the corpus edit lock is
+  // dormant, so gating approvals behind it would make them impossible. Same-origin plus the
+  // command-center credential is the gate here; the brain records who decided and why.
+  const body = await request.json().catch(() => null);
+  const asReview = reviewSchema.safeParse(body);
+  if (asReview.success) {
+    if (!isCommandCenterAuthorized(request)) return commandCenterLockedResponse();
+    try {
+      const result = await reviewBrainFeedback({ feedbackId: asReview.data.feedbackId, action: asReview.data.decision, reviewNote: asReview.data.reviewNote });
+      return NextResponse.json({ ok: true, ...result }, { headers });
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message.slice(0, 200) : "Could not record that decision." }, { status: 500, headers });
+    }
+  }
+
   const edit = knowledgeEditState(request);
   if (!edit.allowed) return NextResponse.json({ error: edit.reason, editLocked: true }, { status: 403, headers });
-  const parsed = bodySchema.safeParse(await request.json().catch(() => null));
+  const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message || "Invalid knowledge entry." }, { status: 400, headers });
   try {
     const input = parsed.data;
