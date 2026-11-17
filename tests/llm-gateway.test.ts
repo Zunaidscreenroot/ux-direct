@@ -87,8 +87,11 @@ test("chat prefers fast models; vision keeps only vision models", () => {
   ];
   const chat = rankCandidates({ providers, role: "chat", promptTokens: 500, vision: false, usage: new Map(), cooldowns: new Map(), localHits: new Map(), random: fixedRandom });
   assert.equal(chat[0].tier, "fast");
+  // Vision keeps the models that can see, whoever serves them: Workers AI's Llama 4 Scout was
+  // barred along with its provider, which left no eyes at all on a day Gemini's quota ran out.
   const vision = rankCandidates({ providers, role: "lead", promptTokens: 500, vision: true, usage: new Map(), cooldowns: new Map(), localHits: new Map(), random: fixedRandom });
-  assert.deepEqual(vision.map((candidate) => candidate.model), ["gemini-2.5-flash"]);
+  assert.deepEqual([...vision.map((candidate) => candidate.model)].sort(), ["@cf/meta/llama-4-scout-17b-16e-instruct", "gemini-2.5-flash"]);
+  assert.ok(!vision.some((candidate) => /gpt-oss/.test(candidate.model)));
 });
 
 test("cooldowns follow Retry-After, daily quota, bad keys and dead models", () => {
@@ -284,4 +287,21 @@ test("account-wide daily caps skip the provider's other models; a per-model quot
   assert.equal(isAccountWideQuota("4006: you have used up your daily free allocation of 10,000 neurons"), true);
   // Gemini quotas are per model: flash-lite can still answer when flash is out.
   assert.equal(isAccountWideQuota("You exceeded your current quota, please check your plan"), false);
+});
+
+/* With Gemini's free quota spent for the day there were no eyes left at all: Workers AI was
+   barred from every vision request, and its Llama 4 Scout can see. The bar is now the model,
+   not the provider — and a model that cannot see never receives a screen at all, rather than
+   having it quietly flattened away and answering about nothing. */
+test("a screen can reach any model that can see it, and no model that cannot", () => {
+  const providers = [
+    { provider: { id: "workers-ai", label: "Workers AI", rpm: 300, maxInputTokens: 100_000, maxOutputTokens: 16_000 } as never,
+      models: ["@cf/meta/llama-4-scout-17b-16e-instruct", "@cf/openai/gpt-oss-120b"] },
+  ];
+  const seen = rankCandidates({ providers, role: "researcher", promptTokens: 2_000, vision: true,
+    usage: new Map(), cooldowns: new Map(), localHits: new Map(), maxAttempts: 10 });
+  assert.deepEqual(seen.map((c) => c.model), ["@cf/meta/llama-4-scout-17b-16e-instruct"]);
+  const text = rankCandidates({ providers, role: "researcher", promptTokens: 2_000, vision: false,
+    usage: new Map(), cooldowns: new Map(), localHits: new Map(), maxAttempts: 10 });
+  assert.equal(text.length, 2);
 });

@@ -220,7 +220,7 @@ export function rankCandidates(input: {
       if ((input.cooldowns.get(key) ?? 0) > now) continue;
       const usage = input.usage.get(key);
       if ((usage?.cooldownUntil ?? 0) > now) continue;
-      if (input.vision && (provider.id === "workers-ai" || !modelSupportsVision(model))) continue;
+      if (input.vision && !modelSupportsVision(model)) continue;
       if (input.promptTokens > provider.maxInputTokens) continue;
       const limits = modelLimits(provider, model);
       const recentLocal = (input.localHits.get(key) || []).filter((at) => at > now - 60_000).length;
@@ -325,14 +325,25 @@ export function workersAiText(result: Record<string, unknown> | null | undefined
 async function callWorkersAi(model: string, body: Record<string, unknown>, signal: AbortSignal): Promise<AttemptOutcome> {
   const ai = aiBinding();
   if (!ai) return { ok: false, status: 503, message: "AI binding missing", retryAfter: null };
+  // A screen must never be dropped on the way in. This flattens content to text, which would
+  // leave a multimodal model answering confidently about a picture it was never shown, so a
+  // request carrying one is either passed through whole to a model that can see it or refused
+  // here for the chain to carry elsewhere.
+  const carriesImages = hasImages(body);
+  if (carriesImages && !modelSupportsVision(model)) {
+    return { ok: false, status: 415, message: "model cannot see images", retryAfter: null };
+  }
   const messages = (Array.isArray(body.messages) ? body.messages : []).map((message) => {
     const record = message as { role?: unknown; content?: unknown };
-    return { role: String(record.role || "user"), content: textOf(record.content) };
+    const role = String(record.role || "user");
+    return carriesImages && Array.isArray(record.content)
+      ? { role, content: record.content }
+      : { role, content: textOf(record.content) };
   });
   const maxTokens = Math.min(typeof body.max_tokens === "number" ? body.max_tokens : 4_096, 4_096);
   const temperature = typeof body.temperature === "number" ? { temperature: body.temperature } : {};
   // gpt-oss on Workers AI speaks the Responses API ("input"); the rest take chat "messages".
-  const run = /gpt-oss/.test(model)
+  const run = /gpt-oss/.test(model) && !carriesImages
     ? ai.run(model, { input: messages, max_output_tokens: maxTokens, reasoning: { effort: "low" }, ...temperature })
     : ai.run(model, { messages, max_tokens: maxTokens, ...temperature });
   const aborted = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error("timed out")), { once: true }));
