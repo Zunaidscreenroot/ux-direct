@@ -95,6 +95,13 @@ test("cooldowns follow Retry-After, daily quota, bad keys and dead models", () =
   const now = Date.UTC(2026, 10, 7, 15, 0, 0);
   assert.equal(cooldownFor(429, "Rate limit reached", "12", now), now + 12_000);
   assert.equal(cooldownFor(429, "You exceeded your requests per day quota", null, now), Date.UTC(2026, 10, 8));
+  // Gemini says only this much when a free key is spent for the day. Read as a per-minute
+  // limit, it was retried a minute later, still spent, and every call after it paid the full
+  // fallback chain — around two minutes each.
+  assert.equal(cooldownFor(429, "You exceeded your current quota, please check your plan and billing details.", null, now), Date.UTC(2026, 10, 8));
+  assert.equal(cooldownFor(429, "quota exceeded", "3600", now), Date.UTC(2026, 10, 8));
+  // A short Retry-After means it really is the per-minute limit, so it stays short.
+  assert.equal(cooldownFor(429, "You exceeded your current quota", "30", now), now + 30_000);
   assert.equal(cooldownFor(401, "invalid key", null, now), now + 3600_000);
   assert.equal(cooldownFor(404, "model not found", null, now), now + 24 * 3600_000);
   assert.equal(cooldownFor(413, "Request too large", null, now), null);
