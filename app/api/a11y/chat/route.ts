@@ -88,13 +88,22 @@ export async function POST(request: Request) {
     clean.push({ role, content: parts });
   }
   if (total > 24_000) return NextResponse.json({ error: "Request too large." }, { status: 413, headers });
-  const maxTokens = Math.max(64, Math.min(1400, Number(body?.max_tokens) || 500));
+  // The ceiling was 1400, which was fine while every caller was a short text task. A request
+  // carrying a screen is routed to a reasoning model, and its thinking tokens come out of the
+  // same budget: at 1400 the answer was cut off after a line or two and the caller got
+  // unparseable JSON. A request with an image gets room for the thinking and the reply.
+  const ceiling = images > 0 ? 4000 : 1400;
+  const maxTokens = Math.max(64, Math.min(ceiling, Number(body?.max_tokens) || 500));
   // Seat: short answers go to the fast accessibility seat; long reviews and reports may ask for the stronger seats.
   const SEATS = ["accessibility", "researcher", "lead", "content-writer"] as const;
   const seat = SEATS.includes(String(body?.seat) as (typeof SEATS)[number]) ? String(body?.seat) : "accessibility";
 
   const upstreamHeaders = new Headers({ "content-type": "application/json", "x-uxd-agent-role": seat });
-  const upstream = await gatewayChatCompletion(JSON.stringify({ model: "auto", messages: clean, max_tokens: maxTokens, temperature: 0.2, response_format: { type: "json_object" } }), upstreamHeaders, request.signal);
+  // A screen needs describing, not pondering. Left to think, the model spends the whole output
+  // budget on deliberation and the JSON comes back cut off after a line or two.
+  const payload: Record<string, unknown> = { model: "auto", messages: clean, max_tokens: maxTokens, temperature: 0.2, response_format: { type: "json_object" } };
+  if (images > 0) payload.reasoning_effort = "none";
+  const upstream = await gatewayChatCompletion(JSON.stringify(payload), upstreamHeaders, request.signal);
   const text = await upstream.text();
   return new Response(text, { status: upstream.status, headers: { ...headers, "content-type": "application/json" } });
 }
