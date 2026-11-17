@@ -99,7 +99,11 @@ export async function POST(request: Request) {
   const seat = SEATS.includes(String(body?.seat) as (typeof SEATS)[number]) ? String(body?.seat) : "accessibility";
 
   const upstreamHeaders = new Headers({ "content-type": "application/json", "x-uxd-agent-role": seat });
-  const upstream = await gatewayChatCompletion(JSON.stringify({ model: "auto", messages: clean, max_tokens: maxTokens, temperature: 0.2, response_format: { type: "json_object" } }), upstreamHeaders, request.signal);
+  // A screen needs describing, not pondering. Left to think, the model spends the whole output
+  // budget on deliberation and the JSON comes back cut off after a line or two.
+  const payload: Record<string, unknown> = { model: "auto", messages: clean, max_tokens: maxTokens, temperature: 0.2, response_format: { type: "json_object" } };
+  if (images > 0) payload.reasoning_effort = "none";
+  const upstream = await gatewayChatCompletion(JSON.stringify(payload), upstreamHeaders, request.signal);
   const text = await upstream.text();
   return new Response(text, { status: upstream.status, headers: { ...headers, "content-type": "application/json" } });
 }

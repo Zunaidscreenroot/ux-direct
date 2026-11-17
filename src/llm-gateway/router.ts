@@ -258,7 +258,10 @@ export function isAccountWideQuota(message: string): boolean {
 
 // ---------- provider calls ----------
 
-const OPENAI_FIELDS = new Set(["model", "messages", "temperature", "top_p", "max_tokens", "stream", "stop", "response_format", "seed", "presence_penalty", "frequency_penalty"]);
+// reasoning_effort rides along so a caller that needs the answer rather than the deliberation can
+// ask for less of it: on a reasoning model the thinking is spent from the same output budget,
+// which otherwise truncates the reply mid-sentence.
+const OPENAI_FIELDS = new Set(["model", "messages", "temperature", "top_p", "max_tokens", "stream", "stop", "response_format", "seed", "presence_penalty", "frequency_penalty", "reasoning_effort"]);
 
 export function providerBody(provider: ProviderDef, model: string, body: Record<string, unknown>, jsonMode: boolean): Record<string, unknown> {
   const out: Record<string, unknown> = {};
