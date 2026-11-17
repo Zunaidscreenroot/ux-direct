@@ -95,7 +95,9 @@ export async function POST(request: Request) {
   const ceiling = images > 0 ? 4000 : 1400;
   const maxTokens = Math.max(64, Math.min(ceiling, Number(body?.max_tokens) || 500));
   // Seat: short answers go to the fast accessibility seat; long reviews and reports may ask for the stronger seats.
-  const SEATS = ["accessibility", "researcher", "lead", "content-writer"] as const;
+  // The director seat is the strongest judgement available, kept for the one output a client
+  // reads first: the executive summary of an audit.
+  const SEATS = ["accessibility", "researcher", "lead", "content-writer", "director"] as const;
   const seat = SEATS.includes(String(body?.seat) as (typeof SEATS)[number]) ? String(body?.seat) : "accessibility";
 
   const upstreamHeaders = new Headers({ "content-type": "application/json", "x-uxd-agent-role": seat });
