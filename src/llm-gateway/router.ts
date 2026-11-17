@@ -99,6 +99,15 @@ export function cooldownFor(status: number, message: string, retryAfter: string 
   const retrySeconds = retryAfter && /^\d+(\.\d+)?$/.test(retryAfter.trim()) ? Number(retryAfter) : NaN;
   if (status === 429) {
     if (/per[\s_-]?day|daily|requests per day|RPD|quota.*day|day.*quota/i.test(message)) return Math.min(nextUtcMidnight(now), now + 12 * 3600_000);
+    // Gemini says only "You exceeded your current quota" when a free key is spent for the day:
+    // no "day", no "RPD". Read as a per-minute limit it came back in a minute, still spent, and
+    // every later request paid the full fallback chain again — about two minutes a call. A
+    // short retry-after means it really is per-minute; anything else is treated as the day.
+    if (!Number.isFinite(retrySeconds) || retrySeconds > 300) {
+      if (/exceeded your current quota|quota exceeded|out of (free )?quota|insufficient quota/i.test(message)) {
+        return Math.min(nextUtcMidnight(now), now + 12 * 3600_000);
+      }
+    }
     return now + (Number.isFinite(retrySeconds) ? Math.min(Math.max(retrySeconds, 5), 3600) * 1000 : 60_000);
   }
   // Model exists but is outside the free tier (Mistral large/medium): skip it for a day.
