@@ -21,8 +21,26 @@ type Payload = {
   version: string; categories: Record<string, string>; roles: string[]; domains: string[];
 };
 type Preview = { results: Array<{ id: string; title: string; category: string; score: number | string }>; packedChars: number; preview: string };
+/* A rule saved by a product, with the reasoning behind it. Drafts wait here for a decision;
+   anything that cleared the 50% relevance gate lands as a draft and is used only once approved. */
+type Pending = {
+  id: string; title: string; rule: string; scope: string; kind: string; source: string; status: string;
+  rationale: string; evidence: string; keywords: string[]; provenance: string;
+  auditRef: string; findingTitle: string; createdAt: string; updatedAt: string;
+};
+type Tab = "core" | "studio" | "approvals";
 
 const PAGE_SIZE = 6;
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: "core", label: "UX knowledge" },
+  { id: "studio", label: "A11y Studio" },
+  { id: "approvals", label: "Approvals" },
+];
+/* Where a rule came from decides how much weight a reviewer should give it. Without this,
+   a sentence a model wrote and a measured fact look identical a month later. */
+const PROVENANCE: Record<string, string> = {
+  measured: "Measured", model: "Written by a model", human: "From a person",
+};
 const ORIGIN_LABEL: Record<Entry["origin"], string> = { core: "Core", edited: "Edited", custom: "Added" };
 
 export function KnowledgeBase({ accessHeader, accessKey, onLocked }: { accessHeader: string; accessKey: string; onLocked: (response: Response) => Promise<void> }) {
@@ -41,6 +59,12 @@ export function KnowledgeBase({ accessHeader, accessKey, onLocked }: { accessHea
   const [preview, setPreview] = useState<Preview | null>(null);
   const [showLegacy, setShowLegacy] = useState(false);
   const [legacy, setLegacy] = useState<Legacy | null>(null);
+  const [tab, setTab] = useState<Tab>("core");
+  const [studio, setStudio] = useState<Pending[] | null>(null);
+  const [queue, setQueue] = useState<Pending[] | null>(null);
+  const [queueSource, setQueueSource] = useState("");
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [deciding, setDeciding] = useState("");
   const requestId = useRef(0);
 
   const authHeaders = useMemo(() => ({ [accessHeader]: accessKey }), [accessHeader, accessKey]);
@@ -109,6 +133,73 @@ export function KnowledgeBase({ accessHeader, accessKey, onLocked }: { accessHea
 
   const label = (id: string) => data?.categories[id] || id;
 
+  const loadStudio = useCallback(async () => {
+    setError("");
+    try {
+      const response = await fetch("/api/command-center/knowledge?view=studio", { cache: "no-store", headers: authHeaders });
+      if (response.status === 401 || response.status === 403) { await onLocked(response); return; }
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not load A11y Studio's knowledge.");
+      setStudio((payload.rules || []) as Pending[]);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not load A11y Studio's knowledge."); }
+  }, [authHeaders, onLocked]);
+
+  const loadQueue = useCallback(async (source: string) => {
+    setError("");
+    try {
+      const params = new URLSearchParams({ view: "approvals" });
+      if (source) params.set("source", source);
+      const response = await fetch("/api/command-center/knowledge?" + params.toString(), { cache: "no-store", headers: authHeaders });
+      if (response.status === 401 || response.status === 403) { await onLocked(response); return; }
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not load the approval queue.");
+      setQueue((payload.rules || []) as Pending[]);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not load the approval queue."); }
+  }, [authHeaders, onLocked]);
+
+  // The pending count belongs on the tab, so it is fetched once rather than only when opened.
+  useEffect(() => { void loadQueue(""); }, [loadQueue]);
+  useEffect(() => { if (tab === "studio" && !studio) void loadStudio(); }, [tab, studio, loadStudio]);
+
+  async function decide(id: string, decision: "approve" | "reject" | "archive") {
+    setDeciding(id + ":" + decision); setError("");
+    try {
+      const response = await fetch("/api/command-center/knowledge", {
+        method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "review", feedbackId: id, decision, reviewNote: notes[id] || undefined }),
+      });
+      if (response.status === 401 || response.status === 403) { await onLocked(response); return; }
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not record that decision.");
+      // Out of the queue either way; an approval also belongs in Studio's list, so that reloads.
+      setQueue((rows) => (rows || []).filter((row) => row.id !== id));
+      if (decision === "approve") setStudio(null);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not record that decision."); }
+    setDeciding("");
+  }
+
+  function pendingRow(row: Pending, withActions: boolean) {
+    return <article className="ud-cc-row" key={row.id}>
+      <div className="ud-cc-row-top"><strong>{row.title}</strong><span className="ud-cc-actions">
+        {row.provenance && <span className={"ud-status-pill " + (row.provenance === "measured" ? "ok" : "muted")}>{PROVENANCE[row.provenance] || row.provenance}</span>}
+        <span className="ud-status-pill muted">{row.scope || "shared"}</span>
+        <span className="ud-status-pill muted">{row.source}</span>
+      </span></div>
+      <p>{row.rule}</p>
+      {row.rationale && <p className="ud-kb-hint">Why: {row.rationale}</p>}
+      {row.evidence && row.evidence !== row.rule && <details><summary className="ud-kb-hint">What was seen</summary><pre className="ud-kb-preview">{row.evidence}</pre></details>}
+      <small>{[row.kind, row.findingTitle, row.auditRef, (row.createdAt || row.updatedAt || "").slice(0, 10), row.keywords.slice(0, 6).join(", ")].filter(Boolean).join(" · ")}</small>
+      {withActions && <div className="ud-kb-row">
+        <input className="ud-kb-input" value={notes[row.id] || ""} aria-label={"Reason for the decision on " + row.title}
+          placeholder="Reason for the decision, so the next reviewer knows why"
+          onChange={(event) => setNotes((prev) => ({ ...prev, [row.id]: event.target.value }))} />
+        <button className="ud-secondary-button" onClick={() => void decide(row.id, "approve")} disabled={deciding.startsWith(row.id)}>{deciding === row.id + ":approve" ? "Approving…" : "Approve"}</button>
+        <button className="ud-secondary-button" onClick={() => void decide(row.id, "reject")} disabled={deciding.startsWith(row.id)}>{deciding === row.id + ":reject" ? "Rejecting…" : "Reject"}</button>
+        <button className="ud-secondary-button" onClick={() => void decide(row.id, "archive")} disabled={deciding.startsWith(row.id)}>Archive</button>
+      </div>}
+    </article>;
+  }
+
   return <>
     <div className="ud-connections-heading">
       <div><h1>Knowledge base.</h1><p>The UX knowledge every model gets for each task: principles, laws, accessibility, design systems, patterns and industry rules. Search it and test what a task retrieves.</p></div>
@@ -118,7 +209,56 @@ export function KnowledgeBase({ accessHeader, accessKey, onLocked }: { accessHea
     </div>
     {error && <div className="ud-chat-error" role="alert">{error}</div>}
 
-    {data && <>
+    {/* Three views of the same brain: the curated UX corpus, A11y Studio's own branch, and
+        everything waiting for a decision. The selected tab is marked by weight and an
+        underline as well as aria-selected, so it does not rest on colour alone. */}
+    <div className="ud-kb-row" role="tablist" aria-label="Knowledge base views">
+      {TABS.map((item) => {
+        const on = tab === item.id;
+        const count = item.id === "approvals" && queue ? queue.length : item.id === "studio" && studio ? studio.length : null;
+        return <button key={item.id} role="tab" aria-selected={on} className="ud-secondary-button"
+          style={on ? { fontWeight: 700, textDecoration: "underline" } : undefined}
+          onClick={() => setTab(item.id)}>
+          {item.label}{count === null ? "" : " (" + count + ")"}
+        </button>;
+      })}
+    </div>
+
+    {tab === "studio" && <>
+      <h2 className="ud-cc-section">A11y Studio’s knowledge</h2>
+      <p className="ud-kb-hint">
+        What A11y Studio has had approved into the brain, on its own branch (project:ux-audit).
+        Studio reads only this branch, never the shared scope, so an accessibility audit is not
+        handed design-agent context it has no use for.
+      </p>
+      {!studio && <p className="ud-cc-empty">Loading…</p>}
+      {studio && !studio.length && <p className="ud-cc-empty">Nothing approved from Studio yet. New rules arrive on the Approvals tab first.</p>}
+      {studio && studio.length > 0 && <div className="ud-cc-list">{studio.map((row) => pendingRow(row, false))}</div>}
+    </>}
+
+    {tab === "approvals" && <>
+      <h2 className="ud-cc-section">Waiting for a decision</h2>
+      <p className="ud-kb-hint">
+        Anything that clears the 50% relevance gate is saved as a draft and waits here. Nothing on
+        this list is being used yet. Each one shows the rule, why it was proposed and what was
+        seen, so a decision is not made on the title alone.
+      </p>
+      <div className="ud-kb-row">
+        <select className="ud-kb-select" value={queueSource} aria-label="Filter by product"
+          onChange={(event) => { setQueueSource(event.target.value); setQueue(null); void loadQueue(event.target.value); }}>
+          <option value="">Every product</option>
+          <option value="ux-audit">A11y Studio</option>
+          <option value="ux-direct">UX Direct</option>
+          <option value="figma-plugin">Figma plugin</option>
+        </select>
+        <button className="ud-secondary-button" onClick={() => { setQueue(null); void loadQueue(queueSource); }}>Refresh ↻</button>
+      </div>
+      {!queue && <p className="ud-cc-empty">Loading…</p>}
+      {queue && !queue.length && <p className="ud-cc-empty">Nothing waiting.</p>}
+      {queue && queue.length > 0 && <div className="ud-cc-list">{queue.map((row) => pendingRow(row, true))}</div>}
+    </>}
+
+    {tab === "core" && data && <>
       <div className="ud-cc-stats">
         <div><b>{data.counts.entries}</b><span>Entries in use</span></div>
         <div><b>{data.counts.categories}</b><span>Categories</span></div>
