@@ -72,7 +72,7 @@ export const PROVIDERS: ProviderDef[] = [
   },
   {
     id: "zai", label: "Z.ai GLM", baseUrl: "https://api.z.ai/api/paas/v4", keyEnv: ["ZAI_API_KEY", "ZHIPU_API_KEY"],
-    models: ["glm-4.5-flash"],
+    models: ["glm-4.5-flash", "glm-4.5v"],
     rpm: 20, maxInputTokens: 100_000, maxOutputTokens: 16_000,
   },
   {
