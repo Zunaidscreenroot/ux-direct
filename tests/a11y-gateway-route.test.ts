@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { GET, OPTIONS, POST } from "../app/api/a11y/chat/route";
@@ -70,4 +71,11 @@ test("a screen does not count towards the text limit", async () => {
 test("a long text prompt is still refused", async () => {
   const r = await post({ messages: [{ role: "user", content: "x".repeat(24_001) }] });
   assert.equal(r.status, 413);
+});
+
+test("a request carrying a screen gets room for a reasoning model's answer", () => {
+  const src = readFileSync("app/api/a11y/chat/route.ts", "utf8");
+  // 1400 was enough for a text task, but a vision request is routed to a reasoning model
+  // whose thinking tokens come out of the same budget, and the reply came back truncated.
+  assert.match(src, /images > 0 \? 4000 : 1400/);
 });
