@@ -4,11 +4,12 @@ import Anthropic from "@anthropic-ai/sdk";
  * Anthropic as the primary provider for A11y Studio's Live audit (Zunaid, 2026-11-21).
  *
  * Three seats, each pinned to ONE model so two runs of the same audit read alike. The free
- * gateway (src/llm-gateway, seats of the same name in roles.ts) is the fixed fallback.
+ * gateway (seats of the same name in roles.ts) is a fallback that is OFF by default (Zunaid,
+ * 2026-11-21: Anthropic only for now); UXD_LIVE_FALLBACK=on turns it back on.
  *
- *   live-vision  page screenshot(s) + prompt → JSON findings   claude-haiku-5-5, effort low
- *   live-review  text only, the reasoning step over a module   claude-sonnet-5-5, effort medium
- *   live-text    the vision prompt without images              claude-haiku-5-5, effort low
+ *   live-vision  page screenshot(s) + rules → JSON            claude-haiku-5-5, thinking off
+ *   live-review  text only, the reasoning step over a module   claude-sonnet-5-5, effort low
+ *   live-text    the vision prompt without images              claude-haiku-5-5, thinking off
  *
  * Cost rules: Opus, Fable and Mythos are never used (refused even if set through env). The system
  * prompt is marked for prompt caching, since it is identical across the calls of one run.
@@ -21,13 +22,29 @@ export type LiveSeat = "live-vision" | "live-review" | "live-text";
 export const LIVE_SEATS: readonly LiveSeat[] = ["live-vision", "live-review", "live-text"];
 
 type Effort = "low" | "medium" | "high";
-type SeatConfig = { model: string; effort: Effort; envModel: string };
+// think: false turns thinking off. The callers send rules, measured facts and a fixed rubric, so
+// the model judges rather than explores; thinking tokens are billed as output and add seconds.
+type SeatConfig = { model: string; effort: Effort; think: boolean; envModel: string; outCap: number };
 
 const SEAT_CONFIG: Record<LiveSeat, SeatConfig> = {
-  "live-vision": { model: "claude-haiku-5-5", effort: "low", envModel: "UXD_LIVE_VISION_MODEL" },
-  "live-review": { model: "claude-sonnet-5-5", effort: "medium", envModel: "UXD_LIVE_REVIEW_MODEL" },
-  "live-text": { model: "claude-haiku-5-5", effort: "low", envModel: "UXD_LIVE_TEXT_MODEL" },
+  "live-vision": { model: "claude-haiku-5-5", effort: "low", think: false, envModel: "UXD_LIVE_VISION_MODEL", outCap: 3000 },
+  // Weighs evidence across a module, but from a fixed rubric and given facts: thinking off too
+  // (Sonnet 5.5 turns it off with "between_tools"), since output is $10/MTok there.
+  "live-review": { model: "claude-sonnet-5-5", effort: "low", think: false, envModel: "UXD_LIVE_REVIEW_MODEL", outCap: 6000 },
+  "live-text": { model: "claude-haiku-5-5", effort: "low", think: false, envModel: "UXD_LIVE_TEXT_MODEL", outCap: 3000 },
 };
+
+/** Price per 1M tokens (Nov 2026), for the cost line returned with every answer. */
+const PRICE: Record<string, { in: number; out: number }> = {
+  haiku: { in: 0.10, out: 0.50 },
+  sonnet: { in: 2.00, out: 10.00 },
+};
+export function costUsd(model: string, usage: Record<string, unknown>): number {
+  const p = /sonnet/i.test(model) ? PRICE.sonnet : PRICE.haiku;
+  const n = (k: string) => Number(usage[k]) || 0;
+  const usd = (n("input_tokens") * p.in + n("cache_creation_input_tokens") * p.in * 1.25 + n("cache_read_input_tokens") * p.in * 0.1 + n("output_tokens") * p.out) / 1e6;
+  return Math.round(usd * 1e6) / 1e6;
+}
 
 /** Only Haiku and Sonnet are allowed: the expensive lines are refused outright. */
 export function allowedLiveModel(model: string): boolean {
@@ -48,7 +65,9 @@ export class LiveError extends Error {
   constructor(public code: LiveErrorCode, message: string, public status = 502) { super(message); }
 }
 
-type Part = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+// `cache: true` on a part puts a prompt-cache breakpoint after it (e.g. after the screenshots and
+// element list that the three module calls of one page share).
+type Part = { type: "text"; text: string; cache?: boolean } | { type: "image_url"; image_url: { url: string }; cache?: boolean };
 export type OpenAIMessage = { role: string; content: string | Part[] };
 
 /** OpenAI-shaped messages → Anthropic system blocks + messages. Images must already be data URLs. */
@@ -61,11 +80,12 @@ export function toAnthropic(messages: OpenAIMessage[]): { system: Anthropic.Text
     let content: string | Anthropic.ContentBlockParam[];
     if (typeof m.content === "string") content = m.content;
     else content = m.content.map((p): Anthropic.ContentBlockParam => {
-      if (p.type === "text") return { type: "text", text: p.text };
+      const mark = p.cache ? { cache_control: { type: "ephemeral" as const } } : {};
+      if (p.type === "text") return { type: "text", text: p.text, ...mark };
       const match = /^data:(image\/(?:png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=\s]*)$/i.exec(p.image_url.url);
       if (!match) throw new LiveError("bad_request", "An image must be a data URL.", 400);
       const media = (match[1].toLowerCase() === "image/jpg" ? "image/jpeg" : match[1].toLowerCase()) as "image/png" | "image/jpeg" | "image/webp";
-      return { type: "image", source: { type: "base64", media_type: media, data: match[2] } };
+      return { type: "image", source: { type: "base64", media_type: media, data: match[2] }, ...mark };
     });
     // Anthropic wants alternating turns: merge two user turns in a row.
     const last = out[out.length - 1];
@@ -107,6 +127,8 @@ export type LiveResult = { model: string; text: string; stop: string; usage: Rec
 
 export async function anthropicLiveCompletion(opts: {
   seat: LiveSeat; messages: OpenAIMessage[]; maxTokens: number; env: Record<string, string | undefined>;
+  /** Optional JSON schema: the answer is then guaranteed to parse and holds nothing else. */
+  schema?: Record<string, unknown> | null;
   signal?: AbortSignal | null; client?: Anthropic;
 }): Promise<LiveResult> {
   const key = String(opts.env.ANTHROPIC_API_KEY || "").trim();
@@ -116,16 +138,19 @@ export async function anthropicLiveCompletion(opts: {
   const model = liveModelFor(opts.seat, opts.env);
   const { system, messages } = toAnthropic(opts.messages);
   if (!messages.length) throw new LiveError("bad_request", "No user message.", 400);
-  // Thinking tokens come out of max_tokens; give room so the JSON is never cut off. Only used
-  // tokens are billed, so the higher ceiling costs nothing unless it is needed.
-  const maxTokens = Math.max(opts.maxTokens, opts.seat === "live-review" ? 12_000 : 6_000);
+  const cfg = SEAT_CONFIG[opts.seat];
+  // The caller's budget, within the seat's cap. With thinking off nothing else eats it; the review
+  // seat gets 2k of headroom for its short thinking so the JSON is never cut off.
+  const maxTokens = Math.min(cfg.outCap, Math.max(256, opts.maxTokens)) + (cfg.think ? 2000 : 0);
+  const format = opts.schema && typeof opts.schema === "object" ? { format: { type: "json_schema" as const, schema: opts.schema } } : {};
   try {
     const response = await client.messages.create({
       model, max_tokens: maxTokens,
       ...(system.length ? { system } : {}),
       messages,
-      output_config: { effort: SEAT_CONFIG[opts.seat].effort },
-    }, { signal: opts.signal ?? undefined });
+      ...(cfg.think ? {} : { thinking: { type: /sonnet/i.test(model) ? "between_tools" : "disabled" } }),
+      output_config: { effort: cfg.effort, ...format },
+    } as Anthropic.MessageCreateParamsNonStreaming, { signal: opts.signal ?? undefined });
     if (response.stop_reason === "refusal") throw new LiveError("refused", "Anthropic declined this request.", 502);
     // Callers parse JSON: drop a ```json fence if the model wrapped its answer in one.
     const text = response.content.map((block) => (block.type === "text" ? block.text : "")).join("").trim()
@@ -140,7 +165,7 @@ export async function anthropicLiveCompletion(opts: {
 /** The response shape A11y Studio already reads: {model, choices:[{message:{content}}]}. */
 export function openAIShape(result: LiveResult, provider = "anthropic") {
   return {
-    id: "live-" + Date.now().toString(36), object: "chat.completion", model: result.model, provider,
+    id: "live-" + Date.now().toString(36), object: "chat.completion", model: result.model, provider, cost_usd: costUsd(result.model, result.usage),
     choices: [{ index: 0, message: { role: "assistant", content: result.text }, finish_reason: result.stop === "max_tokens" ? "length" : "stop" }],
     usage: result.usage,
   };
