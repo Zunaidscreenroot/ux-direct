@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { gatewayChatCompletion } from "@/src/llm-gateway/router";
+import { gatewayChatCompletion, gatewayEnv } from "@/src/llm-gateway/router";
+import { anthropicLiveCompletion, isLiveSeat, LIVE_SEATS, LiveError, openAIShape } from "@/src/llm-gateway/anthropic-live";
 import { checkGatewayRateLimit } from "@/src/model-gateway/rate-limit";
 
 export const runtime = "nodejs";
@@ -29,6 +30,7 @@ function cors(origin: string | null): HeadersInit {
     ...(origin && originOk(origin) ? { "Access-Control-Allow-Origin": origin } : {}),
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Expose-Headers": "x-uxd-provider, x-uxd-anthropic",
     "Cache-Control": "no-store",
     "Vary": "Origin",
   };
@@ -41,7 +43,7 @@ export async function OPTIONS(request: Request) {
 
 export async function GET(request: Request) {
   const origin = request.headers.get("origin");
-  return NextResponse.json({ ok: true, gateway: "a11y", seats: ["accessibility", "researcher", "lead", "content-writer"], vision: true, maxImages: 2 }, { headers: cors(origin) });
+  return NextResponse.json({ ok: true, gateway: "a11y", seats: ["accessibility", "researcher", "lead", "content-writer", ...LIVE_SEATS], vision: true, maxImages: 2 }, { headers: cors(origin) });
 }
 
 export async function POST(request: Request) {
@@ -87,18 +89,33 @@ export async function POST(request: Request) {
     if (!parts.length) return NextResponse.json({ error: "content must hold at least one part." }, { status: 400, headers });
     clean.push({ role, content: parts });
   }
-  if (total > 24_000) return NextResponse.json({ error: "Request too large." }, { status: 413, headers });
+  const live = isLiveSeat(String(body?.seat || ""));
+  // Live audit's module review sends the findings of a whole module, so its seats get more room.
+  if (total > (live ? 60_000 : 24_000)) return NextResponse.json({ error: "Request too large." }, { status: 413, headers });
   // The ceiling was 1400, which was fine while every caller was a short text task. A request
   // carrying a screen is routed to a reasoning model, and its thinking tokens come out of the
   // same budget: at 1400 the answer was cut off after a line or two and the caller got
   // unparseable JSON. A request with an image gets room for the thinking and the reply.
-  const ceiling = images > 0 ? 4000 : 1400;
+  const ceiling = live ? 4000 : images > 0 ? 4000 : 1400;
   const maxTokens = Math.max(64, Math.min(ceiling, Number(body?.max_tokens) || 500));
   // Seat: short answers go to the fast accessibility seat; long reviews and reports may ask for the stronger seats.
   // The director seat is the strongest judgement available, kept for the one output a client
   // reads first: the executive summary of an audit.
-  const SEATS = ["accessibility", "researcher", "lead", "content-writer", "director"] as const;
+  const SEATS = ["accessibility", "researcher", "lead", "content-writer", "director", ...LIVE_SEATS] as const;
   const seat = SEATS.includes(String(body?.seat) as (typeof SEATS)[number]) ? String(body?.seat) : "accessibility";
+
+  // Live audit: Anthropic first, on one fixed model per seat; the free gateway is the fallback.
+  let anthropicError: LiveError | null = null;
+  if (isLiveSeat(seat)) {
+    try {
+      const result = await anthropicLiveCompletion({ seat, messages: clean, maxTokens: Math.max(64, Math.min(8000, Number(body?.max_tokens) || 1500)), env: gatewayEnv(), signal: request.signal });
+      return NextResponse.json(openAIShape(result), { headers: { ...headers, "x-uxd-provider": "anthropic" } });
+    } catch (error) {
+      anthropicError = error instanceof LiveError ? error : new LiveError("busy", "Anthropic failed.");
+      if (anthropicError.code === "bad_request") return NextResponse.json({ error: { message: anthropicError.message, code: "bad_request" } }, { status: 400, headers });
+      console.warn("[a11y-live] anthropic fell back:", anthropicError.code);
+    }
+  }
 
   const upstreamHeaders = new Headers({ "content-type": "application/json", "x-uxd-agent-role": seat });
   // A screen needs describing, not pondering. Left to think, the model spends the whole output
@@ -107,5 +124,11 @@ export async function POST(request: Request) {
   if (images > 0) payload.reasoning_effort = "none";
   const upstream = await gatewayChatCompletion(JSON.stringify(payload), upstreamHeaders, request.signal);
   const text = await upstream.text();
-  return new Response(text, { status: upstream.status, headers: { ...headers, "content-type": "application/json" } });
+  if (isLiveSeat(seat) && !upstream.ok) {
+    // Tell Live audit plainly what to do: retry when busy, switch path when used up.
+    const code = upstream.status === 429 || upstream.status >= 500 && !/balance|quota|exhaust|insufficient/i.test(text) ? "busy" : "used_up";
+    return NextResponse.json({ error: { message: (code === "busy" ? "AI is busy; retry shortly." : "AI quota is used up.") + (anthropicError ? " Anthropic: " + anthropicError.code + "." : ""), code } },
+      { status: upstream.status === 429 ? 429 : 503, headers: { ...headers, "x-uxd-provider": "gateway" } });
+  }
+  return new Response(text, { status: upstream.status, headers: { ...headers, "content-type": "application/json", ...(isLiveSeat(seat) ? { "x-uxd-provider": "gateway", "x-uxd-anthropic": anthropicError?.code || "" } : {}) } });
 }
