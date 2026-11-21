@@ -57,7 +57,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const messages = Array.isArray(body?.messages) ? body!.messages as Array<Record<string, unknown>> : null;
   if (!messages || messages.length < 1 || messages.length > 12) return NextResponse.json({ error: "messages must hold 1 to 12 entries." }, { status: 400, headers });
-  type Part = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+  type Part = { type: "text"; text: string; cache?: boolean } | { type: "image_url"; image_url: { url: string }; cache?: boolean };
   const clean: Array<{ role: string; content: string | Part[] }> = [];
   let total = 0;      // text only: a screen is far bigger than any prompt and is capped on its own
   let images = 0;
@@ -75,14 +75,14 @@ export async function POST(request: Request) {
       const kind = String((raw as { type?: unknown })?.type || "");
       if (kind === "text") {
         const t = typeof raw.text === "string" ? raw.text : "";
-        total += t.length; parts.push({ type: "text", text: t }); continue;
+        total += t.length; parts.push({ type: "text", text: t, ...(raw.cache === true ? { cache: true } : {}) }); continue;
       }
       if (kind === "image_url") {
         const url = String((raw.image_url as { url?: unknown } | undefined)?.url || "");
         if (!/^data:image\/(png|jpeg|jpg|webp);base64,/i.test(url)) return NextResponse.json({ error: "An image must be a data URL (png, jpeg or webp)." }, { status: 400, headers });
         if (url.length > MAX_IMAGE_CHARS) return NextResponse.json({ error: "Screen image too large: render it narrower (about 420 px wide)." }, { status: 413, headers });
         if (++images > MAX_IMAGES) return NextResponse.json({ error: "At most " + MAX_IMAGES + " images per request." }, { status: 400, headers });
-        parts.push({ type: "image_url", image_url: { url } }); continue;
+        parts.push({ type: "image_url", image_url: { url }, ...(raw.cache === true ? { cache: true } : {}) }); continue;
       }
       return NextResponse.json({ error: "Unknown content part: " + kind }, { status: 400, headers });
     }
@@ -108,11 +108,17 @@ export async function POST(request: Request) {
   let anthropicError: LiveError | null = null;
   if (isLiveSeat(seat)) {
     try {
-      const result = await anthropicLiveCompletion({ seat, messages: clean, maxTokens: Math.max(64, Math.min(8000, Number(body?.max_tokens) || 1500)), env: gatewayEnv(), signal: request.signal });
+      const schema = body?.schema && typeof body.schema === "object" && !Array.isArray(body.schema) ? body.schema as Record<string, unknown> : null;
+      const result = await anthropicLiveCompletion({ seat, messages: clean, maxTokens: Number(body?.max_tokens) || 1500, schema, env: gatewayEnv(), signal: request.signal });
       return NextResponse.json(openAIShape(result), { headers: { ...headers, "x-uxd-provider": "anthropic" } });
     } catch (error) {
       anthropicError = error instanceof LiveError ? error : new LiveError("busy", "Anthropic failed.");
-      if (anthropicError.code === "bad_request") return NextResponse.json({ error: { message: anthropicError.message, code: "bad_request" } }, { status: 400, headers });
+      // Anthropic only, for now: the free fallback runs only when UXD_LIVE_FALLBACK=on.
+      const code = anthropicError.code === "no_key" ? "used_up" : anthropicError.code === "refused" ? "bad_request" : anthropicError.code;
+      if (anthropicError.code === "bad_request" || gatewayEnv().UXD_LIVE_FALLBACK !== "on") {
+        const status = code === "busy" ? (anthropicError.status === 429 ? 429 : 503) : code === "used_up" ? 503 : 400;
+        return NextResponse.json({ error: { message: anthropicError.message, code } }, { status, headers: { ...headers, "x-uxd-provider": "anthropic" } });
+      }
       console.warn("[a11y-live] anthropic fell back:", anthropicError.code);
     }
   }
@@ -120,7 +126,8 @@ export async function POST(request: Request) {
   const upstreamHeaders = new Headers({ "content-type": "application/json", "x-uxd-agent-role": seat });
   // A screen needs describing, not pondering. Left to think, the model spends the whole output
   // budget on deliberation and the JSON comes back cut off after a line or two.
-  const payload: Record<string, unknown> = { model: "auto", messages: clean, max_tokens: maxTokens, temperature: 0.2, response_format: { type: "json_object" } };
+  const plain = clean.map((m) => (typeof m.content === "string" ? m : { role: m.role, content: m.content.map((part) => { const rest = { ...part }; delete rest.cache; return rest; }) }));
+  const payload: Record<string, unknown> = { model: "auto", messages: plain, max_tokens: maxTokens, temperature: 0.2, response_format: { type: "json_object" } };
   if (images > 0) payload.reasoning_effort = "none";
   const upstream = await gatewayChatCompletion(JSON.stringify(payload), upstreamHeaders, request.signal);
   const text = await upstream.text();
