@@ -13,27 +13,28 @@
     "cf:build": "opennextjs-cloudflare build --dangerouslyUseUnsupportedNextVersion"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.12.0",
+    "@neondatabase/serverless": "^1.1.0",
+    "@netlify/blobs": "^11.1.4",
+    "@xyflow/react": "^12.12.0",
+    "border-beam": "^1.4.1",
     "next": "^15.5.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "zod": "^4.1.0",
-    "@xyflow/react": "^12.12.0",
-    "@netlify/blobs": "^11.1.4",
-    "@neondatabase/serverless": "^1.1.0",
     "thinking-orbs": "^0.3.2",
-    "border-beam": "^1.4.1"
+    "zod": "^4.1.0"
   },
   "devDependencies": {
+    "@crawlee/cheerio": "^3.18.2",
+    "@opennextjs/cloudflare": "latest",
     "@types/node": "^22.15.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "esbuild": "^0.28.2",
     "eslint": "^9.30.0",
     "eslint-config-next": "^15.5.0",
-    "typescript": "^5.8.3",
     "tsx": "^4.20.3",
-    "@crawlee/cheerio": "^3.18.2",
-    "@opennextjs/cloudflare": "latest",
-    "esbuild": "^0.28.2",
+    "typescript": "^5.8.3",
     "wrangler": "latest"
   }
 }

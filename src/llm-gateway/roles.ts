@@ -28,6 +28,8 @@ export type GatewayRole =
   // agency seats
   | "director" | "lead" | "product-designer" | "ux-designer" | "ui-designer" | "researcher" | "content-writer"
   | "accessibility" | "design-system" | "qa"
+  // A11y Studio Live audit fallbacks (Anthropic is primary, see anthropic-live.ts)
+  | "live-vision" | "live-review" | "live-text"
   // utility
   | "classifier" | "chat" | "fast-retry" | "default"
   // older names, kept as aliases
@@ -134,6 +136,27 @@ export const ROLE_ROUTES: Record<Exclude<GatewayRole, "planner" | "section-desig
     tiers: ["fast", "medium", "strong"], lowLatency: true, attemptTimeoutMs: 30_000, maxAttempts: 6,
     primary: [GROQ_20, WAI_20, MI_14],
     fallback: [GEM_LITE, GROQ_QWEN, MI_8, WAI_SCOUT, GROQ_120, ZAI],
+  },
+  // Live audit fallbacks. Anthropic is primary (anthropic-live.ts); these run only when it is
+  // used up or busy. One primary each, no rotation, so a fallback run still reads alike.
+  // Vision and text start on different quotas from review, so one run never drains one provider.
+  "live-vision": {
+    purpose: "Live audit (fallback): reads a page screenshot and returns JSON findings.",
+    tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 60_000, maxAttempts: 5,
+    primary: [GEM_FLASH],
+    fallback: [OR_VL, GEM_PRO, ZAI, WAI_SCOUT, GEM_LITE],
+  },
+  "live-review": {
+    purpose: "Live audit (fallback): reasons over a module's findings and decides what stands.",
+    tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 80_000, maxAttempts: 5,
+    primary: [GEM_PRO],
+    fallback: [OR_ULTRA, GROQ_KIMI, GEM_FLASH, GROQ_120, CEREBRAS],
+  },
+  "live-text": {
+    purpose: "Live audit (fallback): the vision prompt on page text only, when vision is down.",
+    tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 60_000, maxAttempts: 5,
+    primary: [GROQ_KIMI],
+    fallback: [GROQ_120, CEREBRAS, WAI_120, OR_ULTRA, GEM_FLASH],
   },
   classifier: {
     purpose: "Classifier: routes the request (what kind of task, which seats).",
