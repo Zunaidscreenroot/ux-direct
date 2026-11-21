@@ -155,8 +155,9 @@ export const ROLE_ROUTES: Record<Exclude<GatewayRole, "planner" | "section-desig
   "live-text": {
     purpose: "Live audit (fallback): the vision prompt on page text only, when vision is down.",
     tiers: ["strong", "medium", "fast"], lowLatency: false, attemptTimeoutMs: 60_000, maxAttempts: 5,
-    primary: [GROQ_KIMI],
-    fallback: [GROQ_120, CEREBRAS, WAI_120, OR_ULTRA, GEM_FLASH],
+    // Kimi left Groq's free plan (2026-11), so gpt-oss-120b leads; Kimi stays in case it returns.
+    primary: [GROQ_120],
+    fallback: [CEREBRAS, WAI_120, OR_ULTRA, GEM_FLASH, GROQ_KIMI],
   },
   classifier: {
     purpose: "Classifier: routes the request (what kind of task, which seats).",
